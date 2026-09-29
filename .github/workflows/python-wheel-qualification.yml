@@ -8,9 +8,12 @@ on:
       - "Cargo.lock"
       - "Cargo.toml"
       - "crates/ripr/**"
+      - "fixtures/python/**"
       - "packaging/python/**"
+      - "policy/dependency_allowlist.txt"
       - "policy/distribution.toml"
       - "policy/non-rust-allowlist.toml"
+      - "policy/workflow_allowlist.txt"
       - "rust-toolchain.toml"
       - "xtask/**"
 
@@ -25,7 +28,7 @@ concurrency:
 
 env:
   CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-  RIPR_VERSION: "0.11.0"
+  RUST_TARGET: x86_64-unknown-linux-gnu
   MATURIN_VERSION: "1.14.1"
   TWINE_VERSION: "7.0.0"
   UV_VERSION: "0.12.19"
@@ -35,6 +38,10 @@ jobs:
   build-wheel:
     name: build and inspect Linux x64 wheel
     runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+      payload_sha256: ${{ steps.validate.outputs.payload_sha256 }}
+      wheel_sha256: ${{ steps.validate.outputs.wheel_sha256 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -44,15 +51,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: 1.95.0
+          targets: ${{ env.RUST_TARGET }}
 
-      - name: Bind exact source candidate
+      - name: Bind exact source candidate and version
+        id: candidate
         shell: bash
         run: |
           set -euo pipefail
           test "${GITHUB_REPOSITORY}" = "EffortlessMetrics/ripr-swarm"
           [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
           test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA,,}"
-          test "$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "ripr") | .version')" = "${RIPR_VERSION}"
+          version="$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "ripr") | .version')"
+          test -n "${version}"
+          {
+            echo "version=${version}"
+          } >> "${GITHUB_OUTPUT}"
+          {
+            echo "RIPR_VERSION=${version}"
+          } >> "${GITHUB_ENV}"
 
       - name: Install pinned package tooling
         shell: bash
@@ -95,13 +111,16 @@ jobs:
           cd packaging/python
           "${python}" -m maturin build \
             --release \
+            --target "${RUST_TARGET}" \
             --compatibility linux \
             --out "${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence/wheelhouse"
           mapfile -t wheels < <(find "${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence/wheelhouse" -maxdepth 1 -type f -name '*.whl' -print | sort)
           test "${#wheels[@]}" = "1"
           test "$(basename "${wheels[0]}")" = "ripr_rs-${RIPR_VERSION}-py3-none-linux_x86_64.whl"
+          test -z "$(find "${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence/wheelhouse" -maxdepth 1 -type f ! -name '*.whl' -print -quit)"
 
       - name: Validate metadata, RECORD, payload, and negative control
+        id: validate
         shell: bash
         run: |
           set -euo pipefail
@@ -115,11 +134,19 @@ jobs:
           export TOOL_MATURIN_VERSION
           export TOOL_TWINE_VERSION
           export TOOL_UV_VERSION
+          export CANDIDATE_TREE
+          export CARGO_LOCK_SHA256
+          export RUSTC_VERBOSE_VERSION
+          export CARGO_VERBOSE_VERSION
           TOOL_PYTHON_VERSION="$("${python}" -VV 2>&1 | tr '\n' ' ')"
           TOOL_PIP_VERSION="$("${python}" -m pip --version)"
           TOOL_MATURIN_VERSION="$("${python}" -m maturin --version)"
           TOOL_TWINE_VERSION="$("${python}" -m twine --version | head -n 1)"
           TOOL_UV_VERSION="$("${python}" -m uv --version)"
+          CANDIDATE_TREE="$(git rev-parse 'HEAD^{tree}')"
+          CARGO_LOCK_SHA256="$(sha256sum Cargo.lock | awk '{print $1}')"
+          RUSTC_VERBOSE_VERSION="$(rustc -vV)"
+          CARGO_VERBOSE_VERSION="$(cargo -vV)"
 
           "${python}" - "${wheel}" "${evidence}" <<'PY'
           import base64
@@ -176,13 +203,21 @@ jobs:
                   assert not metadata.get_all("Requires-Dist"), "native wheel acquired runtime dependencies"
 
                   wheel_metadata = archive.read(wheel_path).decode("utf-8")
-                  tags = [line.removeprefix("Tag: ") for line in wheel_metadata.splitlines() if line.startswith("Tag: ")]
+                  tags = [
+                      line.removeprefix("Tag: ")
+                      for line in wheel_metadata.splitlines()
+                      if line.startswith("Tag: ")
+                  ]
                   assert tags == ["py3-none-linux_x86_64"], f"unexpected wheel tags: {tags}"
                   assert not any(tag.endswith("-any") for tag in tags)
 
-                  basenames = {PurePosixPath(name).name for name in names}
-                  assert "LICENSE-MIT" in basenames
-                  assert "LICENSE-APACHE" in basenames
+                  license_mit = [name for name in names if PurePosixPath(name).name == "LICENSE-MIT"]
+                  license_apache = [
+                      name for name in names if PurePosixPath(name).name == "LICENSE-APACHE"
+                  ]
+                  assert len(license_mit) == len(license_apache) == 1
+                  assert archive.read(license_mit[0]) == Path("LICENSE-MIT").read_bytes()
+                  assert archive.read(license_apache[0]) == Path("LICENSE-APACHE").read_bytes()
 
                   record_rows = list(csv.reader(io.StringIO(archive.read(record_path).decode("utf-8"))))
                   record = {row[0]: row[1:] for row in record_rows}
@@ -193,7 +228,11 @@ jobs:
                           assert digest == size == ""
                           continue
                       payload = archive.read(name)
-                      expected_digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=").decode("ascii")
+                      expected_digest = (
+                          base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+                          .rstrip(b"=")
+                          .decode("ascii")
+                      )
                       assert digest == f"sha256={expected_digest}", f"RECORD digest mismatch for {name}"
                       assert size == str(len(payload)), f"RECORD size mismatch for {name}"
 
@@ -224,9 +263,12 @@ jobs:
               "channel": "pypi-local-wheelhouse",
               "publication_attempted": False,
               "candidate_sha": os.environ["CANDIDATE_SHA"].lower(),
+              "candidate_tree": os.environ["CANDIDATE_TREE"],
+              "cargo_lock_sha256": os.environ["CARGO_LOCK_SHA256"],
               "native_version": expected_version,
               "distribution": "ripr-rs",
               "executable": "ripr",
+              "rust_target": os.environ["RUST_TARGET"],
               "compatibility_state": "unqualified",
               "compatibility_owner": "issue:#4489",
               "wheel": {
@@ -239,27 +281,44 @@ jobs:
                   "mutation": "removed .data/scripts/ripr",
                   "result": negative_result,
               },
-              "tooling": {
+              "toolchain": {
+                  "rustc": os.environ["RUSTC_VERBOSE_VERSION"],
+                  "cargo": os.environ["CARGO_VERBOSE_VERSION"],
                   "python": os.environ["TOOL_PYTHON_VERSION"],
                   "pip": os.environ["TOOL_PIP_VERSION"],
                   "maturin": os.environ["TOOL_MATURIN_VERSION"],
                   "twine": os.environ["TOOL_TWINE_VERSION"],
                   "uv": os.environ["TOOL_UV_VERSION"],
               },
+              "runner": {
+                  "os": os.environ.get("RUNNER_OS"),
+                  "arch": os.environ.get("RUNNER_ARCH"),
+                  "image_os": os.environ.get("ImageOS"),
+                  "image_version": os.environ.get("ImageVersion"),
+              },
           }
-          (evidence / "wheel-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+          (evidence / "wheel-receipt.json").write_text(
+              json.dumps(receipt, indent=2) + "\n",
+              encoding="utf-8",
+          )
           print(json.dumps(receipt, indent=2))
           PY
 
-      - name: Package independent consumer fixture
+          {
+            echo "payload_sha256=$(jq -er '.wheel.installed_payload_sha256' "${evidence}/wheel-receipt.json")"
+            echo "wheel_sha256=$(jq -er '.wheel.sha256' "${evidence}/wheel-receipt.json")"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Package independent Python consumer fixture
         shell: bash
         run: |
           set -euo pipefail
           evidence="${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence"
-          tar -czf "${evidence}/sample-fixture.tar.gz" \
+          tar -czf "${evidence}/python-basic-fixture.tar.gz" \
             -C "${GITHUB_WORKSPACE}" \
-            crates/ripr/examples/sample
-          tar -tzf "${evidence}/sample-fixture.tar.gz" | grep -Fx 'crates/ripr/examples/sample/example.diff'
+            fixtures/python/basic
+          tar -tzf "${evidence}/python-basic-fixture.tar.gz" \
+            | grep -Fx 'fixtures/python/basic/diff.patch'
 
       - name: Upload no-publish wheel evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -270,9 +329,12 @@ jobs:
           retention-days: 7
 
   consume-with-pip:
-    name: clean pip install and useful journey
+    name: clean pip install and useful Python journey
     needs: build-wheel
     runs-on: ubuntu-22.04
+    env:
+      RIPR_VERSION: ${{ needs.build-wheel.outputs.version }}
+      EXPECTED_PAYLOAD_SHA256: ${{ needs.build-wheel.outputs.payload_sha256 }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -284,83 +346,161 @@ jobs:
         run: |
           set -euo pipefail
           venv="${RUNNER_TEMP}/pip-consumer"
-          clean_path="${venv}/bin:/usr/bin:/bin"
+          planted="${RUNNER_TEMP}/planted-pip"
+          base_path="/usr/bin:/bin"
           python3 -m venv "${venv}"
+          if env -i HOME="${HOME}" PATH="${base_path}" bash -c \
+            'command -v cargo >/dev/null || command -v rustc >/dev/null || command -v ripr >/dev/null'; then
+            echo "::error::clean pip consumer inherited Cargo, rustc, or ripr" >&2
+            exit 1
+          fi
+          mkdir -p "${planted}"
+          cat > "${planted}/ripr" <<SH
+          #!/usr/bin/env bash
+          printf 'planted PATH ripr was executed\n' > "${RUNNER_TEMP}/planted-pip-executed"
+          exit 97
+          SH
+          chmod +x "${planted}/ripr"
+          clean_path="${venv}/bin:${planted}:${base_path}"
           "${venv}/bin/python" -m pip install \
             --disable-pip-version-check \
             --no-index \
             --find-links evidence/tooling \
             "pip==${PIP_VERSION}"
-          test ! -e "${venv}/bin/ripr"
-          if env -i HOME="${HOME}" PATH="${clean_path}" bash -c 'command -v cargo >/dev/null || command -v rustc >/dev/null || command -v ripr >/dev/null'; then
-            echo "::error::clean pip consumer inherited Cargo, rustc, or ripr" >&2
-            exit 1
-          fi
           "${venv}/bin/python" -m pip install \
             --disable-pip-version-check \
             --no-index \
             --find-links evidence/wheelhouse \
             "ripr-rs==${RIPR_VERSION}"
-          test -x "${venv}/bin/ripr"
-          test "$(env -i HOME="${HOME}" PATH="${clean_path}" "${venv}/bin/ripr" --version)" = "ripr ${RIPR_VERSION} (${CANDIDATE_SHA,,})"
+          resolved="$(env -i HOME="${HOME}" PATH="${clean_path}" bash -c 'command -v ripr')"
+          test "${resolved}" = "${venv}/bin/ripr"
+          test "$(sha256sum "${resolved}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
+          test "$(env -i HOME="${HOME}" PATH="${clean_path}" ripr --version)" = \
+            "ripr ${RIPR_VERSION} (${CANDIDATE_SHA,,})"
+          test ! -e "${RUNNER_TEMP}/planted-pip-executed"
 
-      - name: Run a nonzero analysis and its follow-up from a fresh shell
+      - name: Run no-config Python preview, follow-up, and explicit-disable control
         shell: bash
         run: |
           set -euo pipefail
           venv="${RUNNER_TEMP}/pip-consumer"
+          planted="${RUNNER_TEMP}/planted-pip"
           project="${RUNNER_TEMP}/pip consumer ü"
-          clean_path="${venv}/bin:/usr/bin:/bin"
-          check_json="${RUNNER_TEMP}/pip-check.json"
-          explain_text="${RUNNER_TEMP}/pip-explain.txt"
+          fixture="${project}/fixtures/python/basic"
+          clean_path="${venv}/bin:${planted}:/usr/bin:/bin"
+          check_json="${RUNNER_TEMP}/pip-python-check.json"
+          disabled_json="${RUNNER_TEMP}/pip-python-disabled.json"
+          explain_text="${RUNNER_TEMP}/pip-python-explain.txt"
           mkdir -p "${project}"
-          tar -xzf evidence/sample-fixture.tar.gz -C "${project}"
-          (
-            cd "${project}"
-            env -i HOME="${HOME}" PATH="${clean_path}" \
-              "${venv}/bin/ripr" check \
-                --root . \
-                --diff crates/ripr/examples/sample/example.diff \
-                --mode fast \
-                --json > "${check_json}"
-          )
-          jq -e '.summary.probes > 0 and .summary.findings > 0 and (.findings | length) > 0' "${check_json}" >/dev/null
+          tar -xzf evidence/python-basic-fixture.tar.gz -C "${project}"
+          mkdir -p "${fixture}/.venv/bin"
+          cat > "${fixture}/.venv/bin/python" <<SH
+          #!/usr/bin/env bash
+          printf 'project virtualenv was executed\n' > "${RUNNER_TEMP}/project-python-executed"
+          exit 98
+          SH
+          chmod +x "${fixture}/.venv/bin/python"
+
+          env -i \
+            HOME="${HOME}" \
+            PATH="${clean_path}" \
+            HTTP_PROXY="http://127.0.0.1:9" \
+            HTTPS_PROXY="http://127.0.0.1:9" \
+            NO_PROXY="" \
+            ripr check \
+              --root "${fixture}" \
+              --diff "${fixture}/diff.patch" \
+              --mode fast \
+              --json > "${check_json}"
+          jq -e '
+            .summary.changed_rust_files == 0
+            and .summary.probes > 0
+            and .summary.findings > 0
+            and (.findings | length) > 0
+            and any(.summary.changed_files_by_language[]?;
+              .language == "python" and .files == 1)
+            and any(.preview_languages[]?;
+              .language == "python"
+              and .enabled == true
+              and .analyzed == true
+              and .category == "preview_language_advisory")
+            and .findings[0].language == "python"
+            and .findings[0].language_status == "preview"
+          ' "${check_json}" >/dev/null
           finding_id="$(jq -er '.findings[0].id' "${check_json}")"
-          (
-            cd "${project}"
-            env -i HOME="${HOME}" PATH="${clean_path}" \
-              "${venv}/bin/ripr" explain \
+          env -i \
+            HOME="${HOME}" \
+            PATH="${clean_path}" \
+            PROJECT="${fixture}" \
+            FINDING_ID="${finding_id}" \
+            EXPLAIN_TEXT="${explain_text}" \
+            bash --noprofile --norc -c '
+              cd "${PROJECT}"
+              ripr explain \
                 --root . \
-                --diff crates/ripr/examples/sample/example.diff \
+                --diff diff.patch \
                 --mode fast \
-                "${finding_id}" > "${explain_text}"
-          )
+                "${FINDING_ID}" > "${EXPLAIN_TEXT}"
+            '
           test -s "${explain_text}"
           grep -F "${finding_id}" "${explain_text}"
+          test ! -e "${RUNNER_TEMP}/project-python-executed"
+          test ! -e "${RUNNER_TEMP}/planted-pip-executed"
+
+          cat > "${fixture}/ripr.toml" <<'EOF'
+          [languages]
+          enabled = ["rust"]
+          EOF
+          env -i HOME="${HOME}" PATH="${clean_path}" \
+            ripr check \
+              --root "${fixture}" \
+              --diff "${fixture}/diff.patch" \
+              --mode fast \
+              --json > "${disabled_json}"
+          jq -e '
+            .summary.probes == 0
+            and .summary.findings == 0
+            and .analysis_outcome.analysis_complete == false
+            and any(.analysis_outcome.outcome.limitations[]?;
+              .kind == "language_adapter_unavailable")
+            and any(.preview_languages[]?;
+              .language == "python"
+              and .enabled == false
+              and .analyzed == false
+              and (.why | contains("empty result is not Rust-grade clean")))
+          ' "${disabled_json}" >/dev/null
 
       - name: Reinstall and uninstall cleanly
         shell: bash
         run: |
           set -euo pipefail
           venv="${RUNNER_TEMP}/pip-consumer"
+          planted="${RUNNER_TEMP}/planted-pip"
+          clean_path="${venv}/bin:${planted}:/usr/bin:/bin"
           "${venv}/bin/python" -m pip install \
             --disable-pip-version-check \
             --force-reinstall \
             --no-index \
             --find-links evidence/wheelhouse \
             "ripr-rs==${RIPR_VERSION}"
-          test -x "${venv}/bin/ripr"
+          test "$(sha256sum "${venv}/bin/ripr" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
           "${venv}/bin/python" -m pip uninstall -y ripr-rs
           test ! -e "${venv}/bin/ripr"
           if "${venv}/bin/python" -m pip show ripr-rs >/dev/null 2>&1; then
             echo "::error::ripr-rs remained installed after uninstall" >&2
             exit 1
           fi
+          test "$(env -i HOME="${HOME}" PATH="${clean_path}" bash -c 'command -v ripr')" = \
+            "${planted}/ripr"
+          test -f "${RUNNER_TEMP}/pip consumer ü/fixtures/python/basic/src/pricing.py"
 
   consume-with-uv:
-    name: clean uv tool install and useful journey
+    name: clean uv tool install and useful Python journey
     needs: build-wheel
     runs-on: ubuntu-22.04
+    env:
+      RIPR_VERSION: ${{ needs.build-wheel.outputs.version }}
+      EXPECTED_PAYLOAD_SHA256: ${{ needs.build-wheel.outputs.payload_sha256 }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -379,7 +519,8 @@ jobs:
             --find-links evidence/tooling \
             "pip==${PIP_VERSION}" \
             "uv==${UV_VERSION}"
-          test "$("${bootstrap}/bin/python" -m uv --version)" = "uv ${UV_VERSION}"
+          uv_version="$("${bootstrap}/bin/python" -m uv --version)"
+          [[ "${uv_version}" == "uv ${UV_VERSION}"* ]]
 
       - name: Install the local wheel as an isolated uv tool
         shell: bash
@@ -391,39 +532,99 @@ jobs:
         run: |
           set -euo pipefail
           bootstrap="${RUNNER_TEMP}/uv-bootstrap"
+          planted="${RUNNER_TEMP}/planted-uv"
           wheel="$(find evidence/wheelhouse -maxdepth 1 -type f -name '*.whl' -print -quit)"
-          clean_path="${UV_TOOL_BIN_DIR}:${bootstrap}/bin:/usr/bin:/bin"
-          mkdir -p "${UV_TOOL_BIN_DIR}"
-          if env -i HOME="${HOME}" PATH="${clean_path}" bash -c 'command -v cargo >/dev/null || command -v rustc >/dev/null || command -v ripr >/dev/null'; then
+          base_path="/usr/bin:/bin"
+          if env -i HOME="${HOME}" PATH="${base_path}" bash -c \
+            'command -v cargo >/dev/null || command -v rustc >/dev/null || command -v ripr >/dev/null'; then
             echo "::error::clean uv consumer inherited Cargo, rustc, or ripr" >&2
             exit 1
           fi
+          mkdir -p "${UV_TOOL_BIN_DIR}" "${planted}"
+          cat > "${planted}/ripr" <<SH
+          #!/usr/bin/env bash
+          printf 'planted PATH ripr was executed\n' > "${RUNNER_TEMP}/planted-uv-executed"
+          exit 97
+          SH
+          chmod +x "${planted}/ripr"
+          clean_path="${UV_TOOL_BIN_DIR}:${planted}:${bootstrap}/bin:${base_path}"
           "${bootstrap}/bin/python" -m uv tool install "${wheel}"
-          test -x "${UV_TOOL_BIN_DIR}/ripr"
-          test "$(env -i HOME="${HOME}" PATH="${clean_path}" "${UV_TOOL_BIN_DIR}/ripr" --version)" = "ripr ${RIPR_VERSION} (${CANDIDATE_SHA,,})"
+          resolved="$(env -i HOME="${HOME}" PATH="${clean_path}" bash -c 'command -v ripr')"
+          test "${resolved}" = "${UV_TOOL_BIN_DIR}/ripr"
+          test "$(sha256sum "${resolved}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
+          test "$(env -i HOME="${HOME}" PATH="${clean_path}" ripr --version)" = \
+            "ripr ${RIPR_VERSION} (${CANDIDATE_SHA,,})"
+          test ! -e "${RUNNER_TEMP}/planted-uv-executed"
 
-      - name: Run a useful analysis from the uv tool environment
+      - name: Run a no-config Python preview and follow-up from a fresh shell
         shell: bash
         env:
           UV_TOOL_DIR: ${{ runner.temp }}/uv-tools
           UV_TOOL_BIN_DIR: ${{ runner.temp }}/uv-bin
         run: |
           set -euo pipefail
+          bootstrap="${RUNNER_TEMP}/uv-bootstrap"
+          planted="${RUNNER_TEMP}/planted-uv"
           project="${RUNNER_TEMP}/uv consumer ü"
-          check_json="${RUNNER_TEMP}/uv-check.json"
-          clean_path="${UV_TOOL_BIN_DIR}:/usr/bin:/bin"
+          fixture="${project}/fixtures/python/basic"
+          clean_path="${UV_TOOL_BIN_DIR}:${planted}:${bootstrap}/bin:/usr/bin:/bin"
+          check_json="${RUNNER_TEMP}/uv-python-check.json"
+          explain_text="${RUNNER_TEMP}/uv-python-explain.txt"
           mkdir -p "${project}"
-          tar -xzf evidence/sample-fixture.tar.gz -C "${project}"
-          (
-            cd "${project}"
-            env -i HOME="${HOME}" PATH="${clean_path}" \
-              "${UV_TOOL_BIN_DIR}/ripr" check \
+          tar -xzf evidence/python-basic-fixture.tar.gz -C "${project}"
+          mkdir -p "${fixture}/.venv/bin"
+          cat > "${fixture}/.venv/bin/python" <<SH
+          #!/usr/bin/env bash
+          printf 'project virtualenv was executed\n' > "${RUNNER_TEMP}/uv-project-python-executed"
+          exit 98
+          SH
+          chmod +x "${fixture}/.venv/bin/python"
+
+          env -i \
+            HOME="${HOME}" \
+            PATH="${clean_path}" \
+            HTTP_PROXY="http://127.0.0.1:9" \
+            HTTPS_PROXY="http://127.0.0.1:9" \
+            NO_PROXY="" \
+            ripr check \
+              --root "${fixture}" \
+              --diff "${fixture}/diff.patch" \
+              --mode fast \
+              --json > "${check_json}"
+          jq -e '
+            .summary.changed_rust_files == 0
+            and .summary.probes > 0
+            and .summary.findings > 0
+            and (.findings | length) > 0
+            and any(.summary.changed_files_by_language[]?;
+              .language == "python" and .files == 1)
+            and any(.preview_languages[]?;
+              .language == "python"
+              and .enabled == true
+              and .analyzed == true
+              and .category == "preview_language_advisory")
+            and .findings[0].language == "python"
+            and .findings[0].language_status == "preview"
+          ' "${check_json}" >/dev/null
+          finding_id="$(jq -er '.findings[0].id' "${check_json}")"
+          env -i \
+            HOME="${HOME}" \
+            PATH="${clean_path}" \
+            PROJECT="${fixture}" \
+            FINDING_ID="${finding_id}" \
+            EXPLAIN_TEXT="${explain_text}" \
+            bash --noprofile --norc -c '
+              cd "${PROJECT}"
+              ripr explain \
                 --root . \
-                --diff crates/ripr/examples/sample/example.diff \
+                --diff diff.patch \
                 --mode fast \
-                --json > "${check_json}"
-          )
-          jq -e '.summary.probes > 0 and .summary.findings > 0 and (.findings | length) > 0' "${check_json}" >/dev/null
+                "${FINDING_ID}" > "${EXPLAIN_TEXT}"
+            '
+          test -s "${explain_text}"
+          grep -F "${finding_id}" "${explain_text}"
+          test ! -e "${RUNNER_TEMP}/uv-project-python-executed"
+          test ! -e "${RUNNER_TEMP}/planted-uv-executed"
 
       - name: Force reinstall and uninstall the uv tool
         shell: bash
@@ -435,8 +636,14 @@ jobs:
         run: |
           set -euo pipefail
           bootstrap="${RUNNER_TEMP}/uv-bootstrap"
+          planted="${RUNNER_TEMP}/planted-uv"
           wheel="$(find evidence/wheelhouse -maxdepth 1 -type f -name '*.whl' -print -quit)"
+          clean_path="${UV_TOOL_BIN_DIR}:${planted}:${bootstrap}/bin:/usr/bin:/bin"
           "${bootstrap}/bin/python" -m uv tool install --force "${wheel}"
-          test -x "${UV_TOOL_BIN_DIR}/ripr"
+          test "$(sha256sum "${UV_TOOL_BIN_DIR}/ripr" | awk '{print $1}')" = \
+            "${EXPECTED_PAYLOAD_SHA256}"
           "${bootstrap}/bin/python" -m uv tool uninstall ripr-rs
           test ! -e "${UV_TOOL_BIN_DIR}/ripr"
+          test "$(env -i HOME="${HOME}" PATH="${clean_path}" bash -c 'command -v ripr')" = \
+            "${planted}/ripr"
+          test -f "${RUNNER_TEMP}/uv consumer ü/fixtures/python/basic/src/pricing.py"
