@@ -175,19 +175,20 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     // `GITHUB_ANNOTATIONS_PER_LEVEL` annotations of each level per step, so
     // a trailing notice is the first line dropped on a busy run.
     let mut out = String::new();
-    // An incomplete analysis outcome leads the stream (#4725): zero findings
-    // from an unsupported or partial run is not a clean result, so the
-    // clean no-findings notice is withheld.
-    let incomplete_warning = analysis_incomplete_warning(output);
-    if let Some(warning) = &incomplete_warning {
-        out.push_str(warning);
+    let incomplete = output
+        .analysis_outcome
+        .as_ref()
+        .filter(|outcome| !outcome.kind.is_complete());
+    if let Some(outcome) = incomplete {
         *per_level.entry("warning").or_default() += 1;
+        out.push_str(&incomplete_outcome_warning(
+            outcome,
+            output.findings.is_empty(),
+        ));
+    } else if output.findings.is_empty() {
+        out.push_str("::notice title=ripr::No static exposure findings found\n");
     }
-    if output.findings.is_empty() {
-        if incomplete_warning.is_none() {
-            out.push_str("::notice title=ripr::No static exposure findings found\n");
-        }
-    } else if suppressed > 0 || not_current > 0 {
+    if !output.findings.is_empty() && (suppressed > 0 || not_current > 0) {
         out.push_str(&unannotated_denominator_notice(
             output,
             suppressed,
@@ -201,54 +202,33 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     out
 }
 
-/// Disclose an incomplete producer analysis outcome as a leading warning.
-///
-/// Mirrors the human surface's completeness disclosure: the outcome kind and
-/// every limitation (kind, stage, path, bounded detail, recovery) come from
-/// the producer-owned `AnalysisOutcome`; nothing is inferred here. Returns
-/// `None` for a complete outcome or when no outcome was produced.
-fn analysis_incomplete_warning(output: &CheckOutput) -> Option<String> {
-    let outcome = output
-        .analysis_outcome
-        .as_ref()
-        .filter(|outcome| !outcome.kind.is_complete())?;
-    let mut message = format!("{}:", outcome.kind.as_str());
-    if outcome.limitations.is_empty() {
-        message.push_str(" analysis incomplete.");
-    }
+/// An incomplete analysis must not read as a clean one in a PR check: the
+/// annotation stream is often the only thing a reviewer sees, so it names
+/// the outcome and each limitation's recovery, as the human report does.
+fn incomplete_outcome_warning(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+    no_findings: bool,
+) -> String {
+    let scope = if no_findings {
+        "Zero findings is not a clean result because the analyzed scope is incomplete."
+    } else {
+        "The findings cover only the analyzed scope; behavior outside it has no finding."
+    };
+    let mut message = format!(
+        "Analysis outcome: {} (analysis incomplete). {scope}",
+        outcome.kind.as_str()
+    );
     for limitation in &outcome.limitations {
         message.push_str(&format!(
-            " {} at {}",
+            " Limitation: {}: {}",
             limitation.kind.as_str(),
-            limitation.producer_stage.as_str()
-        ));
-        if let Some(path) = &limitation.path {
-            message.push_str(&format!(" ({path})"));
-        }
-        if let Some(detail) = limitation.bounded_detail.as_deref().and_then(non_empty) {
-            message.push_str(&format!("; {}", detail.trim_end_matches('.')));
-        }
-        message.push_str(&format!(
-            "; recovery: {} — {}.",
-            limitation.recovery.kind.as_str(),
-            limitation.recovery.detail.trim_end_matches('.')
+            limitation.recovery.detail
         ));
     }
-    if output.findings.is_empty() {
-        message.push_str(
-            " Zero findings is not a clean result because the analyzed scope is incomplete.",
-        );
-    } else {
-        message.push_str(&format!(
-            " The {} finding(s) cover only the analyzed scope; behavior outside it has no finding.",
-            output.findings.len()
-        ));
-    }
-    Some(format!(
-        "::warning title={}::{}\n",
-        escape_property("ripr analysis incomplete"),
+    format!(
+        "::warning title=ripr analysis incomplete::{}\n",
         escape_data(&message)
-    ))
+    )
 }
 
 /// GitHub Actions displays at most this many annotations of each level
@@ -435,122 +415,77 @@ mod tests {
         );
     }
 
-    fn with_outcome(
-        mut output: CheckOutput,
-        kind: crate::analysis_outcome::AnalysisOutcomeKind,
-        limitation: crate::analysis_outcome::AnalysisLimitation,
-    ) -> Result<CheckOutput, String> {
-        use crate::analysis_outcome::{AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts};
-        output.analysis_outcome = Some(AnalysisOutcome::new(
-            kind,
-            AnalysisIdentity::default(),
-            AnalysisOutcomeCounts {
-                finding_count: u64::try_from(output.findings.len()).unwrap_or(u64::MAX),
-                ..AnalysisOutcomeCounts::default()
-            },
-            vec![limitation],
-        )?);
-        Ok(output)
-    }
-
-    #[test]
-    fn render_leads_with_incomplete_warning_and_withholds_clean_notice_for_unsupported_input()
-    -> Result<(), String> {
-        // #4725: a garbage diff yields `unsupported_input` with zero findings;
-        // the GitHub stream must not read as a clean run.
+    fn partial_outcome() -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
         use crate::analysis_outcome::{
-            AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeKind, AnalysisRecovery,
-            AnalysisRecoveryKind, AnalysisStage,
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
         };
-        let limitation = AnalysisLimitation::new(
-            AnalysisLimitationKind::MalformedDiff,
-            AnalysisStage::DiffParse,
-            AnalysisRecovery::new(
-                AnalysisRecoveryKind::Retry,
-                "Provide a valid unified diff and re-run the analysis.",
-            )?,
-        )
-        .with_detail("The non-empty diff input contained no parseable file changes or hunks.")?;
-        let mut empty = output_with_unknown_finding();
-        empty.findings.clear();
-        let output = with_outcome(empty, AnalysisOutcomeKind::UnsupportedInput, limitation)?;
-
-        let rendered = render(&output);
-
-        assert_eq!(
-            rendered,
-            "::warning title=ripr analysis incomplete::unsupported_input: malformed_diff at diff_parse; \
-             The non-empty diff input contained no parseable file changes or hunks; \
-             recovery: retry — Provide a valid unified diff and re-run the analysis. \
-             Zero findings is not a clean result because the analyzed scope is incomplete.\n"
-        );
-        assert!(!rendered.contains("No static exposure findings found"));
-        Ok(())
-    }
-
-    #[test]
-    fn render_leads_with_incomplete_warning_before_findings_for_partial_scope() -> Result<(), String>
-    {
-        use crate::analysis_outcome::{
-            AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeKind, AnalysisRecovery,
-            AnalysisRecoveryKind, AnalysisStage,
-        };
-        let limitation = AnalysisLimitation::new(
-            AnalysisLimitationKind::DiffScopeOversized,
-            AnalysisStage::AnalysisPipeline,
-            AnalysisRecovery::new(
-                AnalysisRecoveryKind::IncreaseConfiguredLimit,
-                "Raise RIPR_PARTIAL_DIFF_FILE_BUDGET, then re-run: 100% of scope\nnext",
-            )?,
-        )
-        .with_affected_items(4)?;
-        let output = with_outcome(
-            output_with_unknown_finding(),
+        AnalysisOutcome::new(
             AnalysisOutcomeKind::PartialWithLimitations,
-            limitation,
-        )?;
-
-        let rendered = render(&output);
-        let lines = rendered.lines().collect::<Vec<_>>();
-
-        assert_eq!(
-            lines.first().copied(),
-            Some(
-                "::warning title=ripr analysis incomplete::partial_with_limitations: \
-                 diff_scope_oversized at analysis_pipeline; recovery: increase_configured_limit — \
-                 Raise RIPR_PARTIAL_DIFF_FILE_BUDGET, then re-run: 100%25 of scope%0Anext. \
-                 The 1 finding(s) cover only the analyzed scope; behavior outside it has no finding."
-            ),
-            "{rendered}"
-        );
-        assert_eq!(lines.len(), 2, "{rendered}");
-        assert!(lines[1].contains(" file=src/lib.rs,line=13,"), "{rendered}");
-        Ok(())
-    }
-
-    #[test]
-    fn render_keeps_clean_notice_for_complete_outcome_without_findings() -> Result<(), String> {
-        use crate::analysis_outcome::{
-            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
-        };
-        let mut output = output_with_unknown_finding();
-        output.findings.clear();
-        output.analysis_outcome = Some(AnalysisOutcome::new(
-            AnalysisOutcomeKind::CompleteNoFindings,
             AnalysisIdentity::default(),
             AnalysisOutcomeCounts {
                 changed_file_count: 1,
-                changed_line_count: 1,
-                candidate_line_count: 1,
-                probe_count: 1,
-                finding_count: 0,
+                changed_line_count: 2,
+                ..AnalysisOutcomeCounts::default()
             },
-            Vec::new(),
-        )?);
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    "Not analyzed (Go: 1): pkg/calc.go.",
+                )?,
+            )],
+        )
+    }
 
-        assert_eq!(
-            render(&output),
-            "::notice title=ripr::No static exposure findings found\n"
+    #[test]
+    fn render_never_calls_an_incomplete_analysis_clean() -> Result<(), String> {
+        // A Perl- or Go-only diff is `partial_with_limitations`; the GitHub
+        // stream printed only "No static exposure findings found".
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.analysis_outcome = Some(partial_outcome()?);
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.starts_with("::warning title=ripr analysis incomplete::Analysis outcome: partial_with_limitations"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Zero findings is not a clean result"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Limitation: language_scope_unsupported: Not analyzed (Go: 1): pkg/calc.go."
+            ),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn render_scopes_findings_of_an_incomplete_analysis() -> Result<(), String> {
+        let mut output = output_with_unknown_finding();
+        output.analysis_outcome = Some(partial_outcome()?);
+
+        let rendered = render(&output);
+
+        let first = rendered.lines().next().unwrap_or_default();
+        assert!(
+            first.contains("findings cover only the analyzed scope"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("title=ripr static_unknown::"),
+            "{rendered}"
         );
         Ok(())
     }

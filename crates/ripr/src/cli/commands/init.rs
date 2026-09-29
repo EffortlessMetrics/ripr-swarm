@@ -25,11 +25,38 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     // an existing `ripr.toml` without `--force`, and a root that is not a
     // directory.
     let plan = init_plan(&options)?;
+    if let Some(warning) = unanalyzed_root_warning(&options.root) {
+        eprintln!("{warning}");
+    }
     if options.dry_run {
         print_init_dry_run(&plan);
         return Ok(());
     }
     apply_init_plan(&plan)
+}
+
+/// Warn before configuring ripr for a repository it cannot analyze: a Go or
+/// Java repository got a workflow and "run `ripr check`" with no hint that
+/// every change would be reported as not analyzed.
+fn unanalyzed_root_warning(root: &Path) -> Option<String> {
+    if !crate::analysis::workspace_rust_files(root).is_empty()
+        || !crate::analysis::workspace_preview_language_files(root).is_empty()
+    {
+        return None;
+    }
+    let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
+    if unanalyzed.is_empty() {
+        return None;
+    }
+    let found = unanalyzed
+        .iter()
+        .map(|(language, count)| format!("{language} ({count} file(s))"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "ripr: warning: the root `{}` has {found} source and no Rust, TypeScript/JavaScript or Python source. ripr does not analyze these languages, so `ripr check` and this configuration will report their changes as not analyzed.",
+        output::path::human_path(root)
+    ))
 }
 
 /// What `ripr init` would do to one file.
@@ -39,8 +66,8 @@ enum InitAction {
     Create,
     /// The path exists and `--force` was given; it would be replaced.
     Overwrite,
-    /// The config exists without `--force`, but `--ci` still has work to do,
-    /// so the config is left as the user wrote it.
+    /// The config exists and `--ci` has work to do, so the config is left as
+    /// the user wrote it, with or without `--force`.
     LeaveUnchanged,
 }
 
@@ -105,8 +132,12 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         ));
     }
 
+    // With `--ci`, `--force` only lets the workflow be replaced. Refreshing a
+    // workflow after an upgrade (`ripr init --ci github --force`, which
+    // `ripr doctor` recommends) must not reset a customized `ripr.toml`;
+    // `ripr init --force` without `--ci` still resets the config.
     let config_action = if path_is_occupied(&config_path)? {
-        if options.force {
+        if options.force && options.ci.is_none() {
             InitAction::Overwrite
         } else {
             InitAction::LeaveUnchanged
@@ -2957,6 +2988,26 @@ mod tests {
         Ok(root)
     }
 
+    #[test]
+    fn unanalyzed_root_warning_names_go_only_repositories() -> Result<(), String> {
+        let root = temp_root("go-only")?;
+        std::fs::write(root.join("main.go"), "package main\n")
+            .map_err(|err| format!("write main.go: {err}"))?;
+        let warning = unanalyzed_root_warning(&root).unwrap_or_default();
+        assert!(warning.contains("Go (1 file(s))"), "{warning}");
+        assert!(
+            warning.contains("report their changes as not analyzed"),
+            "{warning}"
+        );
+        // Negative control: Rust source beside the Go file is analyzable.
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|err| format!("write lib.rs: {err}"))?;
+        assert_eq!(unanalyzed_root_warning(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
     fn options(root: &Path) -> InitOptions {
         InitOptions {
             root: root.to_path_buf(),
@@ -3043,6 +3094,40 @@ mod tests {
         let plan = init_plan(&opts)?;
         assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
         assert_eq!(plan[1].action, InitAction::Create);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Upgrade path: refreshing an existing workflow with `--force` replaces
+    /// the workflow and keeps the repository's own `ripr.toml`.
+    #[test]
+    fn plan_ci_force_refreshes_the_workflow_and_keeps_the_config() -> Result<(), String> {
+        let root = temp_root("ci-force")?;
+        write(
+            &root.join(CONFIG_FILE_NAME),
+            "[lsp]\nseam_diagnostics = false\n",
+        )?;
+        let workflow = root.join(".github/workflows/ripr.yml");
+        if let Some(parent) = workflow.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        }
+        write(&workflow, "run: cargo install ripr --locked\n")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Github);
+        opts.force = true;
+
+        let plan = init_plan(&opts)?;
+        assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
+        assert_eq!(plan[1].action, InitAction::Overwrite);
+        apply_init_plan(&plan)?;
+        let config = std::fs::read_to_string(root.join(CONFIG_FILE_NAME))
+            .map_err(|err| format!("read config failed: {err}"))?;
+        assert_eq!(config, "[lsp]\nseam_diagnostics = false\n");
+        let written = std::fs::read_to_string(&workflow)
+            .map_err(|err| format!("read workflow failed: {err}"))?;
+        assert!(written.contains("--version"), "{written}");
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
