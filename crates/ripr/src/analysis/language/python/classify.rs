@@ -14,6 +14,7 @@ use super::related_tests::{
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::static_limit_for_change;
+use super::transitive_reach::apply_python_no_static_path_limit;
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
     owner_for_changed_line, python_recommended_next_step, python_weak_missing_summary,
@@ -638,7 +639,7 @@ pub(super) fn classify_change_with_context(
         probe.after.as_deref(),
     );
 
-    Some(Finding {
+    let mut finding = Finding {
         id: probe.id.0.clone(),
         canonical_gap,
         probe,
@@ -679,5 +680,7 @@ pub(super) fn classify_change_with_context(
         alignment_reason: Some(surfaced_alignment.alignment_reason),
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
-    })
+    };
+    apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
+    Some(finding)
 }

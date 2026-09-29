@@ -1136,6 +1136,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1580,6 +1581,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1618,6 +1620,7 @@ fn same_stem_related_handles_missing_stems() {
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
     };
     let test = PythonTest {
         constant_rebinding: Default::default(),
@@ -3044,6 +3047,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -3109,6 +3113,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -3168,6 +3173,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
     }
 }
 
