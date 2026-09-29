@@ -20,7 +20,9 @@ mod region;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use region::{InlineTestRegionAuthority, validate_inline_region_edit};
+pub(crate) use region::InlineTestRegionAuthority;
+#[cfg(test)]
+pub(crate) use region::validate_inline_region_edit;
 
 const SAFE_NEW_INLINE_UNIT_EVIDENCE: &str = "producer-owned new inline unit test proposal";
 
