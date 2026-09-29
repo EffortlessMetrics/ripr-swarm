@@ -3,7 +3,7 @@ use super::discriminators::python_missing_discriminators;
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
-    is_structural_def_header_text,
+    is_structural_def_header_text, owner_call_display_name,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape, python_flow_sink_for,
@@ -71,6 +71,9 @@ pub(super) struct PythonNoBehaviorContext {
     /// The changed line only names parameters or opens/closes a multi-line
     /// `def` header (`no_behavior::multi_line_def_header_span`).
     pub(super) structural_def_header_line: bool,
+    /// The changed line lies inside a multi-line `def` header, so any
+    /// parameter default on it is the owner's own default.
+    pub(super) multi_line_def_header_line: bool,
 }
 
 /// Classify a change from producer-owned owner, relation, and oracle facts.
@@ -185,8 +188,13 @@ pub(super) fn classify_change_with_context(
     // `verbose=True` default change — the changed default is never exercised, so a
     // strong observing oracle does not discriminate it (#1289 trap 45). Block
     // `exposed` in that case and name the parameter(s) to test by omission.
-    let changed_default_override =
-        changed_default_overridden_params(old_line_text, line_text, owner, &related_candidates);
+    let changed_default_override = changed_default_overridden_params(
+        old_line_text,
+        line_text,
+        no_behavior.multi_line_def_header_line,
+        owner,
+        &related_candidates,
+    );
     let changed_default_exercised_ok = changed_default_override.is_none();
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
@@ -291,7 +299,7 @@ pub(super) fn classify_change_with_context(
                 "A strong Python oracle reaches `{}`, but every related call passes {} explicitly, so the changed default value is never exercised; static evidence cannot confirm the changed default is discriminated. Add a test that calls `{}` without {} to exercise the changed default.",
                 owner.name,
                 format_param_name_list(params),
-                owner.name,
+                owner_call_display_name(owner),
                 format_param_name_list(params),
             )],
         )
@@ -466,7 +474,7 @@ pub(super) fn classify_change_with_context(
             vec![MissingDiscriminatorFact {
                 value: format!(
                     "call `{}` without {}",
-                    owner.name,
+                    owner_call_display_name(owner),
                     format_param_name_list(params)
                 ),
                 reason: format!(

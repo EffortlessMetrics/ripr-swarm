@@ -5382,3 +5382,169 @@ fn module_owner_needs_a_local_imported_from_the_owner_module() -> Result<(), Str
     );
     Ok(())
 }
+
+#[test]
+fn header_param_line_defaults_reads_defaults_on_one_header_line() {
+    let names = |text: &str| {
+        super::no_behavior::header_param_line_defaults(text)
+            .map(|params| params.into_iter().map(|param| param.name).collect::<Vec<_>>())
+    };
+    assert_eq!(
+        names("        alias_is_default=None,"),
+        Some(vec!["alias_is_default".to_string()])
+    );
+    assert_eq!(
+        names("    key: str = \"k\", *, strict=False,"),
+        Some(vec!["key".to_string(), "strict".to_string()])
+    );
+    assert_eq!(names("    limit=10) -> int:"), Some(vec!["limit".to_string()]));
+    assert_eq!(names("def f(a, b=1,"), Some(vec!["b".to_string()]));
+    assert_eq!(names("    options=dict(a=1),"), Some(vec!["options".to_string()]));
+    // No default, a comment, or text that is not a parameter list.
+    assert_eq!(names("        self,"), None);
+    assert_eq!(names("    x=1,  # was 2"), None);
+    assert_eq!(names("    return f(x=1)"), None);
+    assert_eq!(names("    ):"), None);
+}
+
+/// Classifies `line` of a multi-line header with the diff producer's flag.
+fn classify_multi_line_header_line(
+    file: &Path,
+    source: &str,
+    def_line: usize,
+    line: usize,
+    tests: &[PythonTest],
+) -> Result<Finding, String> {
+    let owners = extract_owners(file, source);
+    let text = source
+        .lines()
+        .nth(line - 1)
+        .ok_or_else(|| format!("fixture has no line {line}"))?;
+    let span = super::no_behavior::multi_line_def_header_span(source, def_line);
+    if !span.is_some_and(|(start, end)| (start..=end).contains(&line)) {
+        return Err(format!("line {line} must sit inside the header span {span:?}"));
+    }
+    let context = PythonNoBehaviorContext {
+        multi_line_def_header_line: true,
+        ..PythonNoBehaviorContext::default()
+    };
+    classify_change_with_context(file, line, text, None, &owners, tests, context)
+        .ok_or_else(|| format!("line {line} should classify"))
+}
+
+#[test]
+fn multi_line_header_default_bound_by_every_call_is_not_exposed() -> Result<(), String> {
+    // attrs 862696a shape: a new `name=default,` line inside a multi-line
+    // header. The one-line guard never read it, so a strong test that always
+    // passes the parameter credited `exposed` for a default it never reaches.
+    let file = Path::new("src/render.py");
+    let source = "def render(\n    name,\n    verbose=True,\n):\n    return f\"[debug] {name}\" if verbose else name\n";
+    let tests = extract_tests(
+        Path::new("tests/test_render.py"),
+        "from src.render import render\n\n\ndef test_render_quiet():\n    assert render(\"Sam\", verbose=False) == \"Sam\"\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let finding = classify_multi_line_header_line(file, source, 1, 3, &tests)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "call `render` without `verbose`"),
+        "the downgrade names the parameter to omit: {:?}",
+        finding.activation.missing_discriminators
+    );
+
+    let omitting = extract_tests(
+        Path::new("tests/test_render.py"),
+        "from src.render import render\n\n\ndef test_render_default():\n    assert render(\"Sam\") == \"[debug] Sam\"\n",
+    );
+    let finding = classify_multi_line_header_line(file, source, 1, 3, &omitting)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a call that omits `verbose` reaches the default"
+    );
+    Ok(())
+}
+
+#[test]
+fn constructor_default_bound_by_every_construction_is_not_exposed() -> Result<(), String> {
+    let file = Path::new("src/widget.py");
+    let source = "class Widget:\n    def __init__(\n        self,\n        size,\n        label=None,\n    ):\n        self.label = label or str(size)\n";
+    let binding = extract_tests(
+        Path::new("tests/test_widget.py"),
+        "from src.widget import Widget\nfrom src.widget import Widget as W\n\n\ndef test_label():\n    assert Widget(size=1, label=\"x\").label == \"x\"\n\n\ndef test_aliased():\n    assert W(2, label=\"y\").label == \"y\"\n",
+    );
+    assert_eq!(binding.len(), 2);
+    let finding = classify_multi_line_header_line(file, source, 2, 5, &binding)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "call `Widget` without `label`"),
+        "a constructor is called through its class: {:?}",
+        finding.activation.missing_discriminators
+    );
+
+    // One construction through an alias omits `label`, so the default runs.
+    let omitting = extract_tests(
+        Path::new("tests/test_widget.py"),
+        "from src.widget import Widget\nfrom src.widget import Widget as W\n\n\ndef test_label():\n    assert Widget(size=1, label=\"x\").label == \"x\"\n\n\ndef test_aliased():\n    assert W(2).label == \"2\"\n",
+    );
+    let finding = classify_multi_line_header_line(file, source, 2, 5, &omitting)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // A positional argument is never counted as binding a constructor
+    // parameter (the implicit `self` shifts positions), so this fails open.
+    let positional = extract_tests(
+        Path::new("tests/test_widget.py"),
+        "from src.widget import Widget\n\n\ndef test_label():\n    assert Widget(1, \"x\").label == \"x\"\n",
+    );
+    let finding = classify_multi_line_header_line(file, source, 2, 5, &positional)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn diff_mode_reads_a_default_added_inside_a_multi_line_header() -> Result<(), String> {
+    let root = unique_test_root("diff-multi-line-default");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("render.py"),
+        "def render(\n    name,\n    verbose=True,\n):\n    return f\"[debug] {name}\" if verbose else name\n",
+    )?;
+    write_repo_file(
+        &root.join("test_render.py"),
+        "from render import render\n\n\ndef test_render_quiet():\n    assert render(\"Sam\", verbose=False) == \"Sam\"\n",
+    )?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("render.py"),
+        added_lines: vec![ChangedLine {
+            line: 3,
+            text: "    verbose=True,".to_string(),
+            new_side_line: 3,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(
+        &repo_options(&root),
+        &changed_files,
+        generous_walk_limits(),
+    )?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let [finding] = result.findings.as_slice() else {
+        return Err(format!("expected one finding, got {}", result.findings.len()));
+    };
+    assert_eq!(finding.probe.location.line, 3);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        missing_discriminator_values(finding).contains(&"call `render` without `verbose`"),
+        "{:?}",
+        missing_discriminator_values(finding)
+    );
+    Ok(())
+}
