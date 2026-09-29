@@ -617,8 +617,27 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// recorded on that attempt through the attempt authority, so `ripr agent
 /// status` reports it instead of repeating the refused command unannotated.
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
+    run_agent_repair_with_identity(options, None)
+}
+
+pub(in crate::cli) fn run_before_repair_with_identity(
+    options: AgentRepairOptions,
+    identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
+) -> Result<(), CommandError> {
+    if options.phase != AgentRepairPhase::Before {
+        return Err(CommandError::Failure(
+            "prepared before identity requires the before phase".to_string(),
+        ));
+    }
+    run_agent_repair_with_identity(options, Some(identity))
+}
+
+fn run_agent_repair_with_identity(
+    options: AgentRepairOptions,
+    identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
+) -> Result<(), CommandError> {
     let mut refusal = AfterPhaseRefusalContext::default();
-    let result = run_agent_repair_phase(options, &mut refusal);
+    let result = run_agent_repair_phase(options, &mut refusal, identity);
     if let (Err(error), Some((root, attempt_id))) = (&result, &refusal.selected_attempt)
         && let Err(record_error) = crate::app::repair_attempt::record_repair_attempt_after_refusal(
             root,
@@ -731,6 +750,7 @@ fn after_refusal_reason(error: &str, narration: &[String]) -> String {
 fn run_agent_repair_phase(
     options: AgentRepairOptions,
     refusal: &mut AfterPhaseRefusalContext,
+    identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), String> {
     let AgentRepairOptions {
         root,
@@ -752,6 +772,10 @@ fn run_agent_repair_phase(
                 "agent repair --phase before lost its parsed seam identity".to_string()
             })?;
             ensure_command_root(&root, "agent repair --phase before")?;
+            let identity = identity.ok_or_else(|| {
+                "repair before requires its identity from the locked CLI publication driver"
+                    .to_string()
+            })?;
             eprintln!(
                 "ripr: agent repair --phase before for seam `{seam_id}` at {}",
                 root.display()
@@ -772,6 +796,7 @@ fn run_agent_repair_phase(
                 },
                 output::agent_seam_packets::PacketCommandContext::Prepared {
                     root: &packet_root,
+                    attempt_id: identity.attempt_id(),
                     authorization_suffix: python_repair_trust
                         .as_ref()
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),

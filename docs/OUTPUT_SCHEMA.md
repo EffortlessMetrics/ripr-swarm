@@ -14014,9 +14014,11 @@ Field contract:
   snapshot, outcome, verify, and receipt fields to `null` and advertises
   `next.repair_after_command`. This selected-root command resumes the existing
   durable repair route after the permitted focused edit, including the edit
-  cage, outcome, verify, after verdict, and receipt. Seam selection refuses
-  multiple awaiting attempts; use the preferred exact `--attempt` command
-  from the published manifest or stderr to disambiguate. Trust-bound Python
+  cage, outcome, verify, after verdict, and receipt. The command pins the exact
+  `--attempt` identity also published in the manifest and stderr. A retained
+  packet for a finished attempt refuses that attempt instead of selecting a
+  later awaiting attempt for the same seam. Explicit legacy seam selection
+  still refuses multiple awaiting attempts. Trust-bound Python
   continuations retain the required explicit authorization placeholders;
   rendering the command does not grant authorization. Packet bytes remain
   unchanged after publication.

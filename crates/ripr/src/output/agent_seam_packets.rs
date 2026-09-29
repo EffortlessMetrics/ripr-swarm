@@ -186,6 +186,7 @@ pub(crate) enum PacketCommandContext<'a> {
     },
     Prepared {
         root: &'a str,
+        attempt_id: &'a str,
         authorization_suffix: Option<&'a str>,
     },
 }
@@ -276,18 +277,19 @@ fn render_agent_seam_packets_json_with_root(
     out.push(']');
     if let PacketCommandContext::Prepared {
         root,
+        attempt_id,
         authorization_suffix,
     } = context
     {
-        if let Some(entry) = actionable
+        if actionable
             .iter()
-            .find(|entry| task_for(entry) == TASK_WRITE_TARGETED_TEST)
+            .any(|entry| task_for(entry) == TASK_WRITE_TARGETED_TEST)
         {
             out.push_str(",\n");
             let command = format!(
-                "ripr agent repair --root {} --seam-id {} --phase after{}",
+                "ripr agent repair --root {} --attempt {} --phase after{}",
                 shell_arg(root),
-                shell_arg(entry.seam.id().as_str()),
+                shell_arg(attempt_id),
                 authorization_suffix.unwrap_or_default(),
             );
             out.push_str(&format!(
@@ -6144,6 +6146,7 @@ mod tests {
                 &entry,
                 PacketCommandContext::Prepared {
                     root: "/selected root",
+                    attempt_id: "repair-attempt-selected",
                     authorization_suffix,
                 },
             );
@@ -6154,6 +6157,8 @@ mod tests {
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "missing prepared continuation".to_string())?;
             if !command.contains("--root '/selected root'")
+                || !command.contains("--attempt repair-attempt-selected")
+                || command.contains("--seam-id")
                 || !command.contains("--phase after")
                 || command.ends_with(suffix) != authorization_suffix.is_some()
             {

@@ -698,7 +698,8 @@ fn standalone_packet_next_commands_stay_in_selected_root_from_foreign_cwd() -> R
 }
 
 #[test]
-fn prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam() -> Result<(), String> {
+fn prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam()
+-> Result<(), String> {
     let Some(bash) = shell_prerequisite()? else {
         return Ok(());
     };
@@ -715,27 +716,52 @@ fn prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam(
     journey.launch_dir = foreign;
     std::fs::write(selected.join(".gitignore"), "/target/\n")
         .map_err(|error| format!("declare build ignore: {error}"))?;
-    let before_args = ["agent", "repair", "--root", &journey.root_arg,
-        "--seam-id", &journey.seam_id, "--phase", "before"];
+    let before_args = [
+        "agent",
+        "repair",
+        "--root",
+        &journey.root_arg,
+        "--seam-id",
+        &journey.seam_id,
+        "--phase",
+        "before",
+    ];
     let first = run_ripr(&journey.launch_dir, &before_args)?;
     assert_success(&first, "prepare actual attempt A")?;
     let packet_a: Value = serde_json::from_slice(&first.stdout)
         .map_err(|error| format!("parse actual A stdout packet: {error}"))?;
-    let command_a = packet_a.pointer("/next/repair_after_command")
-        .and_then(Value::as_str).ok_or_else(|| "A packet omitted continuation".to_owned())?;
+    let command_a = packet_a
+        .pointer("/next/repair_after_command")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "A packet omitted continuation".to_owned())?;
     let mut manifests = prepared_attempt_manifests(&selected)?;
     if manifests.len() != 1 {
-        return Err(format!("expected one actual A attempt, found {}", manifests.len()));
+        return Err(format!(
+            "expected one actual A attempt, found {}",
+            manifests.len()
+        ));
     }
-    let (manifest_a_path, manifest_a) = manifests.pop()
+    let (manifest_a_path, manifest_a) = manifests
+        .pop()
         .ok_or_else(|| "actual A manifest disappeared".to_owned())?;
-    let id_a = manifest_a.get("repair_attempt_id").and_then(Value::as_str)
+    let id_a = manifest_a
+        .get("repair_attempt_id")
+        .and_then(Value::as_str)
         .ok_or_else(|| "A manifest omitted attempt identity".to_owned())?;
-    let next_a = manifest_a.get("next_command").and_then(Value::as_str)
+    let next_a = manifest_a
+        .get("next_command")
+        .and_then(Value::as_str)
         .ok_or_else(|| "A manifest omitted exact continuation".to_owned())?;
-    let retained_packet = manifest_a.get("artifacts").and_then(Value::as_array)
-        .and_then(|artifacts| artifacts.iter().find(|artifact| artifact.get("role").and_then(Value::as_str) == Some("agent_packet")))
-        .and_then(|artifact| artifact.get("path")).and_then(Value::as_str)
+    let retained_packet = manifest_a
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .and_then(|artifacts| {
+            artifacts.iter().find(|artifact| {
+                artifact.get("role").and_then(Value::as_str) == Some("agent_packet")
+            })
+        })
+        .and_then(|artifact| artifact.get("path"))
+        .and_then(Value::as_str)
         .ok_or_else(|| "A manifest omitted retained packet authority".to_owned())?;
     if read_json(&selected.join(retained_packet))? != packet_a {
         return Err("printed A packet differs from sealed A packet".to_owned());
@@ -744,47 +770,78 @@ fn prepared_packet_continuation_cannot_resume_a_later_attempt_for_the_same_seam(
     assert_success(&second, "prepare actual competing attempt B")?;
     let manifests = prepared_attempt_manifests(&selected)?;
     if manifests.len() != 2 {
-        return Err(format!("expected two actual attempts, found {}", manifests.len()));
+        return Err(format!(
+            "expected two actual attempts, found {}",
+            manifests.len()
+        ));
     }
-    let (manifest_b_path, manifest_b) = manifests.into_iter()
-        .find(|(_, manifest)| manifest.get("repair_attempt_id").and_then(Value::as_str) != Some(id_a))
+    let (manifest_b_path, manifest_b) = manifests
+        .into_iter()
+        .find(|(_, manifest)| {
+            manifest.get("repair_attempt_id").and_then(Value::as_str) != Some(id_a)
+        })
         .ok_or_else(|| "second Before did not publish a distinct attempt B".to_owned())?;
     if manifest_b.get("seam_id") != manifest_a.get("seam_id")
         || manifest_b.get("repository_head") != manifest_a.get("repository_head")
-        || manifest_b.get("repair_attempt_id").and_then(Value::as_str).is_none_or(|id| id.is_empty() || id == id_a)
-        || manifest_b.get("state").and_then(Value::as_str) != Some("awaiting_edit") {
+        || manifest_b
+            .get("repair_attempt_id")
+            .and_then(Value::as_str)
+            .is_none_or(|id| id.is_empty() || id == id_a)
+        || manifest_b.get("state").and_then(Value::as_str) != Some("awaiting_edit")
+    {
         return Err("B is not an actual awaiting attempt for A's seam".to_owned());
     }
     observe_selected_boundary(&selected)?;
-    assert_success(&run_in_shell(&journey, next_a)?, "complete A through its exact published authority")?;
+    assert_success(
+        &run_in_shell(&journey, next_a)?,
+        "complete A through its exact published authority",
+    )?;
     let receipt = read_json(&selected.join("target/ripr/reports/agent-receipt.json"))?;
     if receipt.get("status").and_then(Value::as_str) != Some("advisory")
-        || receipt.get("analysis_outcome_status").and_then(Value::as_str) != Some("complete") {
-        return Err(format!("A did not produce a real complete advisory receipt: {receipt}"));
+        || receipt
+            .get("analysis_outcome_status")
+            .and_then(Value::as_str)
+            != Some("complete")
+    {
+        return Err(format!(
+            "A did not produce a real complete advisory receipt: {receipt}"
+        ));
     }
     let completed_a = read_json(&manifest_a_path)?;
     if completed_a.get("state").and_then(Value::as_str) != Some("ready_to_finish")
-        || completed_a.get("after").is_none_or(Value::is_null) {
+        || completed_a.get("after").is_none_or(Value::is_null)
+    {
         return Err("actual A continuation did not finish its durable attempt".to_owned());
     }
     if read_json(&manifest_b_path)? != manifest_b {
         return Err("completing A changed awaiting B".to_owned());
     }
-    let attempt_b = manifest_b_path.parent().ok_or_else(|| "B manifest has no directory".to_owned())?;
+    let attempt_b = manifest_b_path
+        .parent()
+        .ok_or_else(|| "B manifest has no directory".to_owned())?;
     let before_inventory = prepared_attempt_inventory(attempt_b)?;
     let production = sha256_file(&selected.join("src/lib.rs"))?;
     let focused_test = sha256_file(&selected.join("tests/pricing.rs"))?;
     let stale = run_in_shell(&journey, command_a)?;
     if stale.status.success() {
-        return Err("retained A packet continuation consumed awaiting B instead of refusing finished A".to_owned());
+        return Err(
+            "retained A packet continuation consumed awaiting B instead of refusing finished A"
+                .to_owned(),
+        );
     }
     let stderr = String::from_utf8_lossy(&stale.stderr);
-    if !stderr.contains(id_a) || !stderr.contains("already finished") || !stderr.contains("ready_to_finish") {
-        return Err(format!("retained A continuation did not name A's terminal-state refusal: {stderr}"));
+    if !stderr.contains(id_a)
+        || !stderr.contains("already finished")
+        || !stderr.contains("ready_to_finish")
+    {
+        return Err(format!(
+            "retained A continuation did not name A's terminal-state refusal: {stderr}"
+        ));
     }
     if prepared_attempt_inventory(attempt_b)? != before_inventory
         || sha256_file(&selected.join("src/lib.rs"))? != production
-        || sha256_file(&selected.join("tests/pricing.rs"))? != focused_test {
+        || sha256_file(&selected.join("tests/pricing.rs"))? != focused_test
+    {
         return Err("retained A continuation altered B custody or selected source".to_owned());
     }
     Ok(())
@@ -795,7 +852,11 @@ fn prepared_attempt_manifests(root: &Path) -> Result<Vec<(PathBuf, Value)>, Stri
     let mut manifests = Vec::new();
     for entry in std::fs::read_dir(&directory).map_err(|error| format!("list attempts: {error}"))? {
         let entry = entry.map_err(|error| format!("read attempt entry: {error}"))?;
-        if entry.file_type().map_err(|error| format!("inspect attempt entry: {error}"))?.is_dir() {
+        if entry
+            .file_type()
+            .map_err(|error| format!("inspect attempt entry: {error}"))?
+            .is_dir()
+        {
             let path = entry.path().join("attempt.json");
             manifests.push((path.clone(), read_json(&path)?));
         }
@@ -805,12 +866,23 @@ fn prepared_attempt_manifests(root: &Path) -> Result<Vec<(PathBuf, Value)>, Stri
 }
 
 fn prepared_attempt_inventory(root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
-    fn visit(root: &Path, directory: &Path, entries: &mut Vec<(PathBuf, String)>) -> Result<(), String> {
-        for entry in std::fs::read_dir(directory).map_err(|error| format!("list B custody: {error}"))? {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        entries: &mut Vec<(PathBuf, String)>,
+    ) -> Result<(), String> {
+        for entry in
+            std::fs::read_dir(directory).map_err(|error| format!("list B custody: {error}"))?
+        {
             let entry = entry.map_err(|error| format!("read B custody entry: {error}"))?;
             let path = entry.path();
-            let relative = path.strip_prefix(root).map_err(|error| format!("B containment: {error}"))?.to_path_buf();
-            let kind = entry.file_type().map_err(|error| format!("inspect B custody: {error}"))?;
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| format!("B containment: {error}"))?
+                .to_path_buf();
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("inspect B custody: {error}"))?;
             if kind.is_dir() {
                 entries.push((relative, "directory".to_owned()));
                 visit(root, &path, entries)?;

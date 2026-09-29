@@ -282,8 +282,9 @@ writes to the selected repository root. Standalone packets include the static ou
 producer before verify and receipt. Prepared repair packets instead advertise
 the durable after-phase continuation and leave incompatible manual steps null;
 the existing edit cage and authorization checks remain authoritative. The
-published exact attempt selector is preferred, and seam-based continuation
-refuses ambiguous awaiting attempts. Portable bulk packets retain their local
+prepared command pins the published exact attempt selector; a finished attempt
+cannot resume a later attempt for the same seam. Explicit seam-based continuation
+still refuses ambiguous awaiting attempts. Portable bulk packets retain their local
 compatibility recipe. The standalone manual recipe assumes no retained durable
 workflow. Resume a matching awaiting attempt by its published exact selector;
 otherwise begin a fresh durable Before route for the selected seam, preserving

@@ -194,8 +194,8 @@ are scoped or reviewed.
 
 - Explicit per-seam agent packets bind their `packet.next` commands and
   artifact paths to the selected root. Prepared repair packets advertise the
-  durable after-phase continuation instead of an incompatible manual receipt
-  recipe; standalone packets include the outcome producer needed by receipts
+  exact published attempt's after-phase continuation instead of an incompatible
+  manual receipt recipe; standalone packets include the outcome producer needed by receipts
   (#4000).
 
 ### Added

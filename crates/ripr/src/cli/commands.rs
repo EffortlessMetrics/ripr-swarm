@@ -232,6 +232,7 @@ mod receipt_command;
 mod swarm_command;
 
 pub(super) use agent::agent;
+pub(super) use agent::run_before_repair_with_identity;
 pub(super) use context::context;
 // The receipt help bodies live beside the receipt parser but are also the
 // flag source for `ripr receipt write|check` suggestions, so `cli::help` needs

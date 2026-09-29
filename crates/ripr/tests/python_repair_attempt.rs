@@ -899,7 +899,8 @@ fn clean_test_only_edit_binds_prepare_and_apply() -> Result<(), String> {
         .split_once(" --attempt ")
         .map(|(prefix, _)| prefix)
         .ok_or("published command carries no exact attempt selector")?;
-    if !continuation.starts_with(&format!("{selected_root_prefix} --seam-id "))
+    if continuation != next_command
+        || !continuation.starts_with(&format!("{selected_root_prefix} --attempt {attempt_id} "))
         || !continuation
             .ends_with(" --edit-authorized --edit-authority <operator-or-agent-identity>")
         || !continuation.contains(" --phase after")
