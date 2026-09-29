@@ -10,8 +10,7 @@ const NPM_BIN_TEXT: &str = include_str!("../../../../packaging/npm/launcher/bin/
 const NPM_LIBRARY_TEXT: &str = include_str!("../../../../packaging/npm/launcher/lib/launcher.cjs");
 const NPM_TEST_TEXT: &str =
     include_str!("../../../../packaging/npm/launcher/test/launcher.test.cjs");
-const NPM_APACHE_TEXT: &str =
-    include_str!("../../../../packaging/npm/launcher/LICENSE-APACHE");
+const NPM_APACHE_TEXT: &str = include_str!("../../../../packaging/npm/launcher/LICENSE-APACHE");
 const NPM_MIT_TEXT: &str = include_str!("../../../../packaging/npm/launcher/LICENSE-MIT");
 
 fn parsed_contract(text: &str) -> Result<DistributionContract, String> {
@@ -216,10 +215,7 @@ fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String
         npm_launcher::LIBRARY_PATH,
         &NPM_LIBRARY_TEXT
             .replace("shell: false", "shell: true")
-            .replace(
-                "process.exitCode = signalExitCode",
-                "process.exitCode = 0",
-            ),
+            .replace("process.exitCode = signalExitCode", "process.exitCode = 0"),
         npm_launcher::TEST_PATH,
         &NPM_TEST_TEXT
             .replace("PATH-FALLBACK", "removed-control")
