@@ -204,7 +204,6 @@ pub(crate) fn render_study_markdown(
     for claim in &study.non_claims {
         markdown.push_str(&format!("- `{claim}`\n"));
     }
-    markdown.push('\n');
     Ok(markdown)
 }
 

@@ -77,4 +77,3 @@ Axes are independently observable and non-compensating.
 - `no_pilot_result`
 - `no_intervention_value`
 - `no_generic_ab_platform`
-
