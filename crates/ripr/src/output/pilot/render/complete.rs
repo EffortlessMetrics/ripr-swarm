@@ -221,9 +221,10 @@ pub(crate) fn render_pilot_summary_md(
         }
         for (idx, entry) in top.iter().enumerate() {
             out.push_str(&format!(
-                "{}. `{}` `{}` {}:{} `{}`\n",
+                "{}. `{}` {} (`{}`) {}:{} `{}`\n",
                 idx + 1,
                 entry.seam.id().as_str(),
+                entry.class.plain_label(),
                 entry.class.as_str(),
                 display_path(entry.seam.file()),
                 entry.seam.display_line(),
@@ -429,7 +430,7 @@ pub(crate) fn render_pilot_terminal(
             entry.seam.display_line(),
             entry.seam.kind().as_str(),
             entry.seam.owner(),
-            entry.class.as_str()
+            entry.class.human_label()
         ));
         out.push_str(&format!("  why it matters: {}\n", why_line(entry)));
         if outline.is_not_applicable() {
