@@ -220,8 +220,8 @@ async fn sdk_session(
                     .map_err(|error| format!("request SDK peer termination: {error}"))?;
                 tokio::time::timeout(Duration::from_secs(3), child.wait())
                     .await
-                    .map_err(|_| "killed SDK peer exceeded its reap deadline".to_string())?
-                    .map_err(|error| format!("reap killed SDK peer: {error}"))
+                    .map_err(|_| "terminated SDK peer exceeded its reap deadline".to_string())?
+                    .map_err(|error| format!("reap terminated SDK peer: {error}"))
             }
         }
     }
