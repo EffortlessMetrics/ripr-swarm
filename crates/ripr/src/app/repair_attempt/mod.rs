@@ -178,7 +178,6 @@ fn open_attempt(
 /// The only attempt state that may authorize a receipt. This is deliberately
 /// derived from the durable manifest and its immutable before artifacts rather
 /// than from the workflow filenames, which are compatibility outputs.
-
 pub(crate) fn receipt_binding_from(
     root: &Path,
     store: Option<&Path>,
@@ -323,7 +322,6 @@ pub(crate) fn receipt_binding_from(
 
 /// Ensure a verify document consumed for an exact attempt names that attempt's
 /// retained before snapshot and its committed content digest.
-
 pub(crate) fn validate_verify_binding_from(
     root: &Path,
     store: Option<&Path>,
@@ -1063,7 +1061,6 @@ pub(crate) fn complete_pending_terminal_retention_from(
 
 /// Loads the retained edit-cage policy of a durable attempt from its staged
 /// baseline artifact, re-verifying the artifact digest first.
-
 pub(crate) fn load_edit_cage_policy_from(
     root: &Path,
     store: Option<&Path>,
@@ -1076,7 +1073,6 @@ pub(crate) fn load_edit_cage_policy_from(
 
 /// Loads the retained edit-cage baseline of a durable attempt from its staged
 /// artifact, re-verifying the artifact digest first.
-
 pub(crate) fn load_edit_cage_baseline_from(
     root: &Path,
     store: Option<&Path>,
@@ -1771,7 +1767,6 @@ pub(crate) fn after_phase_head_admission(
 }
 
 /// [`after_phase_head_admission`] for an attempt selected by identity.
-
 pub(crate) fn after_phase_head_admission_by_id_from(
     root: &Path,
     store: Option<&Path>,
@@ -1893,7 +1888,6 @@ pub(crate) fn repair_attempt_state_label(state: &RepairAttemptState) -> &'static
 /// retained edit-cage baseline (committed changes included) without
 /// finishing the attempt, so an after phase refused for incomparable
 /// analysis inputs can name what moved.
-
 pub(crate) fn analysis_input_changes_from(
     root: &Path,
     store: Option<&Path>,

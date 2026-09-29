@@ -2029,7 +2029,7 @@ mod tests {
 
         let default_report = build_agent_status_report(&root, &root);
         if !default_report.repair_attempts.is_empty() {
-            std::fs::remove_dir_all(&root).ok();
+            let _ = std::fs::remove_dir_all(&root);
             return Err(format!(
                 "default status saw explicit-store attempts: {:?}",
                 default_report.repair_attempts
@@ -2038,7 +2038,7 @@ mod tests {
 
         let explicit_report = build_agent_status_report_from(&root, &root, Some(alt));
         if explicit_report.repair_attempts.len() != 1 {
-            std::fs::remove_dir_all(&root).ok();
+            let _ = std::fs::remove_dir_all(&root);
             return Err(format!(
                 "explicit status missed the prepared attempt: {:?}",
                 explicit_report.repair_attempts
@@ -2052,7 +2052,7 @@ mod tests {
                 && warning.message.contains("does not fall back")
         });
         if !missing_report.repair_attempts.is_empty() || !warned {
-            std::fs::remove_dir_all(&root).ok();
+            let _ = std::fs::remove_dir_all(&root);
             return Err(format!(
                 "missing explicit store fell back or stayed silent: attempts={:?} warnings={:?}",
                 missing_report.repair_attempts, missing_report.warnings

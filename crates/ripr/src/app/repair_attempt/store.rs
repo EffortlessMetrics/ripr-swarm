@@ -218,6 +218,16 @@ pub(crate) fn resolve_repair_attempt_store(
             path.to_path_buf()
         }
     };
+    if requested
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!(
+            "repair attempt store {} is not contained in repository root {}; traversal components are refused",
+            display_path(&requested),
+            display_path(&canonical_root)
+        ));
+    }
     let joined = if requested.is_absolute() {
         requested.clone()
     } else {
@@ -412,7 +422,7 @@ fn components_match(left: Component<'_>, right: Component<'_>) -> bool {
 }
 
 fn relative_locator(root: &Path, path: &Path) -> Result<String, String> {
-    let relative = path.strip_prefix(root).map_err(|_| {
+    let relative = path.strip_prefix(root).map_err(|_prefix| {
         format!(
             "repair attempt store {} is not contained in repository root {}",
             display_path(path),
@@ -736,7 +746,10 @@ mod tests {
                     }
                     Err(error) => error,
                 };
-                if !error.contains("not contained") && !error.contains("outside") {
+                if !error.contains("not contained")
+                    && !error.contains("outside")
+                    && !error.contains("traversal")
+                {
                     return Err(format!(
                         "escape locator {} was not a containment failure: {error}",
                         locator.display()
@@ -823,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn unc_and_drive_relative_locators_fail_closed() {
+    fn unc_and_drive_relative_locators_fail_closed() -> Result<(), String> {
         assert!(is_unsupported_unc(r"\\server\share\attempts"));
         // Drive-letter prefixes are assembled at runtime: check-local-context
         // forbids a contiguous drive-letter path literal in tracked source.
@@ -832,19 +845,41 @@ mod tests {
         assert!(is_drive_relative(&drive_relative));
         assert!(!is_drive_relative(&drive_absolute));
         assert!(!is_drive_relative("target/ripr/repair-attempts"));
-        let error = validate_explicit_locator(Path::new(r"\\server\share")).expect_err("unc");
-        assert!(error.contains("UNC"), "{error}");
+        let error = match validate_explicit_locator(Path::new(r"\\server\share")) {
+            Err(error) => error,
+            Ok(()) => return Err("unc locator was accepted".to_string()),
+        };
+        if !error.contains("UNC") {
+            return Err(format!("unc error was opaque: {error}"));
+        }
         let drive = format!("{}:relative", 'D');
-        let error = validate_explicit_locator(Path::new(&drive)).expect_err("drive-relative");
-        assert!(error.contains("drive-relative"), "{error}");
+        let error = match validate_explicit_locator(Path::new(&drive)) {
+            Err(error) => error,
+            Ok(()) => return Err("drive-relative locator was accepted".to_string()),
+        };
+        if !error.contains("drive-relative") {
+            return Err(format!("drive-relative error was opaque: {error}"));
+        }
+        Ok(())
     }
 
     #[test]
-    fn empty_explicit_locator_is_rejected() {
-        let error = validate_explicit_locator(Path::new("")).expect_err("empty");
-        assert!(error.contains("non-empty"), "{error}");
-        let error = validate_explicit_locator(Path::new("   ")).expect_err("blank");
-        assert!(error.contains("non-empty"), "{error}");
+    fn empty_explicit_locator_is_rejected() -> Result<(), String> {
+        let error = match validate_explicit_locator(Path::new("")) {
+            Err(error) => error,
+            Ok(()) => return Err("empty locator was accepted".to_string()),
+        };
+        if !error.contains("non-empty") {
+            return Err(format!("empty locator error was opaque: {error}"));
+        }
+        let error = match validate_explicit_locator(Path::new("   ")) {
+            Err(error) => error,
+            Ok(()) => return Err("blank locator was accepted".to_string()),
+        };
+        if !error.contains("non-empty") {
+            return Err(format!("blank locator error was opaque: {error}"));
+        }
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -854,8 +889,11 @@ mod tests {
         let outside = test_root("symlink-outside")?;
         let result = (|| {
             let link = root.join("target/ripr/link-store");
-            std::fs::create_dir_all(link.parent().expect("parent"))
-                .map_err(|error| format!("create link parent failed: {error}"))?;
+            std::fs::create_dir_all(
+                link.parent()
+                    .ok_or_else(|| "missing symlink parent".to_string())?,
+            )
+            .map_err(|error| format!("create link parent failed: {error}"))?;
             std::os::unix::fs::symlink(&outside, &link)
                 .map_err(|error| format!("create symlink failed: {error}"))?;
             let error = match resolve_repair_attempt_store(

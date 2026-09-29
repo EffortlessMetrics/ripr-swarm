@@ -28,7 +28,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #4844 — explicit RepairAttempt store identity and resolver
 
 Support-tier impact:
 

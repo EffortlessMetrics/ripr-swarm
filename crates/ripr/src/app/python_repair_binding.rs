@@ -1071,7 +1071,6 @@ pub(crate) fn prepare_binding(
 /// Loads the retained prepare-phase binding artifact of a durable attempt, if
 /// the attempt carries one. The attempt loader has already re-verified the
 /// artifact digest against the attempt manifest.
-
 pub(crate) fn load_retained_binding_from(
     root: &Path,
     store: Option<&Path>,
@@ -1455,7 +1454,6 @@ pub(crate) fn confirm_manifest_unchanged(
 /// and no verification, movement, or closure claim. The identities are read
 /// from the durable attempt's own retained artifacts, so the record restates
 /// the authority instead of re-deriving it.
-
 pub(crate) fn write_apply_record_from(
     root: &Path,
     store: Option<&Path>,
