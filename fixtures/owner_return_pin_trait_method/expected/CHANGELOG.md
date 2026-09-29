@@ -3,7 +3,7 @@
 ## Pending — owner_return_pin_trait_method (1)
 
 Reason:
-RIPR-SPEC-0178: initial golden for owner-return pins (#4478)
+RIPR-SPEC-0180: initial golden for owner-return pins (#4478)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_trait_method --reason "..."`

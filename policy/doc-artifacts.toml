@@ -897,7 +897,21 @@ standalone_reason = "Issue #4101 records the TypeScript parse-depth budget contr
 [[artifact]]
 id = "RIPR-SPEC-0178"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0178-owner-return-pins.md"
+path = "docs/specs/RIPR-SPEC-0178-rust-repair-trust-route-yield-ladder.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #4570 records the Rust repair-trust route-yield ladder: the existing corpus validator/report derives selected-opportunity, complete-route, and eligible-attempt stages from typed observations so three unrouted observations report 0/3 route yield and not_measurable repair success, without a second corpus, attempt lifecycle, or support promotion."
+[[artifact]]
+id = "RIPR-SPEC-0179"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0179-local-usefulness-feedback-receipts.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #4585 records local result-bound usefulness feedback receipts: an explicit CLI writes ignored JSON receipts for useful/incorrect/unclear/expensive/intentional-no-action judgments bound to an immutable snapshot, joins them onto existing route-quality rows, and changes no diagnostic, classification, baseline, suppression, gate, or gap-closure state."
+[[artifact]]
+id = "RIPR-SPEC-0180"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0180-owner-return-pins.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #4478 records the owner-return pin contract: an assert_eq! whose operand is a complete call naming the changed owner confirms a changed Rust return_value expression only when the parser's item-container fact, the test's receiver binding, workspace-wide competing definitions and the owner's return paths establish that the call runs the owner and its value came through the changed tail, with fail-closed fixtures for the associated-versus-free, overridden trait default, early-exit input and shadowed-owner shapes."

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0178: Owner-return pins through calls that name the owner
+# RIPR-SPEC-0180: Owner-return pins through calls that name the owner
 
 Status: proposed
 
@@ -183,8 +183,8 @@ the assertion keeps today's token rule.
   defeats; `file_imports_own_item`; `::`-rooted `use` paths.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
   once per probe.
-- `crates/ripr/src/analysis/seam_cache.rs`: file-fact `1.10`, classified
-  `1.16`, sharded `0.22`, compact `0.23`.
+- `crates/ripr/src/analysis/seam_cache.rs`: file-fact `1.11`, classified
+  `1.17`, sharded `0.23`, compact `0.24`.
 
 ## Metrics
 

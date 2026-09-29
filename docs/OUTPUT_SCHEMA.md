@@ -42,13 +42,19 @@ map is:
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.3` |
-| `ripr agent packet` | `schema_version` | `0.4` |
+| `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
+| `ripr check --format repo-exposure-json` | `schema_version` | `0.3` |
+| `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
+| `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.4` |
+| `ripr agent brief` | `schema_version` | `0.1` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
 | `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
+| `ripr agent repair --phase after` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
+| `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
@@ -72,7 +78,7 @@ records that distinction.
 | `schemas/ripr/ripr-agent-error.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/ripr-agent-request.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/ripr-agent-success.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
-| `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` | `xtask/src/reports/rust_repair_trust.rs`; trust corpus input |
+| `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` | `xtask/src/reports/rust_repair_trust.rs`; trust corpus input, including optional observation `route` ladder facts |
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
@@ -105,6 +111,15 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 `.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup.
+
+`ripr cache status --json` (schema `0.1`) prints one object with
+`schema_version`, `cache_dir` (the inspected directory), `status`,
+`entry_count` (regular files under the cache, symlinks skipped), and
+`total_size_bytes`. `status` is `ok`, `not_found` (no cache directory yet;
+both counts are `0`), `partial` (some directories or entries, including the
+cache directory itself, could not be read, so the counts are lower bounds), or
+`unavailable` (the path is not a directory, is a symlink, or its metadata
+could not be read; both counts are `0`).
 
 ## JSON object key ordering
 
@@ -1763,6 +1778,10 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `rust_value_propagation_unresolved` -- (RIPR-SPEC-0150, additive) A changed Rust value-producing binding reaches a same-owner equality predicate through a bounded `map_or` shape that ripr cannot fully resolve. Classification stays `static_unknown`; this is a named limitation, not a propagation, coverage, or repair claim.
 
+- `rust_subprocess_binary_reach_unresolved` -- (additive) An integration test invokes a Cargo-built binary, but ripr does not yet map that binary target back to the changed owner. Classification stays `no_static_path`; this is a named limitation, not a subprocess reach or receipt claim.
+
+- `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
+
 Reserved `flow_sink` values:
 
 - `return_value`
@@ -1842,6 +1861,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `async_boundary_opaque`
 - `no_changed_rust_line`
 - `macro_reach_unresolved`
+- `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
 - `static_probe_unknown`
@@ -7076,8 +7096,7 @@ JSON shape:
     "next_action": {
       "kind": "improved",
       "summary": "Static grip improved.",
-      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.",
-      "safe_to_merge": false
+      "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."
     }
   }
 }
@@ -7148,7 +7167,7 @@ Field contract:
 - `seam.grip_class` - one-sided grip class for `new` or `resolved` gaps, or
   `null` for matched seams.
 - `test_changed` - optional focused test the edit changed. `ripr agent receipt`
-  takes it from `--test-changed`. The after phase of `ripr agent repair` sets it
+  takes it from `--test NAME`. The after phase of `ripr agent repair` sets it
   to the attempt's selected test file when the edit cage is compliant and
   recorded that file changing, and leaves it null otherwise.
 - `verification.status` - always `verification_not_run` (RIPR-SPEC-0135): no
@@ -7173,8 +7192,9 @@ Field contract:
 - `summary.next_action` - structured static guidance for agents and reviewers.
   `kind` is `improved`, `changed`, `regressed`, `unchanged`, `new_gap`,
   `resolved`, or `unknown`; `summary` is a short static movement statement;
-  `recommended_action` is the bounded next step; and `safe_to_merge` is always
-  `false` because the static receipt is review evidence, not a merge policy.
+  `recommended_action` is the bounded next step. Schema `0.5` omits the
+  invariant-false `safe_to_merge` field that earlier versions carried: the
+  static receipt is review evidence, not a merge policy.
   Only an `advisory` receipt is review evidence: for an `incomplete` or
   `invalid` receipt, `recommended_action` carries the same not-review-evidence
   statement as `next_recommendation` and never recommends including the
@@ -7475,8 +7495,9 @@ Field contract:
   items eligible for check annotations or inline review comments.
 - `comments[].id` - stable report-local ID derived from the seam when possible.
 - `comments[].seam_id` - static seam identifier from the existing exposure or
-  agent packet evidence. On `--gap-ledger`, the producer-owned seam ID is
-  required for a comment to be eligible.
+  agent packet evidence. Required on working-set cards. On `--gap-ledger` it
+  is present only when the GapRecord carries producer-owned seam identity; a
+  card without it is keyed by `gap_id` and `dedupe_key` (#4524).
 - `comments[].source` / `comments[].gap_id` - on `--gap-ledger`, the source is
   `gap_decision_ledger` and the gap ID identifies the supplied record. These
   cards do not invent the working-set `owner` or `seam` objects. The published
@@ -12079,7 +12100,12 @@ Field contract:
   gap ledger omits a receipt command, `ripr first-pr` may provide a deterministic
   canonical `ripr receipt write` command (RIPR-SPEC-0079) under the configured
   receipts directory; `receipt_command_source` is then
-  `first_pr.default_receipt_write_command`. A missing
+  `first_pr.default_receipt_write_command`. `selected.receipt_path` is the
+  file that `receipt_command` writes: the command's `--out` value (or the
+  receipt writer's default for its `--gap` when it has no `--out`), else a
+  path the ledger record names, else the default path the synthesized command is
+  built with, so the printed path and the printed command never disagree.
+  A missing
   receipt is not failure, merge approval, mutation proof, or runtime adequacy.
   `selected.receipt_state` uses the canonical receipt lifecycle vocabulary:
   `receipt_missing`, `receipt_found`, `receipt_stale`,
@@ -12274,6 +12300,7 @@ paths under the supplied workspace root:
 ```text
 target/ripr/workflow/before.repo-exposure.json
 target/ripr/workflow/after.repo-exposure.json
+target/ripr/workflow/analysis-outcome.json
 target/ripr/workflow/agent-brief.json
 target/ripr/workflow/agent-packet.json
 target/ripr/workflow/agent-verify.json
@@ -12339,9 +12366,12 @@ Field contract:
 - `seam` - recovered seam identity when available. The current recovery order
   is receipt, verify, packet, then brief. It is `null` when no existing
   artifact names a seam.
-- `artifacts[]` - one entry for each required fixed artifact. `bytes` and
-  `modified_unix_ms` are `null` when the artifact is missing or the filesystem
-  does not expose the timestamp.
+- `artifacts[]` - one entry for each of the seven fixed artifacts above.
+  `required` is `true` in the artifact loop. While a repair attempt exists
+  under `target/ripr/repair-attempts/`, all seven report `required: false`:
+  the attempt directory holds the enforced identity and the global files are
+  compatibility projections. `bytes` and `modified_unix_ms` are `null` when
+  the artifact is missing or the filesystem does not expose the timestamp.
 - Volatile fields: `artifacts[].modified_unix_ms` is wall-clock state read
   from the filesystem at report time, not analysis output. Two consecutive
   `agent status --json` runs over an unchanged artifact tree can produce
@@ -12352,7 +12382,8 @@ Field contract:
   to the `agent_status` document embedded by `ripr agent repair --phase after`
   (#4052), which is the same schema.
 - `missing_commands[]` - one command for each missing artifact in workflow
-  order: before snapshot, packet, brief, after snapshot, verify, receipt. If no
+  order: before snapshot, packet, brief, after snapshot, analysis outcome,
+  verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
 - `repair_attempts[]` - every repair attempt under
   `target/ripr/repair-attempts/`, validated by the attempt authority and
@@ -12377,19 +12408,27 @@ Field contract:
   the restart reason repeats the after phase's recovery (`git reset --soft
   <prepared-head>`, then the attempt's after command).
   - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
-    object read from `target/ripr/reports/agent-receipt.json`: `path`,
+    object read from the attempt-local terminal receipt when that attempt
+    retained one, else from `target/ripr/reports/agent-receipt.json` for a
+    legacy manifest: `path` (the exact artifact that was read),
     `issued_for_attempt` (whether that receipt's `repair_attempt` binding
     matches this attempt's after verdict: attempt ID, after `HEAD`, delta and
-    packet digests), `superseded_by` (the attempt ID the receipt is bound to
-    when that is another attempt: the workflow keeps one receipt, so a later
-    attempt's after phase replaced this attempt's receipt; otherwise `null`),
+    packet digests), `unavailable` (true when this attempt declared terminal
+    retention but the local result is missing, digest-mismatched, path-escaped,
+    or mis-bound; status does not then reconstruct the outcome from another
+    attempt's compatibility file), `unavailable_reason`,
+    `superseded_by` (the attempt ID the compatibility receipt is bound to
+    when that is another attempt and this attempt has no retained local
+    result; otherwise `null`),
     and, when it is issued for this attempt, the receipt's `status`,
     `movement`, `receipt_state`, `recommended_action`,
     `analysis_outcome_error`, and `verification_status` (the receipt's
     `verification.status`), plus `shows_gap_closed` (`true` only for an
     `advisory` receipt with movement `improved`; it records improved static
     grip, not a runtime or mutation result). Unbound receipts leave these
-    `null` and `shows_gap_closed` `false`.
+    `null` and `shows_gap_closed` `false`. An old result can remain
+    historically valid while `head_current` is false for today's HEAD;
+    retained history is not current proof.
   - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
     attempt's most recent after phase refused after selecting the attempt (the
     attempt manifest's `last_after_refusal`: the final error followed by the
@@ -12439,10 +12478,11 @@ Field contract:
   receipt reports static grip improved at the recorded head), and
   `repair_receipt_unconfirmed` names a `ready_to_finish` attempt whose receipt
   does not report improved grip (an `invalid` or `incomplete` receipt, a
-  movement that is neither `improved` nor open, no receipt issued for it, or a
-  receipt superseded by a later attempt's, in which case the message names
-  that attempt and the new-attempt command for the seam if its gap is still
-  open). Hash mismatch warnings remain a
+  movement that is neither `improved` nor open, no receipt issued for it, a
+  declared attempt-local receipt that is unavailable, or a legacy receipt
+  superseded by a later attempt's compatibility file, in which case the
+  message names that attempt and the new-attempt command for the seam if its
+  gap is still open). Hash mismatch warnings remain a
   later reviewer-summary/status enhancement now that receipt provenance records
   artifact SHA-256 values.
 
@@ -12495,7 +12535,7 @@ The JSON schema is version `0.1`:
     "state": "improved",
     "before_class": "weakly_gripped",
     "after_class": "strongly_gripped",
-    "grip_class": "strongly_gripped",
+    "grip_class": null,
     "evidence_artifact": "target/ripr/reports/agent-receipt.json",
     "verify_artifact": "target/ripr/workflow/agent-verify.json",
     "summary": "Static movement is improved (weakly_gripped -> strongly_gripped).",
@@ -12525,7 +12565,7 @@ The JSON schema is version `0.1`:
       "state": "computed",
       "status": "complete",
       "required": true,
-      "summary": "6 of 6 required artifacts present, 0 missing, 0 warnings."
+      "summary": "7 of 7 required artifacts present, 0 missing, 0 warnings."
     }
   ],
   "ci_artifacts": [
@@ -13311,7 +13351,7 @@ The queue envelope is:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "tool": "ripr",
   "report": "swarm-queue",
   "scope": "repo",
@@ -13377,7 +13417,7 @@ The queue envelope is:
       },
       "suggested_test_file": "tests/test_pricing.py",
       "suggested_test_name": "test_calculate_discount_smoke",
-      "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+      "verify_command": "python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
       "conflict_group": "file:tests/test_pricing.py",
       "conflict_group_size": 2,
       "allowed_edit_surface": ["tests/test_pricing.py"],
@@ -13423,6 +13463,13 @@ The queue envelope is:
   ]
 }
 ```
+
+The example is abbreviated. The real envelope also carries top-level
+`analysis_outcome`, `analysis_outcome_error`, `analysis_outcome_status`,
+`assignment_policy`, `must_not_infer`, and `source_currentness`. `--language`
+defaults to `python`, so in a repository whose ledger holds only Rust records
+the default queue reports `language_records_total: 0` and an empty `packets`
+array; pass `--language rust` to consider Rust records.
 
 `source_currentness` is the live producer-backed authority for a packet source.
 It contains `status`, `queue_state`, `reason`, `refresh_commands`,
@@ -14122,16 +14169,16 @@ The JSON shape uses schema `0.1`:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "before_snapshot_command": "mkdir -p target/ripr/workflow target/ripr/reports && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
-        "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
-        "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
+        "before_snapshot_command": "mkdir -p /work/repo/target/ripr/workflow && ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/before.repo-exposure.json",
+        "after_snapshot_command": "ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/after.repo-exposure.json",
+        "verify_command": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }
   ],
   "next": {
-    "inspect_packet": "ripr check --root . --mode draft --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
-    "verify_after_edit": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+    "inspect_packet": "ripr check --root /work/repo --mode draft --format agent-seam-packets-json > /work/repo/target/ripr/workflow/agent-seam-packets.json",
+    "verify_after_edit": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
   },
   "warnings": []
 }
@@ -14151,7 +14198,11 @@ Field contract:
   `same_file_seam`, `explicit_seam_id`, or `repo_actionable_fallback`.
 - `top_seams[].packet_ref` — pointer to the full agent seam packet.
 - `top_seams[].verification` — before/after static evidence commands and an
-  optional focused test command.
+  optional focused test command. The snapshot and verify commands are anchored
+  at the analyzed root, so they run from any directory; `before_snapshot_command`
+  first creates `target/ripr/workflow` under that root, because the before
+  snapshot is the loop's first write. `suggested_test_command` is a bare
+  `cargo test <name>` and runs from the analyzed root.
 
 Static examples use abbreviated JSON fragments to show routing behavior.
 
@@ -14383,7 +14434,7 @@ is populated:
     "missing_discriminator": "amount == threshold",
     "suggested_test_file": "tests/test_pricing.py",
     "suggested_test_name": "test_calculate_discount_smoke",
-    "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+    "verify_command": "python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
     "receipt_command": null,
     "receipt_status": "unavailable_until_python_gap_ledger",
     "receipt_guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.",
@@ -14759,8 +14810,9 @@ Seam diagnostics also drive editor code actions:
   request.
 
 Validated GapRecord diagnostics use the same code-action surface for
-repair-routing records. Python preview GapRecords accept bounded `pytest ...`
-and `python -m unittest ...` verification commands, expose verify and receipt
+repair-routing records. Python preview GapRecords accept bounded
+`python -m pytest ...` (and the earlier bare `pytest ...` form) and
+`python -m unittest ...` verification commands, expose verify and receipt
 copy actions when those commands are safe, expose `Agent handoff: copy Python
 packet` to copy the same GapRecord-backed agent packet as `ripr agent packet
 --gap-ledger ... --gap-id ...`, expose `Copy Python repair card` to copy a
@@ -15067,7 +15119,7 @@ JSON shape:
         "state": "top_gap",
         "output_state": "preview_limited",
         "top_gap_kind": "MissingBoundaryAssertion",
-        "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
+        "verify_command": "python -m pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
         "next_command": null,
         "expected_status": "actionable",
         "expected_state": "top_gap",
@@ -15348,7 +15400,7 @@ JSON shape:
         "agent_packet_stop_if": ["import cannot be resolved", "expected status code is ambiguous", "production code edit appears necessary"],
         "missing_discriminator": "response.status_code == 422",
         "suggested_test_file": "tests/test_checkout.py",
-        "verify_command": "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
+        "verify_command": "python -m pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
         "verify_result": "pass",
         "receipt_result": "pass",
         "gap_movement": "closed",
@@ -15361,7 +15413,7 @@ JSON shape:
             "usability": "usable",
             "missing_discriminator": "response.status_code == 422",
             "suggested_test_file": "tests/test_checkout.py",
-            "verify_command": "pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
+            "verify_command": "python -m pytest tests/test_checkout.py::test_expired_coupon_response_smoke",
             "false_positive_notes": "none observed",
             "reason": "Rank 1 repair card matched the closed Python receipt."
           }
@@ -15772,9 +15824,16 @@ legacy record that omits either field remains readable but its normalized gate
 route is explicitly `incomplete_repair_route`. Multiple records for one
 canonical gap that contain duplicate, conflicting, or mixed seam identities
 fail closed as a named ledger input configuration error.
-Gap-ledger PR review cards likewise project only `GapRecord.seam_id`; a row
-without it is suppressed with `missing_seam_identity` rather than using
-`gap_id` as a seam substitute.
+Gap-ledger PR review cards likewise project only `GapRecord.seam_id`, and
+never use `gap_id` as a seam substitute. A card is keyed by its GapRecord
+(`gap_id`, `dedupe_key`), so a row without seam identity, such as every
+Python or TypeScript row derived by `reports gap-ledger --check-output`, still
+renders a card with `seam_id` omitted when the ledger marks it PR-comment
+eligible. When a seamless row and a row with
+seam identity share a dedupe key, the row with seam identity renders and the
+seamless row is suppressed as `duplicate_dedupe_fingerprint`; the winning
+card takes the earlier row's ledger position before the inline and summary
+caps apply, so the shared key keeps one card.
 
 Typed command specifications (additive `command_specs`): records may carry
 `command_specs.verify`, `command_specs.receipt`, and
@@ -16415,7 +16474,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "0.1",
+    "schema_version": "1.9",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16426,8 +16485,8 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "0.3",
-      "analyzer_version": "0.10.0",
+      "schema_version": "1.15",
+      "analyzer_version": "0.11.0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -16509,11 +16568,22 @@ targeted-rerun receipt shape:
 }
 ```
 
+`cache.schema_version` and `cache.input_fingerprint.schema_version` version
+the file-fact cache and its input identity, not this report. They move
+whenever cache identity changes, so a consumer dispatches on the top-level
+`schema_version` and treats the nested values as opaque.
+
 For a changed-test selector, `selector.kind` is `changed_test`. `changed_test`
 names the repository-relative parsed test file and may append
 `::<test_node>` to select one test function within that file. An unknown or
-ambiguous node is a named limitation. Without a node, all parsed tests in the
-file participate. The report returns only seams owned by uniquely resolved
+ambiguous node is a named limitation: `state: "limited"`, an empty `seams`
+array, exit 0, and `limitation.kind` `changed_test_unresolved` (no parsed test
+matches the file or node), `changed_test_owner_unresolved` (the selected tests
+call no production owner ripr resolves), or `changed_test_owner_ambiguous`
+(two production functions share a called name). The index is built before the
+selector resolves, so `cache` still reports the file-fact work that ran and
+the `input_fingerprint`. Without a node, all parsed
+tests in the file participate. The report returns only seams owned by uniquely resolved
 functions directly called from the selected test scope.
 
 For a gap selector, `selector.kind` is `canonical_gap`, with
@@ -16823,6 +16893,71 @@ Do not remove fields, rename fields, or change enum meanings without bumping the
 schema version.
 
 Do not emit mutation-runtime terms such as `killed` or `survived` in static JSON.
+
+## Usefulness feedback receipts
+
+`ripr feedback record` writes one local ignored JSON receipt under
+`target/ripr/feedback/`. `ripr feedback export` joins stored receipts onto
+existing route-quality rows. Recording is explicit; analyze, hover, and packet
+paths never record feedback implicitly. Neither command changes diagnostics,
+classification, baselines, suppressions, gates, or gap closure. Neither command
+makes a network, process, editor, LSP, or MCP write. Identity is snapshot plus
+optional canonical item; file/line is rejected.
+
+Receipt JSON (`schema_version` `0.1`, `kind` `usefulness_feedback_receipt`):
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "usefulness_feedback_receipt",
+  "status": "created",
+  "tool": "ripr",
+  "feedback_id": "fb-…",
+  "idempotency_key": "key",
+  "snapshot_id": "snap-1",
+  "canonical_item": null,
+  "route_digest": "add_missing_test",
+  "attempt_id": null,
+  "receipt_id": null,
+  "actor_kind": "human",
+  "review_status": "unreviewed",
+  "review_actor_kind": null,
+  "reason": "useful_limitation",
+  "judgment": "useful",
+  "note": null,
+  "reference_state": "current",
+  "recorded_at": "unix_ms:1",
+  "policy_effects": {
+    "diagnostics": "unchanged",
+    "classification": "unchanged",
+    "baseline": "unchanged",
+    "suppressions": "unchanged",
+    "gates": "unchanged",
+    "gap_closure": "unchanged"
+  },
+  "must_not_infer": [
+    "helpful feedback does not establish correctness",
+    "a negative opinion does not automatically establish a false positive",
+    "agent feedback is not human-approved until a human review actor is recorded",
+    "recording this receipt changes no diagnostic, classification, baseline, suppression, gate, or gap-closure state"
+  ]
+}
+```
+
+`status` is `created` or `already_recorded`. A same-key different payload is a
+conflict, not a second record. `actor_kind` is independent of `review_status`.
+`judgment` is one of `useful`, `incorrect`, `unclear`, `expensive`, or
+`intentional_no_action`. `reference_state` is `current`, `historical`, or
+`mismatched`.
+
+Join JSON (`schema_version` `0.1`, `kind` `usefulness_feedback_join`) keeps
+objective route-quality counts (`repair_kind_attempted`,
+`repair_kind_improved`) separate from subjective usefulness counts. It reports
+denominators for receipts, reviewed/human/unreviewed/agent, unmatched,
+historical, mismatched, and missing-feedback rows. `reviewed_human_useful_rate`
+is a number only when `reviewed_human_total` is nonzero; otherwise it is `null`.
+Unreviewed, stale, unmatched, and missing-feedback states are counts, not
+success percentages. The join does not invent a second attempt ledger.
 
 ## Historical 0.11 candidate execution-scope report
 

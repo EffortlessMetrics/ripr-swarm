@@ -61,6 +61,25 @@ pub(crate) const MANUAL_VERIFY_LABEL: &str = "Manual verify without a repair att
 pub(crate) const MANUAL_RECEIPT_LABEL: &str =
     "Manual receipt without a repair attempt (after the manual verify)";
 
+/// Label for the line that follows a receipt command recording `not_run`.
+pub(crate) const RECEIPT_STATUS_LABEL: &str = "Receipt status";
+/// What to pass as `--status` once verify has run. The printed receipt
+/// command records `--status not_run` so it stays runnable and true as
+/// printed; only the reader knows the verify outcome, so the line names the
+/// values that carry it instead of the command claiming one.
+pub(crate) const RECEIPT_STATUS_STEP: &str = "the command records `--status not_run` as printed; after the verify command runs, change it to `--status passed` if verify exited 0 or `--status failed` if it did not.";
+
+/// The `Receipt status` step for a receipt command that records `not_run`,
+/// `None` for any other command (a `ripr outcome` receipt, or one that already
+/// carries an outcome).
+pub(crate) fn receipt_status_step(receipt_command: &str) -> Option<&'static str> {
+    let words = ripr_command_words(receipt_command)?;
+    let is_receipt_write = words.get(1).map(|(word, _)| word.as_str()) == Some("receipt")
+        && words.get(2).map(|(word, _)| word.as_str()) == Some("write");
+    (is_receipt_write && ripr_flag_value(&words, "--status") == Some("not_run"))
+        .then_some(RECEIPT_STATUS_STEP)
+}
+
 /// The one selector for the low-level verify and receipt labels (#3906).
 ///
 /// With a carried repair start, its after phase runs verify and writes the
@@ -168,7 +187,9 @@ fn omitted_base_resolution(
 /// `parse_options` and before any filesystem write.
 fn print_side_effect_disclosure(options: &FirstPrOptions) {
     println!("ripr first-pr - side effects and cost disclosure");
-    println!("  cost class:      varies with diff and workspace size");
+    // first-pr composes existing artifacts; it runs no analysis, so it has
+    // no analysis cache or diff-sized runtime to disclose.
+    println!("  cost class:      artifact composition only; runs no analysis");
     if options.check {
         println!("  writes to:       none (--check validates an existing start-here packet)");
     } else {
@@ -177,10 +198,10 @@ fn print_side_effect_disclosure(options: &FirstPrOptions) {
             options.out_dir.trim_end_matches('/')
         );
     }
-    println!("  cache location:  target/ripr/cache/");
-    println!("  git reads:       yes (diff between base and head)");
+    println!("  cache location:  none");
+    println!("  git reads:       yes (base and head preflight)");
     println!("  network:         none");
-    println!("  runtime hint:    seconds on typical diffs; minutes on large diffs\n");
+    println!("  runtime hint:    seconds\n");
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -733,6 +754,26 @@ fn git_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selec
     }
 
     if let Err(message) = git_diff_range_valid(root, &options.base, &options.head) {
+        // #4538: a range with no merge base names its cause (shallow clone or
+        // unrelated histories) like `ripr check` does, and a shallow clone's
+        // next command is the unshallow repair, not the same failing diff.
+        if message.contains("no merge base") {
+            let (diagnosis, shallow) =
+                crate::analysis::no_merge_base_diagnosis(root, &options.base, &options.head, None);
+            let command = if shallow {
+                unshallow_command(options)
+            } else {
+                diff_range_command(options)
+            };
+            return Some(Selection::blocked(
+                "blocked_artifact",
+                format!(
+                    "The first-pr diff range `{}...{}` has no merge base: {diagnosis}",
+                    options.base, options.head
+                ),
+                Some(command),
+            ));
+        }
         return Some(Selection::blocked(
             "blocked_artifact",
             format!(
@@ -1724,26 +1765,31 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
     ]);
     let verify_command = first_string_array_item(record, &["verification_commands"])
         .unwrap_or_else(|| regenerate_gap_ledger_command(root, options));
-    let receipt_path = string_path(record, &["receipt_path"])
-        .or_else(|| string_path(record, &["receipt", "path"]))
-        .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
     let ledger_receipt_command = string_path(record, &["receipt_command"]);
     let ledger_receipt_or_path_command = command_like_path(record, &["receipt_command_or_path"]);
+    let ledger_command = ledger_receipt_command
+        .map(|command| (command, "gap_ledger.receipt_command"))
+        .or_else(|| {
+            ledger_receipt_or_path_command
+                .map(|command| (command, "gap_ledger.receipt_command_or_path"))
+        });
+    let receipt_path = selected_receipt_path(
+        record,
+        ledger_command.as_ref().map(|(command, _)| command.as_str()),
+    )
+    .unwrap_or_else(|| first_pr_receipt_path(&options.receipts_dir, &gap_id));
     let canonical_gap_id_for_receipt =
         string_path(record, &["canonical_gap_id"]).unwrap_or_else(|| gap_id.clone());
-    let (receipt_command, receipt_command_source) = if let Some(command) = ledger_receipt_command {
-        (command, "gap_ledger.receipt_command".to_string())
-    } else if let Some(command) = ledger_receipt_or_path_command {
-        (command, "gap_ledger.receipt_command_or_path".to_string())
-    } else {
-        (
+    let (receipt_command, receipt_command_source) = match ledger_command {
+        Some((command, source)) => (command, source.to_string()),
+        None => (
             receipt_write_command(
                 &canonical_gap_id_for_receipt,
                 &verify_command,
                 Some(&receipt_path),
             ),
             "first_pr.default_receipt_write_command".to_string(),
-        )
+        ),
     };
     let repair_route_kind = string_from_sources(&[(repair_route, &["route_kind"])])
         .unwrap_or_else(|| "RepairRouteUnavailable".to_string());
@@ -1956,6 +2002,109 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
             )
         }
     }
+}
+
+/// Shell words of a single `ripr ...` command, read with POSIX quoting (the
+/// `shell_arg` form every receipt command is rendered in), each with whether
+/// any part of it was quoted. `None` for a command this reader cannot take literally:
+/// unbalanced quotes, a trailing escape, another program, or an unquoted
+/// shell operator (a redirect or a chained command writes elsewhere).
+fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
+    let mut words: Vec<(String, bool)> = Vec::new();
+    let mut current = String::new();
+    let mut quoted_word = false;
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars();
+    while let Some(character) = chars.next() {
+        match (quote, character) {
+            (Some(active), value) if value == active => quote = None,
+            (Some('"'), '\\') => current.push(chars.next()?),
+            (Some(_), value) => current.push(value),
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                quoted_word = true;
+                in_word = true;
+            }
+            (None, '\\') => {
+                current.push(chars.next()?);
+                in_word = true;
+            }
+            (None, value) if value.is_whitespace() => {
+                if in_word {
+                    words.push((std::mem::take(&mut current), quoted_word));
+                }
+                quoted_word = false;
+                in_word = false;
+            }
+            (None, value) => {
+                current.push(value);
+                in_word = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if in_word {
+        words.push((current, quoted_word));
+    }
+    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
+        return None;
+    }
+    let operator = words.iter().any(|(word, quoted)| {
+        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
+    });
+    (!operator).then_some(words)
+}
+
+/// Value of the last unquoted `flag` in a ripr command's words.
+fn ripr_flag_value<'a>(words: &'a [(String, bool)], flag: &str) -> Option<&'a str> {
+    words
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, (word, quoted))| !quoted && word == flag)
+        .find_map(|(index, _)| words.get(index + 1).map(|(value, _)| value.as_str()))
+}
+
+/// The file a printed `ripr receipt write` command writes: its `--out`, or
+/// the receipt writer's own default for its `--gap` when it names no
+/// `--out`. `None` when the command cannot be read literally.
+fn receipt_command_out_path(command: &str) -> Option<String> {
+    let words = ripr_command_words(command)?;
+    if words
+        .iter()
+        .any(|(word, quoted)| !quoted && word == "--out")
+    {
+        // A flag with no usable value fails in the CLI; name no path for it.
+        return ripr_flag_value(&words, "--out")
+            .filter(|out| !out.trim().is_empty())
+            .map(str::to_string);
+    }
+    let is_receipt_write = words.get(1).map(|(word, _)| word.as_str()) == Some("receipt")
+        && words.get(2).map(|(word, _)| word.as_str()) == Some("write");
+    let gap = ripr_flag_value(&words, "--gap").filter(|gap| !gap.trim().is_empty())?;
+    is_receipt_write.then(|| {
+        crate::app::receipt::receipt_default_path(gap)
+            .to_string_lossy()
+            .replace('\\', "/")
+    })
+}
+
+/// One source of truth for where the receipt lands: the file the printed
+/// ledger receipt command writes (its `--out`, or the receipt writer's
+/// default for its `--gap`), else a recorded path, else `None` so the
+/// caller uses the first-pr default that its synthesized command then
+/// writes. A path chosen independently of the printed command named a file
+/// that command never writes (Python preview: `gap-pr-...targeted-test-outcome.json`
+/// beside a `--out gap-python-....json`), so the command's own `--out` wins
+/// even over a recorded path that disagrees with it.
+fn selected_receipt_path(record: &Value, ledger_command: Option<&str>) -> Option<String> {
+    ledger_command
+        .and_then(receipt_command_out_path)
+        .or_else(|| string_path(record, &["receipt_path"]))
+        .or_else(|| string_path(record, &["receipt", "path"]))
 }
 
 fn first_pr_receipt_path(receipts_dir: &str, gap_id: &str) -> String {
@@ -2322,6 +2471,13 @@ fn diff_range_command(options: &FirstPrOptions) -> String {
     )
 }
 
+fn unshallow_command(options: &FirstPrOptions) -> String {
+    format!(
+        "git -C {} fetch --unshallow",
+        shell_arg(&options.command_root())
+    )
+}
+
 fn doctor_command(root: &str) -> String {
     format!("ripr doctor --root {}", shell_arg(root))
 }
@@ -2664,6 +2820,52 @@ mod tests {
             "- Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
         ));
         cleanup(&repo)
+    }
+
+    /// A receipt command printed as the step after verify records
+    /// `--status not_run`; the line after it says which value carries the
+    /// verify outcome, on the CLI summary and in the start-here markdown.
+    #[test]
+    fn receipt_after_verify_names_the_status_that_carries_the_verify_outcome() {
+        let command = "ripr receipt write --gap 'gap:python:p.py:f' --verify-command 'python -m pytest tests/test_p.py::test_f' --status not_run --out target/ripr/receipts/g.json";
+        let packet = json!({
+            "status": "actionable",
+            "selected": {
+                "state": "top_gap",
+                "kind": "MissingBoundaryAssertion",
+                "verify_command": "python -m pytest tests/test_p.py::test_f",
+                "receipt_command": command,
+                "receipt_path": "target/ripr/receipts/g.json",
+            },
+        });
+        let step = format!("{RECEIPT_STATUS_LABEL}: {RECEIPT_STATUS_STEP}\n");
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("target/ripr/reports/start-here.json"),
+            Path::new("target/ripr/reports/start-here.md"),
+        );
+        assert!(
+            summary.contains(&format!("Receipt after verify: `{command}`\n{step}")),
+            "{summary}"
+        );
+        let markdown = render_start_here_markdown(&packet);
+        assert!(
+            markdown.contains(&format!("- Receipt after verify: `{command}`\n- {step}")),
+            "{markdown}"
+        );
+        assert!(RECEIPT_STATUS_STEP.contains("`--status passed`"));
+        assert!(RECEIPT_STATUS_STEP.contains("`--status failed`"));
+
+        for other in [
+            "ripr outcome --before b.json --after a.json --format json --out o.json",
+            "ripr receipt write --gap g --verify-command x --status passed",
+            "ripr receipt write --gap 'x --status not_run' --verify-command x --status failed",
+            // Quoted text is a value, not the flag (Devin review on #4485).
+            "ripr receipt write --gap 'x --status not_run ' --verify-command x --status failed",
+            "ripr receipt write --gap \"a --status not_run b\" --status passed",
+        ] {
+            assert_eq!(receipt_status_step(other), None, "{other}");
+        }
     }
 
     /// The start-here markdown must present the receipt command for both
@@ -3421,6 +3623,65 @@ mod tests {
     }
 
     #[test]
+    fn shallow_range_without_merge_base_points_at_unshallow() -> Result<(), String> {
+        // #4538: a PR-style shallow fetch has both tips but no merge base.
+        // The next command must be the unshallow repair, not the same
+        // failing `git diff`.
+        let origin = temp_repo("first-pr-shallow-origin")?;
+        run_git_setup(&origin, &["checkout", "-q", "-b", "feature"])?;
+        run_git_setup(&origin, &["commit", "-q", "--allow-empty", "-m", "feature"])?;
+        run_git_setup(&origin, &["checkout", "-q", "-"])?;
+        run_git_setup(
+            &origin,
+            &["commit", "-q", "--allow-empty", "-m", "main moves"],
+        )?;
+        let shallow = write_temp_root(&env::temp_dir(), "first-pr-shallow-clone")?;
+        // `file://` keeps `--depth` honored (a plain path uses the local
+        // transport); a Windows drive path needs the third slash.
+        let origin_path = origin.display().to_string().replace('\\', "/");
+        let url = if origin_path.starts_with('/') {
+            format!("file://{origin_path}")
+        } else {
+            format!("file:///{origin_path}")
+        };
+        run_git_setup(&shallow, &["init", "-q"])?;
+        run_git_setup(&shallow, &["remote", "add", "origin", &url])?;
+        run_git_setup(
+            &shallow,
+            &[
+                "fetch",
+                "-q",
+                "--depth=1",
+                "origin",
+                "+refs/heads/feature:refs/remotes/origin/feature",
+                "+HEAD:refs/remotes/origin/main",
+            ],
+        )?;
+        run_git_setup(&shallow, &["checkout", "-q", "--detach", "origin/feature"])?;
+        write_json(
+            &shallow.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&shallow, &options)?;
+        let packet = read_packet(&shallow.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        let message = packet["selected"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("no merge base")
+                && message.contains("shallow clone")
+                && message.contains("fetch-depth: 0"),
+            "unexpected message: {message}"
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            format!("git -C {} fetch --unshallow", bound_arg("."))
+        );
+        cleanup(&shallow)?;
+        cleanup(&origin)
+    }
+
+    #[test]
     fn missing_git_head_writes_recovery_packet() -> Result<(), String> {
         let repo = temp_repo("first-pr-missing-head")?;
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
@@ -3462,9 +3723,13 @@ mod tests {
         assert_eq!(packet["status"], "blocked");
         assert_eq!(packet["selected"]["state"], "blocked_artifact");
         assert!(
-            packet["selected"]["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("origin/main...unrelated"))
+            packet["selected"]["message"].as_str().is_some_and(
+                |message| message.contains("origin/main...unrelated")
+                    // #4538: the cause is named, and a full clone is not
+                    // diagnosed as shallow.
+                    && message.contains("unrelated histories")
+                    && !message.contains("shallow clone")
+            )
         );
         assert_eq!(
             packet["selected"]["next_command"],
@@ -4342,6 +4607,11 @@ mod tests {
             packet["selected"]["receipt_command_source"],
             "gap_ledger.receipt_command"
         );
+        // The receipt path is the file the printed receipt command writes.
+        assert_eq!(
+            packet["selected"]["receipt_path"],
+            ".ripr/receipts/python-threshold.json"
+        );
         let python_project = preflight_check(&packet, "python_project")?;
         assert_eq!(python_project["status"], "ok");
         let summary = start_here_cli_summary(
@@ -4918,6 +5188,92 @@ mod tests {
                 }
             ]
         })
+    }
+
+    #[test]
+    fn receipt_path_is_the_out_path_the_printed_receipt_command_writes() {
+        // The shape the gap ledger prints for a Python preview gap: the gap
+        // id is single-quoted because it carries `>=` and `/`.
+        let command = "ripr receipt write --gap 'gap:python:pricing/__init__.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold' --verify-command 'python -m pytest tests/test_pricing.py::test_discount_far_above_threshold' --status not_run --out target/ripr/receipts/gap-python-pricing-__init__.py-discounted_total-predicate_boundary-predicate-amount-discount_threshold.json";
+        assert_eq!(
+            receipt_command_out_path(command).as_deref(),
+            Some(
+                "target/ripr/receipts/gap-python-pricing-__init__.py-discounted_total-predicate_boundary-predicate-amount-discount_threshold.json"
+            )
+        );
+        assert_eq!(
+            receipt_command_out_path(
+                "ripr receipt write --gap g --out 'target/my receipts/o'\\''k.json'"
+            )
+            .as_deref(),
+            Some("target/my receipts/o'k.json")
+        );
+        // A quoted `--out` is the gap's value, not the flag: the command
+        // writes the default for that gap id.
+        assert_eq!(
+            receipt_command_out_path("ripr receipt write --gap '--out' --verify-command x"),
+            Some(
+                crate::app::receipt::receipt_default_path("--out")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            )
+        );
+        // Without `--out`, the command writes the receipt writer's default
+        // for its gap (Devin review on #4485).
+        assert_eq!(
+            receipt_command_out_path(
+                "ripr receipt write --gap gap:test:aabbccdd --verify-command x --status not_run"
+            )
+            .as_deref(),
+            Some(
+                crate::app::receipt::receipt_default_path("gap:test:aabbccdd")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .as_str()
+            )
+        );
+        assert!(
+            receipt_command_out_path("ripr receipt write --gap gap:test:aabbccdd")
+                .is_some_and(|path| path.starts_with("target/ripr/receipts/"))
+        );
+        for command in [
+            "ripr receipt write --verify-command x --status not_run",
+            "ripr outcome --gap g --format json",
+            "ripr receipt write --gap g --out",
+            "ripr receipt write --gap g --out ''",
+            "ripr outcome --json > target/o.json --out other.json",
+            "ripr receipt write --gap 'unterminated --out x.json",
+            "cargo test --out x.json",
+        ] {
+            assert_eq!(receipt_command_out_path(command), None, "{command}");
+        }
+    }
+
+    #[test]
+    fn printed_receipt_command_out_wins_over_a_recorded_receipt_path() {
+        let record = json!({"receipt_path": "target/ripr/receipts/recorded.json"});
+        let command = "ripr receipt write --gap g --verify-command x --status not_run --out target/ripr/receipts/written.json";
+        assert_eq!(
+            selected_receipt_path(&record, Some(command)).as_deref(),
+            Some("target/ripr/receipts/written.json"),
+            "the path shown must be the file the shown command writes"
+        );
+        assert_eq!(
+            selected_receipt_path(&record, Some("ripr receipt write --gap g")),
+            receipt_command_out_path("ripr receipt write --gap g"),
+            "a command without --out writes the writer's default for its gap, not the recorded path"
+        );
+        assert_eq!(
+            selected_receipt_path(&record, Some("ripr outcome --json")).as_deref(),
+            Some("target/ripr/receipts/recorded.json"),
+            "a command that names no receipt file falls back to the recorded path"
+        );
+        let nested = json!({"receipt": {"path": "target/ripr/receipts/nested.json"}});
+        assert_eq!(
+            selected_receipt_path(&nested, None).as_deref(),
+            Some("target/ripr/receipts/nested.json")
+        );
+        assert_eq!(selected_receipt_path(&json!({}), None), None);
     }
 
     fn ledger_with_python_repairable_gap() -> Value {
