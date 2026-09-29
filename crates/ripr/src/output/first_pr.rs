@@ -2045,9 +2045,9 @@ fn ripr_flag_value<'a>(words: &'a [(String, bool)], flag: &str) -> Option<&'a st
     words
         .iter()
         .enumerate()
+        .rev()
         .filter(|(_, (word, quoted))| !quoted && word == flag)
-        .filter_map(|(index, _)| words.get(index + 1).map(|(value, _)| value.as_str()))
-        .last()
+        .find_map(|(index, _)| words.get(index + 1).map(|(value, _)| value.as_str()))
 }
 
 /// The file a printed `ripr receipt write` command writes: its `--out`, or
