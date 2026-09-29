@@ -16,9 +16,10 @@ are scoped or reviewed.
   extraction found each fact's line by scanning the file from the start;
   a Django commit went from 6.9 s to 1.5 s. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
-  a vite commit went from 6.7 s to 3.2 s. Rust classification stopped
-  reparsing the owner's file per probe and computing each related test's
-  value facts again for every probe in the same owner; a ripr commit went
+  a vite commit went from 6.7 s to 3.2 s. Rust classification no longer
+  reparses the owner's file per probe unless the file could admit the
+  derived tuple slice, and computes each related test's value facts once
+  per owner instead of once per probe; a ripr commit went
   from 11.1 s to 8.1 s.
 - `ripr check` spends less time rescanning test files. The same-name-import
   gate re-masked every related test file's source for every probe; one scan
