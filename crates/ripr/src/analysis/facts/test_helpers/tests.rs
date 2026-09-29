@@ -109,6 +109,26 @@ fn helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing()
             "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
             "        let check = |_: u32, _: bool| {};\n        check(10, false);\n",
         ),
+        (
+            "call only in a string beside a method call",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
+            "        other::make().check(10, \"check(10, false) failed\");\n",
+        ),
+        (
+            "cfg-gated helper",
+            "    #[cfg(any())]\n    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
+            "        check(10, false);\n",
+        ),
+        (
+            "use item in the helper body",
+            "    fn check(x: u32, want: bool) {\n        use crate::other::gate;\n        assert_eq!(gate(x), want);\n    }\n",
+            "        check(10, false);\n",
+        ),
+        (
+            "nested fn in the helper body",
+            "    fn check(x: u32, want: bool) {\n        fn gate(_: u32) -> bool {\n            true\n        }\n        assert_eq!(gate(x), want);\n    }\n",
+            "        check(10, false);\n",
+        ),
     ] {
         let index = index_for(&format!(
             "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{helpers}\n    #[test]\n    fn boundary() {{\n{body}    }}\n}}\n"
@@ -191,6 +211,12 @@ fn helper_outside_the_test_module_is_not_credited() -> Result<(), Box<dyn Error>
             "parent module",
             format!(
                 "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn check(x: u32, want: bool) {{\n        assert_eq!(gate(x), want);\n    }}\n\n    mod inner {{\n        use super::*;\n\n        #[test]\n        fn boundary() {{\n            check(10, false);\n        }}\n    }}\n}}\n"
+            ),
+        ),
+        (
+            "helper on the test's line",
+            format!(
+                "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn check(x: u32, want: bool) {{ assert_eq!(gate(x), want) }} #[test] fn boundary() {{ check(10, false); }}\n}}\n"
             ),
         ),
         (

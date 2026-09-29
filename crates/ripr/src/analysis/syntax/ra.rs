@@ -140,6 +140,9 @@ pub(crate) struct ModuleItemScopes {
     pub(crate) item_fns: BTreeMap<(usize, String), Option<(usize, usize)>>,
     /// Fns whose body holds a `use` item, which may shadow a module item.
     pub(crate) fns_with_local_use: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn calls as a parsed single-segment free function
+    /// (`check(..)`), outside macro arguments, strings and comments.
+    pub(crate) direct_calls: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
 }
 
 /// The module scopes of `text`'s functions. `None` when the file does not
@@ -161,12 +164,30 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
             line_index.line(fn_token.text_range().start()),
             name.text().to_string(),
         );
-        if function.body().is_some_and(|body| {
-            body.syntax()
+        if let Some(body) = function.body() {
+            if body
+                .syntax()
                 .descendants()
                 .any(|node| ast::Use::can_cast(node.kind()))
-        }) {
-            scopes.fns_with_local_use.insert(key.clone());
+            {
+                scopes.fns_with_local_use.insert(key.clone());
+            }
+            let called = body
+                .syntax()
+                .descendants()
+                .filter_map(ast::CallExpr::cast)
+                .filter_map(|call| match call.expr()? {
+                    ast::Expr::PathExpr(path) => {
+                        let path = path.path()?;
+                        if path.qualifier().is_some() {
+                            return None;
+                        }
+                        Some(path.segment()?.name_ref()?.text().to_string())
+                    }
+                    _ => None,
+                })
+                .collect();
+            scopes.direct_calls.insert(key.clone(), called);
         }
         let Some(parent) = function.syntax().parent() else {
             continue;

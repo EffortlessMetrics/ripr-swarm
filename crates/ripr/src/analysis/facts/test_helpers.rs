@@ -26,9 +26,13 @@
 //!   helper in a sibling or parent module (`use super::*`), or nested in
 //!   another fn's body, is not credited, and neither is any helper for a
 //!   test whose body holds a `use` item;
-//! - the test calls it as a direct free function (`check(..)`, not
-//!   `self.check(..)` or `path::check(..)`), and neither a nested `fn` nor
-//!   a `let` binding in the test shadows the name;
+//! - the parsed test body calls it as a single-segment free function
+//!   (`check(..)`, not `self.check(..)`, `path::check(..)`, or the text
+//!   `check(` in a string or comment), and neither a nested `fn` nor a
+//!   `let` binding in the test shadows the name;
+//! - the helper has no `#[cfg(..)]` attribute (a disabled helper can stand
+//!   beside a macro-defined real one), no `use` item or nested `fn` in its
+//!   body, and it does not share a line with the test;
 //! - one hop: the helper's calls and parser-backed assertions are added
 //!   with the helper's own line numbers; the assertions of helpers the
 //!   helper calls are not followed.
@@ -94,12 +98,12 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             let Some(helper) = unique_assertion_helper(functions_by_name, &call.name) else {
                 continue;
             };
-            if scopes
-                .item_fns
-                .get(&(helper.start_line, helper.name.clone()))
-                != Some(test_module)
-                || !is_direct_call_site(&call.text, &call.name)
+            let helper_key = (helper.start_line, helper.name.clone());
+            if scopes.item_fns.get(&helper_key) != Some(test_module)
+                || !calls_directly(scopes, &test_key, &call.name)
                 || test_shadows(test, &call.name)
+                || !helper_body_is_plain(scopes, &helper_key, helper)
+                || spans_overlap(helper, test)
             {
                 continue;
             }
@@ -162,15 +166,36 @@ fn test_shadows(test: &TestFact, name: &str) -> bool {
         || test.let_bindings.iter().any(|binding| binding.name == name)
 }
 
-/// Whether `text` calls `name` as a free function: the occurrence is not
-/// preceded by an identifier character, a receiver `.` or a path `::`.
-fn is_direct_call_site(text: &str, name: &str) -> bool {
-    let needle = format!("{name}(");
-    text.match_indices(&needle).any(|(at, _)| {
-        text[..at].chars().next_back().is_none_or(|before| {
-            !before.is_alphanumeric() && before != '_' && before != '.' && before != ':'
-        })
-    })
+/// Whether the parsed test body calls `name` as a single-segment free
+/// function: not a method, a path call, or text in a string or comment.
+fn calls_directly(scopes: &ModuleItemScopes, test_key: &(usize, String), name: &str) -> bool {
+    scopes
+        .direct_calls
+        .get(test_key)
+        .is_some_and(|called| called.contains(name))
+}
+
+/// A helper whose assertion is the one that runs: no `#[cfg(..)]` gate (a
+/// cfg-disabled helper can stand beside a macro-defined real one), and no
+/// `use` item or nested `fn` in its body that could shadow the owner.
+fn helper_body_is_plain(
+    scopes: &ModuleItemScopes,
+    helper_key: &(usize, String),
+    helper: &FunctionFact,
+) -> bool {
+    !helper
+        .attrs
+        .iter()
+        .any(|attribute| attribute.starts_with("#[cfg"))
+        && !scopes.fns_with_local_use.contains(helper_key)
+        && helper.nested_fn_names.is_empty()
+}
+
+/// Credited calls must sit outside the test's line span, which is what
+/// [`TestFact::body_calls`] relies on; a helper sharing a line with the
+/// test is not credited.
+fn spans_overlap(helper: &FunctionFact, test: &TestFact) -> bool {
+    helper.start_line <= test.end_line && test.start_line <= helper.end_line
 }
 
 #[cfg(test)]

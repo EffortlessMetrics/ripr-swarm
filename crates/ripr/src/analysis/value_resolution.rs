@@ -1495,6 +1495,7 @@ fn attr_inner(attr: &str) -> Option<&str> {
 fn extract_fn_param_names(body: &str) -> Vec<String> {
     extract_fn_params(body)
         .into_iter()
+        .filter(|param| !param.name.is_empty())
         .map(|param| param.name)
         .collect()
 }
@@ -1545,19 +1546,23 @@ fn extract_fn_params(body: &str) -> Vec<FnParam> {
             is_case |= attribute == "case" || attribute == "rstest::case";
             part = rest[end + 1..].trim_start();
         }
-        if part.is_empty() || part == "self" || part.starts_with('&') {
+        if part.is_empty() || part == "self" || part.starts_with("&self") {
             continue;
         }
         let ident = part.split(':').next().unwrap_or(part).trim();
         let is_mut = ident.starts_with("mut ");
         let ident = ident.strip_prefix("mut ").unwrap_or(ident).trim();
-        if is_simple_identifier(ident) {
-            out.push(FnParam {
-                name: ident.to_string(),
-                is_case,
-                is_mut,
-            });
-        }
+        // A pattern parameter (`ref x`, `(a, b)`) keeps its position with an
+        // empty name, so later case columns stay aligned; nothing binds it.
+        out.push(FnParam {
+            name: if is_simple_identifier(ident) {
+                ident.to_string()
+            } else {
+                String::new()
+            },
+            is_case,
+            is_mut,
+        });
     }
     out
 }

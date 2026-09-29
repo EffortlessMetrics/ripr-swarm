@@ -927,3 +927,33 @@ fn extract_rstest_cases_maps_case_rows_to_case_marked_parameters_only() {
         "every parameter still counts for shadow invalidation"
     );
 }
+
+#[test]
+fn case_columns_stay_aligned_past_a_pattern_parameter() {
+    // Review of #4715: a `ref` case parameter was dropped from the list, so
+    // `amount` took the first column (10, 9) instead of its own (100, 200).
+    let test = TestSummary {
+        name: "far_above".to_string(),
+        file: std::path::PathBuf::from("src/lib.rs"),
+        start_line: 1,
+        end_line: 1,
+        body:
+            "fn far_above(#[case] ref _label: u32, #[case] amount: u32) { assert!(gate(amount)); }"
+                .to_string(),
+        calls: Vec::new(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: vec![
+            "#[rstest]".to_string(),
+            "#[case(10, 100)]".to_string(),
+            "#[case(9, 200)]".to_string(),
+        ],
+        nested_fn_names: Vec::new(),
+        let_bindings: Vec::new(),
+    };
+
+    assert_eq!(
+        test_case_bound_literals(&test, "amount"),
+        vec!["100", "200"]
+    );
+}
