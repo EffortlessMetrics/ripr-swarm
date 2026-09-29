@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Security: the workflow `ripr init --ci github` writes no longer consumes
+  gate inputs a pull request can commit under `target/ripr` or `target/ci`
+  (#4731), only treats ripr comments posted by `github-actions[bot]` as its
+  own (#4732), and no longer leaves the job token in `.git/config`, prints
+  unfolded repository paths to the log, or interpolates composite-action
+  inputs into shell (#4733). Regenerate the workflow with
+  `ripr init --ci github --force` to pick this up.
 - Security: `ripr lsp` no longer reads a whole client-named file to digest
   an opened document. It digests only a regular file no larger than one LSP
   message, so `didOpen` for `/dev/zero`, a FIFO or a multi-GB file can no
