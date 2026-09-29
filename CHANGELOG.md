@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Security: `ripr lsp` no longer reads a whole client-named file to digest
+  an opened document. It digests only a regular file no larger than one LSP
+  message, so `didOpen` for `/dev/zero`, a FIFO or a multi-GB file can no
+  longer exhaust memory or hang the server (#4729).
+- Security: a base ref starting with `-` is refused before `git diff` runs,
+  including from LSP `baseRef` settings, so it can never be parsed as a diff
+  option such as `--output` (#4730).
 - Security: `ripr pilot` and other commands that write to default paths
   inside the analyzed repository no longer write through a symlink committed
   there. A cloned repository could commit
