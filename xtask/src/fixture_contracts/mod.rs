@@ -161,10 +161,10 @@ fn validate_intervention_study_fixture_corpus(violations: &mut Vec<String>) -> R
         let text = read_text_lossy(&spec)?;
         if !text
             .lines()
-            .any(|line| line.starts_with("Spec: RIPR-SPEC-0181"))
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0182"))
         {
             violations.push(format!(
-                "{} is missing `Spec: RIPR-SPEC-0181`",
+                "{} is missing `Spec: RIPR-SPEC-0182`",
                 normalize_path(&spec)
             ));
         }
