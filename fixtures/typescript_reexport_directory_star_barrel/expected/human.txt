@@ -15,7 +15,7 @@ Start here:
   File: src/utils.ts:4
   Language: typescript
   Language status: preview
-  Static exposure: exposed (warning, confidence 0.60)
+  Static exposure: exposed (info, confidence 0.60)
   Changed behavior: return input;
   Discriminator (observed, advisory): Related test reaches `withoutBase` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
   Related test: test/base.test.ts:7 withoutBase strips the base prefix
