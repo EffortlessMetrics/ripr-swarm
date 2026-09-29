@@ -1262,6 +1262,25 @@ fn line_for_offset_counts_newlines() {
     assert_eq!(line_for_offset(source, 999), 3);
 }
 
+/// The newline index answers every offset, including offsets inside a
+/// multi-byte character, on a `\r\n` line, and past the end, exactly as
+/// the scanning `line_for_offset` does.
+#[test]
+fn indexed_source_lines_match_line_for_offset_at_every_offset() {
+    let source = "def f():\r\n    return \"é→\"\n\n\nx = 1  # ü\n";
+    let indexed = super::source_utils::IndexedSource::new(source);
+    for offset in 0..=source.len() + 2 {
+        assert_eq!(
+            indexed.line_for_offset(offset),
+            line_for_offset(source, offset),
+            "offset {offset}"
+        );
+    }
+    assert_eq!(&*indexed, source);
+    let empty = super::source_utils::IndexedSource::new("");
+    assert_eq!(empty.line_for_offset(0), line_for_offset("", 0));
+}
+
 #[test]
 fn looks_like_call_expression_handles_trailing_semicolons_and_whitespace() {
     assert!(looks_like_call_expression("notify(event);"));

@@ -3,9 +3,7 @@ use super::module_constants::{
 };
 #[cfg(test)]
 use super::source_facts::extract_source_facts;
-use super::source_utils::{
-    line_for_range_end, line_for_range_start, normalized_path, text_for_range,
-};
+use super::source_utils::{IndexedSource, normalized_path, text_for_range};
 use super::static_limits::{collect_static_cli_receiver_names, is_static_route_decorator};
 use super::{
     PythonImport, PythonOwner, PythonParameter, PythonTest, collect_assertions_from_statements,
@@ -25,7 +23,7 @@ pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
 
 pub(super) fn collect_owners_from_statements(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
     imports: &[PythonImport],
@@ -99,7 +97,7 @@ pub(super) fn collect_owners_from_statements(
 #[derive(Clone, Copy)]
 struct PythonOwnerContext<'a> {
     file: &'a Path,
-    source: &'a str,
+    source: &'a IndexedSource<'a>,
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
     module_constants: &'a [PythonModuleConstant],
@@ -139,8 +137,8 @@ fn owner_from_function(
         name: name.to_string(),
         qualified_name,
         file: context.file.to_path_buf(),
-        start_line: line_for_range_start(context.source, range),
-        end_line: line_for_range_end(context.source, range),
+        start_line: context.source.line_for_range_start(range),
+        end_line: context.source.line_for_range_end(range),
         owner_kind: Some(owner_kind),
         decorators,
         imports: context.imports.to_vec(),
@@ -191,8 +189,8 @@ fn owner_from_class(
         name: name.to_string(),
         qualified_name,
         file: context.file.to_path_buf(),
-        start_line: line_for_range_start(context.source, range),
-        end_line: line_for_range_end(context.source, range),
+        start_line: context.source.line_for_range_start(range),
+        end_line: context.source.line_for_range_end(range),
         owner_kind: None,
         decorators: decorator_names(decorators),
         imports: context.imports.to_vec(),
@@ -207,7 +205,7 @@ fn owner_from_class(
 
 pub(super) fn module_owner(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     range: TextRange,
     imports: &[PythonImport],
 ) -> PythonOwner {
@@ -215,8 +213,8 @@ pub(super) fn module_owner(
         name: "<module>".to_string(),
         qualified_name: "<module>".to_string(),
         file: file.to_path_buf(),
-        start_line: line_for_range_start(source, range),
-        end_line: line_for_range_end(source, range),
+        start_line: source.line_for_range_start(range),
+        end_line: source.line_for_range_end(range),
         owner_kind: Some(OwnerKind::ModuleFunction),
         decorators: Vec::new(),
         imports: imports.to_vec(),
@@ -239,7 +237,7 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
 /// Custom collection prefixes and hooks are not resolved here.
 pub(super) fn collect_tests_from_statements(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
     in_unittest_class: bool,
@@ -259,7 +257,7 @@ pub(super) fn collect_tests_from_statements(
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
-                    line: line_for_range_start(source, function.range),
+                    line: source.line_for_range_start(function.range),
                     body_text: text_for_range(source, function.range),
                     imports: imports.to_vec(),
                     decorators: decorator_names(&function.decorator_list),
@@ -285,7 +283,7 @@ pub(super) fn collect_tests_from_statements(
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
-                    line: line_for_range_start(source, function.range),
+                    line: source.line_for_range_start(function.range),
                     body_text: text_for_range(source, function.range),
                     imports: imports.to_vec(),
                     decorators: decorator_names(&function.decorator_list),
