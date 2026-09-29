@@ -4949,6 +4949,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ] {
         let path = root.join(rel);
         let parent = path
@@ -4986,6 +4987,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "build/out.js",
         "coverage/report.ts",
         "src/client.generated.ts",
+        "public/js/app.min.js",
     ]
     .into_iter()
     .map(|path| ChangedFile {
@@ -5017,7 +5019,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
             .file
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains(".generated."))
+            .is_some_and(|name| name.contains(".generated.") || name.ends_with(".min.js"))
     });
     if excluded_finding {
         return Err(format!(
@@ -5426,6 +5428,35 @@ fn classify_probe_shape_reads_a_returned_ternary_as_its_condition_boundary() {
         "    return \"a ? b : c\";",
         "    return ok ? value",
         "    return ok ? 'x : y'",
+    ] {
+        assert_eq!(
+            classify_probe_shape(line),
+            (ProbeFamily::ReturnValue, DeltaKind::Value),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn classify_probe_shape_reads_a_returned_comparison_as_its_boundary() {
+    // `expect(isLarge(500)).toBe(true)` holds before and after `>=` -> `>`.
+    let line = "    return total > 100;";
+    assert_eq!(
+        classify_probe_shape(line),
+        (ProbeFamily::Predicate, DeltaKind::Control)
+    );
+    assert_eq!(
+        typescript_boundary_discriminator(line).as_deref(),
+        Some("total == 100")
+    );
+    // Equality, computed operands, arrows and compound conditions stay
+    // return values.
+    for line in [
+        "    return total === 100;",
+        "    return items.length() > 0;",
+        "    return total + 1 > limit;",
+        "    return (x) => x > 1;",
+        "    return total > 100 && ready;",
     ] {
         assert_eq!(
             classify_probe_shape(line),

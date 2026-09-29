@@ -256,7 +256,7 @@ Updated:
 ## Pending — python_local_callable_binding (8)
 
 Reason:
-RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+RIPR-SPEC-0027/0028: a returned relational comparison is a predicate probe on its boundary, not a return_value probe
 
 Command:
 `cargo xtask goldens bless python_local_callable_binding --reason "..."`

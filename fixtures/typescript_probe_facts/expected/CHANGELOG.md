@@ -497,7 +497,7 @@ Updated:
 ## Pending — typescript_probe_facts (10)
 
 Reason:
-RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+RIPR-SPEC-0082: preview note names JavaScript-family files JavaScript, TS/JS for a mixed diff (#4555)
 
 Command:
 `cargo xtask goldens bless typescript_probe_facts --reason "..."`
