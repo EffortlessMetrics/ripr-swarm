@@ -13,7 +13,7 @@ pub(super) struct McpServer {
 
 impl McpServer {
     pub(super) fn new(status: WorkspaceStatus) -> Result<Self, ErrorData> {
-        Ok(Self {
+        let mut server = Self {
             tools: typed(protocol::tools_list_result())?,
             resources: typed(protocol::resources_list_result())?,
             tool_status: typed(
@@ -32,7 +32,21 @@ impl McpServer {
                 )
                 .map_err(|_| ErrorData::internal_error("serialize workspace status", None))?,
             )?,
-        })
+        };
+        // Domain JSON carries status/catalog data, not version-dependent SDK
+        // result metadata. SDK constructors supply current result fields and
+        // its handler owns stripping them for older peers.
+        server.tools = ListToolsResult::with_all_items(server.tools.tools)
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
+        server.resources = ListResourcesResult::with_all_items(server.resources.resources)
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
+        server.tool_status.result_type = Some(ResultType::COMPLETE);
+        server.resource_status = ReadResourceResult::new(server.resource_status.contents)
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
+        Ok(server)
     }
 }
 fn typed<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, ErrorData> {
