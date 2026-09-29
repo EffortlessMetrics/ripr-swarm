@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
+  now receives the same instructions as an `initialize` client, including the
+  CLI route that analyzes the diff. Before, only `initialize` carried them.
+  Workspace status no longer says a `ripr.toml` is detected when the root has
+  none; that limitation now appears only when one was found.
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr
