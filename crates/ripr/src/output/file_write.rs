@@ -39,8 +39,8 @@ pub(crate) fn append_line(path: &Path, line: &str) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let mut file = open(path, OpenKind::Append)?;
-    if file.metadata()?.len() > 0 {
-        let len = file.metadata()?.len();
+    let len = file.metadata()?.len();
+    if len > 0 {
         file.seek(SeekFrom::Start(len - 1))?;
         let mut last = [0u8; 1];
         file.read_exact(&mut last)?;
