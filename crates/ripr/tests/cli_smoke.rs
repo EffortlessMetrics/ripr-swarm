@@ -2598,7 +2598,9 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert!(stdout.contains("cost class:      artifact composition only; runs no analysis"));
     assert!(stdout.contains(&format!("writes to:       {reports_arg}/")));
     assert!(stdout.contains("cache location:  none"));
-    assert!(stdout.contains("git reads:       yes (base and head preflight)"));
+    assert!(stdout.contains(
+        "git reads:       yes (base/head refs and `git diff --quiet` empty-range check)"
+    ));
     assert!(stdout.contains("network:         none"));
     assert!(stdout.contains("Start here:"));
     // Summary and Wrote lines render the resolved locations with stable

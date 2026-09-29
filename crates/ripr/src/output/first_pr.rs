@@ -181,6 +181,12 @@ fn omitted_base_resolution(
     Some(crate::analysis::resolve_effective_base(&root, None, None))
 }
 
+/// Git reads first-pr actually performs: ref resolution plus
+/// `git diff --quiet <base>..<head> --` in `preflight_diff_check`.
+/// That is an empty-range preflight, not analysis of the diff contents.
+const FIRST_PR_GIT_READS_DISCLOSURE: &str =
+    "yes (base/head refs and `git diff --quiet` empty-range check)";
+
 /// Print the side-effect and cost disclosure for the *resolved* invocation, so
 /// `--check` (validate-only) and custom `--out-dir` runs report their actual
 /// write behavior rather than always claiming the defaults. Rendered after
@@ -199,7 +205,7 @@ fn print_side_effect_disclosure(options: &FirstPrOptions) {
         );
     }
     println!("  cache location:  none");
-    println!("  git reads:       yes (base and head preflight)");
+    println!("  git reads:       {FIRST_PR_GIT_READS_DISCLOSURE}");
     println!("  network:         none");
     println!("  runtime hint:    seconds\n");
 }
@@ -2714,6 +2720,29 @@ mod tests {
         assert!(help.contains("no actionable gap"));
         assert!(help.contains("preview-limited evidence"));
         assert!(help.contains("verify command / receipt command / receipt path"));
+    }
+
+    #[test]
+    fn first_pr_git_read_disclosure_names_the_preflight_diff_argv() {
+        let preflight = include_str!("first_pr/preflight.rs");
+        let fn_at = preflight
+            .find("fn preflight_diff_check")
+            .expect("preflight_diff_check is the git-diff producer");
+        let rest = &preflight[fn_at..];
+        let body_end = rest[1..].find("\nfn ").map(|i| i + 1).unwrap_or(rest.len());
+        let body = &rest[..body_end];
+        assert!(
+            body.contains("\"diff\"") && body.contains("\"--quiet\""),
+            "disclosure is pinned to preflight_diff_check's git argv; body was:\n{body}"
+        );
+        assert!(
+            FIRST_PR_GIT_READS_DISCLOSURE.contains("`git diff --quiet`"),
+            "cost disclosure must name that argv, got {FIRST_PR_GIT_READS_DISCLOSURE}"
+        );
+        assert!(
+            !FIRST_PR_GIT_READS_DISCLOSURE.contains("diff between base and head"),
+            "must not restore the analysis-sized overclaim from #4573 finding 4"
+        );
     }
 
     #[test]
