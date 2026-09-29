@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust diff analysis follows the module tree (#4435). A changed file under
+  `src/`, or beside a declared `[lib]` root outside `src/`, no longer seeds
+  findings when no `mod`, `#[path]` or `include!` from any Cargo target names
+  it, since rustc never compiles it; the run reports a limitation naming the
+  file instead. The out-of-line modules of an external root (`[lib] path =
+  "../shared/lib.rs"`) now seed, and the declaring package's tests stay in
+  the Draft scope. A module tree ripr cannot fully resolve (`cfg_if!`-wrapped
+  declarations, a dynamic `#[path]`, a parse error) keeps the previous
+  layout rule. The editor partition uses the same evidence.
 - LSP: the server now asks clients for `textDocument/didSave`. It advertised
   only the numeric full-sync kind, which under the LSP spec does not request
   save notifications, so a strictly conforming editor could save without ripr
