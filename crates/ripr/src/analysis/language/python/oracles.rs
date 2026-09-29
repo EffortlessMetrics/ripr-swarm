@@ -1,18 +1,23 @@
 use super::source_utils::{line_for_range_start, text_for_range};
 use super::{PythonAssertion, PythonOracleShape, expr_full_name};
+use crate::analysis::language::IndexedSource;
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Stmt};
 
 pub(super) fn collect_assertions_from_statements(
     statements: &[Stmt],
-    source: &str,
+    source: &IndexedSource<'_>,
 ) -> Vec<PythonAssertion> {
     let mut out = Vec::new();
     collect_assertions(statements, source, &mut out);
     out
 }
 
-fn collect_assertions(statements: &[Stmt], source: &str, out: &mut Vec<PythonAssertion>) {
+fn collect_assertions(
+    statements: &[Stmt],
+    source: &IndexedSource<'_>,
+    out: &mut Vec<PythonAssertion>,
+) {
     for stmt in statements {
         match stmt {
             Stmt::Assert(assert_stmt) => {
@@ -71,7 +76,7 @@ fn collect_assertions(statements: &[Stmt], source: &str, out: &mut Vec<PythonAss
 
 fn collect_with_item_assertions(
     items: &[ast::WithItem],
-    source: &str,
+    source: &IndexedSource<'_>,
     out: &mut Vec<PythonAssertion>,
 ) {
     for item in items {
@@ -83,7 +88,7 @@ fn collect_with_item_assertions(
 
 fn collect_except_handler_assertions(
     handlers: &[ast::ExceptHandler],
-    source: &str,
+    source: &IndexedSource<'_>,
     out: &mut Vec<PythonAssertion>,
 ) {
     for handler in handlers {
@@ -92,7 +97,10 @@ fn collect_except_handler_assertions(
     }
 }
 
-fn assertion_from_assert(assert_stmt: &ast::StmtAssert, source: &str) -> PythonAssertion {
+fn assertion_from_assert(
+    assert_stmt: &ast::StmtAssert,
+    source: &IndexedSource<'_>,
+) -> PythonAssertion {
     let (oracle_kind, oracle_strength, oracle_shape) =
         oracle_for_assert_expr(assert_stmt.test.as_ref());
     PythonAssertion {
@@ -104,7 +112,7 @@ fn assertion_from_assert(assert_stmt: &ast::StmtAssert, source: &str) -> PythonA
     }
 }
 
-fn assertion_from_expr(expr: &Expr, source: &str) -> Option<PythonAssertion> {
+fn assertion_from_expr(expr: &Expr, source: &IndexedSource<'_>) -> Option<PythonAssertion> {
     let Expr::Call(call) = expr else {
         return None;
     };

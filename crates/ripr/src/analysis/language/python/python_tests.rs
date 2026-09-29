@@ -2,6 +2,7 @@ use super::owners_tests::{extract_owners, extract_tests};
 use super::source_facts::{PythonSourceFactKind, PythonSourceFacts};
 use super::source_utils::text_for_range;
 use super::*;
+use crate::analysis::language::IndexedSource;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -1251,15 +1252,15 @@ fn text_for_range_clamps_out_of_bounds_offsets() {
 fn line_for_offset_counts_newlines() {
     let source = "alpha\nbeta\ngamma";
     // Offset 0 is line 1.
-    assert_eq!(line_for_offset(source, 0), 1);
+    assert_eq!(IndexedSource::new(source).line(0), 1);
     // Offset exactly on the newline stops before counting that newline.
-    assert_eq!(line_for_offset(source, 5), 1);
+    assert_eq!(IndexedSource::new(source).line(5), 1);
     // Offset immediately after the newline counts the next segment as line 2.
-    assert_eq!(line_for_offset(source, 6), 2);
+    assert_eq!(IndexedSource::new(source).line(6), 2);
     // Offset on the second segment is line 2.
-    assert_eq!(line_for_offset(source, 7), 2);
+    assert_eq!(IndexedSource::new(source).line(7), 2);
     // Offset past end stops at the last counted line.
-    assert_eq!(line_for_offset(source, 999), 3);
+    assert_eq!(IndexedSource::new(source).line(999), 3);
 }
 
 #[test]

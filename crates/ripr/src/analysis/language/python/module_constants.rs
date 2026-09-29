@@ -31,6 +31,7 @@
 use super::PythonTest;
 use super::boundary::literal_value;
 use super::source_utils::{line_for_range_start, text_for_range};
+use crate::analysis::language::IndexedSource;
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 
 /// A module-scope name bound once to a scalar literal and never rebound.
@@ -44,7 +45,7 @@ pub(super) struct PythonModuleConstant {
 
 /// The module-scope literal constants of one parsed module.
 pub(super) fn module_literal_constants(
-    source: &str,
+    source: &IndexedSource<'_>,
     statements: &[Stmt],
 ) -> Vec<PythonModuleConstant> {
     let mut bindings = ScopeBindings::default();
@@ -277,7 +278,7 @@ fn assigned_attributes(source: &str) -> Vec<String> {
     attributes
 }
 
-fn literal_assignment(source: &str, stmt: &Stmt) -> Option<PythonModuleConstant> {
+fn literal_assignment(source: &IndexedSource<'_>, stmt: &Stmt) -> Option<PythonModuleConstant> {
     let (target, value) = match stmt {
         Stmt::Assign(assign) => match assign.targets.as_slice() {
             [target] => (target, assign.value.as_ref()),

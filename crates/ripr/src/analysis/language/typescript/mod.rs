@@ -12,7 +12,7 @@ pub(crate) use super::super::{
 // `probes` is a private module of `crate::analysis`; import it so submodules
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
+    IndexedSource, LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{

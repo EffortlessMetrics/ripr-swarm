@@ -13,11 +13,12 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
             return Vec::new();
         }
         let imports = extract_imports_from_statements(&ret.program.body);
+        let source = IndexedSource::new(source);
         let mut owners = Vec::new();
         for stmt in &ret.program.body {
-            owners.extend(owners_from_statement(stmt, file, source, &imports));
+            owners.extend(owners_from_statement(stmt, file, &source, &imports));
         }
-        let entries = module_entries_by_owner(&ret.program.body, source);
+        let entries = module_entries_by_owner(&ret.program.body, &source);
         for owner in &mut owners {
             if owner.class_name.is_none()
                 && owner.owner_kind != OwnerKind::ModuleFunction
@@ -36,7 +37,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
 pub(crate) fn owners_from_statement(
     stmt: &Statement<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     if let Statement::FunctionDeclaration(func) = stmt
@@ -72,7 +73,7 @@ pub(crate) fn owners_from_statement(
 pub(crate) fn owners_from_statement_declaration(
     stmt: &Statement<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     match stmt {
@@ -87,7 +88,7 @@ pub(crate) fn owners_from_statement_declaration(
 pub(crate) fn owners_from_declaration(
     decl: &Declaration<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     match decl {
@@ -123,7 +124,7 @@ pub(crate) fn owners_from_declaration(
 pub(crate) fn owners_from_default_export(
     decl: &ExportDefaultDeclarationKind<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     let mut owners = match decl {
@@ -184,7 +185,7 @@ pub(crate) fn owners_from_default_export(
 pub(crate) fn owners_from_variable_declaration(
     decl: &VariableDeclaration<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     decl.declarations
@@ -196,7 +197,7 @@ pub(crate) fn owners_from_variable_declaration(
 pub(crate) fn owner_from_variable_declarator(
     declarator: &VariableDeclarator<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     imports: &[TypeScriptImport],
 ) -> Option<TypeScriptOwner> {
     let name = binding_identifier_name(&declarator.id)?;
@@ -223,8 +224,8 @@ pub(crate) fn owner_from_variable_declarator(
         _ => Some(TypeScriptOwner {
             name: name.to_string(),
             file: file.to_path_buf(),
-            start_line: line_for_offset(source, declarator.span.start as usize),
-            end_line: line_for_offset(source, declarator.span.end as usize),
+            start_line: source.line(declarator.span.start as usize),
+            end_line: source.line(declarator.span.end as usize),
             owner_kind: OwnerKind::ModuleFunction,
             class_name: None,
             decorated: false,
@@ -265,7 +266,7 @@ fn parameter_facts(params: &FormalParameters<'_>) -> (Option<usize>, Vec<String>
 
 pub(crate) fn owner_from_function(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     name: &str,
     func: &Function<'_>,
     owner_kind: OwnerKind,
@@ -276,8 +277,8 @@ pub(crate) fn owner_from_function(
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
-        start_line: line_for_offset(source, func.span.start as usize),
-        end_line: line_for_offset(source, func.span.end as usize),
+        start_line: source.line(func.span.start as usize),
+        end_line: source.line(func.span.end as usize),
         owner_kind,
         class_name: None,
         decorated,
@@ -294,7 +295,7 @@ pub(crate) fn owner_from_function(
 
 pub(crate) fn owner_from_arrow(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     name: &str,
     arrow: &ArrowFunctionExpression<'_>,
     owner_start: u32,
@@ -305,8 +306,8 @@ pub(crate) fn owner_from_arrow(
     TypeScriptOwner {
         name: name.to_string(),
         file: file.to_path_buf(),
-        start_line: line_for_offset(source, owner_start as usize),
-        end_line: line_for_offset(source, arrow.span.end as usize),
+        start_line: source.line(owner_start as usize),
+        end_line: source.line(arrow.span.end as usize),
         owner_kind: arrow_owner_kind(file, source, name, arrow.span.start, arrow.span.end),
         class_name: None,
         decorated,
@@ -324,7 +325,7 @@ pub(crate) fn owner_from_arrow(
 pub(crate) fn owners_from_class(
     class: &Class<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     imports: &[TypeScriptImport],
 ) -> Vec<TypeScriptOwner> {
     let mut owners = Vec::new();
@@ -353,7 +354,7 @@ pub(crate) fn owners_from_class(
 pub(crate) fn owner_from_method(
     method: &MethodDefinition<'_>,
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     class_decorated: bool,
     class_name: Option<&str>,
     imports: &[TypeScriptImport],
@@ -366,8 +367,8 @@ pub(crate) fn owner_from_method(
     Some(TypeScriptOwner {
         name,
         file: file.to_path_buf(),
-        start_line: line_for_offset(source, method.span.start as usize),
-        end_line: line_for_offset(source, method.span.end as usize),
+        start_line: source.line(method.span.start as usize),
+        end_line: source.line(method.span.end as usize),
         owner_kind: if method.r#static {
             OwnerKind::ClassMethod
         } else {
@@ -722,7 +723,7 @@ pub(crate) fn detect_owner_extraction_gap(
             // Parse-error disclosure owns this case; do not double-report.
             return None;
         }
-        find_owner_extraction_gap(&ret.program.body, source, &changed)
+        find_owner_extraction_gap(&ret.program.body, &IndexedSource::new(source), &changed)
     }) else {
         return None;
     };
@@ -746,6 +747,7 @@ pub(crate) fn ambient_declaration_lines(file: &Path, source: &str) -> Vec<(usize
         if !ret.errors.is_empty() {
             return Vec::new();
         }
+        let source = IndexedSource::new(source);
         ret.program
             .body
             .iter()
@@ -761,8 +763,8 @@ pub(crate) fn ambient_declaration_lines(file: &Path, source: &str) -> Vec<(usize
             .map(|stmt| {
                 let span = stmt.span();
                 (
-                    line_for_offset(source, span.start as usize),
-                    line_for_offset(source, span.end as usize),
+                    source.line(span.start as usize),
+                    source.line(span.end as usize),
                 )
             })
             .collect()
@@ -774,7 +776,7 @@ pub(crate) fn ambient_declaration_lines(file: &Path, source: &str) -> Vec<(usize
 /// changed line. Returns `(sample_line, shape, (span_start, span_end))`.
 fn find_owner_extraction_gap(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
-    source: &str,
+    source: &IndexedSource<'_>,
     changed: &std::collections::HashSet<usize>,
 ) -> Option<(usize, &'static str, (usize, usize))> {
     for stmt in statements {
@@ -845,7 +847,7 @@ fn find_owner_extraction_gap(
 /// skips, returning the first one that intersects a changed line.
 fn unsupported_class_element_gap(
     class: &Class<'_>,
-    source: &str,
+    source: &IndexedSource<'_>,
     changed: &std::collections::HashSet<usize>,
 ) -> Option<(usize, &'static str, (usize, usize))> {
     for element in &class.body.body {
@@ -886,11 +888,11 @@ fn unsupported_class_element_gap(
 /// First changed line inside `span`'s line range, if any.
 fn span_hits_changed_line(
     span: impl GetSpan,
-    source: &str,
+    source: &IndexedSource<'_>,
     changed: &std::collections::HashSet<usize>,
 ) -> Option<usize> {
     let span = span.span();
-    let start_line = line_for_offset(source, span.start as usize);
-    let end_line = line_for_offset(source, span.end as usize);
+    let start_line = source.line(span.start as usize);
+    let end_line = source.line(span.end as usize);
     (start_line..=end_line).find(|line| changed.contains(line))
 }

@@ -11,6 +11,7 @@ use super::{
     PythonImport, PythonOwner, PythonParameter, PythonTest, collect_assertions_from_statements,
     expr_full_name, first_parenthesized_string_argument,
 };
+use crate::analysis::language::IndexedSource;
 use crate::domain::OwnerKind;
 use rustpython_parser::{
     ast::{self, Expr, Ranged, Stmt},
@@ -25,7 +26,7 @@ pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
 
 pub(super) fn collect_owners_from_statements(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
     imports: &[PythonImport],
@@ -99,7 +100,7 @@ pub(super) fn collect_owners_from_statements(
 #[derive(Clone, Copy)]
 struct PythonOwnerContext<'a> {
     file: &'a Path,
-    source: &'a str,
+    source: &'a IndexedSource<'a>,
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
     module_constants: &'a [PythonModuleConstant],
@@ -207,7 +208,7 @@ fn owner_from_class(
 
 pub(super) fn module_owner(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     range: TextRange,
     imports: &[PythonImport],
 ) -> PythonOwner {
@@ -239,7 +240,7 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
 /// Custom collection prefixes and hooks are not resolved here.
 pub(super) fn collect_tests_from_statements(
     file: &Path,
-    source: &str,
+    source: &IndexedSource<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
     in_unittest_class: bool,
