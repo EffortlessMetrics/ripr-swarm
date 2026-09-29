@@ -244,7 +244,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// before parsing, so those files move to lexical fallback with a typed
 /// `rust_nesting_budget` reason. Old classified entries would serve
 /// parser-backed classification for files the current parser path refuses.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.15";
+/// `1.15` -> `1.16`: full classified evidence may carry a producer-owned
+/// Integration new-test proposal (#4576). Old classified entries would hide
+/// a now-admitted `Proposed` target.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.16";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -291,7 +294,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.15";
 /// transition as the outer classified-seam cache.
 /// `0.20` -> `0.21`: Rust nesting budget refusal — same semantic
 /// transition as the outer classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.21";
+/// `0.21` -> `0.22`: full classified evidence may carry a producer-owned
+/// Integration new-test proposal (#4576) — same semantic transition as
+/// the outer classified-seam cache. Compact evidence stays empty, so the
+/// compact generation does not move.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.22";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -3236,7 +3243,10 @@ mod tests {
         // 1.14 -> 1.15: the Rust nesting budget moves over-deep sources to
         // lexical fallback, so classified seams derived from their old
         // parser-backed facts must miss.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.15");
+        // 1.15 -> 1.16: full classified evidence may carry a producer-owned
+        // Integration new-test proposal (#4576); a warm 1.15 hit would hide
+        // Proposed targets.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.16");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3250,7 +3260,9 @@ mod tests {
         // resolution — same semantic transition as the outer cache.
         // 0.21 (sharded) / 0.22 (compact): Rust nesting budget refusal —
         // same semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.21");
+        // 0.22 (sharded) / 0.22 (compact): #4576 Integration proposals
+        // persist on full classified evidence only; compact stays empty.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.22");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.22");
     }
 
@@ -3336,6 +3348,7 @@ mod tests {
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "discriminate"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,

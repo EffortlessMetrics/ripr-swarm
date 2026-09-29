@@ -2531,6 +2531,7 @@ mod seam_diagnostic_tests {
             discriminate: stage(StageState::Weak),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,

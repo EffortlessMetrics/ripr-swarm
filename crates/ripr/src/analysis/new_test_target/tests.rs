@@ -1,9 +1,9 @@
+use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::{
     NewTestKind, NewTestProposalProvenance, RepairTargetSelection, repair_route_readiness,
 };
 use crate::analysis::seam_inventory::inventory_classified_seams_at;
 use crate::analysis::seams::SeamKind;
-use crate::analysis::ClassifiedSeam;
 use crate::app::repair_attempt::edit_cage_policy_from_packet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,10 +22,8 @@ fn claim_root(label: &str) -> Result<FixtureRoot, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "ripr-4576-{label}-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("ripr-4576-{label}-{}-{stamp}", std::process::id()));
     fs::create_dir_all(&root).map_err(|error| format!("create fixture root: {error}"))?;
     Ok(FixtureRoot(root))
 }
@@ -33,7 +31,8 @@ fn claim_root(label: &str) -> Result<FixtureRoot, String> {
 fn write_file(root: &Path, relative: &str, contents: &str) -> Result<(), String> {
     let path = root.join(relative);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
     }
     fs::write(&path, contents).map_err(|error| format!("write {relative}: {error}"))
 }
@@ -68,7 +67,11 @@ fn crate_compiles() {
 "#
 }
 
-fn write_ordinary_package(root: &Path, package: &str, autotests: Option<bool>) -> Result<(), String> {
+fn write_ordinary_package(
+    root: &Path,
+    package: &str,
+    autotests: Option<bool>,
+) -> Result<(), String> {
     let autotests_line = match autotests {
         Some(value) => format!("autotests = {value}\n"),
         None => String::new(),
@@ -145,11 +148,16 @@ fn public_library_with_established_tests_layout_earns_integration_proposal() -> 
         ));
     }
     if proposal.owner.contains("discounted_total") == false {
-        return Err(format!("proposal owner missed the public item: {}", proposal.owner));
+        return Err(format!(
+            "proposal owner missed the public item: {}",
+            proposal.owner
+        ));
     }
     let file = proposal.file.to_string_lossy().replace('\\', "/");
     if !file.starts_with("tests/") || !file.ends_with(".rs") {
-        return Err(format!("proposed file is not a new tests/ integration file: {file}"));
+        return Err(format!(
+            "proposed file is not a new tests/ integration file: {file}"
+        ));
     }
     if root.0.join(&proposal.file).exists() {
         return Err(format!("proposal named an already-existing file: {file}"));
@@ -160,8 +168,8 @@ fn public_library_with_established_tests_layout_earns_integration_proposal() -> 
     if !readiness.is_repair_ready() {
         return Err(format!("proposal route was not ready: {readiness:?}"));
     }
-    let serialized = serde_json::to_string(proposal)
-        .map_err(|error| format!("serialize proposal: {error}"))?;
+    let serialized =
+        serde_json::to_string(proposal).map_err(|error| format!("serialize proposal: {error}"))?;
     if serialized.contains("amount - 10") || serialized.contains("assert_eq") {
         return Err(format!(
             "proposal invented an expected value or test body: {serialized}"
@@ -305,7 +313,12 @@ fn multi_package_workspace_selects_the_owner_package() -> Result<(), String> {
         .iter()
         .find(|entry| {
             entry.seam.kind() == SeamKind::PredicateBoundary
-                && entry.seam.file().to_string_lossy().replace('\\', "/").starts_with("alpha/")
+                && entry
+                    .seam
+                    .file()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .starts_with("alpha/")
                 && entry.seam.owner().contains("discounted_total")
         })
         .ok_or_else(|| "expected alpha discounted_total seam".to_string())?;
@@ -332,7 +345,11 @@ fn external_new_file_binds_to_the_original_proposal() -> Result<(), String> {
     let before_readiness = repair_route_readiness(before_entry);
     let proposed = match &before_readiness.target_selection {
         RepairTargetSelection::Proposed(proposal) => proposal.file.clone(),
-        other => return Err(format!("expected a proposal before the edit, got {other:?}")),
+        other => {
+            return Err(format!(
+                "expected a proposal before the edit, got {other:?}"
+            ));
+        }
     };
     if root.0.join(&proposed).exists() {
         return Err("proposal file already existed before the external edit".to_string());
@@ -356,7 +373,9 @@ fn discounted_total_at_threshold() {
             let file = target.file().to_string_lossy().replace('\\', "/");
             let expected = proposed.to_string_lossy().replace('\\', "/");
             if file != expected {
-                return Err(format!("after-edit Existing {file} did not bind {expected}"));
+                return Err(format!(
+                    "after-edit Existing {file} did not bind {expected}"
+                ));
             }
         }
         other => {

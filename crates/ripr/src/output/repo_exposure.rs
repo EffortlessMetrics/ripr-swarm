@@ -1117,6 +1117,7 @@ mod tests {
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,

@@ -11,12 +11,20 @@
 //! actionability flip is fail-closed and every ineligible state carries a
 //! typed reason.
 
+use super::new_test_target::NewTestTargetAdmission;
 use super::seam_classification::ClassifiedSeam;
 use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
-use std::path::PathBuf;
+
+#[expect(
+    unused_imports,
+    reason = "re-export producer-owned proposal types for repair-route consumers"
+)]
+pub(crate) use super::new_test_target::{
+    NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
+};
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
     "analysis/producer-owned-repair-route-readiness";
@@ -35,48 +43,14 @@ pub(crate) enum RepairRouteState {
 /// The producer-owned choice of where a test-only repair may land.
 ///
 /// `Missing` is deliberate: a related-test summary, a path, or a renderer
-/// heuristic is not permission to edit that location. New-test proposals are
-/// represented explicitly so a future producer can supply them without
-/// overloading an existing-test identity.
-#[allow(
-    dead_code,
-    reason = "reserved typed target proposal variants await a RustIndex proposal producer"
-)]
+/// heuristic is not permission to edit that location. `Proposed` is a
+/// producer-owned new integration file, not an existing-test identity.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RepairTargetSelection {
     Existing(TestTargetEvidence),
     Proposed(NewTestTargetProposal),
     Missing,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-pub(crate) struct NewTestTargetProposal {
-    pub(crate) kind: NewTestKind,
-    pub(crate) file: PathBuf,
-    pub(crate) owner: String,
-    pub(crate) provenance: NewTestProposalProvenance,
-}
-
-#[allow(
-    dead_code,
-    reason = "reserved typed new-test kinds await a RustIndex proposal producer"
-)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum NewTestKind {
-    InlineUnit,
-    Integration,
-}
-
-#[allow(
-    dead_code,
-    reason = "reserved typed proposal provenance awaits a RustIndex proposal producer"
-)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum NewTestProposalProvenance {
-    ProducerOwned,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -258,9 +232,9 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     ];
     let has_discriminator = has_exact_discriminator(seam, evidence);
     let selected_test_target = existing_test_target(evidence, false);
-    // No related test is not evidence of a safe new-test location. A future
-    // producer may populate `Proposed`; until then the target is Missing.
-    let has_safe_target = selected_test_target.is_some();
+    let admission = evidence.new_test_target.as_ref();
+    let target_selection = value_target_selection(selected_test_target.as_ref(), admission);
+    let has_safe_target = !matches!(target_selection, RepairTargetSelection::Missing);
     let state = if has_discriminator && has_safe_target {
         RepairRouteState::Ready
     } else {
@@ -272,6 +246,9 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     }
     if has_safe_target {
         present_evidence.push(SAFE_TEST_TARGET_EVIDENCE.to_string());
+        if matches!(target_selection, RepairTargetSelection::Proposed(_)) {
+            present_evidence.push(NewTestTargetAdmission::present_reason().to_string());
+        }
     }
     let mut missing_evidence = Vec::new();
     if !has_discriminator {
@@ -279,6 +256,9 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     }
     if !has_safe_target {
         missing_evidence.push(SAFE_TEST_TARGET_EVIDENCE.to_string());
+        if let Some(reason) = admission.and_then(NewTestTargetAdmission::missing_reason) {
+            missing_evidence.push(reason);
+        }
     }
     RepairRouteReadiness {
         state,
@@ -287,10 +267,7 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
         required_evidence: required,
         present_evidence,
         missing_evidence,
-        target_selection: selected_test_target
-            .clone()
-            .map(RepairTargetSelection::Existing)
-            .unwrap_or(RepairTargetSelection::Missing),
+        target_selection,
         test_target: selected_test_target,
         proposed_oracle: Some(oracle_for_seam(seam.kind())),
         current_oracle: current_oracle(evidence, false, true),
@@ -517,9 +494,10 @@ fn fact_discriminator_key(
                     right,
                 });
             }
-            let right = fact
-                .trim()
+            let trimmed = fact.trim();
+            let right = trimmed
                 .strip_suffix(" (equality boundary)")
+                .or_else(|| trimmed.strip_suffix(" (boundary value)"))
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(normalize_discriminator_text)?;
@@ -570,6 +548,19 @@ fn direct_owner_related_test_with_target(evidence: &TestGripEvidence) -> Option<
         test.relation_reason == crate::domain::RelationReason::DirectOwnerCall
             && test.test_target.is_some()
     })
+}
+
+fn value_target_selection(
+    existing: Option<&TestTargetEvidence>,
+    admission: Option<&NewTestTargetAdmission>,
+) -> RepairTargetSelection {
+    if let Some(existing) = existing {
+        return RepairTargetSelection::Existing(existing.clone());
+    }
+    if let Some(proposal) = admission.and_then(|admission| admission.proposal.clone()) {
+        return RepairTargetSelection::Proposed(proposal);
+    }
+    RepairTargetSelection::Missing
 }
 
 fn existing_test_target(
@@ -869,6 +860,7 @@ mod tests {
                     reason: "observed values do not include the equality-boundary case".to_string(),
                     flow_sink: None,
                 }],
+                new_test_target: None,
             },
             class,
         }

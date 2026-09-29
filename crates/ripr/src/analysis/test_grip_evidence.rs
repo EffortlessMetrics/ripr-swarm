@@ -22,6 +22,7 @@ use related_tests::{
 };
 
 use super::facts::CallFact;
+use super::new_test_target::{self, NewTestTargetAdmission};
 use super::rust_index::{
     self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
     extract_identifier_tokens,
@@ -52,6 +53,11 @@ pub(crate) struct TestGripEvidence {
     pub(crate) discriminate: StageEvidence,
     pub(crate) observed_values: Vec<ValueFact>,
     pub(crate) missing_discriminators: Vec<MissingDiscriminatorFact>,
+    /// Producer-owned Integration proposal or the typed blocker that kept
+    /// the target `Missing`. Compact evidence leaves this empty so the
+    /// compact classified-seam cache does not need a generation bump.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) new_test_target: Option<NewTestTargetAdmission>,
 }
 
 const COMPACT_RELATED_TEST_LIMIT: usize = 12;
@@ -271,6 +277,7 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context))
         .collect();
+    let new_test_target = new_test_target_admission(seam, context.index, &related_tests);
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -282,6 +289,25 @@ fn evidence_for_seam_with_context(
         discriminate,
         observed_values,
         missing_discriminators,
+        new_test_target,
+    }
+}
+
+fn new_test_target_admission(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    related_tests: &[RelatedTestGrip],
+) -> Option<NewTestTargetAdmission> {
+    if related_tests.iter().any(|test| test.test_target.is_some()) {
+        return None;
+    }
+    match seam.kind() {
+        SeamKind::PredicateBoundary
+        | SeamKind::ErrorVariant
+        | SeamKind::ReturnValue
+        | SeamKind::FieldConstruction
+        | SeamKind::MatchArm => Some(new_test_target::admit_new_integration_test(seam, index)),
+        SeamKind::SideEffect | SeamKind::CallPresence => None,
     }
 }
 
@@ -327,6 +353,7 @@ pub(crate) fn compact_evidence_for_seam(
         discriminate,
         observed_values: Vec::new(),
         missing_discriminators,
+        new_test_target: None,
     }
 }
 

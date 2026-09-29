@@ -12324,6 +12324,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 reason: "observed values skip equality boundary".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         },
         class: SeamGripClass::WeaklyGripped,
     }
@@ -12360,6 +12361,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         class: SeamGripClass::Ungripped,
     }
