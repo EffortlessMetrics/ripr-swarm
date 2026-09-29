@@ -1,4 +1,5 @@
 mod payload;
+mod producer;
 
 use std::fs;
 use std::io::Read;
@@ -32,7 +33,15 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     fs::create_dir_all(dist_dir)
         .map_err(|err| format!("failed to create {}: {err}", dist_dir.display()))?;
 
+    let producer = producer::build_release_executable(&version, &target, &executable)?;
     let staged = payload::stage_final_native_payload(&version, &target, &executable, &archive)?;
+    producer::bind_to_payload_identity(&producer, &staged.identity)?;
+    let payload_root = staged
+        .identity_json
+        .parent()
+        .ok_or_else(|| "payload identity path has no parent directory".to_string())?;
+    let producer_receipt = producer::write_receipt(payload_root, &producer)?;
+    let producer_receipt_sha256 = sha256_file(&producer_receipt)?;
     let identity_sha256 = payload::payload_identity_sha256(&staged)?;
 
     let asset_path = dist_dir.join(&asset_name);
@@ -64,11 +73,13 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     eprintln!("wrote {}", asset_path.display());
     eprintln!("wrote {}", staged.identity_json.display());
     eprintln!("wrote {}", staged.identity_markdown.display());
+    eprintln!("wrote {}", producer_receipt.display());
     eprintln!(
         "final native payload aggregate SHA-256: {}",
         staged.identity.payload_aggregate_sha256
     );
     eprintln!("final native payload identity SHA-256: {identity_sha256}");
+    eprintln!("producer build receipt SHA-256: {producer_receipt_sha256}");
     Ok(())
 }
 
@@ -361,13 +372,11 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
             options.unix_permissions(0o755)
         } else if metadata.permissions().readonly() {
             options
-        } else {
+        } else if !file_name.contains('.') {
             // Best-effort executable bit for Unix-style binaries (ripr) without an extension.
-            if !file_name.contains('.') {
-                options.unix_permissions(0o755)
-            } else {
-                options
-            }
+            options.unix_permissions(0o755)
+        } else {
+            options
         };
         writer
             .start_file(&file_name, entry_options)
