@@ -180,6 +180,12 @@ the stream: the unannotated-denominator notice (suppressed or not-current
 findings) and, when any level exceeds 10, a notice naming how many annotations
 of that level were emitted. Per-finding annotations follow.
 
+When the producer-owned `analysis_outcome` is not complete (for example
+`unsupported_input` or `partial_with_limitations`), the stream starts with a
+`ripr analysis incomplete` warning naming the outcome kind and each limitation
+with its recovery, and the clean `No static exposure findings found` notice is
+not printed.
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
@@ -9687,7 +9693,8 @@ ripr policy history \
   --commit HEAD \
   --pr-number 123 \
   --out target/ripr/reports/policy-history.json \
-  --out-md target/ripr/reports/policy-history.md
+  --out-md target/ripr/reports/policy-history.md \
+  --out-jsonl .ripr/policy-history.jsonl
 ```
 
 The report writes:
@@ -9697,11 +9704,18 @@ target/ripr/reports/policy-history.json
 target/ripr/reports/policy-history.md
 ```
 
-This report is advisory policy trend evidence. It does not append to
-`.ripr/policy-history.jsonl`, execute gates, collect telemetry, mutate config,
-baselines, suppressions, workflows, branch protection, generated CI defaults,
-or source files, promote preview-language evidence, run analysis, generate
-tests, call providers, post comments, or run mutation testing.
+`--out-jsonl PATH` is the opt-in producer. Each run appends one compact JSON
+line matching `example_append_record` (the current snapshot object, not the
+full trend report). Generated CI never passes `--out-jsonl` and never
+auto-commits `.ripr/policy-history.jsonl`. Adopt the file by committing it
+yourself, or keep supplying it from an external store.
+
+This report is advisory policy trend evidence. The default write path does not
+append to `.ripr/policy-history.jsonl`. The command does not execute gates,
+collect telemetry, mutate config, baselines, suppressions, workflows, branch
+protection, generated CI defaults, or source files, promote preview-language
+evidence, run analysis, generate tests, call providers, post comments, or run
+mutation testing.
 
 JSON shape:
 
@@ -9804,7 +9818,7 @@ JSON shape:
       "status": "missing"
     }
   ],
-  "limits_note": "Read-only advisory policy history report. It reads explicit history inputs and never appends, mutates policy, or changes gate authority."
+  "limits_note": "Read-only advisory policy history report. It reads explicit history inputs and does not mutate policy or change gate authority. Default execution and generated CI do not append history; `--out-jsonl` is the opt-in producer."
 }
 ```
 
@@ -10451,7 +10465,8 @@ ripr pr-ledger record \
   --coverage target/ripr/reports/coverage-summary.json \
   --history .ripr/pr-evidence-ledger.jsonl \
   --out target/ripr/reports/pr-evidence-ledger.json \
-  --out-md target/ripr/reports/pr-evidence-ledger.md
+  --out-md target/ripr/reports/pr-evidence-ledger.md \
+  --out-jsonl .ripr/pr-evidence-ledger.jsonl
 ```
 
 The report writes:
@@ -10460,6 +10475,12 @@ The report writes:
 target/ripr/reports/pr-evidence-ledger.json
 target/ripr/reports/pr-evidence-ledger.md
 ```
+
+`--out-jsonl PATH` is the opt-in producer. Each run appends one compact JSON
+line: the same record object as `--out`, without pretty-print newlines.
+Generated CI reads `.ripr/pr-evidence-ledger.jsonl` when that file exists and
+never passes `--out-jsonl` or auto-commits the ledger. Adopt the file by
+committing it yourself, or keep supplying it from an external store.
 
 This report is advisory history. `ripr gate evaluate` remains the pass/fail
 authority for configured gate modes. Generated GitHub CI runs
@@ -12031,6 +12052,7 @@ JSON shape:
   "schema_version": "0.1",
   "tool": "ripr",
   "kind": "first_pr_start_here",
+  "ripr_version": "0.11.0",
   "status": "blocked",
   "posture": "advisory",
   "root": ".",
@@ -12093,6 +12115,10 @@ Field contract:
 
 - `schema_version` is `0.1` until the packet shape changes.
 - `kind` is always `first_pr_start_here`.
+- `ripr_version` is the producing `ripr` package version. It is additive on
+  schema `0.1`. `first-pr --check` and `doctor` treat a missing or different
+  value as `stale_evidence` and print the refresh command. A packet without
+  this field is a pre-0.11 artifact, not a contract-invalid document.
 - `status` is `actionable`, `blocked`, or `no_action`. It is reviewer context
   only, not gate authority.
 - `posture` is always `advisory`.
@@ -14124,6 +14150,38 @@ Field contract:
   packet and is `null` for a repo-wide envelope containing multiple seams.
   These commands are advisory handoff instructions and do not execute a test,
   approve a patch, or authorize a merge.
+  Compound recipes use Bash-style quoting, directory creation, and redirects,
+  consistent with the structured workflow's `command_shell: "bash"`; they do
+  not establish PowerShell recipe compatibility. Read the structured workflow
+  for its shell contract before executing commands.
+  Explicit standalone per-seam CLI `agent packet` binds these `next` commands,
+  including directory creation, to the selected repository root.
+  Its optional `next.analysis_outcome_command` writes the static outcome
+  consumed by the receipt, between the after snapshot and verify steps.
+  Portable bulk/check-format wrappers omit this additive field and retain
+  their repository-local recipe; they are not a complete foreign-CWD receipt
+  workflow. GapRecord and editor routes are unchanged. Static receipt
+  completeness does not establish project-test execution.
+  The standalone manual recipe assumes a fresh workflow without retained
+  durable repair attempts. Resume a matching awaiting attempt through its
+  published exact `--attempt` selector. If none is awaiting for the selected
+  seam, begin a fresh durable Before route and preserve the retained attempts.
+  The receipt validator retains its existing attempt binding and can refuse an
+  incompatible manual recipe.
+  Per-packet canonical/evidence receipt commands and portable bulk output are
+  outside this `packet.next` root-binding claim (#4000 remains open).
+  A packet emitted by `agent repair --phase before` instead sets the manual
+  snapshot, outcome, verify, and receipt fields to `null` and advertises
+  `next.repair_after_command`. This selected-root command resumes the existing
+  durable repair route after the permitted focused edit, including the edit
+  cage, outcome, verify, after verdict, and receipt. The command pins the exact
+  `--attempt` identity also published in the manifest and stderr. A retained
+  packet for a finished attempt refuses that attempt instead of selecting a
+  later awaiting attempt for the same seam. Explicit legacy seam selection
+  still refuses multiple awaiting attempts. Trust-bound Python
+  continuations retain the required explicit authorization placeholders;
+  rendering the command does not grant authorization. Packet bytes remain
+  unchanged after publication.
 
 The packet is the agent's work order: it names the seam, the missing
 discriminator, the oracle shape, and either a producer-backed assertion
@@ -16624,7 +16682,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.11",
+    "schema_version": "1.12",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16635,7 +16693,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.17",
+      "schema_version": "1.18",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -16778,7 +16836,9 @@ matching-record index and do not hide other current scopes. The overall result
 is `limited` only when no current scope resolves. Missing, root-mismatched, or
 otherwise unresolved selectors emit `state: "limited"`, an empty `seams` array,
 and a named `limitation` such as `canonical_gap_unresolved` or
-`stale_gap_ledger`. They never fall back to an unrelated workspace scan.
+`stale_gap_ledger`. They never fall back to an unrelated workspace scan. A
+`--gap-ledger` that cannot be read or parsed is not a limitation: the command
+exits 2 without a report, as it does for an unreadable `--changed-test`.
 
 Both selectors reuse valid file facts but recompute the selected evidence. A
 `canonical_gap_id` is domain-supplied and nullable; it is never derived from a
