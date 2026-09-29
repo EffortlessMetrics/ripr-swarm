@@ -154,7 +154,8 @@ impl SpawnSite {
     /// Windows refuses the same root through `-C` (even with
     /// `core.longpaths`), through `GIT_DIR` (`'$GIT_DIR' too big`), and
     /// through a short junction, because it resolves the junction back to the
-    /// long root before its work-tree commands. So that one case leads with
+    /// long root before its work-tree commands (probe table on #4350,
+    /// issuecomment-5881212067). So that one case leads with
     /// the limit and the remedy, ahead of the long invocation text that
     /// bounded LSP status messages would otherwise truncate it behind.
     fn failure_message(&self, describe: &str, err: &std::io::Error) -> String {
