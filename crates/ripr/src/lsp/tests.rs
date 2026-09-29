@@ -13563,7 +13563,7 @@ fn execute_command_context_commands_reject_unreadable_arguments_with_shapes() ->
             (
                 COLLECT_CONTEXT_COMMAND,
                 vec![serde_json::json!({"finding_id": "   "})],
-                "`finding_id` must be a non-empty string when present, got a blank string",
+                "one of `gap_id`, `seam_id`, `finding_id`",
             ),
             (
                 COLLECT_EVIDENCE_CONTEXT_COMMAND,
@@ -13630,9 +13630,9 @@ async fn expect_invalid_params(
     }
 }
 
-/// A present `gap_id` that is not a non-empty string is the caller's fault
-/// and is reported under `gap_id`, even when a `seam_id` is also present:
-/// the handler looks `gap_id` up first, so blaming `seam_id` named the wrong
+/// A present `gap_id` that is not a string is the caller's fault and is
+/// reported under `gap_id`, even when a `seam_id` is also present: the
+/// handler looks `gap_id` up first, so blaming `seam_id` named the wrong
 /// field.
 #[test]
 fn execute_command_collect_context_rejects_malformed_gap_id_naming_gap_id() -> Result<(), String> {
@@ -13646,21 +13646,24 @@ fn execute_command_collect_context_rejects_malformed_gap_id_naming_gap_id() -> R
         seed_successful_snapshot(backend)?;
         let cases = [
             (
-                serde_json::json!({"gap_id": "", "seam_id": "seam:src/lib.rs:1"}),
-                "a blank string",
+                serde_json::json!({"gap_id": 42, "seam_id": "seam:src/lib.rs:1"}),
+                "a number",
             ),
             (
-                serde_json::json!({"gap_id": "   ", "finding_id": "probe:src/lib.rs:1:predicate"}),
-                "a blank string",
+                serde_json::json!({"gap_id": false, "finding_id": "probe:src/lib.rs:1:predicate"}),
+                "a boolean",
             ),
-            (serde_json::json!({"gap_id": 42}), "a number"),
+            (
+                serde_json::json!({"gap_id": {"id": "gap:rust:x"}}),
+                "an object",
+            ),
         ];
         for (argument, got) in cases {
             let error =
                 expect_invalid_params(backend, COLLECT_CONTEXT_COMMAND, argument.clone()).await?;
             assert!(
                 error.message.contains(&format!(
-                    "`gap_id` must be a non-empty string when present, got {got}"
+                    "`gap_id` must be a string when present, got {got}"
                 )),
                 "{argument}: error must name `gap_id` and what was expected: {}",
                 error.message
@@ -13676,8 +13679,8 @@ fn execute_command_collect_context_rejects_malformed_gap_id_naming_gap_id() -> R
 }
 
 /// Positive controls for the context target: a valid `gap_id` is still the
-/// looked-up target, and a JSON `null` `gap_id` counts as absent so the next
-/// key in precedence order is used, as before.
+/// looked-up target, and a JSON `null` or blank `gap_id` counts as absent so
+/// the next key in precedence order is used, as before.
 #[test]
 fn execute_command_collect_context_valid_or_null_gap_id_keeps_target() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -13714,6 +13717,19 @@ fn execute_command_collect_context_valid_or_null_gap_id_keeps_target() -> Result
                 "`finding_id` `probe:unknown:1:predicate` is not in the current analysis snapshot"
             ),
             "a null gap_id must be treated as absent: {}",
+            error.message
+        );
+        let error = expect_invalid_params(
+            backend,
+            COLLECT_CONTEXT_COMMAND,
+            serde_json::json!({"gap_id": "  ", "finding_id": "probe:unknown:1:predicate"}),
+        )
+        .await?;
+        assert!(
+            error.message.contains(
+                "`finding_id` `probe:unknown:1:predicate` is not in the current analysis snapshot"
+            ),
+            "a blank gap_id must be treated as absent: {}",
             error.message
         );
         Ok(())
@@ -14704,8 +14720,8 @@ fn execute_command_collect_repair_packet_incomplete_gap_returns_sentinel() -> Re
     })
 }
 
-/// A present `gap_id` that is not a non-empty string must be rejected, not
-/// silently dropped: dropping it answered a request for one gap with the top
+/// A present `gap_id` that is not a string must be rejected, not silently
+/// dropped: dropping it answered a request for one gap with the top
 /// gap's packet, a wrong actionable signal. The fixture holds a complete top
 /// packet so a fall-through would visibly succeed.
 #[test]
@@ -14723,8 +14739,7 @@ fn execute_command_collect_repair_packet_rejects_malformed_gap_id() -> Result<()
         seed_successful_snapshot(backend)?;
         let cases = [
             (serde_json::json!({"gap_id": 42}), "a number"),
-            (serde_json::json!({"gap_id": " "}), "a blank string"),
-            (serde_json::json!({"gap_id": ""}), "a blank string"),
+            (serde_json::json!({"gap_id": true}), "a boolean"),
             (
                 serde_json::json!({"gap_id": ["gap:rust:pricing-boundary"]}),
                 "an array",
@@ -14736,7 +14751,7 @@ fn execute_command_collect_repair_packet_rejects_malformed_gap_id() -> Result<()
                     .await?;
             assert!(
                 error.message.contains(&format!(
-                    "`gap_id` must be a non-empty string when present, got {got}"
+                    "`gap_id` must be a string when present, got {got}"
                 )) && error.message.contains("no arguments for the top packet"),
                 "{argument}: error must name `gap_id`, the expectation, and the shapes: {}",
                 error.message
@@ -14746,9 +14761,10 @@ fn execute_command_collect_repair_packet_rejects_malformed_gap_id() -> Result<()
     })
 }
 
-/// Positive control: without a `gap_id` (no arguments, an empty object, or a
-/// null `gap_id`) the top packet is still returned, and a valid, padded
-/// `gap_id` still selects its packet.
+/// Positive control: without a `gap_id` (no arguments, an empty object, a
+/// null `gap_id`, or an empty or blank one, per RIPR-SPEC-0077) the top
+/// packet is still returned, and a valid, padded `gap_id` still selects its
+/// packet.
 #[test]
 fn execute_command_collect_repair_packet_absent_or_valid_gap_id_returns_packet()
 -> Result<(), String> {
@@ -14768,6 +14784,8 @@ fn execute_command_collect_repair_packet_absent_or_valid_gap_id_returns_packet()
             vec![serde_json::Value::Null],
             vec![serde_json::json!({})],
             vec![serde_json::json!({"gap_id": null})],
+            vec![serde_json::json!({"gap_id": ""})],
+            vec![serde_json::json!({"gap_id": "  "})],
             vec![serde_json::json!({"gap_id": " gap:rust:pricing-boundary "})],
         ];
         for arguments in cases {

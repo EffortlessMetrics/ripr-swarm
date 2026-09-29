@@ -4616,9 +4616,9 @@ fn context_command_target(
         )));
     };
     // Every present target key is validated before one is chosen, so a
-    // malformed higher-precedence id (`{"gap_id": "", "seam_id": "..."}`) is
-    // reported under its own name instead of being skipped for a later key
-    // the handler would not have used.
+    // mistyped higher-precedence id (`{"gap_id": 42, "seam_id": "..."}`) is
+    // reported under its own name instead of being skipped for a later key.
+    // A blank id counts as not given, so the next key is used.
     let mut target = None;
     for key in keys {
         if let Some(id) = optional_id_argument(command, args, key, shapes)?
@@ -4636,12 +4636,13 @@ fn context_command_target(
     })
 }
 
-/// Reads one optional id argument of an agent command. An absent key or a
-/// JSON `null` is `Ok(None)`; a present value must be a string that is not
-/// empty after trimming, otherwise the call is rejected with InvalidParams
-/// naming the field. A malformed id must never fall through to a different
-/// target (such as the top repair packet): answering a request for one gap
-/// with another gap's packet is a wrong actionable signal.
+/// Reads one optional id argument of an agent command. An absent key, a
+/// JSON `null`, or a string that is empty after trimming is `Ok(None)`: the
+/// id was not given (RIPR-SPEC-0077: an absent or empty `gap_id` selects the
+/// top gap). Any other non-string value is rejected with InvalidParams naming
+/// the field. A mistyped id must never fall through to a different target
+/// (such as the top repair packet): answering a request for one gap with
+/// another gap's packet is a wrong actionable signal.
 fn optional_id_argument<'a>(
     command: &str,
     args: &'a serde_json::Map<String, serde_json::Value>,
@@ -4650,15 +4651,15 @@ fn optional_id_argument<'a>(
 ) -> LspResult<Option<&'a str>> {
     let found = match args.get(key) {
         None | Some(serde_json::Value::Null) => return Ok(None),
-        Some(serde_json::Value::String(id)) if !id.trim().is_empty() => return Ok(Some(id)),
-        Some(serde_json::Value::String(_)) => "a blank string",
+        Some(serde_json::Value::String(id)) if id.trim().is_empty() => return Ok(None),
+        Some(serde_json::Value::String(id)) => return Ok(Some(id)),
         Some(serde_json::Value::Bool(_)) => "a boolean",
         Some(serde_json::Value::Number(_)) => "a number",
         Some(serde_json::Value::Array(_)) => "an array",
         Some(serde_json::Value::Object(_)) => "an object",
     };
     Err(LspError::invalid_params(format!(
-        "`{command}`: `{key}` must be a non-empty string when present, got {found}; \
+        "`{command}`: `{key}` must be a string when present, got {found}; \
 it expects {shapes}"
     )))
 }
