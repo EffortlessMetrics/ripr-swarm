@@ -40,10 +40,12 @@ pub(crate) enum RepairRouteState {
 ///
 /// `Missing` is deliberate: a related-test summary, a path, or a renderer
 /// heuristic is not permission to edit that location. Ranking prefers an
-/// admitted `Existing` target. When related tests are present but none are
-/// admitted, the selection stays `Missing` rather than inventing a new test.
-/// `Proposed` is a producer-owned new Integration or InlineUnit target for a
-/// seam with no related observer yet, not an existing-test identity.
+/// admitted `Existing` target. A DirectOwnerCall related test that failed
+/// target admission stays `Missing` rather than inventing a new test.
+/// Advisory observers (`SameModule`, `WeakTokenSubstring`,
+/// `ImportPathAffinity`) do not occupy that slot: a producer-owned
+/// `Proposed` Integration or InlineUnit remains eligible when no suitable
+/// existing target was admitted. `Proposed` is not an existing-test identity.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RepairTargetSelection {
@@ -563,10 +565,14 @@ fn value_target_selection(
     if let Some(existing) = existing {
         return RepairTargetSelection::Existing(existing.clone());
     }
-    // A related observer that failed target admission occupies the existing-test
-    // slot. Falling through to Proposed would keep a repair packet after
-    // authority refused the test we already found.
-    if !related_tests.is_empty() {
+    // A DirectOwnerCall observer that failed target admission occupies the
+    // existing-test slot. Falling through to Proposed would keep a repair
+    // packet after authority refused the test we already found. Advisory
+    // relations never supplied a suitable Existing target, so they must not
+    // block an independently admitted producer-owned proposal.
+    if related_tests.iter().any(|test| {
+        test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_none()
+    }) {
         return RepairTargetSelection::Missing;
     }
     if let Some(proposal) = admission.and_then(|admission| admission.proposal.clone()) {
@@ -933,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn unadmitted_related_test_does_not_fall_through_to_proposed() -> Result<(), String> {
+    fn refused_direct_owner_target_does_not_fall_through_to_proposed() -> Result<(), String> {
         let mut related = rust_related_test(RelationReason::DirectOwnerCall);
         related.test_target = None;
         let mut entry =
@@ -944,7 +950,7 @@ mod tests {
             RepairTargetSelection::Missing => {}
             other => {
                 return Err(format!(
-                    "unadmitted related test must stay Missing, not fall through to {other:?}"
+                    "refused DirectOwnerCall must stay Missing, not fall through to {other:?}"
                 ));
             }
         }
@@ -952,6 +958,37 @@ mod tests {
             return Err(
                 "failed existing-target authority must not keep a repair packet".to_string(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn advisory_related_observer_does_not_block_producer_owned_proposal() -> Result<(), String> {
+        for reason in [
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SameModule,
+            RelationReason::ImportPathAffinity,
+        ] {
+            let mut related = rust_related_test(reason);
+            related.test_target = None;
+            let mut entry =
+                classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, vec![related]);
+            entry.evidence.new_test_target = Some(inline_unit_admission());
+            let eligibility = repair_packet_eligibility(&entry);
+            match &eligibility.readiness.target_selection {
+                RepairTargetSelection::Proposed(proposal)
+                    if proposal.kind == NewTestKind::InlineUnit => {}
+                other => {
+                    return Err(format!(
+                        "{reason:?}: advisory observer must not block Proposed, got {other:?}"
+                    ));
+                }
+            }
+            if !eligibility.eligible() || !eligibility.readiness.is_repair_ready() {
+                return Err(format!(
+                    "{reason:?}: independently admitted proposal must stay eligible"
+                ));
+            }
         }
         Ok(())
     }

@@ -170,7 +170,9 @@ pub(crate) fn admit_new_test_target(seam: &RepoSeam, index: &RustIndex) -> NewTe
 /// Admit one InlineUnit proposal from indexed source-role and parser-backed
 /// module facts. Callers that already have a related observer still invoke
 /// this so Missing reasons stay typed; ranking prefers an admitted Existing
-/// target, and an unadmitted related test stays Missing rather than Proposed.
+/// target, a refused DirectOwnerCall stays Missing rather than Proposed, and
+/// an advisory related observer does not block an independently admitted
+/// proposal.
 pub(crate) fn admit_new_inline_unit_test(
     seam: &RepoSeam,
     index: &RustIndex,

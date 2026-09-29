@@ -40,8 +40,9 @@ are scoped or reviewed.
   failed target authority, mutable field borrows, assertion-message-only
   field mentions, assertion-local shadows, same-name local or imported
   callees, and local callee bindings of the owner name stay non-ready.
-  A related test that failed target admission stays missing rather than
-  falling through to a proposed new-test target (#1981).
+  A DirectOwnerCall related test that failed target admission stays missing
+  rather than falling through to a proposed new-test target; advisory related
+  observers do not block an independently admitted proposal (#1981).
 - An unchanged Rust test file that the reference parser refuses is no longer
   a silent related-test hole. If a classified owner consults that
   lexical-fallback file (the file contributed a related test, or it calls the
