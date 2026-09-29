@@ -225,9 +225,11 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
     write_repo_exposure_json_document(
         classified,
         limit_info,
-        ts_guidance,
-        python_guidance,
-        generated_skip,
+        RepoExposureJsonDisclosures {
+            ts_guidance,
+            python_guidance,
+            generated_skip,
+        },
         None,
         None,
         out,
@@ -250,12 +252,15 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     let placeholder = repo_exposure_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
     let source_subject = repo_exposure_source_subject(classified, &context.root);
     let mut hasher = Sha256Writer::new();
-    write_repo_exposure_json_document(
-        classified,
-        limit_info,
+    let disclosures = RepoExposureJsonDisclosures {
         ts_guidance,
         python_guidance,
         generated_skip,
+    };
+    write_repo_exposure_json_document(
+        classified,
+        limit_info,
+        disclosures,
         Some(&placeholder),
         source_subject.as_ref(),
         &mut hasher,
@@ -267,9 +272,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     write_repo_exposure_json_document(
         classified,
         limit_info,
-        ts_guidance,
-        python_guidance,
-        generated_skip,
+        disclosures,
         Some(&metadata),
         source_subject.as_ref(),
         out,
@@ -324,16 +327,29 @@ fn repo_exposure_source_subject(
     serde_json::to_value(stamp).ok()
 }
 
+/// Additive disclosures that stay in `limitations[]` without changing
+/// `run_status`. Grouped so the document writer does not grow a new
+/// argument for each skip or guidance category.
+#[derive(Clone, Copy)]
+struct RepoExposureJsonDisclosures<'a> {
+    ts_guidance: Option<&'a TsFullRepoGuidance>,
+    python_guidance: Option<&'a PythonRepoExposureGuidance>,
+    generated_skip: Option<&'a GeneratedRustSkip>,
+}
+
 fn write_repo_exposure_json_document<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
-    ts_guidance: Option<&TsFullRepoGuidance>,
-    python_guidance: Option<&PythonRepoExposureGuidance>,
-    generated_skip: Option<&GeneratedRustSkip>,
+    disclosures: RepoExposureJsonDisclosures<'_>,
     artifact: Option<&serde_json::Value>,
     source_subject: Option<&serde_json::Value>,
     out: &mut W,
 ) -> io::Result<()> {
+    let RepoExposureJsonDisclosures {
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+    } = disclosures;
     let metrics = ExposureMetrics::from(classified);
     let canonical_gaps = canonical_gap_identities(classified);
 
@@ -1405,19 +1421,13 @@ mod tests {
             PathBuf::from("src/schema.rs"),
         ])
         .ok_or_else(|| "generated skip must be Some for nonempty paths".to_string())?;
-        let mut bytes = Vec::new();
-        super::write_repo_exposure_json_document(
+        let json = render_repo_exposure_json_with_generated_skip(
             &[weakly_gripped_classified()],
             None,
             None,
             None,
             Some(&skip),
-            None,
-            None,
-            &mut bytes,
-        )
-        .map_err(|error| format!("write json: {error}"))?;
-        let json = String::from_utf8(bytes).map_err(|error| format!("utf8: {error}"))?;
+        );
         assert!(
             json.contains("\"run_status\": \"complete\""),
             "generated skip must not look like a truncated scan:\n{json}"
