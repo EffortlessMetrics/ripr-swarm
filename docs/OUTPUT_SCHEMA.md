@@ -7475,8 +7475,9 @@ Field contract:
   items eligible for check annotations or inline review comments.
 - `comments[].id` - stable report-local ID derived from the seam when possible.
 - `comments[].seam_id` - static seam identifier from the existing exposure or
-  agent packet evidence. On `--gap-ledger`, the producer-owned seam ID is
-  required for a comment to be eligible.
+  agent packet evidence. Required on working-set cards. On `--gap-ledger` it
+  is present only when the GapRecord carries producer-owned seam identity; a
+  card without it is keyed by `gap_id` and `dedupe_key` (#4524).
 - `comments[].source` / `comments[].gap_id` - on `--gap-ledger`, the source is
   `gap_decision_ledger` and the gap ID identifies the supplied record. These
   cards do not invent the working-set `owner` or `seam` objects. The published

@@ -608,13 +608,8 @@ fn gap_record_comment_json(
             "A GapRecord with producer-owned seam identity emits this PR comment dedupe key.",
         ));
     }
-    if !seen_dedupe.insert(dedupe.to_string()) {
-        return Err(gap_record_suppressed_json(
-            record,
-            "duplicate_dedupe_fingerprint",
-            "A previous GapRecord already emitted this PR comment dedupe key.",
-        ));
-    }
+    // Every rejection comes before the dedupe insert, so only a card that
+    // renders reserves its key.
     let Some(repair_route) = record.repair_route.as_ref() else {
         return Err(gap_record_suppressed_json(
             record,
@@ -627,6 +622,13 @@ fn gap_record_comment_json(
             record,
             "missing_verification_command",
             "PR comments require only nonblank verification commands.",
+        ));
+    }
+    if !seen_dedupe.insert(dedupe.to_string()) {
+        return Err(gap_record_suppressed_json(
+            record,
+            "duplicate_dedupe_fingerprint",
+            "A previous GapRecord already emitted this PR comment dedupe key.",
         ));
     }
 
@@ -3465,6 +3467,51 @@ mod tests {
             value["suppressed"][0]["reason"],
             "policy_state_not_commentable"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_rejected_record_does_not_reserve_a_dedupe_key() -> Result<(), String> {
+        let mut no_route = eligible_gap_record_json("gap:no-route", "dedupe:shared");
+        no_route
+            .as_object_mut()
+            .ok_or("no-route fixture should be an object")?
+            .remove("repair_route");
+        let mut blank_verify = eligible_gap_record_json("gap:blank-verify", "dedupe:shared");
+        blank_verify["verification_commands"] = serde_json::json!(["  "]);
+        let valid = eligible_gap_record_json("gap:valid", "dedupe:shared");
+        for (rejected, reason) in [
+            (&no_route, "missing_repair_route"),
+            (&blank_verify, "missing_verification_command"),
+        ] {
+            for with_seam in [true, false] {
+                let (mut rejected, mut valid) = (rejected.clone(), valid.clone());
+                if !with_seam {
+                    for record in [&mut rejected, &mut valid] {
+                        record
+                            .as_object_mut()
+                            .ok_or("fixture should be an object")?
+                            .remove("seam_id");
+                    }
+                }
+                let records_json = serde_json::json!({ "records": [rejected, valid] }).to_string();
+                let records =
+                    crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+                let rendered = render_gap_record_review_comments_json(
+                    Path::new("."),
+                    "main",
+                    "HEAD",
+                    &Mode::Draft,
+                    "target/ripr/reports/gap-decision-ledger.json",
+                    &records,
+                )?;
+                let value: Value = serde_json::from_str(&rendered)
+                    .map_err(|err| format!("parse reserved-key JSON: {err}"))?;
+                assert_eq!(value["summary"]["comments"], 1, "{reason} seam={with_seam}");
+                assert_eq!(value["comments"][0]["gap_id"], "gap:valid");
+                assert_eq!(value["suppressed"][0]["reason"], reason);
+            }
+        }
         Ok(())
     }
 
