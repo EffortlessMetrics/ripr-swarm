@@ -35,6 +35,7 @@ pub(crate) fn observe_inline_test_region(
         .syntax()
         .descendants()
         .filter_map(ast::Module::cast)
+        .filter(has_module_item_ancestry)
     {
         let Some(observed) = observe_module(source, &module) else {
             continue;
@@ -57,15 +58,16 @@ pub(crate) fn observe_inline_test_region(
 fn observe_module(source: &str, module: &ast::Module) -> Option<ObservedInlineTestRegion> {
     let list = module.item_list()?;
     module.name()?;
-    let attributes: Vec<String> = module
+    let (body_start, body_end) = item_list_body_offsets(&list)?;
+    if body_end < body_start || body_end > source.len() {
+        return None;
+    }
+    let mut attributes: Vec<String> = module
         .attrs()
         .map(|attr| attr.syntax().text().to_string())
         .collect();
+    attributes.extend(item_list_inner_attribute_texts(&list));
     if !crate::analysis::cfg_predicates::attributes_require_test(attributes.iter()) {
-        return None;
-    }
-    let (body_start, body_end) = item_list_body_offsets(&list)?;
-    if body_end < body_start || body_end > source.len() {
         return None;
     }
     let header_start = usize::from(module.syntax().text_range().start());
@@ -78,6 +80,33 @@ fn observe_module(source: &str, module: &ast::Module) -> Option<ObservedInlineTe
         header_range: header_start..header_end,
         body_range: body_start..body_end,
     })
+}
+
+fn item_list_inner_attribute_texts(list: &ast::ItemList) -> Vec<String> {
+    list.syntax()
+        .children()
+        .filter_map(ast::Attr::cast)
+        .map(|attr| attr.syntax().text().to_string())
+        .filter(|text| text.trim_start().starts_with("#!["))
+        .collect()
+}
+
+/// File-level or nested-module items only. A `mod` inside a function, const,
+/// or other statement list is not a rustc test-harness subject.
+fn has_module_item_ancestry(module: &ast::Module) -> bool {
+    let mut current = module.syntax().parent();
+    while let Some(node) = current {
+        if ast::SourceFile::cast(node.clone()).is_some() {
+            return true;
+        }
+        if ast::Module::cast(node.clone()).is_some() || ast::ItemList::cast(node.clone()).is_some()
+        {
+            current = node.parent();
+            continue;
+        }
+        return false;
+    }
+    false
 }
 
 fn item_list_body_offsets(list: &ast::ItemList) -> Option<(usize, usize)> {
@@ -145,6 +174,7 @@ pub(crate) fn named_module_items(
         .syntax()
         .descendants()
         .filter_map(ast::Module::cast)
+        .filter(has_module_item_ancestry)
     {
         if module_path(module.syntax()) != expected_module_path {
             continue;

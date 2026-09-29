@@ -64,9 +64,13 @@ body range of the captured bytes. Cfg-test recognition is consumed from
 detector.
 
 V1 admits only an already-existing inline module whose test-required cfg
-authority is exact and unique for the requested module name. Out-of-line
-declarations, generated paths, test-layout files, ambiguous duplicate names,
-symlink escapes, traversals, and stale source digests fail closed.
+authority is exact and unique for the requested module name. The module must
+have module-item ancestry rooted at the source file or another inline module;
+function-local `mod` items are not authorities. Out-of-line declarations,
+generated paths (built-in naming and configured `generated_file_patterns`),
+test-layout files, ambiguous duplicate names, symlink or FIFO escapes,
+traversals, inner-attribute cfg-basis changes, and stale source digests fail
+closed. Capture reads through a no-follow handle of the walked path.
 
 An admitted edit is a pure insertion of test-role `fn` items (optional `use`
 companions, including at more than one site) into the named body. Existing
@@ -83,7 +87,8 @@ actionability.
 
 - `crates/ripr/src/edit_cage/inline_test_region/tests.rs` — positive insertion
   plus production, sibling/nested-module, cfg/name/visibility, stale,
-  generated, traversal, symlink, relocated-root, line-movement, non-test
+  generated (built-in and configured), traversal, symlink, FIFO,
+  function-local, inner-attribute, relocated-root, line-movement, non-test
   subject, and file-level-removal controls
 - A file-level-only weaker oracle must accept the combined
   production-and-test edit that the region cage rejects
@@ -104,6 +109,10 @@ actionability.
 - Changing `price` in the same file, or adding a helper beside the module, is
   rejected as a production edit.
 - Inserting into a sibling test module not named by the authority is rejected.
+- A function-local `#[cfg(test)] mod tests` is not an authority; a file-level
+  region stays unique beside that lookalike.
+- Inserting `#![cfg(not(test))]` plus a function into the named body is
+  rejected as a cfg-basis change.
 - Relocating the same bytes to another checkout preserves portable identity.
 - Removing the region check makes the production-and-test negative pass the
   weaker file-level oracle.
@@ -123,6 +132,11 @@ actionability.
 - `crates/ripr/src/edit_cage/inline_test_region/tests.rs::removing_the_region_check_would_let_the_production_negative_pass`
 - `crates/ripr/src/edit_cage/inline_test_region/tests.rs::portable_identity_survives_relocated_roots_while_containment_stays_exact`
 - `crates/ripr/src/edit_cage/inline_test_region/tests.rs::symlink_escape_cannot_redirect_the_allowed_region`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::function_local_cfg_test_module_is_not_a_region`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::file_level_region_stays_unique_beside_a_function_local_lookalike`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::inner_cfg_not_test_plus_a_function_is_rejected`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::configured_generated_pattern_rejects_a_non_conventional_path`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::fifo_at_the_captured_path_is_rejected_without_blocking`
 
 ## Implementation Mapping
 

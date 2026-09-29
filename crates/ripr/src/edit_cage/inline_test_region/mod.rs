@@ -16,6 +16,7 @@ mod observe;
 )]
 mod validate;
 
+use std::io::Read as _;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -146,6 +147,7 @@ pub(crate) fn authority_from_source(
     source: &str,
     module_name: &str,
     package_identity: String,
+    generated_file_patterns: &[String],
 ) -> Result<InlineTestRegionAuthority, InlineTestRegionError> {
     let relative_file = normalize_repo_relative_path(Path::new(relative_file))
         .map_err(InlineTestRegionError::Path)?;
@@ -154,7 +156,10 @@ pub(crate) fn authority_from_source(
             reason: InlineTestRegionRejectReason::UnsupportedModuleKind,
         });
     }
-    if crate::analysis::is_generated_rust_file_with_patterns(Path::new(&relative_file), &[]) {
+    if crate::analysis::is_generated_rust_file_with_patterns(
+        Path::new(&relative_file),
+        generated_file_patterns,
+    ) {
         return Err(InlineTestRegionError::Unsupported {
             reason: InlineTestRegionRejectReason::UnsupportedModuleKind,
         });
@@ -173,16 +178,20 @@ pub(crate) fn capture_inline_test_region_authority(
     root: &Path,
     relative_file: &str,
     module_name: &str,
+    generated_file_patterns: &[String],
 ) -> Result<InlineTestRegionAuthority, InlineTestRegionError> {
     let root = canonical_repository_root(root).map_err(InlineTestRegionError::Path)?;
     let relative_file = normalize_repo_relative_path(Path::new(relative_file))
         .map_err(InlineTestRegionError::Path)?;
-    let path = contained_regular_file(&root, &relative_file)?;
-    let source = std::fs::read_to_string(&path).map_err(|error| {
-        InlineTestRegionError::Path(format!("read {}: {error}", path.display()))
-    })?;
+    let source = read_contained_regular_file(&root, &relative_file)?;
     let package_identity = nearest_package_identity(&root, &relative_file);
-    authority_from_source(&relative_file, &source, module_name, package_identity)
+    authority_from_source(
+        &relative_file,
+        &source,
+        module_name,
+        package_identity,
+        generated_file_patterns,
+    )
 }
 
 fn authority_from_observed(
@@ -210,6 +219,45 @@ fn authority_from_observed(
     }
 }
 
+fn read_contained_regular_file(
+    root: &Path,
+    relative_file: &str,
+) -> Result<String, InlineTestRegionError> {
+    let path = contained_regular_file(root, relative_file)?;
+    let walked = std::fs::symlink_metadata(&path).map_err(|error| {
+        InlineTestRegionError::Path(format!("inspect {}: {error}", path.display()))
+    })?;
+    if walked.file_type().is_symlink() {
+        return Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::PathEscape,
+        });
+    }
+    let file = super::open_regular_file_no_follow(&path).map_err(|error| {
+        InlineTestRegionError::Path(format!("open {}: {error}", path.display()))
+    })?;
+    let opened = file.metadata().map_err(|error| {
+        InlineTestRegionError::Path(format!("inspect opened {}: {error}", path.display()))
+    })?;
+    if !opened.is_file() || !super::same_file_object(&walked, &opened) {
+        return Err(InlineTestRegionError::Unsupported {
+            reason: InlineTestRegionRejectReason::PathEscape,
+        });
+    }
+    let limit = super::MAX_CAPTURE_FILE_BYTES.saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(limit).read_to_end(&mut bytes).map_err(|error| {
+        InlineTestRegionError::Path(format!("read {}: {error}", path.display()))
+    })?;
+    if bytes.len() as u64 > super::MAX_CAPTURE_FILE_BYTES {
+        return Err(InlineTestRegionError::Path(format!(
+            "read {}: file exceeds capture bound",
+            path.display()
+        )));
+    }
+    String::from_utf8(bytes)
+        .map_err(|error| InlineTestRegionError::Path(format!("read {}: {error}", path.display())))
+}
+
 fn contained_regular_file(
     root: &Path,
     relative_file: &str,
@@ -226,23 +274,12 @@ fn contained_regular_file(
             });
         }
     }
-    let canonical = std::fs::canonicalize(&current).map_err(|error| {
-        InlineTestRegionError::Path(format!("canonicalize {}: {error}", current.display()))
-    })?;
-    if !canonical.starts_with(root) {
+    if !current.starts_with(root) {
         return Err(InlineTestRegionError::Unsupported {
             reason: InlineTestRegionRejectReason::WrongRoot,
         });
     }
-    let metadata = std::fs::symlink_metadata(&canonical).map_err(|error| {
-        InlineTestRegionError::Path(format!("inspect {}: {error}", canonical.display()))
-    })?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(InlineTestRegionError::Unsupported {
-            reason: InlineTestRegionRejectReason::PathEscape,
-        });
-    }
-    Ok(canonical)
+    Ok(current)
 }
 
 fn nearest_package_identity(root: &Path, relative_file: &str) -> String {
