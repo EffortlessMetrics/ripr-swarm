@@ -1969,6 +1969,8 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
 
 const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
   "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
   "summary": {"unchanged_tests": true},
   "comments": [],
   "summary_only": [],
@@ -2714,6 +2716,10 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json_path)?)?;
     assert_eq!(json_pointer_str(&report, "/schema_version")?, "0.1");
     assert_eq!(json_pointer_str(&report, "/kind")?, "first_pr_start_here");
+    assert_eq!(
+        json_pointer_str(&report, "/ripr_version")?,
+        env!("CARGO_PKG_VERSION")
+    );
     assert_eq!(json_pointer_str(&report, "/status")?, "actionable");
     assert_eq!(json_pointer_str(&report, "/selected/state")?, "top_gap");
     assert_eq!(
@@ -7889,6 +7895,99 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
 #[test]
 fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    write_start_here_packet(&workspace, Some(env!("CARGO_PKG_VERSION")))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
+    assert!(stdout.contains("(present; open it first)"));
+    assert!(!stdout.contains("not yet generated"));
+    assert!(!stdout.contains("stale_evidence"));
+    // With a packet on disk `first-pr` has something to refresh, so naming it
+    // here is a real route rather than a dead end.
+    assert!(stdout.contains("Safe next action: open that packet"));
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_version_mismatched_start_here_packet_as_stale() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let recorded = if env!("CARGO_PKG_VERSION") == "0.10.0" {
+        "0.9.0"
+    } else {
+        "0.10.0"
+    };
+    write_start_here_packet(&workspace, Some(recorded))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stale_evidence"), "{stdout}");
+    assert!(stdout.contains(recorded), "{stdout}");
+    assert!(stdout.contains(env!("CARGO_PKG_VERSION")), "{stdout}");
+    assert!(!stdout.contains("(present; open it first)"), "{stdout}");
+    assert!(
+        stdout.contains("Safe next action: `ripr first-pr --root ")
+            && stdout.contains("--base <ref> --head HEAD` refreshes it"),
+        "{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_start_here_packet_missing_version_as_stale() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    write_start_here_packet(&workspace, None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stale_evidence"), "{stdout}");
+    assert!(stdout.contains("missing ripr_version"), "{stdout}");
+    assert!(!stdout.contains("(present; open it first)"), "{stdout}");
+    assert!(
+        stdout.contains("Safe next action: `ripr first-pr --root ")
+            && stdout.contains("refreshes it"),
+        "{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+fn write_start_here_packet(workspace: &Path, ripr_version: Option<&str>) -> Result<(), String> {
+    let reports = workspace.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
+    std::fs::write(reports.join("start-here.md"), "# start here\n")
+        .map_err(|e| format!("write start-here.md: {e}"))?;
+    let mut packet = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "kind": "first_pr_start_here"
+    });
+    if let Some(version) = ripr_version {
+        packet["ripr_version"] = serde_json::Value::String(version.to_string());
+    }
+    std::fs::write(
+        reports.join("start-here.json"),
+        serde_json::to_string_pretty(&packet)
+            .map_err(|e| format!("serialize start-here.json: {e}"))?,
+    )
+    .map_err(|e| format!("write start-here.json: {e}"))?;
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_markdown_only_start_here_packet_as_stale() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
     let reports = workspace.join("target/ripr/reports");
     std::fs::create_dir_all(&reports).map_err(|e| format!("create reports dir: {e}"))?;
     std::fs::write(reports.join("start-here.md"), "# start here\n")
@@ -7898,12 +7997,12 @@ fn doctor_reports_present_start_here_packet() -> Result<(), String> {
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Start-here packet: target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("(present; open it first)"));
-    assert!(!stdout.contains("not yet generated"));
-    // With a packet on disk `first-pr` has something to refresh, so naming it
-    // here is a real route rather than a dead end.
-    assert!(stdout.contains("Safe next action: open that packet"));
+    assert!(stdout.contains("stale_evidence"), "{stdout}");
+    assert!(
+        stdout.contains("start-here.json is missing or unreadable"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("(present; open it first)"), "{stdout}");
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -8102,6 +8201,41 @@ fn doctor_names_workspace_build_first_on_path() -> Result<(), String> {
     ignore_remove_dir_all(&installed_dir);
     ignore_remove_dir_all(&workspace);
     result
+}
+
+#[test]
+fn doctor_json_reports_an_unpinned_generated_workflow_as_advisory() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let workflows = workspace.join(".github/workflows");
+    std::fs::create_dir_all(&workflows).map_err(|err| format!("create workflows: {err}"))?;
+    // The install step `ripr 0.10.0 init --ci github` wrote.
+    std::fs::write(
+        workflows.join("ripr.yml"),
+        "      - name: Install ripr\n        run: cargo install ripr --locked\n",
+    )
+    .map_err(|err| format!("write workflow: {err}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root, "--json"]);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
+    std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
+
+    let check = report["checks"]
+        .as_array()
+        .and_then(|checks| {
+            checks
+                .iter()
+                .find(|check| check["name"] == "generated_workflow")
+        })
+        .ok_or_else(|| format!("doctor JSON must report the stale workflow: {report}"))?;
+    assert_eq!(check["status"], "advisory");
+    assert!(
+        check["evidence"].as_str().is_some_and(|evidence| evidence
+            .contains("installs ripr without a version")
+            && evidence.contains("ripr init --ci github --force")),
+        "{check}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -8864,6 +8998,216 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
             .lines()
             .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
         "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
+    );
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+fn run_ripr_without_git(args: &[&str]) -> Output {
+    // Empty PATH is the distroless case (#4735). The binary is invoked by
+    // absolute path, so the child can start; it cannot find `git`.
+    run_ripr_with_env(args, &[("PATH", "")])
+}
+
+fn recommended_first_command_line(stdout: &str) -> Option<&str> {
+    stdout.lines().find_map(|line| {
+        line.trim_end()
+            .strip_prefix("- Recommended first command: ")
+    })
+}
+
+#[test]
+fn check_without_git_names_path_and_diff_routes_without_dumping_argv() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr_without_git(&["check", "--root", &root, "--base", "HEAD"]);
+    assert_failure(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing git stays a Failure (exit 2); stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git was not found on PATH"),
+        "stderr must name the missing binary:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`--diff PATH`") && stderr.contains("`--diff -`"),
+        "stderr must name both saved-diff routes:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("install git"),
+        "stderr must name the install route:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("core.quotePath") && !stderr.contains("[\"-c\""),
+        "git argv must not leak into stderr:\n{stderr}"
+    );
+
+    let diff = workspace.join("change.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn placeholder() {}\n+pub fn placeholder() { let _ = 1; }\n",
+    )
+    .map_err(|error| format!("write saved diff: {error}"))?;
+    let diff_arg = diff.display().to_string();
+    let via_diff = run_ripr_without_git(&["check", "--root", &root, "--diff", &diff_arg]);
+    let via_diff_stderr = String::from_utf8_lossy(&via_diff.stderr);
+    assert!(
+        !via_diff_stderr.contains("git was not found on PATH"),
+        "--diff must not demand git; stderr:\n{via_diff_stderr}"
+    );
+    assert!(
+        via_diff.status.success() || via_diff.status.code() == Some(3),
+        "--diff without git must complete analysis (0) or a decision (3), not an operational failure; status={:?}\nstdout:\n{}\nstderr:\n{}",
+        via_diff.status,
+        String::from_utf8_lossy(&via_diff.stdout),
+        via_diff_stderr
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn check_without_git_omitted_base_names_path_not_unresolvable_base() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr_without_git(&["check", "--root", &root]);
+    assert_failure(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing git stays a Failure (exit 2); stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("git was not found on PATH"),
+        "zero-config check must name the missing binary:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`--diff PATH`") && stderr.contains("`--diff -`"),
+        "zero-config check must name both saved-diff routes:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("could not resolve a default base"),
+        "missing git must not be diagnosed as an unresolved default base:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Pass `--base"),
+        "missing git must not send the user to `--base`:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("core.quotePath") && !stderr.contains("[\"-c\""),
+        "git argv must not leak into stderr:\n{stderr}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr_without_git(&["doctor", "--root", &root]);
+    assert_failure(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "doctor without git stays exit 2; stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let git_line = stdout
+        .lines()
+        .find(|line| {
+            line.contains("git was not found on PATH") || line.contains("git not available")
+        })
+        .unwrap_or("");
+    assert!(
+        git_line.starts_with('!'),
+        "missing git must be a failing ! line:\n{stdout}"
+    );
+    assert!(
+        git_line.contains("git was not found on PATH")
+            && git_line.contains("install git")
+            && git_line.contains("`--diff PATH`")
+            && git_line.contains("`--diff -`"),
+        "the ! line must name the same fix as check:\n{git_line}"
+    );
+    assert!(
+        !git_line.contains("core.quotePath") && !git_line.contains("[\"-c\""),
+        "git argv must not appear on the doctor ! line:\n{git_line}"
+    );
+    assert_eq!(
+        recommended_first_command_line(&stdout),
+        Some("ripr check --diff PATH"),
+        "doctor must not recommend a git-backed check:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recommended first command: ripr check --base HEAD --worktree"),
+        "a gitless doctor must not recommend --worktree:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("each `!` line above names the check and its fix"),
+        "failed-doctor footer must remain:\n{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<(), String> {
+    let root = unique_temp_workspace("doctor-dirty-no-git");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"doctor-dirty-no-git\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn f(a: i32) -> i32 { a + 1 }\n",
+    )
+    .map_err(|err| err.to_string())?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn f(a: i32) -> i32 { a + 2 }\n",
+    )
+    .map_err(|err| err.to_string())?;
+
+    let root_str = root.display().to_string();
+    let with_git = run_ripr(&["doctor", "--root", &root_str]);
+    assert_success(&with_git);
+    assert_eq!(
+        recommended_first_command_line(&String::from_utf8_lossy(&with_git.stdout)),
+        Some("ripr check --base HEAD --worktree"),
+        "control: dirty tree with git still recommends --worktree:\n{}",
+        String::from_utf8_lossy(&with_git.stdout)
+    );
+
+    let without_git = run_ripr_without_git(&["doctor", "--root", &root_str]);
+    assert_failure(&without_git);
+    let stdout = String::from_utf8_lossy(&without_git.stdout);
+    assert_eq!(
+        recommended_first_command_line(&stdout),
+        Some("ripr check --diff PATH"),
+        "dirty tree cannot win over a missing git binary:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recommended first command: ripr check --base HEAD --worktree"),
+        "gitless doctor must not recommend --worktree:\n{stdout}"
     );
 
     ignore_remove_dir_all(&root);
@@ -17980,6 +18324,82 @@ fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
     Ok(())
 }
 
+/// A report write cut short by the process dying (here the file-size limit
+/// terminates it, the same outcome as Ctrl-C or a cancelled CI step mid-write) must
+/// leave the previous complete report in place, not a truncated one (#4542).
+#[cfg(unix)]
+#[test]
+fn interrupted_report_write_keeps_the_previous_complete_report()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("interrupted-report-write");
+    std::fs::create_dir_all(&workspace)?;
+    let fixture = workspace_root().join("fixtures/boundary_gap");
+    let fixture_input = fixture.join("input").to_string_lossy().into_owned();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &fixture_input,
+        "--diff",
+        &fixture.join("diff.patch").to_string_lossy(),
+        "--format",
+        "json",
+    ]);
+    assert_success(&check);
+    let check_path = workspace.join("check.json");
+    std::fs::write(&check_path, &check.stdout)?;
+    let ledger_path = workspace.join("gap-ledger.json");
+    let ledger_args = [
+        "reports".to_string(),
+        "gap-ledger".to_string(),
+        "--check-output".to_string(),
+        check_path.to_string_lossy().into_owned(),
+        "--root".to_string(),
+        fixture_input.clone(),
+        "--out".to_string(),
+        ledger_path.to_string_lossy().into_owned(),
+        "--out-md".to_string(),
+        workspace
+            .join("gap-ledger.md")
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    let ledger_arg_refs: Vec<&str> = ledger_args.iter().map(String::as_str).collect();
+    assert_success(&run_ripr(&ledger_arg_refs));
+    let complete = std::fs::read(&ledger_path)?;
+    assert!(
+        complete.len() > 1024,
+        "the fixture ledger must exceed the 1 KiB limit below to exercise a cut-short write, got {} bytes",
+        complete.len()
+    );
+    serde_json::from_slice::<serde_json::Value>(&complete)?;
+
+    // `ulimit -f 1` caps any file this process writes at 1 KiB.
+    let mut limited = vec![
+        "-c",
+        "ulimit -f 1 && exec \"$0\" \"$@\"",
+        env!("CARGO_BIN_EXE_ripr"),
+    ];
+    limited.extend(ledger_arg_refs.iter().copied());
+    let interrupted = run_command("sh", None, &limited)?;
+    assert!(
+        !interrupted.status.success(),
+        "the size-limited write must not succeed: {interrupted:?}"
+    );
+    let after = std::fs::read(&ledger_path)?;
+    assert_eq!(
+        after.len(),
+        complete.len(),
+        "an interrupted write replaced the previous report with {} bytes",
+        after.len()
+    );
+    assert_eq!(
+        after, complete,
+        "an interrupted write changed the previous report"
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// Run `ripr` with `stdin` wired to an arbitrary source (for example
 /// `/dev/zero`) under a deadline. Before #4480 an unbounded input read never
 /// returned, so the deadline turns that hang into a failed assertion instead
@@ -18272,4 +18692,31 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
         });
     ignore_remove_dir_all(&workspace);
     result
+}
+
+/// docs/EXIT_CODES.md: a reader that closes stdout early gets a quiet exit 2
+/// (#4728). The reader closes before ripr writes anything, so the JSON write
+/// always meets the closed pipe.
+#[test]
+fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    let mut child = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--root"])
+        .arg(&sample)
+        .arg("--diff")
+        .arg(sample.join("example.diff"))
+        .args(["--format", "json"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    drop(child.stdout.take());
+    let output = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("stdout failed") && !stderr.contains("Broken pipe"),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
 }

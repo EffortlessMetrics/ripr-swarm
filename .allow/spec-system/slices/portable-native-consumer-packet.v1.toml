@@ -3,7 +3,7 @@ id = "ripr.slice.portable-native-consumer-packet.v1"
 generation = 1
 
 source_issue = "issue:4713"
-design_reference = "RIPR-SPEC-0181#portable-native-consumer"
+design_reference = "RIPR-SPEC-0183#portable-native-consumer"
 change_class = "behavior_change"
 
 claim_boundary = """
@@ -46,7 +46,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0181#portable-native-consumer"
+requirement_id = "RIPR-SPEC-0183#portable-native-consumer"
 requirement_generation = 1
 
 [implementation_claim]

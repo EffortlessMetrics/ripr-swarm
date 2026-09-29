@@ -249,7 +249,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// parsing and a non-UTF-8 source is indexed on lexical fallback instead of
 /// aborting. Old classified entries would keep the ownerless line-1 findings
 /// a BOM produced.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.17";
+/// `1.17` -> `1.18`: full classified evidence may carry a producer-owned
+/// Integration new-test proposal (#4576). A warm main `1.17` hit would hide
+/// a now-admitted `Proposed` target.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.18";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -299,7 +302,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.17";
 /// 0.21 -> 0.22: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
 /// `0.22` -> `0.23`: BOM and non-UTF-8 Rust source decoding — same semantic
 /// transition as the outer classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.23";
+/// `0.23` -> `0.24`: full classified evidence may carry a producer-owned
+/// Integration new-test proposal (#4576) — same semantic transition as
+/// the outer classified-seam cache. Compact evidence stays empty, so the
+/// compact generation remains main's `0.24`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.24";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -463,7 +470,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.10` -> `1.11`: a leading UTF-8 byte-order mark is dropped before
 /// parsing. A warm pre-bump hit for a BOM file would serve facts parsed with
 /// the stray `U+FEFF`, where an item on line 1 has no owner.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.11";
+///
+/// `1.11` -> `1.12`: `FunctionFact.impl_attrs` (the enclosing `impl` block's
+/// attributes). A warm pre-bump hit would deserialize it empty, so a
+/// `#[pymethods]` method would silently lose its cross-language limitation.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.12";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -684,7 +695,7 @@ impl RepoFileFactCacheKey {
     pub(crate) fn new(file_path: &Path, content: &[u8]) -> Self {
         Self {
             schema_version: FILE_FACT_CACHE_SCHEMA_VERSION.to_string(),
-            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
             file_path: file_path.to_path_buf(),
             content_hash: hash_bytes(content),
         }
@@ -833,7 +844,7 @@ impl WorkspaceKeyContext<'_> {
 
         RepoSeamCacheKey {
             schema_version: CACHE_SCHEMA_VERSION.to_string(),
-            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
             workspace_root_hash,
             files_content_hash,
             cfg_features_hash: hash_str(self.cfg_features.unwrap_or("")),
@@ -1653,8 +1664,11 @@ impl RepoFileFactCache {
 
     /// Snapshot paths with valid cached envelopes before a build starts. The
     /// caller uses this set for O(1) miss attribution and deliberately does not
-    /// observe entries created during the same build.
+    /// observe entries created during the same build. Only entries this build
+    /// could have served count: a miss against another build's entry means
+    /// the build changed, not the file's content.
     pub(crate) fn known_file_paths(&self) -> HashSet<PathBuf> {
+        let identity = crate::build_identity::cache_identity();
         let mut paths = HashSet::new();
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return paths;
@@ -1669,7 +1683,7 @@ impl RepoFileFactCache {
             };
             if let Ok(envelope) = codec::decode_file_facts(&bytes)
                 && envelope.file_fact_cache_schema_version == FILE_FACT_CACHE_SCHEMA_VERSION
-                && envelope.analyzer_version == env!("CARGO_PKG_VERSION")
+                && envelope.analyzer_version == identity
                 && envelope.validate_integrity().is_ok()
             {
                 paths.insert(envelope.file_path);
@@ -3384,7 +3398,8 @@ mod tests {
         // retiring the lexical scanners' defeats.
         // 1.8 -> 1.9: the Rust nesting budget moves over-deep sources to
         // lexical fallback, so a warm pre-bump parser-backed hit must miss.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.11");
+        // 1.11 -> 1.12: impl_attrs carries the cross-language FFI marker.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.12");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3420,7 +3435,12 @@ mod tests {
         // 1.14 -> 1.15: the Rust nesting budget moves over-deep sources to
         // lexical fallback, so classified seams derived from their old
         // parser-backed facts must miss.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.17");
+        // 1.15 -> 1.16: typed semantic-body integrity (#4382).
+        // 1.16 -> 1.17: BOM / non-UTF-8 Rust source decoding (#4597).
+        // 1.17 -> 1.18: full classified evidence may carry a producer-owned
+        // Integration new-test proposal (#4576); a warm main 1.17 hit would
+        // hide Proposed targets.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.18");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3434,7 +3454,12 @@ mod tests {
         // resolution — same semantic transition as the outer cache.
         // 0.21 (sharded) / 0.22 (compact): Rust nesting budget refusal —
         // same semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.23");
+        // 0.22 (sharded) / 0.23 (compact): typed semantic-body integrity
+        // (#4382).
+        // 0.23 (sharded) / 0.24 (compact): BOM / non-UTF-8 decoding (#4597).
+        // 0.24 (sharded) / 0.24 (compact): #4576 Integration proposals
+        // persist on full classified evidence only; compact stays empty.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.24");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.24");
     }
 
@@ -3462,7 +3487,7 @@ mod tests {
         .to_vec();
         let previous_key = RepoFileFactCacheKey {
             schema_version: "1.2".to_string(),
-            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
             file_path: file.to_path_buf(),
             // Production derives this field via `hash_bytes`, so the seed
             // must too: the only difference from the current key is then
@@ -3520,6 +3545,7 @@ mod tests {
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "discriminate"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -6878,7 +6904,7 @@ mod generation_transition_tests {
         let content = cfg_test_helper_source().as_bytes().to_vec();
         let previous_key = RepoFileFactCacheKey {
             schema_version: "0.2".to_string(),
-            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
             file_path: file.to_path_buf(),
             content_hash: content_hash_for(&content),
         };
@@ -6951,7 +6977,7 @@ mod generation_transition_tests {
         let cache = RepoSeamFactCache::at_dir(dir.clone());
         let previous_key = RepoSeamCacheKey {
             schema_version: "1.11".to_string(),
-            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
             workspace_root_hash: hash_str("/ws"),
             files_content_hash: hash_str("corpus"),
             cfg_features_hash: hash_str(""),
@@ -7013,7 +7039,7 @@ mod generation_transition_tests {
             .to_vec();
         let previous_key = RepoFileFactCacheKey {
             schema_version: "0.9".to_string(),
-            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
             file_path: file.to_path_buf(),
             // Production derives this field via `hash_bytes`, so the seed
             // must too: the only difference from the current key is then
@@ -7143,6 +7169,115 @@ mod generation_transition_tests {
             "file-fact cache directory must be generation-scoped: {:?}",
             file_facts.dir
         );
+        Ok(())
+    }
+
+    /// Analyzer identities another build of this same package version could
+    /// have written: the bare version (every build before the cache keyed on
+    /// the build) and a clean build of a different commit.
+    fn other_builds_of_this_version() -> [String; 2] {
+        [
+            env!("CARGO_PKG_VERSION").to_string(),
+            format!(
+                "{}+0123456789abcdef0123456789abcdef01234567",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ]
+    }
+
+    #[test]
+    fn file_facts_written_by_another_build_of_this_version_are_a_miss() -> Result<(), String> {
+        let file = Path::new("src/lib.rs");
+        let content = b"pub fn f() -> u32 { 1 }\n".to_vec();
+        let current_key = RepoFileFactCacheKey::new(file, &content);
+        for analyzer_version in other_builds_of_this_version() {
+            let dir = isolated_dir("other-build-facts");
+            super::ignore_remove_dir_all(&dir);
+            let cache = RepoFileFactCache::at_dir(dir.clone());
+            let other_build_key = RepoFileFactCacheKey {
+                analyzer_version: analyzer_version.clone(),
+                ..current_key.clone()
+            };
+            assert_ne!(other_build_key, current_key);
+            let facts = FileFacts {
+                path: file.to_path_buf(),
+                ..FileFacts::default()
+            };
+            cache.store_file_facts(&other_build_key, &facts)?;
+            match cache.load_file_facts(&other_build_key) {
+                CacheLoad::Hit(_) => {}
+                other => {
+                    return Err(format!(
+                        "seed sanity: {analyzer_version} should read its own entry, got {other:?}"
+                    ));
+                }
+            }
+            match cache.load_file_facts(&current_key) {
+                CacheLoad::Miss => {}
+                other => {
+                    return Err(format!(
+                        "file facts from build {analyzer_version} were served to build {}: {other:?}",
+                        crate::build_identity::cache_identity()
+                    ));
+                }
+            }
+            // That miss is a build change, not a content change: another
+            // build's entry must not mark the file as previously cached.
+            assert!(
+                !cache.known_file_paths().contains(file),
+                "an entry from build {analyzer_version} was attributed as this file's earlier content"
+            );
+            cache.store_file_facts(&current_key, &facts)?;
+            assert!(cache.known_file_paths().contains(file));
+            super::ignore_remove_dir_all(&dir);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classified_seams_written_by_another_build_of_this_version_are_a_miss() -> Result<(), String>
+    {
+        let current_key = WorkspaceKeyContext {
+            workspace_root: Path::new("/ws"),
+            cfg_features: None,
+            config_text: None,
+            test_intent_text: None,
+            suppressions_text: None,
+        }
+        .cache_key(hash_str("corpus"));
+        for analyzer_version in other_builds_of_this_version() {
+            let dir = isolated_dir("other-build-seams");
+            super::ignore_remove_dir_all(&dir);
+            let cache = RepoSeamFactCache::at_dir(dir.clone());
+            let other_build_key = RepoSeamCacheKey {
+                analyzer_version: analyzer_version.clone(),
+                ..current_key.clone()
+            };
+            cache.store_classified_seams_with_limit(
+                &other_build_key,
+                &[],
+                None,
+                CLASSIFIED_SEAM_CACHE_STORE_LIMIT,
+            )?;
+            match cache.load_classified_seams_with_fallback(&other_build_key) {
+                CacheLoad::Hit(_) => {}
+                other => {
+                    return Err(format!(
+                        "seed sanity: {analyzer_version} should read its own entry, got {other:?}"
+                    ));
+                }
+            }
+            match cache.load_classified_seams_with_fallback(&current_key) {
+                CacheLoad::Miss => {}
+                other => {
+                    return Err(format!(
+                        "classified seams from build {analyzer_version} were served to build {}: {other:?}",
+                        crate::build_identity::cache_identity()
+                    ));
+                }
+            }
+            super::ignore_remove_dir_all(&dir);
+        }
         Ok(())
     }
 
