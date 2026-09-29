@@ -5599,7 +5599,7 @@ fn nested_class_dunder_relates_through_its_outer_class() -> Result<(), String> {
 fn private_descriptor_dunder_reached_through_its_package_is_a_limit() -> Result<(), String> {
     // cachetools 57d2e48: `_DescriptorBase.__get__` runs whenever a test
     // reads a `@cachedmethod` attribute. No test names the private base, but
-    // the suite imports `cachedmethod` from the package, and it killed the
+    // the suite imports `cachedmethod` from the package, and it detected the
     // mutant of the changed line while ripr said `no_static_path`.
     let owner_file = Path::new("src/cachetools/_cachedmethod.py");
     let owner_source = "class _DescriptorBase:\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return self.bind(obj)\n";
