@@ -157,7 +157,7 @@ fn helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing()
         (
             "tuple struct in the test body",
             "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
-            "        #[allow(non_camel_case_types, dead_code)]\n        struct check(u32, bool);\n        check(10, false);\n",
+            "        struct check(u32, bool);\n        check(10, false);\n",
         ),
         (
             "cfg-gated statement in the test",
