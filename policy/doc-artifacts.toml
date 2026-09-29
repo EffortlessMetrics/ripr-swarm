@@ -932,7 +932,14 @@ standalone_reason = "Issue #4804 records the governed identity registry: one che
 [[artifact]]
 id = "RIPR-SPEC-0183"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0183-cli-analysis-progress-stderr.md"
+path = "docs/specs/RIPR-SPEC-0183-executed-control-obligation.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #4641 records the executed-control obligation/result contract: one closed vocabulary, validator, and bounded projection that distinguishes executed discriminating controls from ordinary tests and review prose, without live GitHub inspection, merge enforcement, or historical audit."
+[[artifact]]
+id = "RIPR-SPEC-0184"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0184-cli-analysis-progress-stderr.md"
 status = "proposed"
 owner = "product-cli"
 standalone_reason = "Issue #4810 records CLI stderr projection of producer-owned analysis stages and throttled heartbeats: machine stdout stays byte-clean, --quiet suppresses the stream, unknown totals never become a percentage or ETA, and visibility is not a speed or success claim."
