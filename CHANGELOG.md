@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Added
 
+- Ops: `cargo xtask merge-queue capture` writes the MQ0 read-only current-state
+  receipt for merge/protection surfaces (`#4832`). Desired settings, live
+  observation, apply-route capability, and rollback identity stay separate
+  facts. The command ends in exactly one of `READY_FOR_DESIRED_STATE`,
+  `CAPABILITY_BLOCKED`, `NOT_PROVEN`, or `DRIFT_REPAIR_REQUIRED`, and it never
+  applies settings or enables a queue.
 - LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
   sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
   unchanged save/refresh, production/related/unrelated edits, rename, config
