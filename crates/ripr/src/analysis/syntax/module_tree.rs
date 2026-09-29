@@ -9,7 +9,7 @@
 //! Anything that could add an edge this scan cannot resolve makes the scan
 //! incomplete instead of silently dropping it:
 //!
-//! - a parse error;
+//! - a parse error, or a source over the nesting budget;
 //! - a `#[path]` that is not one plain string literal, or is introduced
 //!   through `cfg_attr`;
 //! - a `#[path]` on an inline module, or on an out-of-line declaration
@@ -26,11 +26,12 @@
 //! layout rule for that package.
 
 use ra_ap_syntax::{
-    AstNode, Edition, SourceFile, SyntaxKind,
+    AstNode, SyntaxKind,
     ast::{self, HasAttrs, HasName},
 };
 use std::path::PathBuf;
 
+use super::nesting::parse_clean_source_file;
 use super::ra::{include_literal_path, path_target_from_attributes};
 use crate::analysis::facts::ModulePathTarget;
 
@@ -60,10 +61,9 @@ pub(crate) struct RustModuleTreeScan {
 
 /// Scans one Rust source text for its module-tree edges.
 pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
-    let parse = SourceFile::parse(text, Edition::CURRENT);
-    if !parse.errors().is_empty() {
+    let Some(parse) = parse_clean_source_file(text) else {
         return RustModuleTreeScan::default();
-    }
+    };
     let tree = parse.tree();
     let mut scan = RustModuleTreeScan {
         edges: Vec::new(),
@@ -234,6 +234,13 @@ mod tests {
                 "`{source}` must not scan as complete"
             );
         }
+        // Over the nesting budget the parse is refused and the scan stays incomplete.
+        let deep = format!(
+            "mod plain;\nfn f() {}{}\n",
+            "{".repeat(300),
+            "}".repeat(300)
+        );
+        assert!(!rust_module_tree_scan(&deep).complete);
     }
 
     #[test]
