@@ -2466,6 +2466,7 @@ mod tests {
     /// TypeScript adapter analyzes it. A JavaScript-only root must get a
     /// snippet that config loading accepts, and JavaScript with `typescript`
     /// already enabled needs no tip at all.
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn doctor_enable_tip_maps_javascript_to_the_typescript_entry() -> Result<(), String> {
         let dir = unique_command_test_dir("suggest-javascript-only");
