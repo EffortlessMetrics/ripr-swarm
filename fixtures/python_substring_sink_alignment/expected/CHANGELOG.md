@@ -244,7 +244,19 @@ Updated:
 ## Pending — python_substring_sink_alignment (8)
 
 Reason:
-RIPR-SPEC-0028: #4567 oracle local wraps the owner call so the fixture keeps testing substring token coincidence; classification and alignment unchanged
+RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
+
+Command:
+`cargo xtask goldens bless python_substring_sink_alignment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_substring_sink_alignment (9)
+
+Reason:
+RIPR-SPEC-0028 RIPR-SPEC-0046: #4567 fixture input (oracle local wraps the owner call) combined with main's source_subject digest; classification and alignment unchanged
 
 Command:
 `cargo xtask goldens bless python_substring_sink_alignment --reason "..."`
