@@ -443,6 +443,9 @@ test("shorthand", { skip }, () => {
 test("legacy trailing options", () => {
     expect(isAdult(18)).toBe(true);
 }, { skip: true });
+test({ skip: true }, () => {
+    assert.strictEqual(isAdult(18), true);
+});
 test.each([[18]])("each skipped %i", { skip: true }, (age) => {
     expect(isAdult(age)).toBe(true);
 });

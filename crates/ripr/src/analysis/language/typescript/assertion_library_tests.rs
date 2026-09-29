@@ -446,6 +446,27 @@ it('totals', () => {
     assert!(assertions.is_empty(), "{assertions:?}");
 }
 
+/// Negative (#4638 re-review): a destructured or inline test-body declaration
+/// shadows the imported binding too. The line-start text guard misses both;
+/// the AST walk over the body's declarations catches them.
+#[test]
+fn assertion_binding_shadowed_by_destructured_or_inline_declaration_is_not_credited() {
+    let assertions = only_assertions(
+        "test/cart.test.js",
+        r#"
+const assert = require('node:assert')
+const { strictEqual } = require('node:assert')
+
+it('totals', () => {
+  const { assert } = helpers
+  if (ready) { const strictEqual = () => {}; strictEqual(total([1, 2]), 3) }
+  assert.strictEqual(total([1, 2]), 3)
+})
+"#,
+    );
+    assert!(assertions.is_empty(), "{assertions:?}");
+}
+
 /// Negative (#4638 review): a declaration in an enclosing describe body
 /// shadows the imported binding for every test inside it; a sibling describe
 /// without the declaration still credits the import (positive control).

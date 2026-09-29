@@ -1377,6 +1377,96 @@ fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
 }
 
 /// Names a callback argument binds as parameters; empty for anything else.
+/// Every name a test body declares at any block depth: `var`/`let`/`const`
+/// bindings (destructuring included), function and class declarations, and
+/// `catch` parameters. Nested function bodies are not entered. The text
+/// guard only sees a declaration that starts its line, so a destructured or
+/// inline declaration would otherwise leave an assertion binding credited
+/// while shadowed (#4638 review). Over-collecting only withholds credit.
+fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+    for statement in statements {
+        collect_statement_declared_names(statement, out);
+    }
+}
+
+fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<String>) {
+    match statement {
+        Statement::VariableDeclaration(declaration) => {
+            out.extend(declaration_binding_names(declaration));
+        }
+        Statement::FunctionDeclaration(function) => {
+            if let Some(identifier) = &function.id {
+                out.push(identifier.name.to_string());
+            }
+        }
+        Statement::ClassDeclaration(class) => {
+            if let Some(identifier) = &class.id {
+                out.push(identifier.name.to_string());
+            }
+        }
+        Statement::BlockStatement(block) => collect_block_declared_names(&block.body, out),
+        Statement::IfStatement(if_stmt) => {
+            collect_statement_declared_names(&if_stmt.consequent, out);
+            if let Some(alternate) = &if_stmt.alternate {
+                collect_statement_declared_names(alternate, out);
+            }
+        }
+        Statement::ForStatement(for_stmt) => {
+            if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                &for_stmt.init
+            {
+                out.extend(declaration_binding_names(declaration));
+            }
+            collect_statement_declared_names(&for_stmt.body, out);
+        }
+        Statement::ForOfStatement(for_of) => {
+            if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_of.left {
+                out.extend(declaration_binding_names(declaration));
+            }
+            collect_statement_declared_names(&for_of.body, out);
+        }
+        Statement::ForInStatement(for_in) => {
+            if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_in.left {
+                out.extend(declaration_binding_names(declaration));
+            }
+            collect_statement_declared_names(&for_in.body, out);
+        }
+        Statement::WhileStatement(while_stmt) => {
+            collect_statement_declared_names(&while_stmt.body, out);
+        }
+        Statement::DoWhileStatement(do_while) => {
+            collect_statement_declared_names(&do_while.body, out);
+        }
+        Statement::LabeledStatement(labeled) => {
+            collect_statement_declared_names(&labeled.body, out);
+        }
+        Statement::TryStatement(try_stmt) => {
+            collect_block_declared_names(&try_stmt.block.body, out);
+            if let Some(handler) = &try_stmt.handler {
+                if let Some(param) = &handler.param {
+                    out.extend(
+                        param
+                            .pattern
+                            .get_binding_identifiers()
+                            .iter()
+                            .map(|identifier| identifier.name.to_string()),
+                    );
+                }
+                collect_block_declared_names(&handler.body.body, out);
+            }
+            if let Some(finalizer) = &try_stmt.finalizer {
+                collect_block_declared_names(&finalizer.body, out);
+            }
+        }
+        Statement::SwitchStatement(switch) => {
+            for case in &switch.cases {
+                collect_block_declared_names(&case.consequent, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
     let params = match argument {
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
@@ -1473,8 +1563,16 @@ pub(crate) fn test_name_and_assertions_from_call(
     let call_text = source
         .get(call.span.start as usize..call.span.end as usize)
         .unwrap_or_default();
+    let body_declarations = function_body_statements_from_argument(callback)
+        .map(|statements| {
+            let mut names = Vec::new();
+            collect_block_declared_names(statements, &mut names);
+            names
+        })
+        .unwrap_or_default();
     let bindings = bindings.without_shadowed(|name| {
         parameters.iter().any(|parameter| parameter == name)
+            || body_declarations.iter().any(|declared| declared == name)
             || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
     });
     let bindings = &bindings;
@@ -1520,8 +1618,9 @@ fn call_callee_is_active_declaration(
 /// and Vitest accept `{ skip, todo }` (and Vitest `{ fails }`, which inverts
 /// the verdict) in the options object, which registers exactly what `.skip` /
 /// `.todo` / `.fails` register: no running discriminator. The options object
-/// sits before the callback (`it(name, opts, fn)`) or, in legacy Vitest,
-/// after it (`it(name, fn, opts)`); both positions are checked.
+/// sits before the callback (`it(name, opts, fn)`), in legacy Vitest after
+/// it (`it(name, fn, opts)`), and `node:test` also accepts it in place of
+/// the name (`test(opts, fn)`); all three positions are checked.
 ///
 /// Fail-closed (#4638 review): a `skip` / `todo` / `fails` key whose value is
 /// anything but literal `false` / `undefined`, a spread, a computed key, or a
@@ -1531,8 +1630,7 @@ fn call_callee_is_active_declaration(
 fn declaration_options_are_active(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
     call.arguments
         .iter()
-        .skip(1)
-        .take(2)
+        .take(3)
         .all(|argument| match argument {
             oxc_ast::ast::Argument::ObjectExpression(options) => options
                 .properties
