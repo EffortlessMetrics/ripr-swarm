@@ -27,6 +27,7 @@ pub(crate) mod gap_decision_ledger_live;
 pub(crate) mod gate;
 pub mod github;
 pub mod human;
+pub(crate) mod intervention_study;
 pub mod json;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;

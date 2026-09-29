@@ -410,6 +410,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "first_successful_pr"
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
+                    | "intervention-study"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
                     | "perl_packet_contract_migration"

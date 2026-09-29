@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Added
 
+- Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
+  a frozen protocol names study identity, assignment, equal budgets, the named
+  RIPR evidence surface, leakage controls, retries, stopping, non-compensating
+  outcome axes, and claim ceiling before any attempt. JSON and Markdown project
+  one sealed object. This does not execute agents, grade repairs, or claim
+  intervention value (#4649).
 - LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
   sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
   unchanged save/refresh, production/related/unrelated edits, rename, config

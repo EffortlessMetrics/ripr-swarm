@@ -215,6 +215,13 @@ const BINDINGS: &[Binding] = &[
         edge_fixtures: &[],
         excluded: &[],
     },
+    Binding {
+        schema_path: "schemas/ripr/ripr-intervention-study.schema.json",
+        pointer: None,
+        corpus: Corpus::Paths(&["fixtures/intervention-study/valid.json"]),
+        edge_fixtures: &[],
+        excluded: &[],
+    },
 ];
 
 /// One `--artifact SCHEMA[#POINTER]=FILE[#POINTER]` input: live producer bytes

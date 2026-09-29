@@ -10,6 +10,7 @@ mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
+mod intervention_study;
 mod language;
 mod probe;
 mod summary;
@@ -53,6 +54,10 @@ pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
+};
+pub(crate) use intervention_study::{
+    InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
+    codes as intervention_study_codes, example_preregistered_study,
 };
 pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]
