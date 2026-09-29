@@ -53,9 +53,10 @@ pub(crate) struct TestGripEvidence {
     pub(crate) discriminate: StageEvidence,
     pub(crate) observed_values: Vec<ValueFact>,
     pub(crate) missing_discriminators: Vec<MissingDiscriminatorFact>,
-    /// Producer-owned Integration proposal or the typed blocker that kept
-    /// the target `Missing`. Compact evidence leaves this empty so the
-    /// compact classified-seam cache does not need a generation bump.
+    /// Producer-owned Integration or InlineUnit proposal, or the typed
+    /// blocker that kept the target `Missing`. Compact evidence leaves this
+    /// empty so the compact classified-seam cache does not need a generation
+    /// bump.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) new_test_target: Option<NewTestTargetAdmission>,
 }
@@ -277,7 +278,7 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context))
         .collect();
-    let new_test_target = new_test_target_admission(seam, context.index, &related_tests);
+    let new_test_target = new_test_target_admission(seam, context.index);
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -293,20 +294,13 @@ fn evidence_for_seam_with_context(
     }
 }
 
-fn new_test_target_admission(
-    seam: &RepoSeam,
-    index: &RustIndex,
-    related_tests: &[RelatedTestGrip],
-) -> Option<NewTestTargetAdmission> {
-    if related_tests.iter().any(|test| test.test_target.is_some()) {
-        return None;
-    }
+fn new_test_target_admission(seam: &RepoSeam, index: &RustIndex) -> Option<NewTestTargetAdmission> {
     match seam.kind() {
         SeamKind::PredicateBoundary
         | SeamKind::ErrorVariant
         | SeamKind::ReturnValue
         | SeamKind::FieldConstruction
-        | SeamKind::MatchArm => Some(new_test_target::admit_new_integration_test(seam, index)),
+        | SeamKind::MatchArm => Some(new_test_target::admit_new_test_target(seam, index)),
         SeamKind::SideEffect | SeamKind::CallPresence => None,
     }
 }

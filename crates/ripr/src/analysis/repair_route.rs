@@ -11,7 +11,7 @@
 //! actionability flip is fail-closed and every ineligible state carries a
 //! typed reason.
 
-use super::new_test_target::NewTestTargetAdmission;
+pub(crate) use super::new_test_target::NewTestTargetAdmission;
 use super::seam_classification::ClassifiedSeam;
 use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
@@ -40,7 +40,8 @@ pub(crate) enum RepairRouteState {
 ///
 /// `Missing` is deliberate: a related-test summary, a path, or a renderer
 /// heuristic is not permission to edit that location. `Proposed` is a
-/// producer-owned new integration file, not an existing-test identity.
+/// producer-owned new Integration or InlineUnit target, not an existing-test
+/// identity.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RepairTargetSelection {
@@ -243,7 +244,9 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     if has_safe_target {
         present_evidence.push(SAFE_TEST_TARGET_EVIDENCE.to_string());
         if matches!(target_selection, RepairTargetSelection::Proposed(_)) {
-            present_evidence.push(NewTestTargetAdmission::present_reason().to_string());
+            if let Some(admission) = admission {
+                present_evidence.push(admission.present_reason().to_string());
+            }
         }
     }
     let mut missing_evidence = Vec::new();
@@ -554,8 +557,10 @@ fn value_target_selection(
         return RepairTargetSelection::Existing(existing.clone());
     }
     if let Some(proposal) = admission.and_then(|admission| admission.proposal.clone()) {
-        if proposal.kind != NewTestKind::Integration
-            || proposal.provenance != NewTestProposalProvenance::ProducerOwned
+        if !matches!(
+            proposal.kind,
+            NewTestKind::Integration | NewTestKind::InlineUnit
+        ) || proposal.provenance != NewTestProposalProvenance::ProducerOwned
         {
             return RepairTargetSelection::Missing;
         }
@@ -768,9 +773,12 @@ mod tests {
     mod case_identity;
 
     use super::{
-        ClassifiedSeam, RepairPacketIneligibility, cross_language_oracle_visibility_unresolved,
-        discriminator_fact_matches, is_safe_for_repair_packet, repair_packet_eligibility,
-        repair_packet_queue_visible,
+        ClassifiedSeam, RepairPacketIneligibility, RepairTargetSelection,
+        cross_language_oracle_visibility_unresolved, discriminator_fact_matches,
+        is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
+    };
+    use crate::analysis::new_test_target::{
+        NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
     };
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
@@ -864,6 +872,68 @@ mod tests {
                 new_test_target: None,
             },
             class,
+        }
+    }
+
+    fn inline_unit_admission() -> NewTestTargetAdmission {
+        NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::InlineUnit,
+                file: PathBuf::from("src/pricing.rs"),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: None,
+            blocker: None,
+        }
+    }
+
+    #[test]
+    fn producer_owned_inline_unit_proposal_is_a_safe_target() -> Result<(), String> {
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.new_test_target = Some(inline_unit_admission());
+        let eligibility = repair_packet_eligibility(&entry);
+        match &eligibility.readiness.target_selection {
+            RepairTargetSelection::Proposed(proposal) => {
+                assert_eq!(proposal.kind, NewTestKind::InlineUnit);
+            }
+            other => return Err(format!("expected Proposed InlineUnit, got {other:?}")),
+        }
+        assert!(eligibility.readiness.is_repair_ready());
+        assert!(eligibility.eligible());
+        Ok(())
+    }
+
+    #[test]
+    fn existing_target_stays_preferred_when_an_inline_proposal_is_also_present()
+    -> Result<(), String> {
+        let mut entry = classified_with(
+            boundary_seam(),
+            SeamGripClass::WeaklyGripped,
+            vec![rust_related_test(RelationReason::DirectOwnerCall)],
+        );
+        entry.evidence.new_test_target = Some(inline_unit_admission());
+        match repair_packet_eligibility(&entry).readiness.target_selection {
+            RepairTargetSelection::Existing(_) => Ok(()),
+            other => Err(format!("Existing must outrank Proposed, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn producer_owned_integration_proposal_is_a_safe_target() -> Result<(), String> {
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        let mut admission = inline_unit_admission();
+        if let Some(proposal) = admission.proposal.as_mut() {
+            proposal.kind = NewTestKind::Integration;
+            proposal.file = PathBuf::from("tests/pricing.rs");
+        }
+        entry.evidence.new_test_target = Some(admission);
+        match repair_packet_eligibility(&entry).readiness.target_selection {
+            RepairTargetSelection::Proposed(proposal) => {
+                assert_eq!(proposal.kind, NewTestKind::Integration);
+                Ok(())
+            }
+            other => Err(format!("expected Proposed Integration, got {other:?}")),
         }
     }
 

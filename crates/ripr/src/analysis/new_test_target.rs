@@ -1,72 +1,122 @@
-//! Producer-owned Integration `NewTestTargetProposal` admission (#4576).
+//! Producer-owned `NewTestTargetProposal` admission.
 //!
-//! When no existing test can own a test-only repair, this module may earn
-//! one exact new integration-test file from RustIndex facts. It does not
-//! invent expected values or generate the test body. Inline unit insertion
-//! stays out of scope.
+//! InlineUnit (#4784) may earn one exact insertion into an already-governed
+//! inline cfg-test module. Integration (#4576) may earn one new `tests/` file
+//! for a crate-root public library item with established autodiscovery.
+//! Neither invents expected values or generates a test body.
 
-use crate::analysis::facts::{FunctionSourceRole, RustIndex};
-use crate::analysis::rust_index::{self, FunctionSummary};
+use crate::analysis::facts::FunctionSourceRole;
+use crate::analysis::language::is_generated_rust_file_with_patterns;
+use crate::analysis::rust_index::{self, FunctionSummary, RustIndex};
 use crate::analysis::seams::{RepoSeam, SeamKind};
+use crate::analysis::syntax::{
+    GovernedCfgTestModule, governed_cfg_test_modules, production_owner_module_path,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
+mod integration;
+#[cfg(test)]
+mod integration_tests;
+mod region;
 #[cfg(test)]
 mod tests;
 
-const SAFE_NEW_INTEGRATION_TEST_EVIDENCE: &str = "producer-owned new integration test proposal";
+pub(crate) use region::InlineTestRegionAuthority;
+#[cfg(test)]
+pub(crate) use region::validate_inline_region_edit;
+
+const SAFE_NEW_INLINE_UNIT_EVIDENCE: &str = "producer-owned new inline unit test proposal";
+
+pub(crate) use integration::admit_new_integration_test;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct NewTestTargetAdmission {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) proposal: Option<NewTestTargetProposal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) region: Option<InlineTestRegionAuthority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) blocker: Option<NewTestProposalBlocker>,
 }
 
 impl NewTestTargetAdmission {
     pub(crate) fn missing_reason(&self) -> Option<String> {
-        self.blocker.as_ref().map(|blocker| {
-            format!(
-                "new integration test proposal blocked: {}",
-                blocker.as_str()
-            )
-        })
+        self.blocker
+            .as_ref()
+            .map(|blocker| format!("new test proposal blocked: {}", blocker.as_str()))
     }
 
-    pub(crate) fn present_reason() -> &'static str {
-        SAFE_NEW_INTEGRATION_TEST_EVIDENCE
+    pub(crate) fn present_reason(&self) -> &'static str {
+        match self.proposal.as_ref().map(|proposal| proposal.kind) {
+            Some(NewTestKind::Integration) => integration::integration_present_reason(),
+            _ => SAFE_NEW_INLINE_UNIT_EVIDENCE,
+        }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum NewTestProposalBlocker {
+    NoTestModule,
+    AmbiguousModule,
+    OutOfLineModule,
+    CustomHarness,
+    GeneratedOrVendor,
+    OwnerUnresolved,
+    OwnerInaccessible,
+    LexicalFallback,
+    PathUnsafe,
+    StaleSource,
+    ProductionEdit,
+    InlineUnitOutOfScope,
     PrivateOwner,
     AutotestsDisabled,
     MissingIntegrationLayout,
     LibraryTargetUnresolved,
-    OwnerUnresolved,
     FileCollision,
-    PathUnsafe,
-    InlineUnitOutOfScope,
 }
 
 impl NewTestProposalBlocker {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
+            Self::NoTestModule => "no governed inline cfg-test module exists in the owner file",
+            Self::AmbiguousModule => {
+                "more than one governed inline test module or insertion anchor is plausible"
+            }
+            Self::OutOfLineModule => {
+                "the only test module is out-of-line; V1 does not follow mod tests;"
+            }
+            Self::CustomHarness => {
+                "owner file is a custom test harness, not an ordinary inline module"
+            }
+            Self::GeneratedOrVendor => {
+                "owner file is generated, vendored, or otherwise outside the governed source set"
+            }
+            Self::OwnerUnresolved => "production owner is unresolved",
+            Self::OwnerInaccessible => {
+                "the selected inline test module does not have ordinary Rust access to the owner"
+            }
+            Self::LexicalFallback => {
+                "owner file used lexical fallback; module region identity is not established"
+            }
+            Self::PathUnsafe => "owner source path is not a root-contained production file",
+            Self::StaleSource => {
+                "region authority source digest does not match the supplied before text"
+            }
+            Self::ProductionEdit => {
+                "edit changed production text outside the governed inline test-module region"
+            }
+            Self::InlineUnitOutOfScope => {
+                "inline unit insertion is out of scope for this seam or file"
+            }
             Self::PrivateOwner => {
                 "owner is private and would require a production visibility change"
             }
             Self::AutotestsDisabled => "cargo autotests discovery is disabled",
             Self::MissingIntegrationLayout => "package has no established tests/ layout",
             Self::LibraryTargetUnresolved => "exact public library target is unresolved",
-            Self::OwnerUnresolved => "production owner is unresolved",
             Self::FileCollision => "proposed integration file collides with an existing path",
-            Self::PathUnsafe => "proposed integration path is not a root-contained new tests/ file",
-            Self::InlineUnitOutOfScope => {
-                "inline unit insertion is out of scope for this integration leaf"
-            }
         }
     }
 }
@@ -92,29 +142,56 @@ pub(crate) enum NewTestProposalProvenance {
     ProducerOwned,
 }
 
-/// Admit one Integration proposal from indexed package, visibility, and
-/// Cargo discovery facts. Callers that already have a safe Existing target
-/// must not invoke this.
-pub(crate) fn admit_new_integration_test(
+/// Prefer a producer-owned Integration file when the owner is a crate-root
+/// public library item; otherwise keep the landed InlineUnit producer.
+/// When both stay Missing, keep Integration's visibility or layout blocker
+/// so the Missing reason names why a new tests/ file is refused.
+pub(crate) fn admit_new_test_target(seam: &RepoSeam, index: &RustIndex) -> NewTestTargetAdmission {
+    let integration = admit_new_integration_test(seam, index);
+    if integration.proposal.is_some() {
+        return integration;
+    }
+    let inline = admit_new_inline_unit_test(seam, index);
+    if inline.proposal.is_some() {
+        return inline;
+    }
+    match integration.blocker {
+        Some(
+            NewTestProposalBlocker::PrivateOwner
+            | NewTestProposalBlocker::AutotestsDisabled
+            | NewTestProposalBlocker::MissingIntegrationLayout
+            | NewTestProposalBlocker::LibraryTargetUnresolved
+            | NewTestProposalBlocker::FileCollision,
+        ) => integration,
+        _ => inline,
+    }
+}
+
+/// Admit one InlineUnit proposal from indexed source-role and parser-backed
+/// module facts. Callers that already have a safe Existing target still invoke
+/// this so Missing reasons stay typed; ranking prefers Existing.
+pub(crate) fn admit_new_inline_unit_test(
     seam: &RepoSeam,
     index: &RustIndex,
 ) -> NewTestTargetAdmission {
-    match try_admit_new_integration_test(seam, index) {
-        Ok(proposal) => NewTestTargetAdmission {
+    match try_admit_new_inline_unit_test(seam, index) {
+        Ok((proposal, region)) => NewTestTargetAdmission {
             proposal: Some(proposal),
+            region: Some(region),
             blocker: None,
         },
         Err(blocker) => NewTestTargetAdmission {
             proposal: None,
+            region: None,
             blocker: Some(blocker),
         },
     }
 }
 
-fn try_admit_new_integration_test(
+fn try_admit_new_inline_unit_test(
     seam: &RepoSeam,
     index: &RustIndex,
-) -> Result<NewTestTargetProposal, NewTestProposalBlocker> {
+) -> Result<(NewTestTargetProposal, InlineTestRegionAuthority), NewTestProposalBlocker> {
     if !matches!(
         seam.kind(),
         SeamKind::PredicateBoundary
@@ -125,6 +202,15 @@ fn try_admit_new_integration_test(
     ) {
         return Err(NewTestProposalBlocker::InlineUnitOutOfScope);
     }
+    if rust_index::is_test_file(seam.file()) {
+        return Err(NewTestProposalBlocker::InlineUnitOutOfScope);
+    }
+    if path_is_generated_or_vendor(seam.file()) {
+        return Err(NewTestProposalBlocker::GeneratedOrVendor);
+    }
+    if !is_relative_without_parent(seam.file()) {
+        return Err(NewTestProposalBlocker::PathUnsafe);
+    }
 
     let owner_fn = rust_index::find_owner_function(index, seam.file(), seam.display_line())
         .ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
@@ -132,286 +218,99 @@ fn try_admit_new_integration_test(
         return Err(NewTestProposalBlocker::OwnerUnresolved);
     }
 
-    let authority = index
-        .workspace_authority
-        .as_ref()
-        .ok_or(NewTestProposalBlocker::PathUnsafe)?;
-    let package = owning_package(&authority.root, seam.file())?;
-    owner_is_public_library_item(index, owner_fn, &package)?;
-    if !package.has_library_target {
-        return Err(NewTestProposalBlocker::LibraryTargetUnresolved);
+    let facts = rust_index::find_file_facts(index, seam.file())
+        .ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
+    if facts.used_lexical_fallback {
+        return Err(NewTestProposalBlocker::LexicalFallback);
     }
-    if !package.autotests {
-        return Err(NewTestProposalBlocker::AutotestsDisabled);
-    }
-    if !package.has_established_tests_layout {
-        return Err(NewTestProposalBlocker::MissingIntegrationLayout);
+    if facts
+        .functions
+        .iter()
+        .any(|function| function.source_role == FunctionSourceRole::HarnessHelper)
+    {
+        return Err(NewTestProposalBlocker::CustomHarness);
     }
 
-    let proposed = proposed_integration_file(&authority.root, &package, owner_fn)?;
-    if !is_root_contained_new_test_file(&authority.root, &proposed) {
-        return Err(NewTestProposalBlocker::PathUnsafe);
-    }
+    let modules =
+        governed_cfg_test_modules(&facts.source).ok_or(NewTestProposalBlocker::LexicalFallback)?;
+    let region = unique_inline_region(seam.file(), &facts.source, owner_fn, &modules)?;
 
-    Ok(NewTestTargetProposal {
-        kind: NewTestKind::Integration,
-        file: proposed,
-        owner: format!("{}::{}", package.library_crate_name, owner_fn.name),
-        provenance: NewTestProposalProvenance::ProducerOwned,
+    Ok((
+        NewTestTargetProposal {
+            kind: NewTestKind::InlineUnit,
+            file: normalize_relative(seam.file()),
+            owner: seam.owner().to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+        },
+        region,
+    ))
+}
+
+fn unique_inline_region(
+    file: &Path,
+    source: &str,
+    owner_fn: &FunctionSummary,
+    modules: &[GovernedCfgTestModule],
+) -> Result<InlineTestRegionAuthority, NewTestProposalBlocker> {
+    let owner_modules = production_owner_module_path(source, owner_fn.start_line)
+        .ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
+    let inline = modules
+        .iter()
+        .filter(|module| module.is_inline)
+        .collect::<Vec<_>>();
+    let out_of_line = modules
+        .iter()
+        .filter(|module| !module.is_inline)
+        .collect::<Vec<_>>();
+
+    if inline.is_empty() {
+        if !out_of_line.is_empty() {
+            return Err(NewTestProposalBlocker::OutOfLineModule);
+        }
+        return Err(NewTestProposalBlocker::NoTestModule);
+    }
+    if inline.len() != 1 || !out_of_line.is_empty() {
+        return Err(NewTestProposalBlocker::AmbiguousModule);
+    }
+    let module = inline[0];
+    if module.parent_modules != owner_modules {
+        return Err(NewTestProposalBlocker::OwnerInaccessible);
+    }
+    let body_start = module
+        .body_start
+        .ok_or(NewTestProposalBlocker::AmbiguousModule)?;
+    let close_brace_start = module
+        .close_brace_start
+        .ok_or(NewTestProposalBlocker::AmbiguousModule)?;
+    if body_start > close_brace_start || close_brace_start > source.len() {
+        return Err(NewTestProposalBlocker::AmbiguousModule);
+    }
+    Ok(InlineTestRegionAuthority {
+        file: normalize_relative(file),
+        module_name: module.name.clone(),
+        parent_modules: module.parent_modules.clone(),
+        body_start,
+        close_brace_start,
+        source_digest: region::source_digest(source),
     })
 }
 
-struct PackageFacts {
-    package_dir: PathBuf,
-    library_root: PathBuf,
-    library_crate_name: String,
-    autotests: bool,
-    has_library_target: bool,
-    has_established_tests_layout: bool,
-}
-
-fn owning_package(
-    root: &Path,
-    relative_file: &Path,
-) -> Result<PackageFacts, NewTestProposalBlocker> {
-    let mut cursor = relative_file.parent().map(Path::to_path_buf);
-    while let Some(directory) = cursor {
-        let relative_manifest = directory.join("Cargo.toml");
-        let manifest = root.join(&relative_manifest);
-        if manifest.is_file() {
-            let text = std::fs::read_to_string(&manifest)
-                .map_err(|_read| NewTestProposalBlocker::LibraryTargetUnresolved)?;
-            let value = text
-                .parse::<toml::Table>()
-                .map_err(|_parse| NewTestProposalBlocker::LibraryTargetUnresolved)?;
-            let Some(package) = value.get("package").and_then(toml::Value::as_table) else {
-                cursor = directory.parent().map(Path::to_path_buf);
-                continue;
-            };
-            let package_name = package
-                .get("name")
-                .and_then(toml::Value::as_str)
-                .filter(|name| !name.trim().is_empty())
-                .ok_or(NewTestProposalBlocker::LibraryTargetUnresolved)?
-                .to_string();
-            let autotests = package
-                .get("autotests")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(true);
-            let explicit_lib = value.get("lib").and_then(toml::Value::as_table);
-            let autolib = package
-                .get("autolib")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(true);
-            let lib_name = explicit_lib
-                .and_then(|lib| lib.get("name"))
-                .and_then(toml::Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| package_name.replace('-', "_"));
-            let lib_path = explicit_lib
-                .and_then(|lib| lib.get("path"))
-                .and_then(toml::Value::as_str)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("src/lib.rs"));
-            let lib_source = root.join(&directory).join(&lib_path);
-            let has_library_target = if explicit_lib.is_some() || autolib {
-                lib_source.is_file()
-            } else {
-                false
-            };
-            let tests_dir = root.join(&directory).join("tests");
-            let has_established_tests_layout = tests_dir.is_dir()
-                && std::fs::read_dir(&tests_dir)
-                    .map(|entries| {
-                        entries.filter_map(Result::ok).any(|entry| {
-                            entry.path().extension().and_then(|ext| ext.to_str()) == Some("rs")
-                        })
-                    })
-                    .unwrap_or(false);
-            let library_root = if directory.as_os_str().is_empty() {
-                normalize_relative(&lib_path)
-            } else {
-                normalize_relative(&directory.join(&lib_path))
-            };
-            return Ok(PackageFacts {
-                package_dir: directory,
-                library_root,
-                library_crate_name: lib_name.replace('-', "_"),
-                autotests,
-                has_library_target,
-                has_established_tests_layout,
-            });
-        }
-        if directory.as_os_str().is_empty() {
-            break;
-        }
-        cursor = directory.parent().map(Path::to_path_buf);
+fn path_is_generated_or_vendor(path: &Path) -> bool {
+    if is_generated_rust_file_with_patterns(path, &[]) {
+        return true;
     }
-    Err(NewTestProposalBlocker::LibraryTargetUnresolved)
-}
-
-fn owner_is_public_library_item(
-    index: &RustIndex,
-    owner_fn: &FunctionSummary,
-    package: &PackageFacts,
-) -> Result<(), NewTestProposalBlocker> {
-    if normalize_relative(&owner_fn.file) != package.library_root {
-        return Err(NewTestProposalBlocker::PrivateOwner);
-    }
-    let Some(facts) = index.files.get(&owner_fn.file) else {
-        return Err(NewTestProposalBlocker::OwnerUnresolved);
-    };
-    if facts.used_lexical_fallback {
-        return Err(NewTestProposalBlocker::OwnerUnresolved);
-    }
-    if !owner_symbol_is_crate_root(owner_fn) {
-        return Err(NewTestProposalBlocker::PrivateOwner);
-    }
-    if function_item_is_crate_public(&facts.source, owner_fn.start_line) {
-        Ok(())
-    } else {
-        Err(NewTestProposalBlocker::PrivateOwner)
-    }
-}
-
-fn owner_symbol_is_crate_root(owner_fn: &FunctionSummary) -> bool {
-    let expected = format!(
-        "{}::{}",
-        crate::analysis::stable_path_text(&owner_fn.file),
-        owner_fn.name
-    );
-    owner_fn.id.0 == expected
-}
-
-fn function_item_is_crate_public(source: &str, start_line: usize) -> bool {
-    let declaration = source
-        .lines()
-        .nth(start_line.saturating_sub(1))
-        .unwrap_or("")
-        .trim();
-    crate_public_fn_declaration(declaration)
-}
-
-fn crate_public_fn_declaration(declaration: &str) -> bool {
-    let Some(after_pub) = declaration.strip_prefix("pub") else {
-        return false;
-    };
-    if after_pub.starts_with('(') {
-        return false;
-    }
-    let rest = after_pub.trim_start();
-    let rest = rest
-        .strip_prefix("async")
-        .map(str::trim_start)
-        .unwrap_or(rest);
-    let rest = rest
-        .strip_prefix("const")
-        .map(str::trim_start)
-        .unwrap_or(rest);
-    let rest = rest
-        .strip_prefix("unsafe")
-        .map(str::trim_start)
-        .unwrap_or(rest);
-    rest.starts_with("fn")
-        && rest
-            .as_bytes()
-            .get(2)
-            .is_none_or(|byte| byte.is_ascii_whitespace())
-}
-
-fn proposed_integration_file(
-    root: &Path,
-    package: &PackageFacts,
-    owner_fn: &FunctionSummary,
-) -> Result<PathBuf, NewTestProposalBlocker> {
-    let stem = sanitize_test_file_stem(&owner_fn.name)?;
-    let candidates = [
-        format!("tests/{stem}.rs"),
-        format!("tests/{stem}_boundary.rs"),
-    ];
-    for relative in candidates {
-        let workspace_relative = if package.package_dir.as_os_str().is_empty() {
-            PathBuf::from(&relative)
-        } else {
-            package.package_dir.join(&relative)
+    path.components().any(|component| {
+        let Component::Normal(value) = component else {
+            return false;
         };
-        if leaf_is_absent(&root.join(&workspace_relative))? {
-            return Ok(normalize_relative(&workspace_relative));
-        }
-    }
-    Err(NewTestProposalBlocker::FileCollision)
+        matches!(
+            value.to_string_lossy().as_ref(),
+            "vendor" | "vendored" | "node_modules" | "target" | ".git" | "fixtures"
+        )
+    })
 }
 
-fn sanitize_test_file_stem(name: &str) -> Result<String, NewTestProposalBlocker> {
-    let stem: String = name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '_' {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if stem.is_empty() {
-        return Err(NewTestProposalBlocker::PathUnsafe);
-    }
-    Ok(stem)
-}
-
-fn is_root_contained_new_test_file(root: &Path, relative: &Path) -> bool {
-    if !is_relative_without_parent(relative) {
-        return false;
-    }
-    let normalized = relative.to_string_lossy().replace('\\', "/");
-    if !rust_index::is_test_file(relative) {
-        return false;
-    }
-    if !normalized.ends_with(".rs") {
-        return false;
-    }
-    let forbidden = [
-        "target/",
-        ".git/",
-        "vendor/",
-        "node_modules/",
-        "fixtures/",
-        "generated/",
-    ];
-    if forbidden
-        .iter()
-        .any(|prefix| normalized.starts_with(prefix) || normalized.contains(&format!("/{prefix}")))
-    {
-        return false;
-    }
-    let full = root.join(relative);
-    match leaf_is_absent(&full) {
-        Ok(true) => {}
-        Ok(false) | Err(_) => return false,
-    }
-    let Some(parent) = full.parent() else {
-        return false;
-    };
-    let Ok(canonical_root) = root.canonicalize() else {
-        return false;
-    };
-    parent
-        .canonicalize()
-        .is_ok_and(|canonical| canonical.starts_with(&canonical_root))
-}
-
-/// No-follow occupancy: only `NotFound` is a genuinely new leaf.
-/// `exists`/`try_exists` follow a dangling symlink and would treat it as
-/// free. Any other IO error fails closed.
-fn leaf_is_absent(path: &Path) -> Result<bool, NewTestProposalBlocker> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(false),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
-        Err(_) => Err(NewTestProposalBlocker::PathUnsafe),
-    }
-}
-
-fn is_relative_without_parent(path: &Path) -> bool {
+pub(super) fn is_relative_without_parent(path: &Path) -> bool {
     !path.is_absolute()
         && path.components().all(|component| {
             !matches!(
@@ -421,6 +320,6 @@ fn is_relative_without_parent(path: &Path) -> bool {
         })
 }
 
-fn normalize_relative(path: &Path) -> PathBuf {
+pub(super) fn normalize_relative(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().replace('\\', "/"))
 }

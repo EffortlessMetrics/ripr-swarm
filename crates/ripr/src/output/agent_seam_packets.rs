@@ -5447,6 +5447,36 @@ mod tests {
     }
 
     #[test]
+    fn producer_owned_inline_unit_proposal_projects_as_new_inline_module() {
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        };
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+        }];
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::InlineUnit,
+                file: PathBuf::from("src/pricing.rs"),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: None,
+            blocker: None,
+        });
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.target_kind,
+            RecommendedTestTargetKind::NewInlineTestModule
+        );
+        assert_eq!(recommended.file.replace('\\', "/"), "src/pricing.rs");
+        assert!(recommended.symbol_id.is_none());
+    }
+
+    #[test]
     fn packet_queue_excludes_cross_language_binding_seam_without_rust_test_context()
     -> Result<(), String> {
         let seam = RepoSeam::new(
