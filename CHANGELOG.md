@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check` run from a crate subdirectory such as `src/` now analyzes the
+  crate. In a repository whose `Cargo.toml` has no `[workspace]` table, the
+  root stayed the subdirectory, the diff fell outside it, and the JSON reported
+  `analysis_complete: true` with no findings. The implicit root now walks up to
+  the nearest `Cargo.toml`, or to the git top level when there is none, and
+  says so on stderr. `ripr cache` resolves the same root (#4610).
 - MCP: a client that opens with `server/discover` (protocol `2026-07-28`)
   now receives the same instructions as an `initialize` client, including the
   CLI route that analyzes the diff. Before, only `initialize` carried them.

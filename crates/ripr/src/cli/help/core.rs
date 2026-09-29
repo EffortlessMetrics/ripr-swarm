@@ -110,7 +110,9 @@ Usage: ripr check [OPTIONS]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
-                           walks up to a Cargo.toml containing [workspace].
+                           walks up to a Cargo.toml containing [workspace];
+                           without one, to the nearest Cargo.toml or the git
+                           top level. A moved root is disclosed on stderr.
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
