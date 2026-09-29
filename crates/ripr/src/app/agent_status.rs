@@ -2086,6 +2086,70 @@ mod tests {
         Ok(())
     }
 
+    /// A finished attempt that never retained `terminal_artifacts` still reads
+    /// the one-slot compatibility file. An exact match is issued; a receipt
+    /// bound to another attempt stays superseded and is not reconstructed.
+    #[test]
+    fn agent_status_legacy_manifest_does_not_reconstruct_a_superseded_receipt() -> Result<(), String>
+    {
+        let manifest = ready_to_finish_manifest()?;
+        let after = manifest
+            .after
+            .as_ref()
+            .ok_or_else(|| "fixture after missing".to_string())?;
+        let other = serde_json::json!({
+            "repair_attempt": {
+                "attempt_id": "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa",
+                "after_head": after.repository_head,
+                "delta_sha256": after.delta_sha256,
+                "packet_sha256": after.packet_sha256
+            }
+        });
+        assert_eq!(
+            attempt_receipt(
+                Path::new("."),
+                &manifest,
+                &WorkflowReceiptRead::Parsed(other)
+            ),
+            AgentStatusAttemptReceipt::Superseded {
+                by_attempt_id: "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+            }
+        );
+        let superseded = attempt_receipt_json(&AgentStatusAttemptReceipt::Superseded {
+            by_attempt_id: "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        });
+        assert_eq!(superseded["issued_for_attempt"], false);
+        assert_eq!(superseded["unavailable"], false);
+        assert_eq!(
+            superseded["superseded_by"],
+            "repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+
+        let matching = serde_json::json!({
+            "repair_attempt": {
+                "attempt_id": after.attempt_id.as_str(),
+                "after_head": after.repository_head,
+                "delta_sha256": after.delta_sha256,
+                "packet_sha256": after.packet_sha256
+            }
+        });
+        match attempt_receipt(
+            Path::new("."),
+            &manifest,
+            &WorkflowReceiptRead::Parsed(matching),
+        ) {
+            AgentStatusAttemptReceipt::Issued { path, .. } => {
+                assert_eq!(path, WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+            }
+            other => {
+                return Err(format!(
+                    "an exact matching legacy receipt must stay issued, not {other:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn ready_to_finish_manifest() -> Result<RepairAttemptManifest, String> {
         use crate::app::repair_attempt::{RepairAttemptAfter, RepairAttemptId};
         use crate::edit_cage::{EditCageVerdict, EditCageVerdictStatus};

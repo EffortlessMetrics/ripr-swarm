@@ -16389,6 +16389,11 @@ fn agent_status_does_not_fall_back_to_another_attempt_when_local_receipt_is_unus
         "{missing:#}"
     );
     assert_eq!(earlier["receipt"]["unavailable"], true, "{missing:#}");
+    assert_eq!(
+        earlier["receipt"]["superseded_by"],
+        serde_json::Value::Null,
+        "a declared local miss is unavailable, not a superseded projection of B: {missing:#}"
+    );
     assert_ne!(
         earlier["receipt"]["movement"],
         repair_route_attempt(&missing, &second)?["receipt"]["movement"],
