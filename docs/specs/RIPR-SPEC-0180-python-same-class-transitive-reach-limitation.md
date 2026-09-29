@@ -135,6 +135,17 @@ Leave the finding exactly as the direct-call classifier produced it.
 | Classifier wiring | `crates/ripr/src/analysis/language/python/classify.rs` |
 | Stop-reason map | `crates/ripr/src/analysis/language/python.rs` |
 
+## Metrics
+
+- Gate: 0 golden drift on existing fixtures; both new transitive-reach fixtures passing.
+- Behavioral repro: positive fixture shows `static_limit_kind: "python_transitive_reach_unresolved"`,
+  classification stays `no_static_path`, `related_tests` empty. Negative fixture shows
+  bare `no_static_path` with no `static_limit_kind`.
+- Unit tests in `crates/ripr/src/analysis/language/python/transitive_reach.rs` cover
+  construction, alias/module import, bound-method alias, classmethod, import-without-use,
+  other-module class, missing self-path, getattr/foreign receiver, nested function, lambda,
+  depth 5 vs 6, direct owner call, and a cross-module façade staying silent.
+
 ## Follow-up Boundary
 
 Relating method-to-method tests as `helper_owner_call` remains owned by #4568
