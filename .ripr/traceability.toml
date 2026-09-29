@@ -6226,7 +6226,8 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::call_deletion_whole_object_observer_without_token_clears_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::return_value_whole_object_without_token_still_emits_observation_unverified",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_sibling_qualifier_does_not_clear_observation_unverified",
-  "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_variant_token_match_keeps_discriminate_yes"
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_variant_token_match_keeps_discriminate_yes",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

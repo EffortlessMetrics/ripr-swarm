@@ -2,6 +2,7 @@ use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
 
+use super::reach::is_proximity_only;
 use super::rust_string_literals;
 use crate::domain::*;
 
@@ -304,8 +305,10 @@ fn analyze_related_assertions(
     // For families that need token confirmation: start pessimistic and clear
     // once a token_match fires.
     let mut observation_unverified = false;
-    // When any related test is tied to the owner by more than a shared name,
-    // reach comes from that test. A test related only because its name or
+    // When any related test is tied to the owner by a call, helper chain,
+    // assertion affinity or seam callee, reach comes from that test.
+    // Same-file and same-module relations do not count: `reach.rs` treats
+    // them as proximity with no reach. A test related only because its name or
     // path contains a changed token or the owner's name, with no captured
     // call, helper chain or assertion affinity (`WeakTokenSubstring`,
     // `OwnerNamedTest`), may never run the changed code, so its
@@ -321,7 +324,9 @@ fn analyze_related_assertions(
             RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
         )
     };
-    let reach_bearing_related = related_tests.iter().any(|(_, reason)| !name_only(*reason));
+    let reach_bearing_related = related_tests
+        .iter()
+        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
 
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
@@ -2156,14 +2161,26 @@ mod tests {
         }
         // With no reach-bearing relation, reach itself stays weak or absent
         // (reach.rs), so the proximity oracle keeps its old reading here.
-        let (_, discriminate, _) = reveal_evidence(
-            &probe,
-            &[(&proximity_test, RelationReason::WeakTokenSubstring)],
-        );
-        if discriminate.state != StageState::Yes {
-            return Err(format!(
-                "all-proximity relation lost its oracle reading: {discriminate:?}"
-            ));
+        // An assertionless same-file or same-module neighbour supplies no
+        // reach either, so it must not switch the rule on.
+        let bystander = test_with_assertions("same_file_bystander", Vec::new());
+        for related in [
+            vec![(&proximity_test, RelationReason::WeakTokenSubstring)],
+            vec![
+                (&bystander, RelationReason::SameTestFile),
+                (&proximity_test, RelationReason::WeakTokenSubstring),
+            ],
+            vec![
+                (&bystander, RelationReason::SameModule),
+                (&proximity_test, RelationReason::OwnerNamedTest),
+            ],
+        ] {
+            let (_, discriminate, _) = reveal_evidence(&probe, &related);
+            if discriminate.state != StageState::Yes {
+                return Err(format!(
+                    "relation with no reach-bearing test lost its oracle reading: {discriminate:?}"
+                ));
+            }
         }
         Ok(())
     }
