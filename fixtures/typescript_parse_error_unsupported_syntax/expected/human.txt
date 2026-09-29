@@ -8,7 +8,7 @@ Changed file(s) by language: typescript: 1.
 
 Analysis outcome: limitations below (analysis incomplete; partial_with_limitations).
   The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: language_scope_unsupported at language_adapter (src/broken.ts); affected items: 1; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
+  Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); file: src/broken.ts; affected items: 1; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
 
 Start here:
   State: preview language, advisory only (preview_limited)

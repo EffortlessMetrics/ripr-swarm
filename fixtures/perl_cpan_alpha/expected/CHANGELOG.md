@@ -125,3 +125,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — perl_cpan_alpha (6)
+
+Reason:
+RIPR-SPEC-0122: analysis-outcome Limitation lines lead with plain words; kind, stage and recovery tokens stay in parentheses (#4323)
+
+Command:
+`cargo xtask goldens bless perl_cpan_alpha --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -84,3 +84,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (8)
+
+Reason:
+RIPR-SPEC-0122: analysis-outcome Limitation lines lead with plain words; kind, stage and recovery tokens stay in parentheses (#4323)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (9)
+
+Reason:
+RIPR-SPEC-0122: analysis-outcome Limitation lines lead with plain words; kind, stage and recovery tokens stay in parentheses (#4323)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

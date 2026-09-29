@@ -227,20 +227,29 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         ));
     }
     for limitation in &outcome.limitations {
+        // Plain words lead; the schema tokens follow in parentheses so the
+        // line still greps against JSON and docs (#4323).
         out.push_str(&format!(
-            "  Limitation: {} at {}",
+            "  Limitation: {} during {} ({} at {})",
+            limitation.kind.plain_label(),
+            limitation.producer_stage.plain_label(),
             limitation.kind.as_str(),
             limitation.producer_stage.as_str()
         ));
         if let Some(path) = &limitation.path {
-            out.push_str(&format!(" ({path})"));
+            out.push_str(&format!("; file: {path}"));
         }
         if let Some(count) = limitation.affected_items {
             out.push_str(&format!("; affected items: {count}"));
         }
+        let recovery = limitation.recovery.kind;
+        let recovery_label = if recovery.plain_label() == recovery.as_str() {
+            recovery.as_str().to_string()
+        } else {
+            format!("{} ({})", recovery.plain_label(), recovery.as_str())
+        };
         out.push_str(&format!(
-            "; recovery: {} — {}.\n",
-            limitation.recovery.kind.as_str(),
+            "; recovery: {recovery_label} — {}.\n",
             // The recovery detail is often a full sentence; the line supplies
             // its own terminal period.
             limitation.recovery.detail.trim_end_matches('.')

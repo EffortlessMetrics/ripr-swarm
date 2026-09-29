@@ -1329,6 +1329,12 @@ are scoped or reviewed.
   the id in parentheses, for example `Analysis outcome: findings below
   (analysis complete; complete_with_findings).` and `State: a test gap to
   inspect or repair (top_gap)`.
+- `ripr check`'s `Limitation:` lines lead with plain words and keep the
+  schema tokens in parentheses, for example `Limitation: some changed files
+  were not analyzed during language analysis (language_scope_unsupported at
+  language_adapter); file: src/broken.ts; ...; recovery: enable the language
+  (enable_language) — ...`. Before, the kind, stage and recovery were bare
+  snake_case tokens (#4323).
 
 ### Added
 

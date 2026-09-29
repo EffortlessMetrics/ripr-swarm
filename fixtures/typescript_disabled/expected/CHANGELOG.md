@@ -119,3 +119,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_disabled (5)
+
+Reason:
+RIPR-SPEC-0122: analysis-outcome Limitation lines lead with plain words; kind, stage and recovery tokens stay in parentheses (#4323)
+
+Command:
+`cargo xtask goldens bless typescript_disabled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
