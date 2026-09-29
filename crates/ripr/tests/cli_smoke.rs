@@ -1969,6 +1969,8 @@ fn check_suppression_policy_rejects_unsupported_formats() -> Result<(), String> 
 
 const SMOKE_PR_GUIDANCE_JSON: &str = r#"{
   "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
   "summary": {"unchanged_tests": true},
   "comments": [],
   "summary_only": [],
@@ -8960,11 +8962,32 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     let clean = run_ripr(&["doctor", "--root", &root_str]);
     assert_success(&clean);
     let clean_out = String::from_utf8_lossy(&clean.stdout);
-    assert!(
-        clean_out
-            .lines()
-            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
+    assert_eq!(
+        recommended_first_command_line(&clean_out),
+        Some(first_command_at(&root_str, "").as_str()),
         "clean worktree must recommend the diff-first command directly:\n{clean_out}"
+    );
+    // A relative `--root` is bound to doctor's directory (#4890), so the
+    // printed command still names this repository after a `cd`.
+    let parent = root
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", root.display()))?;
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("{} has no UTF-8 name", root.display()))?;
+    let relative = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(parent),
+        &["doctor", "--root", name],
+    )
+    .map_err(|err| err.to_string())?;
+    assert_success(&relative);
+    let relative_out = String::from_utf8_lossy(&relative.stdout);
+    assert_eq!(
+        recommended_first_command_line(&relative_out),
+        Some(first_command_at(&root_str, "").as_str()),
+        "a relative --root must print the bound root:\n{relative_out}"
     );
     // The base is resolved, not asserted: `origin/main` does not exist in a
     // repository whose default branch is not `main`, and this fixture has no
@@ -8983,18 +9006,18 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     let dirty = run_ripr(&["doctor", "--root", &root_str]);
     assert_success(&dirty);
     let dirty_out = String::from_utf8_lossy(&dirty.stdout);
-    assert!(
-        dirty_out.contains("Recommended first command: ripr check --base HEAD --worktree"),
+    assert_eq!(
+        recommended_first_command_line(&dirty_out),
+        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
         "dirty worktree must recommend the worktree command:\n{dirty_out}"
     );
     assert!(
         dirty_out.contains("staged and unstaged tracked edits"),
         "dirty worktree must disclose the tracked-edit scope:\n{dirty_out}"
     );
-    assert!(
-        !dirty_out
-            .lines()
-            .any(|line| line.trim_end() == "- Recommended first command: ripr check"),
+    assert_ne!(
+        recommended_first_command_line(&dirty_out),
+        Some(first_command_at(&root_str, "").as_str()),
         "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
     );
 
@@ -9013,6 +9036,28 @@ fn recommended_first_command_line(stdout: &str) -> Option<&str> {
         line.trim_end()
             .strip_prefix("- Recommended first command: ")
     })
+}
+
+/// Doctor's recommended command after `doctor --root <root>` run from another
+/// directory: `ripr check` defaults to `.`, so the root is named, quoted the
+/// way `agent::loop_commands::shell_arg` quotes it. `root` is absolute; on
+/// Windows command paths render with `/` separators.
+fn first_command_at(root: &str, flags: &str) -> String {
+    let root = if cfg!(windows) {
+        root.replace('\\', "/")
+    } else {
+        root.to_string()
+    };
+    let quoted = if !root.is_empty()
+        && root
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
+    {
+        root.to_string()
+    } else {
+        format!("'{}'", root.replace('\'', r"'\''"))
+    };
+    format!("ripr check --root {quoted}{flags}")
 }
 
 #[test]
@@ -9144,7 +9189,7 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
     );
     assert_eq!(
         recommended_first_command_line(&stdout),
-        Some("ripr check --diff PATH"),
+        Some(first_command_at(&root, " --diff PATH").as_str()),
         "doctor must not recommend a git-backed check:\n{stdout}"
     );
     assert!(
@@ -9190,7 +9235,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
     assert_success(&with_git);
     assert_eq!(
         recommended_first_command_line(&String::from_utf8_lossy(&with_git.stdout)),
-        Some("ripr check --base HEAD --worktree"),
+        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
         "control: dirty tree with git still recommends --worktree:\n{}",
         String::from_utf8_lossy(&with_git.stdout)
     );
@@ -9200,7 +9245,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
     let stdout = String::from_utf8_lossy(&without_git.stdout);
     assert_eq!(
         recommended_first_command_line(&stdout),
-        Some("ripr check --diff PATH"),
+        Some(first_command_at(&root_str, " --diff PATH").as_str()),
         "dirty tree cannot win over a missing git binary:\n{stdout}"
     );
     assert!(
@@ -18690,4 +18735,31 @@ fn doctor_probes_language_runtimes_outside_the_checkout() -> Result<(), String> 
         });
     ignore_remove_dir_all(&workspace);
     result
+}
+
+/// docs/EXIT_CODES.md: a reader that closes stdout early gets a quiet exit 2
+/// (#4728). The reader closes before ripr writes anything, so the JSON write
+/// always meets the closed pipe.
+#[test]
+fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    let mut child = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--root"])
+        .arg(&sample)
+        .arg("--diff")
+        .arg(sample.join("example.diff"))
+        .args(["--format", "json"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    drop(child.stdout.take());
+    let output = child.wait_with_output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("stdout failed") && !stderr.contains("Broken pipe"),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
 }
