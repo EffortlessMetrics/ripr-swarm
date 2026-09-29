@@ -8,6 +8,7 @@ mod extract;
 mod facts;
 pub(crate) mod harness_projection;
 mod language;
+mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
@@ -54,7 +55,9 @@ pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
-pub(crate) use probes::{fingerprint_probe_id, normalize_expression};
+pub(crate) use probes::{
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+};
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -84,6 +87,16 @@ pub(crate) fn workspace_preview_language_files(
     root: &Path,
 ) -> Vec<(language::LanguageId, PathBuf)> {
     workspace::discover_preview_language_files(root)
+}
+
+/// Source files in languages no ripr adapter reads, counted per language
+/// name in stable name order; see `workspace::discover_unanalyzed_source_files`.
+pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'static str, usize)> {
+    let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
+    for (language, _) in workspace::discover_unanalyzed_source_files(root) {
+        *counts.entry(language).or_default() += 1;
+    }
+    counts.into_iter().collect()
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can
