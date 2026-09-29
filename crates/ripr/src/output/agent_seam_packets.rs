@@ -3265,6 +3265,7 @@ mod tests {
                 discriminate: stage(StageState::No),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                new_test_target: None,
             },
             class,
         }
@@ -3340,6 +3341,7 @@ mod tests {
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -3360,6 +3362,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -3380,6 +3383,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
