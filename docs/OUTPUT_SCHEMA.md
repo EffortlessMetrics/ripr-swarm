@@ -180,6 +180,12 @@ the stream: the unannotated-denominator notice (suppressed or not-current
 findings) and, when any level exceeds 10, a notice naming how many annotations
 of that level were emitted. Per-finding annotations follow.
 
+When the producer-owned `analysis_outcome` is not complete (for example
+`unsupported_input` or `partial_with_limitations`), the stream starts with a
+`ripr analysis incomplete` warning naming the outcome kind and each limitation
+with its recovery, and the clean `No static exposure findings found` notice is
+not printed.
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
@@ -9687,7 +9693,8 @@ ripr policy history \
   --commit HEAD \
   --pr-number 123 \
   --out target/ripr/reports/policy-history.json \
-  --out-md target/ripr/reports/policy-history.md
+  --out-md target/ripr/reports/policy-history.md \
+  --out-jsonl .ripr/policy-history.jsonl
 ```
 
 The report writes:
@@ -9697,11 +9704,18 @@ target/ripr/reports/policy-history.json
 target/ripr/reports/policy-history.md
 ```
 
-This report is advisory policy trend evidence. It does not append to
-`.ripr/policy-history.jsonl`, execute gates, collect telemetry, mutate config,
-baselines, suppressions, workflows, branch protection, generated CI defaults,
-or source files, promote preview-language evidence, run analysis, generate
-tests, call providers, post comments, or run mutation testing.
+`--out-jsonl PATH` is the opt-in producer. Each run appends one compact JSON
+line matching `example_append_record` (the current snapshot object, not the
+full trend report). Generated CI never passes `--out-jsonl` and never
+auto-commits `.ripr/policy-history.jsonl`. Adopt the file by committing it
+yourself, or keep supplying it from an external store.
+
+This report is advisory policy trend evidence. The default write path does not
+append to `.ripr/policy-history.jsonl`. The command does not execute gates,
+collect telemetry, mutate config, baselines, suppressions, workflows, branch
+protection, generated CI defaults, or source files, promote preview-language
+evidence, run analysis, generate tests, call providers, post comments, or run
+mutation testing.
 
 JSON shape:
 
@@ -9804,7 +9818,7 @@ JSON shape:
       "status": "missing"
     }
   ],
-  "limits_note": "Read-only advisory policy history report. It reads explicit history inputs and never appends, mutates policy, or changes gate authority."
+  "limits_note": "Read-only advisory policy history report. It reads explicit history inputs and does not mutate policy or change gate authority. Default execution and generated CI do not append history; `--out-jsonl` is the opt-in producer."
 }
 ```
 
@@ -10451,7 +10465,8 @@ ripr pr-ledger record \
   --coverage target/ripr/reports/coverage-summary.json \
   --history .ripr/pr-evidence-ledger.jsonl \
   --out target/ripr/reports/pr-evidence-ledger.json \
-  --out-md target/ripr/reports/pr-evidence-ledger.md
+  --out-md target/ripr/reports/pr-evidence-ledger.md \
+  --out-jsonl .ripr/pr-evidence-ledger.jsonl
 ```
 
 The report writes:
@@ -10460,6 +10475,12 @@ The report writes:
 target/ripr/reports/pr-evidence-ledger.json
 target/ripr/reports/pr-evidence-ledger.md
 ```
+
+`--out-jsonl PATH` is the opt-in producer. Each run appends one compact JSON
+line: the same record object as `--out`, without pretty-print newlines.
+Generated CI reads `.ripr/pr-evidence-ledger.jsonl` when that file exists and
+never passes `--out-jsonl` or auto-commits the ledger. Adopt the file by
+committing it yourself, or keep supplying it from an external store.
 
 This report is advisory history. `ripr gate evaluate` remains the pass/fail
 authority for configured gate modes. Generated GitHub CI runs
@@ -12031,6 +12052,7 @@ JSON shape:
   "schema_version": "0.1",
   "tool": "ripr",
   "kind": "first_pr_start_here",
+  "ripr_version": "0.11.0",
   "status": "blocked",
   "posture": "advisory",
   "root": ".",
@@ -12093,6 +12115,10 @@ Field contract:
 
 - `schema_version` is `0.1` until the packet shape changes.
 - `kind` is always `first_pr_start_here`.
+- `ripr_version` is the producing `ripr` package version. It is additive on
+  schema `0.1`. `first-pr --check` and `doctor` treat a missing or different
+  value as `stale_evidence` and print the refresh command. A packet without
+  this field is a pre-0.11 artifact, not a contract-invalid document.
 - `status` is `actionable`, `blocked`, or `no_action`. It is reviewer context
   only, not gate authority.
 - `posture` is always `advisory`.
@@ -16624,7 +16650,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.11",
+    "schema_version": "1.12",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16635,7 +16661,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.17",
+      "schema_version": "1.18",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -16778,7 +16804,9 @@ matching-record index and do not hide other current scopes. The overall result
 is `limited` only when no current scope resolves. Missing, root-mismatched, or
 otherwise unresolved selectors emit `state: "limited"`, an empty `seams` array,
 and a named `limitation` such as `canonical_gap_unresolved` or
-`stale_gap_ledger`. They never fall back to an unrelated workspace scan.
+`stale_gap_ledger`. They never fall back to an unrelated workspace scan. A
+`--gap-ledger` that cannot be read or parsed is not a limitation: the command
+exits 2 without a report, as it does for an unreadable `--changed-test`.
 
 Both selectors reuse valid file facts but recompute the selected evidence. A
 `canonical_gap_id` is domain-supplied and nullable; it is never derived from a
