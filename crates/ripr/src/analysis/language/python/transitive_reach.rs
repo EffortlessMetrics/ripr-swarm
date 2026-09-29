@@ -322,20 +322,20 @@ class Table:
         owner_file: &str,
         test_file: &str,
         line_text: &str,
-    ) -> Finding {
+    ) -> Result<Finding, String> {
         let file = Path::new(owner_file);
         let line = source
             .lines()
             .position(|line| line == line_text)
-            .expect("fixture source must contain the changed line")
+            .ok_or_else(|| format!("fixture source must contain the changed line: {line_text}"))?
             + 1;
         let owners = extract_owners(file, source);
         let tests = extract_tests(Path::new(test_file), tests);
         classify_change(file, line, line_text, &owners, &tests)
-            .expect("behavioral fixture must produce a finding")
+            .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
     }
 
-    fn padding_finding(tests: &str) -> Finding {
+    fn padding_finding(tests: &str) -> Result<Finding, String> {
         classify_owner(
             TABLE_SOURCE,
             tests,
@@ -385,10 +385,10 @@ class Table:
     }
 
     #[test]
-    fn construction_plus_self_path_names_limitation() {
+    fn construction_plus_self_path_names_limitation() -> Result<(), String> {
         let finding = padding_finding(
             "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",
-        );
+        )?;
         assert_named_limitation(&finding);
         assert!(
             finding
@@ -398,26 +398,29 @@ class Table:
             "construction witness should name the class: {:?}",
             finding.evidence
         );
+        Ok(())
     }
 
     #[test]
-    fn import_alias_construction_names_limitation() {
+    fn import_alias_construction_names_limitation() -> Result<(), String> {
         let finding = padding_finding(
             "from src.table import Table as T\n\ndef test_print_table():\n    table = T()\n    assert table is not None\n",
-        );
+        )?;
         assert_named_limitation(&finding);
+        Ok(())
     }
 
     #[test]
-    fn module_import_construction_names_limitation() {
+    fn module_import_construction_names_limitation() -> Result<(), String> {
         let finding = padding_finding(
             "import src.table as table\n\ndef test_print_table():\n    value = table.Table()\n    assert value is not None\n",
-        );
+        )?;
         assert_named_limitation(&finding);
+        Ok(())
     }
 
     #[test]
-    fn bound_method_alias_inside_class_is_an_edge() {
+    fn bound_method_alias_inside_class_is_an_edge() -> Result<(), String> {
         let source = r#"
 class Table:
     def render(self):
@@ -435,12 +438,13 @@ class Table:
             "src/table.py",
             "tests/test_table.py",
             "        if column_index == 0:",
-        );
+        )?;
         assert_named_limitation(&finding);
+        Ok(())
     }
 
     #[test]
-    fn classmethod_cls_call_is_an_edge() {
+    fn classmethod_cls_call_is_an_edge() -> Result<(), String> {
         let source = r#"
 class Factory:
     @classmethod
@@ -459,7 +463,7 @@ class Factory:
             "src/factory.py",
             "tests/test_factory.py",
             "        if True:",
-        );
+        )?;
         assert_named_limitation(&finding);
         assert!(
             finding
@@ -469,26 +473,29 @@ class Factory:
             "classmethod call should be the entry, not mere construction: {:?}",
             finding.evidence
         );
+        Ok(())
     }
 
     #[test]
-    fn import_without_construct_or_call_stays_silent() {
+    fn import_without_construct_or_call_stays_silent() -> Result<(), String> {
         let finding = padding_finding(
             "from src.table import Table\n\ndef test_placeholder():\n    assert True\n",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn same_named_other_module_class_stays_silent() {
+    fn same_named_other_module_class_stays_silent() -> Result<(), String> {
         let finding = padding_finding(
             "from other.models import Table\n\ndef test_other():\n    table = Table()\n    assert table is not None\n",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn construction_without_self_path_stays_silent() {
+    fn construction_without_self_path_stays_silent() -> Result<(), String> {
         let source = r#"
 class Table:
     def public(self):
@@ -505,12 +512,13 @@ class Table:
             "src/table.py",
             "tests/test_table.py",
             "        if column_index == 0:",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn getattr_and_foreign_receiver_are_not_edges() {
+    fn getattr_and_foreign_receiver_are_not_edges() -> Result<(), String> {
         let source = r#"
 class Table:
     def render(self, other):
@@ -529,12 +537,13 @@ class Table:
             "src/table.py",
             "tests/test_table.py",
             "        if column_index == 0:",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn nested_inner_function_self_call_is_not_an_edge() {
+    fn nested_inner_function_self_call_is_not_an_edge() -> Result<(), String> {
         let source = r#"
 class Table:
     def render(self):
@@ -553,12 +562,13 @@ class Table:
             "src/table.py",
             "tests/test_table.py",
             "        if column_index == 0:",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn lambda_self_call_is_not_an_edge() {
+    fn lambda_self_call_is_not_an_edge() -> Result<(), String> {
         let source = r#"
 class Table:
     def render(self):
@@ -576,12 +586,13 @@ class Table:
             "src/table.py",
             "tests/test_table.py",
             "        if column_index == 0:",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn depth_five_names_limitation_and_depth_six_stays_silent() {
+    fn depth_five_names_limitation_and_depth_six_stays_silent() -> Result<(), String> {
         let chain = |hops: usize| {
             let mut body = String::from(
                 "class Box:\n    @classmethod\n    def m0(cls):\n        return cls.m1()\n",
@@ -606,7 +617,7 @@ class Table:
             "src/box.py",
             "tests/test_box.py",
             "        if True:",
-        );
+        )?;
         assert_named_limitation(&depth_five);
 
         let depth_six = classify_owner(
@@ -615,28 +626,31 @@ class Table:
             "src/box.py",
             "tests/test_box.py",
             "        if True:",
-        );
+        )?;
         assert_silent(&depth_six);
+        Ok(())
     }
 
     #[test]
-    fn direct_owner_call_stays_related_not_this_limitation() {
+    fn direct_owner_call_stays_related_not_this_limitation() -> Result<(), String> {
         let finding = classify_owner(
             TABLE_SOURCE,
             "from src.table import Table\n\ndef test_padding():\n    table = Table()\n    assert table._get_padding_width(0) == 1\n",
             "src/table.py",
             "tests/test_table.py",
             "        if column_index == len(self.columns) - 1:",
-        );
+        )?;
         assert!(!finding.related_tests.is_empty());
         assert_ne!(
             finding.static_limit_kind,
             Some(StaticLimitKind::PythonTransitiveReachUnresolved)
         );
+        Ok(())
     }
 
     #[test]
-    fn cross_module_function_facade_without_class_construction_stays_silent() {
+    fn cross_module_function_facade_without_class_construction_stays_silent() -> Result<(), String>
+    {
         let source = r#"
 class PreparedRequest:
     def prepare_body(self, data):
@@ -650,18 +664,20 @@ class PreparedRequest:
             "src/models.py",
             "tests/test_requests.py",
             "        if data:",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn no_tests_stay_silent() {
-        let finding = padding_finding("");
+    fn no_tests_stay_silent() -> Result<(), String> {
+        let finding = padding_finding("")?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
-    fn staticmethod_does_not_contribute_self_edges() {
+    fn staticmethod_does_not_contribute_self_edges() -> Result<(), String> {
         let source = r#"
 class Table:
     @staticmethod
@@ -679,8 +695,9 @@ class Table:
             "src/table.py",
             "tests/test_table.py",
             "        if column_index == 0:",
-        );
+        )?;
         assert_silent(&finding);
+        Ok(())
     }
 
     #[test]
@@ -737,20 +754,26 @@ class Table:
         return self._get_padding_width(width)
 "#,
         );
-        let render = owners
-            .iter()
-            .find(|owner| owner.name == "render")
-            .expect("render owner");
-        assert_eq!(render.same_class_callees, vec!["_calculate_column_widths"]);
-        let calculate = owners
-            .iter()
-            .find(|owner| owner.name == "_calculate_column_widths")
-            .expect("calculate owner");
-        assert_eq!(calculate.same_class_callees, vec!["_get_padding_width"]);
-        let normalize = owners
-            .iter()
-            .find(|owner| owner.name == "normalize")
-            .expect("normalize owner");
-        assert!(normalize.same_class_callees.is_empty());
+        assert_eq!(
+            owners
+                .iter()
+                .find(|owner| owner.name == "render")
+                .map(|owner| &owner.same_class_callees),
+            Some(&vec!["_calculate_column_widths".to_string()])
+        );
+        assert_eq!(
+            owners
+                .iter()
+                .find(|owner| owner.name == "_calculate_column_widths")
+                .map(|owner| &owner.same_class_callees),
+            Some(&vec!["_get_padding_width".to_string()])
+        );
+        assert_eq!(
+            owners
+                .iter()
+                .find(|owner| owner.name == "normalize")
+                .map(|owner| owner.same_class_callees.is_empty()),
+            Some(true)
+        );
     }
 }
