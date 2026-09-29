@@ -271,6 +271,16 @@ impl TsAliasMap {
         self
     }
 
+    /// The workspace package directory a bare specifier names, when no
+    /// `paths` key owns it (#4769): an unresolved import of it is a package
+    /// manifest question, not a tsconfig one.
+    pub(crate) fn workspace_package_dir_for(&self, specifier: &str) -> Option<&Path> {
+        if self.tsconfig_loaded && self.paths_key_matches(specifier) {
+            return None;
+        }
+        self.packages.package_dir_for(specifier)
+    }
+
     /// `true` when the map's `paths` entries came from a loaded config.
     pub(crate) fn has_tsconfig(&self) -> bool {
         self.tsconfig_loaded

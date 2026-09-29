@@ -128,6 +128,13 @@ impl WorkspacePackages {
         unique(&mut candidates.iter().filter_map(|target| src_mirror(target)))
     }
 
+    /// The directory of the workspace package `specifier` names, when it
+    /// names exactly one (for unresolved-import advice).
+    pub(crate) fn package_dir_for(&self, specifier: &str) -> Option<&Path> {
+        self.package_for(specifier)
+            .map(|(package, _)| package.dir.as_path())
+    }
+
     /// The package whose name is the longest `/`-bounded prefix of
     /// `specifier`, with the remaining subpath in exports form (`.`, `./x`).
     fn package_for(&self, specifier: &str) -> Option<(&WorkspacePackage, String)> {

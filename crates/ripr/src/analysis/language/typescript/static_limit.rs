@@ -464,8 +464,25 @@ pub(crate) fn named_limitations_for_alias_unresolved(
             // config problem.
             // A map that carries only workspace package names (#4554) has no
             // tsconfig of its own: its advice is the flag-off / load-gap one.
+            // A specifier naming a workspace package (#4769) failed in its
+            // own manifest; tsconfig advice would send the user elsewhere.
+            let package_dir =
+                alias_map.and_then(|map| map.workspace_package_dir_for(&import.source));
             let tsconfig_map = alias_map.filter(|map| map.has_tsconfig());
             let (cause_text, recovery_hint) = match (tsconfig_map, alias_unavailable) {
+                _ if package_dir.is_some() => {
+                    let manifest = package_dir
+                        .map(|dir| normalized_path(&dir.join("package.json")))
+                        .unwrap_or_default();
+                    (
+                        format!(
+                            "the specifier names a workspace package whose {manifest} does not map it to exactly one source file in the workspace"
+                        ),
+                        format!(
+                            "add a condition such as `source` to that export in {manifest} pointing at the source file, or import the file by relative path"
+                        ),
+                    )
+                }
                 (Some(map), _) => {
                     let (cause, hint) = map.unresolve_cause_for(&import.source).parts();
                     (cause.to_string(), hint.to_string())

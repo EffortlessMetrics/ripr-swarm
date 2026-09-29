@@ -14949,3 +14949,78 @@ mod mock_form_tests;
 mod module_entry_tests;
 mod reexport_chain_tests;
 mod scope_receiver_tests;
+
+/// #4769: an unresolved import of a workspace package by name is a package
+/// manifest question. The limitation names that manifest instead of telling
+/// the user to enable tsconfig path aliases, which would not help.
+#[test]
+fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String> {
+    let root = ts_unique_tempdir("pkg-self-import-advice")?;
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"bundle","main":"./dist/bundle.js"}"#,
+    )?;
+    ts_write_file(&root.join("src/index.ts"), "export function build() {}\n")?;
+    let packages = super::workspace_packages::WorkspacePackages::discover(
+        &root,
+        &[PathBuf::from("src/index.ts")],
+    );
+    let map = super::tsconfig::TsAliasMap::workspace_packages_only(&root, packages);
+    let owner = test_owner("build", "src/index.ts");
+    let test = TypeScriptTest {
+        name: "builds".into(),
+        local_name: "builds".into(),
+        describe_names: Vec::new(),
+        file: "tests/build.test.ts".into(),
+        line: 3,
+        body_text: "expect(build()).toBe(1)".into(),
+        assertions: Vec::new(),
+        mocks_in_file: Vec::new(),
+        scope_bindings: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "bundle".into(),
+            imported: Some("build".into()),
+            local: "build".into(),
+            namespace: false,
+        }],
+    };
+    let limitations = super::static_limit::named_limitations_for_alias_unresolved(
+        &owner,
+        std::slice::from_ref(&test),
+        |_| false,
+        Some(&map),
+        None,
+    );
+    let [limitation] = limitations.as_slice() else {
+        return Err(format!("expected one limitation, got {limitations:?}"));
+    };
+    assert!(
+        limitation.why_not_actionable.contains("package.json")
+            && !limitation
+                .why_not_actionable
+                .contains("resolve_tsconfig_paths"),
+        "{}",
+        limitation.why_not_actionable
+    );
+    // An unrelated bare specifier keeps the tsconfig advice.
+    let mut other = test;
+    other.imports_in_file[0].source = "@elsewhere/lib".into();
+    let limitations = super::static_limit::named_limitations_for_alias_unresolved(
+        &owner,
+        std::slice::from_ref(&other),
+        |_| false,
+        Some(&map),
+        None,
+    );
+    let [limitation] = limitations.as_slice() else {
+        return Err(format!("expected one limitation, got {limitations:?}"));
+    };
+    assert!(
+        limitation
+            .why_not_actionable
+            .contains("resolve_tsconfig_paths"),
+        "{}",
+        limitation.why_not_actionable
+    );
+    Ok(())
+}
