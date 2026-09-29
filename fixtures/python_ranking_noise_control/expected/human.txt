@@ -4,7 +4,7 @@ root: fixtures/python_ranking_noise_control/input
 
 Summary: 4 probe(s), 1 exposed, 1 weak, 0 unrevealed, 1 no path, 1 unknown
 
-Changed file(s) by language: python: 4, rust: 0.
+Changed file(s) by language: python: 4.
 
 Analysis outcome: complete_with_findings (analysis complete).
   Counts: 4 changed file(s), 4 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s).
@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_discount.py
   Suggested test: test_calculate_discount_smoke
   Test node: tests/test_discount.py::test_calculate_discount_smoke
-  Verify command: pytest tests/test_discount.py::test_calculate_discount_smoke (high)
+  Verify command: python -m pytest tests/test_discount.py::test_calculate_discount_smoke (high)
   Next step: Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `calculate_discount`
@@ -41,4 +41,4 @@ Hidden:
   Machine data: rerun with --format json
 
 
-Note: 4 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 4 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

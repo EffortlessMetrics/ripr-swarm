@@ -650,6 +650,11 @@
           "type": "integer",
           "minimum": 0
         },
+        "unevaluated_seams": {
+          "description": "Present only when seams on changed lines and in changed owner functions filled every review slot and the rest of the scope was not evaluated.",
+          "type": "integer",
+          "minimum": 1
+        },
         "downstream_consumable": {
           "type": "boolean"
         },
@@ -823,7 +828,6 @@
       "additionalProperties": true,
       "required": [
         "id",
-        "seam_id",
         "canonical_gap_id",
         "dedupe_key",
         "kind",
@@ -847,6 +851,7 @@
           "minLength": 1
         },
         "seam_id": {
+          "description": "Seam source-locator identity. Required on diff-scoped cards. A gap-ledger card carries it only when its GapRecord has producer-owned seam identity; it is never synthesized from the gap, file or line.",
           "type": "string",
           "minLength": 1
         },
@@ -970,7 +975,7 @@
             }
           },
           "else": {
-            "required": ["owner", "seam"],
+            "required": ["seam_id", "owner", "seam"],
             "properties": {
               "suggested_test": {
                 "properties": {
@@ -1408,6 +1413,11 @@
             "string",
             "null"
           ],
+          "minLength": 1
+        },
+        "analysis_outcome_command": {
+          "description": "Optional working-set card command that writes the static analysis outcome beside the persisted verify artifact before agent receipt. Not project-test execution or repair eligibility.",
+          "type": "string",
           "minLength": 1
         },
         "repair_command": {

@@ -25,3 +25,17 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_predicate_boundary_overcredit (3)
+
+Reason:
+RIPR-SPEC-0122: human-full carries per-finding drill-in commands (#4379); digest why-line names the incomplete stage; unreached static_unknown asks for a test first
+RIPR-SPEC-0087: additive typescript_boundary_input evidence line for a read-only parameter boundary; packet readiness unchanged
+
+Command:
+`cargo xtask goldens bless ts_predicate_boundary_overcredit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -56,11 +56,13 @@ use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
 mod discriminators;
+mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
 mod parse_budget;
 mod probe_shape;
+mod reexports;
 mod related_tests;
 mod repo;
 mod sink_alignment;
@@ -80,10 +82,11 @@ use discriminators::{
     python_return_dict_field_discriminator, python_string_literal_value, split_python_assignment,
     top_level_python_segments,
 };
+use no_behavior::is_python_no_behavior_line;
 #[cfg(test)]
 use no_behavior::{
     analyze_call_args, changed_default_value_params, free_function_call_arglists,
-    is_annotation_only_def_change, is_annotation_only_var_change, is_python_no_behavior_line,
+    is_annotation_only_def_change, is_annotation_only_var_change,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -147,6 +150,17 @@ use workspace::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PythonAdapter;
 
+/// Whether `text` holds `name` as a whole Python identifier.
+fn mentions_python_name(text: &str, name: &str) -> bool {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    !name.is_empty()
+        && text.match_indices(name).any(|(start, _)| {
+            let end = start + name.len();
+            (start == 0 || !is_ident(text.as_bytes()[start - 1]))
+                && !text.as_bytes().get(end).is_some_and(|byte| is_ident(*byte))
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonOwner {
     name: String,
@@ -164,6 +178,13 @@ struct PythonOwner {
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
     parameters: Vec<PythonParameter>,
+    /// Dotted package paths whose `__init__.py` re-exports this owner under
+    /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
+    reexport_modules: Vec<String>,
+    /// Module-scope literal constants visible in a function/method owner
+    /// (not shadowed locally). Empty for class and module owners. Used only
+    /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
+    module_constants: Vec<module_constants::PythonModuleConstant>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -233,6 +254,9 @@ struct PythonTest {
     parametrized: bool,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
+    /// How the test and its module can rebind names and attributes; guards
+    /// module-constant boundary resolution (`boundary.rs`, #4227).
+    constant_rebinding: module_constants::PythonTestRebinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -504,6 +528,9 @@ impl PythonAdapter {
                 all_owners.extend(facts.owners);
             }
         }
+        reexports::apply_package_reexports(&mut all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -627,6 +654,27 @@ impl PythonAdapter {
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),
+                    opens_owner_with_added_body: owner_for_changed_line(
+                        &changed.path,
+                        added.line,
+                        &all_owners,
+                    )
+                    .is_some_and(|owner| {
+                        owner.start_line == added.line
+                            // An old line naming the owner means its `def`
+                            // existed before, even when git pairs the old
+                            // header with an unrelated inserted line.
+                            && !changed
+                                .removed_lines
+                                .iter()
+                                .any(|removed| mentions_python_name(&removed.text, &owner.name))
+                            && changed.added_lines.iter().any(|other| {
+                                other.line > owner.start_line
+                                    && other.line <= owner.end_line
+                                    && !line_is_in_ranges(other.line, new_docstring_ranges)
+                                    && !is_python_no_behavior_line(&other.text)
+                            })
+                    }),
                 };
                 if let Some(finding) = classify_change_with_context(
                     &changed.path,
@@ -687,7 +735,13 @@ impl PythonAdapter {
 }
 
 #[cfg(test)]
+mod new_declaration_tests;
+
+#[cfg(test)]
 mod python_tests;
+
+#[cfg(test)]
+mod reexport_tests;
 
 #[cfg(test)]
 mod tests;

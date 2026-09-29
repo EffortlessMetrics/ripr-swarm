@@ -58,7 +58,8 @@ a static snapshot, not a live view, and nothing re-resolves it:
   It is detected, not loaded;
 - `trust` and `authority`: `read_only_status` access, with source edit,
   verification execution, mutation execution, and model provider all `none`;
-- `claim_boundary` and `limitations`, as plain text;
+- `claim_boundary` and `limitations`, as plain text. The `ripr.toml`
+  limitation appears only when a `ripr.toml` was detected;
 - the transport, tool, resource, and byte bounds under `mcp`.
 
 Supported protocol versions are `2024-11-05`, `2025-03-26`, `2025-06-18`,
@@ -76,7 +77,15 @@ commands or mutation testing, load project-local configuration or providers,
 embed a model, or offer a remote transport.
 
 An invalid root does not stop the server. Status reports
-`workspace_state: "unavailable"` with a `root.error_code`. Protocol errors keep
+`workspace_state: "unavailable"` with a `root.error_code`, and the tool result
+adds a second text content item that names the cause and the recovery
+(restart with `--root <repository>`). An unknown tool or resource name is
+rejected with the one valid name in the message and in `error.data.available`.
+The instructions (returned by both `initialize` and `server/discover`) and the
+tool description say that this server
+does not analyze the diff and name the CLI route that does
+(`ripr check --format json`, `ripr pilot --root .`); naming a route executes
+nothing. Protocol errors keep
 standard JSON-RPC codes, and every error response carries an `id` (`null` when
 the request id is unreadable). Messages are capped at 256 KiB and responses at
 128 KiB. Stdout carries only protocol messages; operational errors go to stderr,

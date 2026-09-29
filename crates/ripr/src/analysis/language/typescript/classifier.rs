@@ -721,7 +721,7 @@ fn substitute_constant_arguments(
 /// `$`-prefixed segments excluded — mirrors the Rust
 /// `value_resolution::constant_operand_name` shape (leading uppercase, then
 /// uppercase / digit / underscore only, no dots, no calls).
-fn is_constant_shaped_operand(operand: &str) -> bool {
+pub(crate) fn is_constant_shaped_operand(operand: &str) -> bool {
     let operand = operand.trim();
     operand.starts_with(|ch: char| ch.is_ascii_uppercase())
         && operand
@@ -760,7 +760,11 @@ fn ts_owner_module_constant_value(
         }
     }
     let root = workspace_root?;
-    let source = std::fs::read_to_string(root.join(&owner.file)).ok()?;
+    // Committed-history diffs read the owner module's HEAD content.
+    let source = String::from_utf8(
+        crate::analysis::committed_source::read_source_bytes(root, &owner.file).ok()??,
+    )
+    .ok()?;
     match scan_owner_module_constant(&source, name) {
         OwnerModuleConstant::Resolved(value) => Some(value),
         _ => None,
@@ -2339,7 +2343,7 @@ pub(crate) fn strongest_family_matching_oracle(
 /// `packages/a/`.  Pass `None` to preserve the previous single-package
 /// behaviour (used in unit tests).
 ///
-/// `reexport_index` enables single-hop re-export tracing for test discovery.
+/// `reexport_index` enables bounded re-export tracing for test discovery.
 /// Pass `&ReExportIndex::empty()` to disable (backward-compatible for unit tests).
 // 8 parameters — all are structurally distinct context tokens required by the
 // TypeScript classifier pipeline; bundling them would force a heap allocation
@@ -2487,6 +2491,15 @@ pub(crate) fn classify_change_with_alias_state(
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());
+    // Reach only through a same-module entry (an exported wrapper or factory
+    // product that calls the owner) is indirect: the entry's assertions see
+    // the owner's effect only after the entry's own code. Such reach stays
+    // `weakly_exposed`; `exposed` needs a relation that calls the owner.
+    let reach_only_through_module_entry = has_oracle_eligible_relation
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
     // Owner-call evidence is broader than trusted relation credit: a test
     // whose relation was denied by the #4102/#4103 gates still observes an
     // owner-name call, so its oracle classification and missing-discriminator
@@ -2564,6 +2577,20 @@ pub(crate) fn classify_change_with_alias_state(
             vec![format!(
                 "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
                 owner.name
+            )],
+        )
+    } else if reach_only_through_module_entry {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![module_entry_reach_summary(
+                owner,
+                &related_candidates,
+                reexport_index,
+                alias_map,
+                workspace_root,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
@@ -2775,6 +2802,16 @@ pub(crate) fn classify_change_with_alias_state(
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
     }
+    // The call input that hits the named predicate boundary, when the owner's
+    // module pins it statically (parameter read-only, literal or single
+    // immutable integer module `const`). The repair-packet projection uses
+    // it in place of an observed input that does not reach the boundary.
+    if !missing_discriminators.is_empty()
+        && let Some(input) =
+            ts_boundary_input_for_change(&probe_shape, line, line_text, owner, workspace_root)
+    {
+        evidence.push(input.evidence_line());
+    }
     if let Some(oracle) = &mock_payload_oracle {
         evidence.push(format!("mock_payload_evidence: {oracle}"));
     }
@@ -2920,4 +2957,45 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
             "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
         }
     }
+}
+
+/// Missing-evidence line for an owner reached only through same-module
+/// entries: names the entries the related tests call.
+/// An entry is named when a related test passes the same relation gate for
+/// it, so a default or renamed import names the export it binds.
+fn module_entry_reach_summary(
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> String {
+    let called: Vec<String> = owner
+        .module_entries
+        .iter()
+        .filter(|entry| {
+            let entry_owner = module_entry_owner(owner, entry);
+            candidates.iter().any(|candidate| {
+                candidate.relation == TypeScriptRelationKind::ModuleEntryCall
+                    && owner_call_relation(
+                        candidate.test,
+                        &entry_owner,
+                        reexport_index,
+                        alias_map,
+                        workspace_root,
+                    )
+                    .is_some_and(TypeScriptRelationKind::uses_oracle)
+            })
+        })
+        .map(|entry| format!("`{}`", entry.name))
+        .collect();
+    let entries = if called.is_empty() {
+        "an exported caller".to_string()
+    } else {
+        called.join(", ")
+    };
+    format!(
+        "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
+        owner.name, entries, owner.name
+    )
 }

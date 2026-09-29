@@ -12,9 +12,38 @@ use std::os::unix::fs::symlink as symlink_file;
 use std::os::windows::fs::symlink_file;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    index_from_files_at_stamp(files, stamp)
+}
+
+fn claim_index_fixture_root(stamp: u128) -> Result<AuthorityFixtureRoot, String> {
+    static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+    for _ in 0..32 {
+        let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-3410-memory-{}-{stamp}-{id}",
+            std::process::id()
+        ));
+        match fs::create_dir(&root) {
+            Ok(()) => return Ok(AuthorityFixtureRoot(root)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("claim index fixture {}: {error}", root.display())),
+        }
+    }
+    Err("could not claim a unique index fixture root after 32 attempts".to_string())
+}
+
+fn index_from_files_at_stamp(
+    files: &[(PathBuf, &str)],
+    stamp: u128,
+) -> Result<FixtureIndex, String> {
     let adapter = RaRustSyntaxAdapter;
     let mut index = RustIndex::default();
     for (path, source) in files {
@@ -23,15 +52,7 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
         index.functions.extend(facts.functions.iter().cloned());
         index.files.insert(path.clone(), facts);
     }
-    let root = std::env::temp_dir().join(format!(
-        "ripr-3410-memory-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    let fixture_root = AuthorityFixtureRoot(root);
+    let fixture_root = claim_index_fixture_root(stamp)?;
     fs::write(
         fixture_root.join("Cargo.toml"),
         "[package]\nname = \"memory-fixture\"\nversion = \"0.1.0\"\n",
@@ -133,6 +154,109 @@ fn target_for_index(
 ) -> Option<TestTargetEvidence> {
     let context = CompactGripContext::new(index);
     test_target_evidence(&context, seam, test, relation)
+}
+
+fn fixture_thread_panic(label: &str, payload: Box<dyn std::any::Any + Send>) -> String {
+    let detail = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("non-string panic payload");
+    format!("{label} index fixture thread panicked: {detail}")
+}
+
+#[test]
+fn simultaneous_same_stamp_indexes_keep_distinct_live_target_authority() -> Result<(), String> {
+    let file = PathBuf::from("src/lib.rs");
+    let source = "pub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests { #[test] fn score_boundary() { assert_eq!(super::score(1, 1), 1); } }\n";
+    let files = [(file.clone(), source)];
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let (first, second) = std::thread::scope(|scope| {
+        let first_barrier = Arc::clone(&barrier);
+        let second_barrier = Arc::clone(&barrier);
+        let files_ref = &files;
+        let first_thread = scope.spawn(move || {
+            let _ = first_barrier.wait();
+            index_from_files_at_stamp(files_ref, 4377)
+        });
+        let second_thread = scope.spawn(move || {
+            let _ = second_barrier.wait();
+            index_from_files_at_stamp(files_ref, 4377)
+        });
+        let first = first_thread
+            .join()
+            .map_err(|payload| fixture_thread_panic("first", payload))??;
+        let second = second_thread
+            .join()
+            .map_err(|payload| fixture_thread_panic("second", payload))??;
+        Ok::<(FixtureIndex, FixtureIndex), String>((first, second))
+    })?;
+
+    let first_root = first._fixture_root.0.clone();
+    let second_root = second._fixture_root.0.clone();
+    if first_root == second_root {
+        return Err(format!(
+            "same-stamp index fixtures shared one root: {}",
+            first_root.display()
+        ));
+    }
+    let indexed_target = |fixture: &FixtureIndex| -> Result<TestTargetEvidence, String> {
+        let seam = inventory_seams_from_index(std::slice::from_ref(&file), fixture)
+            .into_iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "fixture lost its predicate seam".to_string())?;
+        let test = fixture
+            .tests
+            .iter()
+            .find(|test| test.name == "score_boundary")
+            .ok_or_else(|| "fixture lost its indexed test".to_string())?;
+        target_for_index(fixture, &seam, test, RelationReason::DirectOwnerCall)
+            .ok_or_else(|| "live fixture lost its current indexed target".to_string())
+    };
+    let first_target = indexed_target(&first)?;
+    let second_target = indexed_target(&second)?;
+    if first_target.symbol_id() != second_target.symbol_id() {
+        return Err("identical indexed fixtures disagreed on the test symbol".to_string());
+    }
+    let expected_digest = crate::analysis::facts::source_digest(source.as_bytes());
+    let second_digest = second
+        .workspace_authority
+        .as_ref()
+        .and_then(|authority| authority.files.get(&file))
+        .map(|authority| authority.source_digest.as_str())
+        .ok_or_else(|| "second fixture lost its indexed source digest".to_string())?;
+    if second_digest != expected_digest {
+        return Err(format!(
+            "second fixture digest changed: expected {expected_digest}, got {second_digest}"
+        ));
+    }
+
+    drop(first);
+    let current_source = fs::read_to_string(second_root.join(&file))
+        .map_err(|error| format!("peer cleanup removed the surviving fixture: {error}"))?;
+    if current_source != source {
+        return Err("peer cleanup changed the surviving fixture source".to_string());
+    }
+    let surviving_target = indexed_target(&second)?;
+    if surviving_target.symbol_id() != second_target.symbol_id() {
+        return Err("peer cleanup changed the surviving indexed test symbol".to_string());
+    }
+
+    fs::write(second_root.join(&file), format!("{source}// stale\n"))
+        .map_err(|error| format!("write stale fixture source: {error}"))?;
+    let seam = inventory_seams_from_index(std::slice::from_ref(&file), &second)
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "stale fixture lost its indexed seam".to_string())?;
+    let test = second
+        .tests
+        .iter()
+        .find(|test| test.name == "score_boundary")
+        .ok_or_else(|| "stale fixture lost its indexed test".to_string())?;
+    if target_for_index(&second, &seam, test, RelationReason::DirectOwnerCall).is_some() {
+        return Err("stale fixture source retained an indexed target".to_string());
+    }
+    Ok(())
 }
 
 #[test]
@@ -11116,6 +11240,229 @@ fn same_module_matches_parent_prefix_and_underscore_form() {
     assert!(same_module("a/b/c", "a_b/d"));
     assert!(!same_module("flat", "anything"));
     assert!(!same_module("pricing/discount", "billing/integration"));
+}
+
+#[test]
+fn close_module_keeps_owner_children_parent_and_test_named_siblings() {
+    for (test_module, close) in [
+        ("analysis", true),
+        ("analysis/cancellation", true),
+        ("analysis/cancellation/tests", true),
+        ("analysis/tests", true),
+        ("analysis/pipeline_tests/cases", true),
+        ("analysis/test_support", true),
+        ("analysis_cancellation", false),
+        ("analysis/classify", false),
+        ("analysis/classify/tests", false),
+        ("output/tests", false),
+    ] {
+        assert_eq!(
+            close_module("analysis/cancellation", test_module),
+            close,
+            "{test_module}"
+        );
+    }
+    assert!(close_module("a/b/c", "a_b/tests"));
+    assert!(!close_module("a/b/c", "a_b/d"));
+    assert!(!close_module("flat", "flat"));
+    assert_eq!(crowded_relation_limit(10), 64);
+    assert_eq!(crowded_relation_limit(20_000), 200);
+}
+
+/// #4434: in a workspace whose parent module and asserted field names cover
+/// most of the suite, `review-comments` related every seam to thousands of
+/// tests. Past the crowded limit a distant sibling module and a suite-wide
+/// assertion token relate nothing; below it both rules still relate.
+#[test]
+fn given_assertion_token_common_only_in_another_crate_then_local_test_still_relates()
+-> Result<(), String> {
+    let owner = PathBuf::from("crates/a/src/cancellation.rs");
+    let owner_src =
+        "pub fn cancel_after(elapsed: i32, deadline: i32) -> bool { elapsed >= deadline }\n";
+    let local_src = "#[test] fn local_deadline() { let deadline = 1; assert_eq!(deadline, 1); }\n";
+    let foreign_src =
+        "#[test] fn foreign_deadline() { let deadline = 2; assert_eq!(deadline, 2); }\n";
+    let mut files: Vec<(PathBuf, &str)> = vec![
+        (owner.clone(), owner_src),
+        (PathBuf::from("crates/a/tests/timing.rs"), local_src),
+    ];
+    for k in 0..70 {
+        files.push((
+            PathBuf::from(format!("crates/b/tests/foreign_{k}.rs")),
+            foreign_src,
+        ));
+    }
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&owner), &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let related = evidence_for_seam(predicate, &index).related_tests;
+    assert!(
+        related.iter().any(|g| {
+            g.file.to_string_lossy().replace('\\', "/") == "crates/a/tests/timing.rs"
+                && g.relation_reason == RelationReason::AssertionTargetAffinity
+        }),
+        "{related:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn given_crowded_parent_module_and_common_assertion_token_then_distant_tests_do_not_relate()
+-> Result<(), String> {
+    let owner = PathBuf::from("src/analysis/cancellation.rs");
+    let owner_src =
+        "pub fn cancel_after(elapsed: i32, deadline: i32) -> bool { elapsed >= deadline }\n";
+    let sibling_src = "#[test] fn sibling_smoke() { let v = 1; assert_eq!(v, 1); }\n";
+    let affinity_src =
+        "#[test] fn deadline_smoke() { let deadline = 1; assert_eq!(deadline, 1); }\n";
+    let near_src = "#[test] fn near_smoke() { let v = 2; assert_eq!(v, 2); }\n";
+    let reasons = |crowd: usize| -> Result<Vec<(String, RelationReason)>, String> {
+        let mut files: Vec<(PathBuf, &str)> = vec![
+            (owner.clone(), owner_src),
+            (PathBuf::from("src/analysis/tests.rs"), near_src),
+            (
+                PathBuf::from("src/analysis/cancellation/tests.rs"),
+                near_src,
+            ),
+        ];
+        for k in 0..crowd {
+            files.push((
+                PathBuf::from(format!("src/analysis/sibling_{k}.rs")),
+                sibling_src,
+            ));
+            files.push((
+                PathBuf::from(format!("src/elsewhere/affinity_{k}.rs")),
+                affinity_src,
+            ));
+        }
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&owner), &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        Ok(evidence_for_seam(predicate, &index)
+            .related_tests
+            .iter()
+            .map(|g| {
+                (
+                    g.file.to_string_lossy().replace('\\', "/"),
+                    g.relation_reason,
+                )
+            })
+            .collect())
+    };
+    let count = |rows: &[(String, RelationReason)], prefix: &str, reason: RelationReason| {
+        rows.iter()
+            .filter(|(file, r)| file.starts_with(prefix) && *r == reason)
+            .count()
+    };
+    let small = reasons(4)?;
+    assert_eq!(
+        count(&small, "src/analysis/sibling_", RelationReason::SameModule),
+        4,
+        "{small:?}"
+    );
+    assert_eq!(
+        count(
+            &small,
+            "src/elsewhere/",
+            RelationReason::AssertionTargetAffinity
+        ),
+        4,
+        "{small:?}"
+    );
+    let crowded = reasons(70)?;
+    assert_eq!(
+        count(
+            &crowded,
+            "src/analysis/sibling_",
+            RelationReason::SameModule
+        ),
+        0,
+        "{crowded:?}"
+    );
+    assert_eq!(
+        count(
+            &crowded,
+            "src/elsewhere/",
+            RelationReason::AssertionTargetAffinity
+        ),
+        0,
+        "{crowded:?}"
+    );
+    assert_eq!(
+        count(
+            &crowded,
+            "src/analysis/tests.rs",
+            RelationReason::SameModule
+        ),
+        1,
+        "{crowded:?}"
+    );
+    assert_eq!(
+        count(
+            &crowded,
+            "src/analysis/cancellation/tests.rs",
+            RelationReason::SameModule
+        ) + count(
+            &crowded,
+            "src/analysis/cancellation/tests.rs",
+            RelationReason::SameTestFile
+        ),
+        1,
+        "{crowded:?}"
+    );
+    Ok(())
+}
+
+/// #4434: two target tokens that are each under the crowded limit can still
+/// relate most of the suite together. Past the limit the affinity relation
+/// keeps the tests that assert the most target tokens.
+#[test]
+fn given_affinity_union_past_the_limit_then_tests_asserting_more_target_tokens_win()
+-> Result<(), String> {
+    let owner = PathBuf::from("src/cancellation.rs");
+    let owner_src =
+        "pub fn cancel_after(elapsed: i32, deadline: i32) -> bool { elapsed >= deadline }\n";
+    let deadline_src =
+        "#[test] fn deadline_only() { let deadline = 1; assert_eq!(deadline, 1); }\n";
+    let elapsed_src = "#[test] fn elapsed_only() { let elapsed = 1; assert_eq!(elapsed, 1); }\n";
+    let both_src = "#[test] fn both_tokens() { let (elapsed, deadline) = (1, 2); assert!(elapsed < deadline); }\n";
+    let mut files: Vec<(PathBuf, &str)> = vec![(owner.clone(), owner_src)];
+    for k in 0..40 {
+        files.push((
+            PathBuf::from(format!("tests/deadline_{k}.rs")),
+            deadline_src,
+        ));
+        files.push((PathBuf::from(format!("tests/elapsed_{k}.rs")), elapsed_src));
+    }
+    files.push((PathBuf::from("tests/zz_both.rs"), both_src));
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&owner), &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let affinity = evidence_for_seam(predicate, &index)
+        .related_tests
+        .iter()
+        .filter(|g| g.relation_reason == RelationReason::AssertionTargetAffinity)
+        .map(|g| g.file.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        affinity.len(),
+        crowded_relation_limit(index.tests.len()),
+        "{affinity:?}"
+    );
+    assert!(
+        affinity.iter().any(|file| file == "tests/zz_both.rs"),
+        "{affinity:?}"
+    );
+    Ok(())
 }
 
 #[test]
