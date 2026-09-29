@@ -9311,3 +9311,34 @@ metrics = [
   "typescript_parse_aborts",
   "typescript_parse_refusal_disclosure_parity",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0178"
+name = "Cache envelope payload digest binding"
+spec = "docs/specs/RIPR-SPEC-0178-cache-payload-digest.md"
+tests = [
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_file_fact_payload_edited_when_loading_then_digest_mismatch_degrades_to_rebuild",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_legacy_file_fact_entry_without_digest_when_loading_then_miss_and_rebuild_serves",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_classified_seam_payload_edited_when_loading_then_digest_mismatch_degrades_to_rebuild",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_legacy_classified_seam_entry_without_digest_when_loading_then_miss_and_rebuild_serves",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_sharded_seam_payload_edited_when_loading_then_digest_mismatch_names_the_shard",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_sharded_manifest_payload_edited_when_loading_then_digest_mismatch_names_the_manifest",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_sharded_manifest_total_seams_edited_when_loading_then_corrupt_ignored_not_panic",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::given_legacy_sharded_shards_without_digest_when_loading_then_miss_and_rebuild_serves",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::corpus_fingerprint_lookup_detailed_rejects_edited_payload_hash",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::corpus_fingerprint_lookup_treats_legacy_mapping_without_digest_as_miss",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::corpus_fingerprint_lookup_detailed_names_the_miss_kind",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::corpus_fingerprint_lookup_detailed_rejects_undecodable_entry",
+]
+fixtures = [
+]
+code = [
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+]
+outputs = [
+]
+metrics = [
+  "cache_payload_digest_mismatch_rebuilds",
+  "cache_manifest_count_cross_check_rebuilds",
+]

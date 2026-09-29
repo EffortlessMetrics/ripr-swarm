@@ -938,11 +938,24 @@ fn stat_signature(root: &Path, files: &[PathBuf]) -> Option<String> {
 /// fingerprint, mirroring the one-file-per-key layout of the other cache
 /// layers; the embedded fields are re-verified on load so a hash collision
 /// or a stale file degrades to a miss instead of a wrong hash.
+///
+/// The served payload (`files_content_hash`) is digest-bound like every
+/// other production cache envelope (#4382 review): the mapping is the root
+/// of the repo-seam cache key, so a post-write edit to it would not corrupt
+/// a payload — it would redirect the whole evidence chain to an older,
+/// internally-valid classified-seam entry and serve stale evidence instead
+/// of rebuilding. `#[serde(default)]` keeps pre-digest entries decodable;
+/// load treats a missing digest as a plain miss so the entry is rebuilt
+/// with one.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CorpusFingerprintEnvelope {
     fingerprint_cache_schema_version: String,
     workspace_root_hash: String,
     fingerprint: String,
+    /// SHA-256 over the serialized served payload (`files_content_hash`),
+    /// bound at store time and re-verified at load time (#4382).
+    #[serde(default)]
+    payload_sha256: Option<String>,
     files_content_hash: String,
 }
 
@@ -1032,6 +1045,21 @@ impl RepoCorpusFingerprintCache {
         if envelope.fingerprint != fingerprint {
             return CorpusFingerprintLookup::Incompatible("fingerprint".to_owned());
         }
+        // A pre-digest legacy mapping is a plain miss (one-time transparent
+        // rebuild with a digest, #4382); a present-but-mismatched digest
+        // means the served hash was edited after the write, and serving it
+        // could redirect the seam-cache key to an older classified entry —
+        // report it as corrupt so the caller recomputes from file contents.
+        match payload_digest_status(
+            envelope.payload_sha256.as_ref(),
+            &envelope.files_content_hash,
+        ) {
+            PayloadDigestStatus::Valid => {}
+            PayloadDigestStatus::LegacyMissing => return CorpusFingerprintLookup::Missing,
+            PayloadDigestStatus::Mismatch { reason } => {
+                return CorpusFingerprintLookup::Corrupt(reason);
+            }
+        }
         CorpusFingerprintLookup::Hit(envelope.files_content_hash)
     }
 
@@ -1052,6 +1080,7 @@ impl RepoCorpusFingerprintCache {
             fingerprint_cache_schema_version: CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION.to_string(),
             workspace_root_hash: hash_str(&workspace_root.to_string_lossy()),
             fingerprint: fingerprint.to_string(),
+            payload_sha256: Some(payload_digest(files_content_hash)?),
             files_content_hash: files_content_hash.to_string(),
         };
         let bytes = codec::encode_corpus_fingerprint(&envelope)?;
@@ -1335,8 +1364,30 @@ impl RepoSeamFactCache {
                 ),
             };
         }
+        // `total_seams` stays outside the manifest digest, so a count edited
+        // after the write still verifies. Cross-check it against the
+        // digest-bound shard list BEFORE it reaches `Vec::with_capacity`:
+        // an oversized or overflowing declared count must degrade to a
+        // `CorruptIgnored` rebuild, never abort the analysis (#4382 review).
+        let expected_total = manifest.shards.iter().try_fold(0usize, |total, shard| {
+            total
+                .checked_add(shard.seams)
+                .ok_or_else(|| "sharded manifest shard seam counts overflow usize".to_string())
+        });
+        let expected_total = match expected_total {
+            Ok(total) => total,
+            Err(reason) => return CacheLoad::CorruptIgnored { reason },
+        };
+        if expected_total != manifest.total_seams {
+            return CacheLoad::CorruptIgnored {
+                reason: format!(
+                    "sharded manifest declared {} seams but its shard list carries {}",
+                    manifest.total_seams, expected_total
+                ),
+            };
+        }
 
-        let mut seams = Vec::with_capacity(manifest.total_seams);
+        let mut seams = Vec::with_capacity(expected_total);
         for (index, shard) in manifest.shards.iter().enumerate() {
             if shard.index != index {
                 return CacheLoad::CorruptIgnored {
@@ -1765,7 +1816,7 @@ impl RepoSeamCountCache {
 /// typed payload (struct field order and `Vec` order are deterministic and
 /// no payload type uses `HashMap`/`serde_json::Value`), so the digest is
 /// reproducible without keeping the raw entry bytes.
-fn payload_digest<T: serde::Serialize>(payload: &T) -> Result<String, String> {
+fn payload_digest<T: serde::Serialize + ?Sized>(payload: &T) -> Result<String, String> {
     let bytes = serde_json::to_vec(payload)
         .map_err(|err| format!("serialize payload for digest failed: {err}"))?;
     Ok(sha256_hex(&bytes))
@@ -2114,8 +2165,12 @@ impl ShardedCacheManifest {
 
     /// Re-compute the manifest-served-payload digest bound at store time
     /// (#4382). `total_seams`/`shard_count` stay outside the digest: the
-    /// shard loop already cross-checks them against the digest-bound shard
-    /// list and the loaded shard files.
+    /// loader cross-checks `shard_count` against the digest-bound shard
+    /// list, and cross-checks `total_seams` against the digest-bound
+    /// per-shard seam counts before any allocation, so an edited count
+    /// degrades to `CorruptIgnored` instead of an oversized allocation
+    /// (#4382 review); the shard loop then re-checks both against the
+    /// loaded shard files.
     fn payload_digest_status(&self) -> PayloadDigestStatus {
         payload_digest_status(
             self.payload_sha256.as_ref(),
@@ -6132,6 +6187,133 @@ mod tests {
     }
 
     #[test]
+    fn corpus_fingerprint_lookup_detailed_rejects_edited_payload_hash() -> Result<(), String> {
+        // #4382 review: the mapping's served `files_content_hash` is the
+        // root of the repo-seam cache key, so a post-write edit must not be
+        // served — a forged older hash could redirect the key to a
+        // still-present, internally-valid classified-seam entry and serve
+        // stale evidence instead of rebuilding.
+        let dir = isolated_dir("fingerprint-lookup-edited-payload");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        let fingerprint = "0123456789abcdef";
+        cache
+            .store(&dir, fingerprint, "hash-of-contents")
+            .map_err(|err| format!("store: {err}"))?;
+        let entry = std::fs::read_dir(dir.join("cache"))
+            .map_err(|err| format!("list cache: {err}"))?
+            .next()
+            .ok_or("expected one stored mapping")?
+            .map_err(|err| format!("entry: {err}"))?
+            .path();
+        let honest =
+            std::fs::read_to_string(&entry).map_err(|err| format!("read stored mapping: {err}"))?;
+        let tampered = honest
+            .replace("hash-of-contents", "hash-of-older-corpus")
+            .replace(
+                &stored_digest_for_test(&honest)?,
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            );
+        if tampered == honest {
+            return Err("tamper must have replaced the served content hash".to_string());
+        }
+        std::fs::write(&entry, tampered).map_err(|err| format!("write tampered: {err}"))?;
+        match cache.lookup_detailed(&dir, fingerprint) {
+            CorpusFingerprintLookup::Corrupt(reason) => {
+                if !reason.contains("payload digest mismatch") {
+                    return Err(format!(
+                        "edited payload must report a digest mismatch, got {reason}"
+                    ));
+                }
+            }
+            other => Err(format!(
+                "an edited served hash must report Corrupt, got {other:?}"
+            ))?,
+        }
+        assert_eq!(
+            cache.lookup(&dir, fingerprint),
+            None,
+            "lookup must keep degrading Corrupt to a conservative miss"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// Extract the `payload_sha256` value recorded in a stored corpus
+    /// fingerprint entry so the edit test can leave the recorded digest in
+    /// place while changing only the served payload.
+    fn stored_digest_for_test(entry_json: &str) -> Result<String, String> {
+        let marker = "\"payload_sha256\": \"";
+        let start = entry_json
+            .find(marker)
+            .ok_or("stored entry must record payload_sha256")?
+            + marker.len();
+        let end = entry_json[start..]
+            .find('"')
+            .ok_or("payload_sha256 must be quoted")?;
+        Ok(entry_json[start..start + end].to_string())
+    }
+
+    /// Remove the recorded `payload_sha256` line from a stored entry,
+    /// producing the pre-digest legacy on-disk shape.
+    fn strip_payload_sha256_line_for_test(entry_json: &str) -> Result<String, String> {
+        let marker = "\"payload_sha256\": \"";
+        let start = entry_json
+            .find(marker)
+            .ok_or("stored entry must record payload_sha256")?;
+        let line_start = entry_json[..start]
+            .rfind('\n')
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        let line_end = entry_json[start..]
+            .find('\n')
+            .map(|idx| start + idx + 1)
+            .unwrap_or(entry_json.len());
+        Ok(format!(
+            "{}{}",
+            &entry_json[..line_start],
+            &entry_json[line_end..]
+        ))
+    }
+
+    #[test]
+    fn corpus_fingerprint_lookup_treats_legacy_mapping_without_digest_as_miss() -> Result<(), String>
+    {
+        // Pre-digest mappings were written by earlier builds; the load path
+        // must treat them as a plain miss (one-time transparent rebuild with
+        // a digest), never serve them unverified.
+        let dir = isolated_dir("fingerprint-lookup-legacy-no-digest");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoCorpusFingerprintCache::at_dir(dir.join("cache"));
+        let fingerprint = "0123456789abcdef";
+        cache
+            .store(&dir, fingerprint, "hash-of-contents")
+            .map_err(|err| format!("store: {err}"))?;
+        let entry = std::fs::read_dir(dir.join("cache"))
+            .map_err(|err| format!("list cache: {err}"))?
+            .next()
+            .ok_or("expected one stored mapping")?
+            .map_err(|err| format!("entry: {err}"))?
+            .path();
+        let honest =
+            std::fs::read_to_string(&entry).map_err(|err| format!("read stored mapping: {err}"))?;
+        let legacy = strip_payload_sha256_line_for_test(&honest)?;
+        if legacy == honest {
+            return Err("legacy strip must have removed the recorded digest".to_string());
+        }
+        std::fs::write(&entry, legacy).map_err(|err| format!("write legacy: {err}"))?;
+        assert_eq!(
+            cache.lookup_detailed(&dir, fingerprint),
+            CorpusFingerprintLookup::Missing,
+            "a pre-digest mapping must load as a plain miss"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn corpus_fingerprint_lookup_detailed_rejects_foreign_root_entry() -> Result<(), String> {
         let dir = isolated_dir("fingerprint-lookup-foreign");
         ignore_remove_dir_all(&dir);
@@ -6703,6 +6885,72 @@ mod tests {
             other => {
                 return Err(format!(
                     "rebuilt sharded entry must load as Hit, got {other:?}"
+                ));
+            }
+        }
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn given_sharded_manifest_total_seams_edited_when_loading_then_corrupt_ignored_not_panic()
+    -> Result<(), String> {
+        // #4382 review: `total_seams` is outside the manifest digest, so an
+        // edited count still verifies. The loader must cross-check the
+        // declared total against the digest-bound shard list BEFORE the
+        // allocation: `Vec::with_capacity(usize::MAX)` would abort the
+        // analysis with a capacity overflow instead of degrading to the
+        // promised `CorruptIgnored` rebuild.
+        let dir = isolated_dir("sharded-manifest-total-seams-edit");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+
+        let seams = vec![sample_classified(), sample_classified()];
+        cache
+            .store_classified_seams_with_limit(&key, &seams, None, 1)
+            .map_err(|err| format!("small limit should shard the entry: {err}"))?;
+
+        let manifest = cache.sharded_manifest_path(&key);
+        let honest = std::fs::read_to_string(&manifest)
+            .map_err(|err| format!("read stored manifest: {err}"))?;
+        let needle = "\"total_seams\": 2";
+        if !honest.contains(needle) {
+            return Err(format!(
+                "fixture precondition: stored manifest must declare {needle}"
+            ));
+        }
+        let tampered = honest.replace(needle, "\"total_seams\": 18446744073709551615");
+        if tampered == honest {
+            return Err("tamper must have replaced the declared seam total".to_string());
+        }
+        std::fs::write(&manifest, tampered)
+            .map_err(|err| format!("write tampered manifest: {err}"))?;
+
+        match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => {
+                if !reason.contains("declared 18446744073709551615 seams") {
+                    return Err(format!(
+                        "corruption reason must name the declared total, got {reason}"
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "an edited total_seams must degrade to CorruptIgnored, got {other:?}"
+                ));
+            }
+        }
+
+        cache
+            .store_classified_seams_with_limit(&key, &seams, None, 1)
+            .map_err(|err| format!("rebuild store should succeed: {err}"))?;
+        match cache.load_classified_seams(&key) {
+            CacheLoad::Hit((loaded, _)) if loaded.len() == 2 => {}
+            other => {
+                return Err(format!(
+                    "rebuilt sharded entry must load as Hit with both seams, got {other:?}"
                 ));
             }
         }
