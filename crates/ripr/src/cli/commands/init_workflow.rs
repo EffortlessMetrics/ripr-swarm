@@ -11,7 +11,7 @@ use crate::output::first_pr::{
     REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
 };
 
-pub(super) fn generated_github_actions_workflow() -> String {
+pub fn generated_github_actions_workflow() -> String {
     r#"name: RIPR
 
 on:
