@@ -1048,9 +1048,16 @@ fn detect_repo_preview_advisories(
         if !language.is_available() && *language != LanguageId::Perl {
             continue;
         }
+        // An enabled advisory reports files "analyzed under preview support",
+        // so it drops what the adapter's own authority refuses, as the diff
+        // advisory does (#4372). A not-enabled advisory discloses presence.
+        let analyzed_only = enabled.contains(language) && language.is_available();
         let files: Vec<String> = discovered
             .iter()
-            .filter(|(lang, _)| lang == language)
+            .filter(|(lang, path)| {
+                lang == language
+                    && !(analyzed_only && is_excluded_from_preview_analysis(*lang, path))
+            })
             .map(|(_, path)| path.to_string_lossy().replace('\\', "/"))
             .collect();
         if files.is_empty() {
@@ -1062,7 +1069,7 @@ fn detect_repo_preview_advisories(
             language: language.as_str().to_string(),
             file_count,
             sample_paths,
-            enabled: enabled.contains(language) && language.is_available(),
+            enabled: analyzed_only,
         });
     }
     advisories
@@ -2776,6 +2783,52 @@ index 0000000..1111111 100644
             .map(|count| (count.language.as_str(), count.files))
             .collect();
         assert_eq!(per_language, vec![("typescript", 1)]);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #4372 (repo scope): the workspace-walk advisory applies the same
+    /// authority. With TypeScript enabled, a vendored or `*.generated.*`
+    /// file is not counted as analyzed; with it not enabled, the advisory
+    /// still discloses every routed file.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_typescript_advisory_excludes_detectable_excluded_paths_when_enabled()
+    -> Result<(), String> {
+        let root = temp_root("issue-4372-ts-repo-advisory")?;
+        for path in ["src/discount.ts", "vendor/lib.ts", "src/cart.generated.ts"] {
+            write(&root.join(path), "export const limit = 1;\n")?;
+        }
+        let counts = |enabled: &[LanguageId]| -> Vec<(String, usize, Vec<String>, bool)> {
+            detect_repo_preview_advisories(&root, enabled)
+                .into_iter()
+                .map(|advisory| {
+                    (
+                        advisory.language,
+                        advisory.file_count,
+                        advisory.sample_paths,
+                        advisory.enabled,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            counts(&[LanguageId::TypeScript]),
+            vec![(
+                "typescript".to_string(),
+                1,
+                vec!["src/discount.ts".to_string()],
+                true
+            )]
+        );
+        let not_enabled = counts(&[LanguageId::Rust]);
+        assert_eq!(
+            not_enabled
+                .iter()
+                .map(|(language, count, _, enabled)| (language.as_str(), *count, *enabled))
+                .collect::<Vec<_>>(),
+            vec![("typescript", 3, false)]
+        );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
