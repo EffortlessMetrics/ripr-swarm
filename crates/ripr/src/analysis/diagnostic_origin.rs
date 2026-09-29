@@ -11,10 +11,16 @@
 //! zero-width. Absent or default-empty maps, and other languages, keep the
 //! saved-line heuristic. Non-current records stay bounded so a deleted
 //! expression cannot paint a current line.
+//!
+//! Captured files keep the decoder `Cow`: valid UTF-8, including a supported
+//! leading BOM strip, is borrowed from the loaded buffer; only a required
+//! lossy decode owns. UTF-8/16/32 scalar-boundary coordinates are built once
+//! per file and admitted endpoints are derived from that index.
 
 use super::facts::rust_source_text;
 use super::rust_index::RustIndex;
 use crate::domain::Finding;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -111,12 +117,101 @@ pub(crate) struct OriginBuildContext<'a> {
     pub parser_spans: &'a BTreeMap<String, ParserByteSpan>,
 }
 
-struct CapturedFile {
-    source: String,
+struct CapturedFile<'a> {
+    source: Cow<'a, str>,
     has_standalone_cr: bool,
     lines: Vec<LineSpan>,
+    coords: ScalarIndex,
     facts_match: bool,
     used_lexical_fallback: bool,
+}
+
+/// Scalar-boundary UTF-8/16/32 coordinates for one captured file.
+/// Offsets are file-absolute; line-relative LSP endpoints subtract the line start.
+struct ScalarIndex {
+    offsets: Vec<usize>,
+    utf16: Vec<u32>,
+    utf32: Vec<u32>,
+}
+
+impl ScalarIndex {
+    fn build(source: &str) -> Self {
+        let mut offsets = Vec::new();
+        let mut utf16 = Vec::new();
+        let mut utf32 = Vec::new();
+        offsets.push(0);
+        utf16.push(0);
+        utf32.push(0);
+        let mut byte = 0usize;
+        let mut u16_units = 0u32;
+        let mut u32_units = 0u32;
+        for ch in source.chars() {
+            byte = byte.saturating_add(ch.len_utf8());
+            u16_units = u16_units.saturating_add(ch.len_utf16() as u32);
+            u32_units = u32_units.saturating_add(1);
+            offsets.push(byte);
+            utf16.push(u16_units);
+            utf32.push(u32_units);
+        }
+        Self {
+            offsets,
+            utf16,
+            utf32,
+        }
+    }
+
+    fn index_of(&self, byte: usize) -> Option<usize> {
+        self.offsets.binary_search(&byte).ok()
+    }
+
+    fn units(&self, byte: usize, encoding: Encoding) -> Option<u32> {
+        let i = self.index_of(byte)?;
+        match encoding {
+            Encoding::Utf8 => u32::try_from(byte).ok(),
+            Encoding::Utf16 => self.utf16.get(i).copied(),
+            Encoding::Utf32 => self.utf32.get(i).copied(),
+        }
+    }
+
+    fn capped_end(&self, start: usize, end: usize, encoding: Encoding) -> Option<u32> {
+        let start_i = self.index_of(start)?;
+        let end_i = self.index_of(end)?;
+        let start_units = match encoding {
+            Encoding::Utf8 => u32::try_from(start).ok()?,
+            Encoding::Utf16 => *self.utf16.get(start_i)?,
+            Encoding::Utf32 => *self.utf32.get(start_i)?,
+        };
+        let mut last = start_units;
+        let mut i = start_i.saturating_add(1);
+        while i <= end_i {
+            let abs = match encoding {
+                Encoding::Utf8 => u32::try_from(*self.offsets.get(i)?)?,
+                Encoding::Utf16 => *self.utf16.get(i)?,
+                Encoding::Utf32 => *self.utf32.get(i)?,
+            };
+            if abs.saturating_sub(start_units) > ORIGIN_MAX_SPAN_WIDTH {
+                break;
+            }
+            last = abs;
+            i = i.saturating_add(1);
+        }
+        Some(last)
+    }
+
+    fn line_span(
+        &self,
+        line_start: usize,
+        expr_start: usize,
+        expr_end: usize,
+        encoding: Encoding,
+    ) -> Option<EncodedSpan> {
+        let origin = self.units(line_start, encoding)?;
+        let start = self.units(expr_start, encoding)?.saturating_sub(origin);
+        let end = self
+            .capped_end(expr_start, expr_end, encoding)?
+            .saturating_sub(origin);
+        Some(EncodedSpan { start, end })
+    }
 }
 
 pub(crate) fn origins_for_rust_findings(
@@ -139,20 +234,22 @@ pub(crate) fn origins_for_rust_findings(
     origins
 }
 
-fn captured_file_index(
-    loaded_files: &[(PathBuf, Vec<u8>)],
+fn captured_file_index<'a>(
+    loaded_files: &'a [(PathBuf, Vec<u8>)],
     index: &RustIndex,
-) -> BTreeMap<PathBuf, CapturedFile> {
+) -> BTreeMap<PathBuf, CapturedFile<'a>> {
     let mut captured = BTreeMap::new();
     for (path, bytes) in loaded_files {
-        let source = rust_source_text(bytes).text.into_owned();
+        let source = rust_source_text(bytes).text;
         let facts = index.files.get(path);
+        let text = source.as_ref();
         captured.insert(
             path.clone(),
             CapturedFile {
-                has_standalone_cr: has_standalone_cr(&source),
-                lines: lsp_lines(&source),
-                facts_match: facts.is_some_and(|facts| facts.source == source),
+                has_standalone_cr: has_standalone_cr(text),
+                lines: lsp_lines(text),
+                coords: ScalarIndex::build(text),
+                facts_match: facts.is_some_and(|facts| facts.source == text),
                 used_lexical_fallback: facts.is_some_and(|facts| facts.used_lexical_fallback),
                 source,
             },
@@ -185,7 +282,7 @@ fn relative_finding_path(root: &Path, finding: &Finding) -> Option<PathBuf> {
 fn origin_for_finding(
     finding: &Finding,
     span: Option<ParserByteSpan>,
-    captured: Option<&CapturedFile>,
+    captured: Option<&CapturedFile<'_>>,
 ) -> EncodedOrigin {
     let Some(captured) = captured else {
         return missing_input_origin();
@@ -202,7 +299,7 @@ fn origin_for_finding(
     if captured.used_lexical_fallback || !captured.facts_match {
         return coarse_on_line(&captured.lines, finding.probe.location.line);
     }
-    exact_origin(&captured.source, &captured.lines, span, finding)
+    exact_origin(captured, span, finding)
         .unwrap_or_else(|| coarse_on_line(&captured.lines, finding.probe.location.line))
 }
 
@@ -232,14 +329,14 @@ fn coarse_on_line(lines: &[LineSpan], one_based_line: usize) -> EncodedOrigin {
 }
 
 fn exact_origin(
-    source: &str,
-    lines: &[LineSpan],
+    captured: &CapturedFile<'_>,
     span: ParserByteSpan,
     finding: &Finding,
 ) -> Option<EncodedOrigin> {
     if finding.probe.expression.is_empty() {
         return None;
     }
+    let source = captured.source.as_ref();
     let start = trimmed_expression_start(source, span.start_byte, &finding.probe.expression)?;
     let end = start.checked_add(finding.probe.expression.len())?;
     if end > source.len() || !source.is_char_boundary(start) || !source.is_char_boundary(end) {
@@ -248,20 +345,24 @@ fn exact_origin(
     if source.get(start..end) != Some(finding.probe.expression.as_str()) {
         return None;
     }
-    let (line_index, line_span) = line_containing(start, lines)?;
+    let (line_index, line_span) = line_containing(start, &captured.lines)?;
     if end > line_span.end {
         return None;
     }
     if finding.probe.location.line.saturating_sub(1) != line_index {
         return None;
     }
-    let prefix = source.get(line_span.start..start)?;
-    let expression = finding.probe.expression.as_str();
     Some(EncodedOrigin {
         line: line_index as u32,
-        utf8: encoded_span(prefix, expression, Encoding::Utf8),
-        utf16: encoded_span(prefix, expression, Encoding::Utf16),
-        utf32: encoded_span(prefix, expression, Encoding::Utf32),
+        utf8: captured
+            .coords
+            .line_span(line_span.start, start, end, Encoding::Utf8)?,
+        utf16: captured
+            .coords
+            .line_span(line_span.start, start, end, Encoding::Utf16)?,
+        utf32: captured
+            .coords
+            .line_span(line_span.start, start, end, Encoding::Utf32)?,
         kind: OriginKind::Exact,
     })
 }
@@ -274,22 +375,14 @@ fn trimmed_expression_start(source: &str, start_byte: usize, expression: &str) -
     Some(exact_start)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Encoding {
     Utf8,
     Utf16,
     Utf32,
 }
 
-fn encoded_span(prefix: &str, expression: &str, encoding: Encoding) -> EncodedSpan {
-    let start = encoding_width(prefix, encoding);
-    let width = capped_width(expression, encoding);
-    EncodedSpan {
-        start,
-        end: start.saturating_add(width),
-    }
-}
-
+#[cfg(test)]
 fn encoding_width(text: &str, encoding: Encoding) -> u32 {
     match encoding {
         Encoding::Utf8 => text.len() as u32,
@@ -298,6 +391,7 @@ fn encoding_width(text: &str, encoding: Encoding) -> u32 {
     }
 }
 
+#[cfg(test)]
 fn capped_width(expression: &str, encoding: Encoding) -> u32 {
     let mut width = 0u32;
     for ch in expression.chars() {
@@ -384,6 +478,7 @@ mod tests {
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Probe, ProbeFamily, ProbeId,
         RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
     };
+    use std::borrow::Cow;
     use std::path::PathBuf;
 
     const PREDICATE: &str = "montant_é > discount_threshold";
@@ -875,11 +970,152 @@ mod tests {
     }
 
     #[test]
-    fn scalar_cap_does_not_split_an_astral_character() {
+    fn scalar_cap_does_not_split_an_astral_character() -> Result<(), String> {
         let expression = format!("{}{}", "a".repeat(119), "🎉");
         let width = capped_width(&expression, Encoding::Utf16);
         assert_eq!(width, 119);
         let utf8 = capped_width(&expression, Encoding::Utf8);
         assert_eq!(utf8, 119);
+        let coords = ScalarIndex::build(&expression);
+        let utf16_end = coords
+            .capped_end(0, expression.len(), Encoding::Utf16)
+            .ok_or_else(|| "astral expression leaves UTF-16 scalar boundaries".to_string())?;
+        assert_eq!(utf16_end, 119);
+        let utf8_end = coords
+            .capped_end(0, expression.len(), Encoding::Utf8)
+            .ok_or_else(|| "astral expression leaves UTF-8 scalar boundaries".to_string())?;
+        assert_eq!(utf8_end, 119);
+        Ok(())
+    }
+
+    #[test]
+    fn captured_index_borrows_ordinary_utf8_including_bom() -> Result<(), String> {
+        let ordinary = b"fn a() { true }\n".to_vec();
+        let mut bom = b"\xEF\xBB\xBF".to_vec();
+        bom.extend_from_slice(&ordinary);
+        let loaded = vec![
+            (PathBuf::from("src/lib.rs"), ordinary),
+            (PathBuf::from("src/bom.rs"), bom),
+        ];
+        let captured = captured_file_index(&loaded, &RustIndex::default());
+        let ordinary_file = captured
+            .get(Path::new("src/lib.rs"))
+            .ok_or_else(|| "ordinary file missing".to_string())?;
+        let bom_file = captured
+            .get(Path::new("src/bom.rs"))
+            .ok_or_else(|| "bom file missing".to_string())?;
+        if !matches!(ordinary_file.source, Cow::Borrowed(_)) {
+            return Err("ordinary valid UTF-8 must stay borrowed".to_string());
+        }
+        if !matches!(bom_file.source, Cow::Borrowed(_)) {
+            return Err("BOM-stripped valid UTF-8 must stay borrowed".to_string());
+        }
+        assert_eq!(ordinary_file.source.as_ref(), bom_file.source.as_ref());
+        Ok(())
+    }
+
+    #[test]
+    fn captured_index_owns_lossy_non_utf8() -> Result<(), String> {
+        let loaded = vec![(PathBuf::from("src/lib.rs"), vec![0xff, 0xfe, b'x'])];
+        let captured = captured_file_index(&loaded, &RustIndex::default());
+        let file = captured
+            .get(Path::new("src/lib.rs"))
+            .ok_or_else(|| "lossy file missing".to_string())?;
+        if !matches!(file.source, Cow::Owned(_)) {
+            return Err("invalid UTF-8 must own the lossy decode".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn two_predicates_on_one_unicode_line_share_file_coordinates() -> Result<(), String> {
+        const SECOND: &str = "montant_é < other_threshold";
+        let prefix_a = "\tlet 日本語🎉e\u{0301} = 1; if ";
+        let between = " { true } else if ";
+        let source = format!(
+            "fn price() {{\n{prefix_a}{PREDICATE}{between}{SECOND} {{\n        true\n    }}\n}}\n"
+        );
+        let start_a = require_find(&source, PREDICATE, "first predicate")?;
+        let start_b = require_find(&source, SECOND, "second predicate")?;
+        let finding_a = current_finding("probe:a", 2, PREDICATE);
+        let finding_b = current_finding("probe:b", 2, SECOND);
+        let mut spans = BTreeMap::new();
+        spans.insert(
+            finding_a.id.clone(),
+            ParserByteSpan {
+                start_byte: start_a,
+            },
+        );
+        spans.insert(
+            finding_b.id.clone(),
+            ParserByteSpan {
+                start_byte: start_b,
+            },
+        );
+        let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
+        let captured = captured_file_index(&loaded, &index_with(&source));
+        let file = captured
+            .get(Path::new("src/lib.rs"))
+            .ok_or_else(|| "captured file missing".to_string())?;
+        if !matches!(file.source, Cow::Borrowed(_)) {
+            return Err("fixture UTF-8 must stay borrowed".to_string());
+        }
+        let origins = origins_for_rust_findings(
+            &[finding_a, finding_b],
+            &OriginBuildContext {
+                root: Path::new("/workspace"),
+                loaded_files: &loaded,
+                index: &index_with(&source),
+                parser_spans: &spans,
+            },
+        );
+        let origin_a = require_origin(&origins, "probe:a")?;
+        let origin_b = require_origin(&origins, "probe:b")?;
+        assert_eq!(origin_a.kind, OriginKind::Exact);
+        assert_eq!(origin_b.kind, OriginKind::Exact);
+        assert_eq!(origin_a.line, origin_b.line);
+        let line_start = file
+            .lines
+            .get(origin_a.line as usize)
+            .ok_or_else(|| "missing predicate line".to_string())?
+            .start;
+        for encoding in [Encoding::Utf8, Encoding::Utf16, Encoding::Utf32] {
+            let start_a_units = file
+                .coords
+                .line_span(line_start, start_a, start_a + PREDICATE.len(), encoding)
+                .ok_or_else(|| format!("{encoding:?} missing first span"))?;
+            let start_b_units = file
+                .coords
+                .line_span(line_start, start_b, start_b + SECOND.len(), encoding)
+                .ok_or_else(|| format!("{encoding:?} missing second span"))?;
+            let origin_span = match encoding {
+                Encoding::Utf8 => origin_a.utf8,
+                Encoding::Utf16 => origin_a.utf16,
+                Encoding::Utf32 => origin_a.utf32,
+            };
+            assert_eq!(origin_span, start_a_units);
+            let origin_b_span = match encoding {
+                Encoding::Utf8 => origin_b.utf8,
+                Encoding::Utf16 => origin_b.utf16,
+                Encoding::Utf32 => origin_b.utf32,
+            };
+            assert_eq!(origin_b_span, start_b_units);
+        }
+        assert_eq!(
+            origin_a.utf8.start,
+            encoding_width(prefix_a, Encoding::Utf8)
+        );
+        assert_eq!(
+            origin_a.utf16.start,
+            encoding_width(prefix_a, Encoding::Utf16)
+        );
+        assert_eq!(
+            origin_a.utf32.start,
+            encoding_width(prefix_a, Encoding::Utf32)
+        );
+        assert_ne!(origin_a.utf8.start, origin_a.utf16.start);
+        assert_ne!(origin_a.utf16.start, origin_a.utf32.start);
+        assert_ne!(origin_a.utf8.start, origin_b.utf8.start);
+        Ok(())
     }
 }
