@@ -3,6 +3,34 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Same-crate trait methods are not unique just because they share a crate (#4760)
+
+`body_contains_owner_call` and `tests_by_call_name` match `size_hint(` including
+`.size_hint()`. That is correct for a unique impl method (`ledger.apply(5)` is
+how a test calls `Ledger::apply`). It is not identity when two impls of one
+trait method live in the same crate.
+
+The uniqueness bypass only gates *cross-crate* package-prefix filtering. A
+name seen twice in one crate (`WhileSome::size_hint` vs `Combinations::size_hint`)
+still became `direct_owner_call`, and the Combinations test's strong
+`assert_eq!(it.size_hint().1, …)` then reported itertools `WhileSome::size_hint`
+as `exposed` 1.0. Mutation: with `(0, None)` applied, every suite still passed.
+
+Fail closed: an impl method whose name has more than one workspace definition
+is `direct_owner_call` only when the receiver resolves to this impl (let
+binding that names the type, UFCS `Type::method`, or `Type { }.method` prefix).
+Unresolved receivers (`let it = (0..3).combinations(2); it.size_hint()`) stay
+`weak_token_substring`. Unique impl methods are unchanged. Full `CallFact`
+receiver fields remain #3727.
+
+A second effect: one test with five matching assertions occupied five of the
+eight `related_tests` rows. Dedup by `(name, file, line)` and keep the
+strongest oracle.
+
+Pin both sides: `rust_adversarial_same_method_other_type` must stay below
+`exposed`; `rust_same_method_owner_type_positive` must keep `exposed`. Do not
+absorb #4478 (confirmation pin), #4486 (proximity-only oracle), or #3727.
+
 ## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
 
 `ripr pilot` and `ripr first-pr` create `target/ripr/pilot` and

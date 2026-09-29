@@ -1763,11 +1763,26 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
 }
 
 fn finalize_related_tests(mut related: Vec<RelatedTest>) -> Vec<RelatedTest> {
-    related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
-    related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
+    // One row per test: keep the strongest matching oracle so a test with
+    // several assertions cannot occupy every `related_tests` cap slot (#4760).
+    related.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.file.cmp(&right.file))
+            .then(left.line.cmp(&right.line))
+            .then(
+                right
+                    .oracle_strength
+                    .rank()
+                    .cmp(&left.oracle_strength.rank()),
+            )
+    });
+    related.dedup_by(|left, right| {
+        left.name == right.name && left.file == right.file && left.line == right.line
+    });
     // Renderers present the first entry as the primary related test, so the
-    // strongest relation leads. The sort is stable: name and line order holds
-    // within one confidence tier, and the dedup above is unchanged.
+    // strongest relation leads. The sort is stable: name and file order holds
+    // within one confidence tier.
     related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
     related
 }
@@ -2402,6 +2417,75 @@ mod tests {
         assert_eq!(related[0].name, "a_error_path");
         assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
         assert_eq!(related[1].name, "z_error_path");
+    }
+
+    /// #4760: several matching assertions on one test occupy one related-test
+    /// row, carrying the strongest oracle, so the 8-row cap cannot hide other
+    /// tests behind duplicate oracle entries.
+    #[test]
+    fn related_tests_list_each_test_once_with_the_strongest_oracle() {
+        let probe = probe(ProbeFamily::ReturnValue, "(0, self.iter.size_hint().1)");
+        let multi = test_with_assertions(
+            "combinations_inexact_size_hints",
+            vec![
+                oracle(
+                    "assert_eq!(it.size_hint().1, Some(3));",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                ),
+                oracle(
+                    "assert_eq!(it.size_hint().0, 0);",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                ),
+                oracle(
+                    "assert!(it.size_hint().1.is_some());",
+                    OracleKind::RelationalCheck,
+                    OracleStrength::Weak,
+                ),
+                oracle(
+                    "assert_eq!(it.size_hint(), (0, Some(3)));",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                ),
+                oracle(
+                    "assert!(it.size_hint().1 == Some(3));",
+                    OracleKind::RelationalCheck,
+                    OracleStrength::Weak,
+                ),
+            ],
+        );
+        let other = test_with_assertions(
+            "while_some_is_untested",
+            vec![oracle(
+                "assert_eq!(1, 1);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            )],
+        );
+        let (_, _, related) = reveal_evidence(
+            &probe,
+            &[
+                (&multi, RelationReason::WeakTokenSubstring),
+                (&other, RelationReason::SameTestFile),
+            ],
+        );
+
+        let named: Vec<&str> = related.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(
+            named
+                .iter()
+                .filter(|name| **name == "combinations_inexact_size_hints")
+                .count(),
+            1,
+            "one test must occupy one related_tests row, not one row per oracle: {named:?}"
+        );
+        let combinations = related
+            .iter()
+            .find(|test| test.name == "combinations_inexact_size_hints")
+            .expect("combinations test listed");
+        assert_eq!(combinations.oracle_strength, OracleStrength::Strong);
+        assert_eq!(combinations.oracle_kind, OracleKind::ExactValue);
     }
 
     #[test]
