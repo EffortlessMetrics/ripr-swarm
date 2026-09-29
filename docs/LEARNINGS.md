@@ -1798,7 +1798,7 @@ content hash or omit the counter from the identity comparison.
 
 ## 2026-07-19: `continue-on-error: true` on every step makes green meaningless
 
-The generated CI workflow (`init.rs`) uses `continue-on-error: true` on ~30 of
+The generated CI workflow (`cli/commands/init_workflow.rs`) uses `continue-on-error: true` on ~30 of
 ~31 steps. Only the gate step and the diff-capture step lack it. A consumer
 sees a green job and missing artifacts (SARIF, badge, reports) with no signal
 that anything failed.
