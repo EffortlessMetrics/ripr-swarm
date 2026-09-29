@@ -231,6 +231,18 @@ Updated:
 ## Pending — python_substring_sink_alignment (7)
 
 Reason:
+RIPR-SPEC-0122: Python pytest verify commands now emit python -m pytest so a flat-layout package imports from the repository root; wording only, no exposure class change
+
+Command:
+`cargo xtask goldens bless python_substring_sink_alignment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_substring_sink_alignment (8)
+
+Reason:
 RIPR-SPEC-0028: #4567 oracle local wraps the owner call so the fixture keeps testing substring token coincidence; classification and alignment unchanged
 
 Command:

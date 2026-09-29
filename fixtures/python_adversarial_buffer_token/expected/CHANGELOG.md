@@ -272,6 +272,19 @@ Updated:
 ## Pending — python_adversarial_buffer_token (8)
 
 Reason:
+RIPR-SPEC-0122: Python pytest verify commands now emit python -m pytest so a flat-layout package imports from the repository root; wording only, no exposure class change
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (9)
+
+Reason:
 RIPR-SPEC-0028: #4567 oracle local wraps the owner call so the fixture keeps testing substring token coincidence; classification and alignment unchanged
 
 Command:

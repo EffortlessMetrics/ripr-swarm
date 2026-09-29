@@ -2595,10 +2595,10 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ripr first-pr - side effects and cost disclosure"));
-    assert!(stdout.contains("cost class:      varies with diff and workspace size"));
+    assert!(stdout.contains("cost class:      artifact composition only; runs no analysis"));
     assert!(stdout.contains(&format!("writes to:       {reports_arg}/")));
-    assert!(stdout.contains("cache location:  target/ripr/cache/"));
-    assert!(stdout.contains("git reads:       yes (diff between base and head)"));
+    assert!(stdout.contains("cache location:  none"));
+    assert!(stdout.contains("git reads:       yes (base and head preflight)"));
     assert!(stdout.contains("network:         none"));
     assert!(stdout.contains("Start here:"));
     // Summary and Wrote lines render the resolved locations with stable
@@ -10708,7 +10708,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "changed owner: calculate_discount",
         "missing discriminator: amount == threshold",
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
-        "verify: pytest tests/test_pricing.py::test_calculate_discount_smoke",
+        "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
@@ -10729,7 +10729,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         r#""changed_owner": "calculate_discount""#,
         r#""missing_discriminator": "amount == threshold""#,
         r#""suggested_test_file": "tests/test_pricing.py""#,
-        r#""verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke""#,
+        r#""verify_command": "python -m pytest tests/test_pricing.py::test_calculate_discount_smoke""#,
     ] {
         assert!(
             summary_json.contains(needle),
@@ -11108,7 +11108,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     // which only leads back to pilot (rc rehearsal py-pricing).
     assert!(
         stdout.contains("Next, in order:\n  1. ripr first-pr --root ")
-            && stdout.contains("\n  3. pytest ")
+            && stdout.contains("\n  3. python -m pytest ")
             && stdout.contains("\n  4. run the receipt command step 1 printed\n"),
         "{stdout}"
     );
