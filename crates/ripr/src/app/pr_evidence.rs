@@ -70,8 +70,9 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
         // through the diff loader's authority instead of assuming
         // `origin/main`, which need not exist; nothing resolving is a named
         // failure, never a guessed base recorded in the packet.
-        options.base = crate::analysis::resolve_effective_base(&repo, None, None)
-            .map_err(|err| format!("pr-evidence: {err}"))?;
+        options.base =
+            crate::analysis::resolve_effective_base(&repo, None, Some(PR_EVIDENCE_GIT_DEADLINE))
+                .map_err(|err| format!("pr-evidence: {err}"))?;
     }
     if options.check {
         check_pr_evidence(&repo, &options)

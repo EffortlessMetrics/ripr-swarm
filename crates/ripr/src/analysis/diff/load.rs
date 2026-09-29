@@ -607,6 +607,11 @@ fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static st
     }
 }
 
+/// Cooperative ceiling for the PR-evidence packet diff (#4363). A `--binary`
+/// full-patch diff of a large pull request can take far longer than a
+/// revision probe, so this is five minutes, not the one-minute probe ceiling.
+const PR_EVIDENCE_DIFF_DEADLINE: Duration = Duration::from_mins(5);
+
 /// PR-evidence range path (issue #3930): the same pinned presentation as
 /// the analysis loaders, with `--binary` as the caller extra (the packet
 /// artifact keeps binary hunks) and three context lines (the pre-#3930
@@ -615,10 +620,17 @@ fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static st
 /// PR-evidence path produced it, so ordinary repositories see
 /// byte-identical `PR_DIFF`. The packet artifact records evidence, so the
 /// decode stays strict like the pre-#3930 helper: non-UTF-8 stdout is a
-/// named error, never silently recorded with replacement characters. Like
-/// `load_diff_range`, no deadline is threaded.
+/// named error, never silently recorded with replacement characters. The
+/// diff runs under [`PR_EVIDENCE_DIFF_DEADLINE`] (#4363), so a hung git ends
+/// in the named `git_invocation_timeout` error instead of pinning the packet.
 pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    let bytes = run_git_diff_bytes(root, &format!("{base}...{head}"), &["--binary"], "3", None)?;
+    let bytes = run_git_diff_bytes(
+        root,
+        &format!("{base}...{head}"),
+        &["--binary"],
+        "3",
+        Some(PR_EVIDENCE_DIFF_DEADLINE),
+    )?;
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
 
