@@ -1,0 +1,79 @@
+# Distribution identity and target metadata for ripr package adapters (#4488).
+#
+# This file does not declare a published package or a supported platform. The
+# workspace Cargo version remains the product-version authority. Compatibility
+# floors stay explicitly pending until #4489 qualifies final installed payloads.
+schema_version = "0.1"
+control_issue = 4488
+compatibility_issue = 4489
+source_version = "workspace"
+non_claim = "Identity and target-shape contract only; no package is published and no compatibility floor is qualified."
+
+product = "ripr"
+cargo_package = "ripr"
+executable = "ripr"
+pypi_distribution = "ripr-rs"
+npm_launcher = "@effortlessmetrics/ripr"
+release_features = ["lang-rust", "lang-typescript", "lang-python"]
+
+[[target]]
+rust_target = "x86_64-pc-windows-msvc"
+executable = "ripr.exe"
+native_os = "windows"
+native_cpu = "x86_64"
+native_libc = "msvc"
+minimum_system = "pending:#4489"
+wheel_family = "windows"
+npm_os = "win32"
+npm_cpu = "x64"
+npm_package = "@effortlessmetrics/ripr-win32-x64-msvc"
+
+[[target]]
+rust_target = "x86_64-unknown-linux-gnu"
+executable = "ripr"
+native_os = "linux"
+native_cpu = "x86_64"
+native_libc = "glibc"
+minimum_system = "pending:#4489"
+wheel_family = "manylinux"
+npm_os = "linux"
+npm_cpu = "x64"
+npm_libc = "glibc"
+npm_package = "@effortlessmetrics/ripr-linux-x64-gnu"
+
+[[target]]
+rust_target = "aarch64-unknown-linux-gnu"
+executable = "ripr"
+native_os = "linux"
+native_cpu = "aarch64"
+native_libc = "glibc"
+minimum_system = "pending:#4489"
+wheel_family = "manylinux"
+npm_os = "linux"
+npm_cpu = "arm64"
+npm_libc = "glibc"
+npm_package = "@effortlessmetrics/ripr-linux-arm64-gnu"
+
+[[target]]
+rust_target = "x86_64-apple-darwin"
+executable = "ripr"
+native_os = "macos"
+native_cpu = "x86_64"
+native_libc = "system"
+minimum_system = "pending:#4489"
+wheel_family = "macosx"
+npm_os = "darwin"
+npm_cpu = "x64"
+npm_package = "@effortlessmetrics/ripr-darwin-x64"
+
+[[target]]
+rust_target = "aarch64-apple-darwin"
+executable = "ripr"
+native_os = "macos"
+native_cpu = "aarch64"
+native_libc = "system"
+minimum_system = "pending:#4489"
+wheel_family = "macosx"
+npm_os = "darwin"
+npm_cpu = "arm64"
+npm_package = "@effortlessmetrics/ripr-darwin-arm64"

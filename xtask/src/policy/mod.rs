@@ -3,6 +3,7 @@ mod ci_lane_whitelist;
 pub(crate) mod ci_scratch;
 mod covered_by;
 mod dependency_expiry;
+mod distribution_packages;
 mod doc_roles;
 pub(crate) mod droid_review;
 mod executable_files;
@@ -34,6 +35,17 @@ pub(crate) use positioning_language::check_positioning_language;
 pub(crate) use process::check_process_policy;
 pub(crate) use product_copy::check_product_copy;
 pub(crate) use proof_packs::check_proof_packs;
-pub(crate) use release_targets::check_release_targets;
 pub(crate) use static_language::check_static_language;
 pub(crate) use workflows::check_workflows;
+
+pub(crate) fn check_release_targets() -> Result<(), String> {
+    let release_graph = release_targets::check_release_targets();
+    let distribution = distribution_packages::check_distribution_packages();
+    match (release_graph, distribution) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(release_error), Err(distribution_error)) => {
+            Err(format!("{release_error}\n{distribution_error}"))
+        }
+    }
+}
