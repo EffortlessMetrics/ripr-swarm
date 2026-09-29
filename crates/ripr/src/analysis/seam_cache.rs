@@ -240,8 +240,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// constant; an undeclared or ambiguous constant routes to the
 /// unresolved-operand limitation. Old classified entries would keep
 /// serving the unclosable `weakly_gripped` gap for warm workspaces.
-/// 1.14 -> 1.15: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.15";
+/// `1.14` -> `1.15`: the Rust nesting budget refuses over-deep sources
+/// before parsing, so those files move to lexical fallback with a typed
+/// `rust_nesting_budget` reason. Old classified entries would serve
+/// parser-backed classification for files the current parser path refuses.
+/// 1.15 -> 1.16: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.16";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -286,8 +290,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.15";
 /// cache.
 /// `0.19` -> `0.20`: named-constant boundary resolution — same semantic
 /// transition as the outer classified-seam cache.
-/// 0.20 -> 0.21: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.21";
+/// `0.20` -> `0.21`: Rust nesting budget refusal — same semantic
+/// transition as the outer classified-seam cache.
+/// 0.21 -> 0.22: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.22";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -338,8 +344,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.21";
 /// cache.
 /// `0.20` -> `0.21`: named-constant boundary resolution — same semantic
 /// transition as the outer classified-seam cache.
-/// 0.21 -> 0.22: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.22";
+/// `0.21` -> `0.22`: Rust nesting budget refusal — same semantic
+/// transition as the outer classified-seam cache.
+/// 0.22 -> 0.23: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.23";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -437,8 +445,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// build against the current manifests, and the #3636 reachability
 /// authority runs inside that re-application — so a warm hit cannot
 /// bypass either validation or reachability classification.
-/// 1.8 -> 1.9: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.9";
+///
+/// `1.8` -> `1.9`: the Rust nesting budget refuses over-deep sources before
+/// parsing. A warm pre-bump hit would serve parser-backed facts for a file
+/// the current parser path refuses, and the parse sites that re-read that
+/// source would then disagree with the facts' `used_lexical_fallback` flag.
+/// 1.9 -> 1.10: typed semantic-body integrity (#4382); unsigned generations cold-recompute.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.10";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3357,7 +3370,9 @@ mod tests {
         // parser-backed files without the fact fields, and the flag law
         // reads empty facts on those files as real "no shadow" — silently
         // retiring the lexical scanners' defeats.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.9");
+        // 1.8 -> 1.9: the Rust nesting budget moves over-deep sources to
+        // lexical fallback, so a warm pre-bump parser-backed hit must miss.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.10");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3390,7 +3405,10 @@ mod tests {
         // 1.13 -> 1.14: a predicate boundary naming a same-file integer
         // `const` resolves through the shared named-constant lookup, so a
         // warm pre-bump hit would keep an unclosable boundary gap open.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.15");
+        // 1.14 -> 1.15: the Rust nesting budget moves over-deep sources to
+        // lexical fallback, so classified seams derived from their old
+        // parser-backed facts must miss.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.16");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3402,8 +3420,10 @@ mod tests {
         // classified-seam cache.
         // 0.20 (sharded) / 0.21 (compact): named-constant boundary
         // resolution — same semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.21");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.22");
+        // 0.21 (sharded) / 0.22 (compact): Rust nesting budget refusal —
+        // same semantic transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.22");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.23");
     }
 
     #[test]
@@ -3710,7 +3730,7 @@ mod tests {
             let object = value.as_object_mut().ok_or("envelope must be object")?;
             object.insert(
                 "file_fact_cache_schema_version".to_owned(),
-                serde_json::json!("1.8"),
+                serde_json::json!("1.9"),
             );
             std::fs::write(
                 &entry,
@@ -3798,6 +3818,42 @@ mod tests {
                         return Err(format!(
                             "invalid digest served classified family compact={compact} sharded={sharded}"
                         ));
+                    }
+                    // #4475 shipped unsigned nesting-budget generations. Even
+                    // when copied into the new entry path, their decoded
+                    // generation must miss before digest admission.
+                    let invalid_bytes = std::fs::read(&manifest_or_single)
+                        .map_err(|err| err.to_string())?;
+                    let previous_outer = if compact { "0.22" } else { "1.15" };
+                    let previous_generations = if sharded {
+                        vec![
+                            ("schema_version", previous_outer),
+                            ("sharded_cache_schema_version", "0.21"),
+                        ]
+                    } else {
+                        vec![("schema_version", previous_outer)]
+                    };
+                    for (field, previous) in previous_generations {
+                        let mut value: serde_json::Value =
+                            serde_json::from_slice(&invalid_bytes)
+                                .map_err(|err| err.to_string())?;
+                        value
+                            .as_object_mut()
+                            .ok_or("envelope must be object")?
+                            .insert(field.to_owned(), serde_json::json!(previous));
+                        std::fs::write(
+                            &manifest_or_single,
+                            serde_json::to_vec(&value).map_err(|err| err.to_string())?,
+                        )
+                        .map_err(|err| err.to_string())?;
+                        if !matches!(
+                            cache.load_classified_seams_with_fallback(&key),
+                            CacheLoad::Miss
+                        ) {
+                            return Err(format!(
+                                "unsigned nesting generation must miss: compact={compact} sharded={sharded} field={field}"
+                            ));
+                        }
                     }
                     if sharded {
                         cache.store_classified_seams_with_limit(&key, &seams, None, 1)?;

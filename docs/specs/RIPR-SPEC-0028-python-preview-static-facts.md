@@ -144,6 +144,33 @@ directory named `src` (the PyPA src layout, including monorepo
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
 while the repository-relative `src.pricing.discounts` form still matches. Bare
 file stems and arbitrary path suffixes never count as module identity.
+
+A package whose `__init__.py` re-exports a top-level function or class under
+its own name is also an import path of that owner: `from .time import
+naturaldelta` in `src/humanize/__init__.py` lets `import humanize` +
+`humanize.naturaldelta(...)` and `from humanize import naturaldelta` relate to
+`src/humanize/time.py::naturaldelta`, and `from .more import *` lets
+`import more_itertools as mi` + `mi.one(...)` relate to
+`more_itertools/more.py::one`. The re-export is followed only from
+`__init__.py` module imports whose source module is the owner's module (or an
+earlier re-exporting package), for at most three packages. A renamed
+re-export (`from .time import naturaldelta as delta`) is not followed. A star re-export
+never carries a `_private` name, and when the source module binds `__all__`
+at top level the name must be listed in it; any other binding of `__all__`
+(an import, `del`, a loop target, a binding inside a conditional block, or a
+value other than a literal list or tuple of strings or a `+=` of one) fails
+closed, and a mention of `__all__` in a comment or docstring is not a binding.
+When the initializer also binds the name to something else (a second import
+under that name, a star import from another module that defines it, its own
+definition, an assignment, `del`, a loop or `with` target, or any binding
+inside a conditional block), the re-export is not followed, because the
+reader does not order bindings. An unreadable or unparsable initializer
+re-exports nothing.
+Methods and module owners are never re-exported. The test must still call the owner's own name through
+the package, so a test that only calls a sibling name from the same package
+stays unrelated, and a test that binds a local named like the package alias
+(a parameter, fixture or assignment) calls that local, not the package. Diff
+mode and repo mode apply the same rule.
 Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.
@@ -288,7 +315,22 @@ as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
 with several comparisons) never counts as observed, and such a boundary is not
 named as a typed repair target: the test input may already sit on it at runtime
 (`reserve(Item("a", 3), 3)`), so the finding states the unresolved operand
-instead of producing a repair card. When no strong related call binds a literal
+instead of producing a repair card. A module-scope name bound once to a scalar
+literal (`DISCOUNT_THRESHOLD = 10_000`) resolves like a literal operand, the
+way the Rust and TypeScript adapters resolve a same-file constant; the missing
+discriminator keeps the name (`amount == DISCOUNT_THRESHOLD`) and its reason
+names the value and declaring line. A test argument that names the constant,
+imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
+`pricing.DISCOUNT_THRESHOLD`), binds to that value unless the test's own scope
+or its module binds that name again. The name stays unresolved when anything
+can rebind it: a second module-scope binding (including inside
+`if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
+the module, a star import, a module-scope `match`, any mention of a dynamic
+namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
+`sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
+of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
+or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
+= 5`). When no strong related call binds a literal
 argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
@@ -526,7 +568,11 @@ Follow-up fixtures and tests cover the owner, test, assertion, related
 test, probe, and static-limit cases listed under Required Evidence, plus
 generated CI behavior and LSP smoke coverage. The CLI first-use path also
 checks that `ripr pilot` can surface a top Python repair card from diff-scoped
-preview evidence without requiring a Cargo workspace, and that `ripr first-pr`
+preview evidence without requiring a Cargo workspace, that pilot's next
+commands then follow that card's route instead of the diff-first
+`ripr check` route (`ripr first-pr` before the edit to name the receipt
+command, unless the card carries one; then the test edit, the card's verify
+command, and the receipt command), and that `ripr first-pr`
 can route an existing Python preview GapRecord into a preview-limited
 start-here packet for a Python project root. The first-PR mapping also covers
 the direct `--check-output <check.json>` bridge that materializes the
@@ -544,6 +590,17 @@ suggested test file when the repair route carries a bare test name.
 The single-literal expected-value rule (including one triple-quoted string,
 and excluding compounds and adjacent-string concatenation) is covered by
 `crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator`.
+
+Package re-export reach is covered end to end, in diff and repo mode, by
+`crates/ripr/src/analysis/language/python/reexport_tests.rs`: attribute calls
+through an explicit `__init__.py` re-export, `from package import name`
+module identity, a star re-export honoring `__all__`, and the negative
+controls (a name `__all__` omits, a name quoted elsewhere but not in
+`__all__`, a sibling name, a renamed re-export, a shadowed package alias, an
+initializer that binds the name twice, an initializer that reassigns, deletes
+or conditionally rebinds it, and an `__all__` replaced by an import), a
+binding of another name that keeps the re-export, and a docstring that
+mentions `__all__` without binding it.
 
 ## Implementation Mapping
 
