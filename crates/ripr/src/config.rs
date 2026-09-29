@@ -138,7 +138,7 @@ enabled = ["rust"]
 #
 # [perl]
 # producer = "perl-ripr-facts"  # canonical managed exporter; "perllsp"/"perl-lsp" are compatibility wrappers
-# executable = "perl"      # Exporter path; only run when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1
+# executable = "perl-ripr-facts"  # Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1
 # timeout_ms = 30000       # Per-invocation timeout
 # cache_dir = "target/ripr/perl-facts"  # Fact cache location
 "#;
@@ -184,7 +184,7 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     let Some(path) = discover_config_path(root) else {
         return default_config_for_root(root);
     };
-    let text = std::fs::read_to_string(&path)
+    let text = crate::bounded_input::read_to_string(&path)
         .map_err(|err| format!("read {} failed: {err}", path.display()))?;
     let mut config = parse_config(&text).map_err(|err| format!("{}: {err}", path.display()))?;
     config.source_path = Some(path);
