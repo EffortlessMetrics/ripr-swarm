@@ -254,6 +254,11 @@ are scoped or reviewed.
   the `RIPR_PARTIAL_*_BUDGET` overrides. It used to keep the default deadline
   silently (#4374).
 
+- LSP code lenses now offer the registered saved-workspace refresh command with an
+  explicit action label, avoiding unsupported empty-command clicks in standard clients.
+  Cached related-test advisories remain static; clicking does not run tests or repair code
+  (#4357).
+
 ### Added
 
 - `ripr --version` now names the commit the binary was built from, as
