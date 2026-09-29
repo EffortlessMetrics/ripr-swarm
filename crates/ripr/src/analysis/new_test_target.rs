@@ -144,8 +144,9 @@ pub(crate) enum NewTestProposalProvenance {
 
 /// Prefer a producer-owned Integration file when the owner is a crate-root
 /// public library item; otherwise keep the landed InlineUnit producer.
-/// When both stay Missing, keep Integration's visibility or layout blocker
-/// so the Missing reason names why a new tests/ file is refused.
+/// When both stay Missing, keep Integration's Cargo/layout blockers. A
+/// PrivateOwner Integration refusal does not replace an InlineUnit module
+/// reason: private items can still earn a same-file unit proposal.
 pub(crate) fn admit_new_test_target(seam: &RepoSeam, index: &RustIndex) -> NewTestTargetAdmission {
     let integration = admit_new_integration_test(seam, index);
     if integration.proposal.is_some() {
@@ -157,8 +158,7 @@ pub(crate) fn admit_new_test_target(seam: &RepoSeam, index: &RustIndex) -> NewTe
     }
     match integration.blocker {
         Some(
-            NewTestProposalBlocker::PrivateOwner
-            | NewTestProposalBlocker::AutotestsDisabled
+            NewTestProposalBlocker::AutotestsDisabled
             | NewTestProposalBlocker::MissingIntegrationLayout
             | NewTestProposalBlocker::LibraryTargetUnresolved
             | NewTestProposalBlocker::FileCollision,

@@ -1,15 +1,14 @@
 use crate::analysis::ClassifiedSeam;
-#[cfg(unix)]
 use crate::analysis::facts::build_index;
-#[cfg(unix)]
 use crate::analysis::new_test_target::admit_new_integration_test;
-use crate::analysis::new_test_target::{NewTestKind, NewTestProposalProvenance};
+use crate::analysis::new_test_target::{
+    NewTestKind, NewTestProposalBlocker, NewTestProposalProvenance,
+};
 #[cfg(unix)]
 use crate::analysis::repair_route::RepairRouteReadiness;
 use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
 use crate::analysis::seam_inventory::inventory_classified_seams_at;
 use crate::analysis::seams::SeamKind;
-#[cfg(unix)]
 use crate::analysis::workspace::discover_rust_files;
 use crate::app::repair_attempt::edit_cage_policy_from_packet;
 use std::fs;
@@ -118,6 +117,15 @@ fn boundary_entry(classified: &[ClassifiedSeam]) -> Result<&ClassifiedSeam, Stri
                     .join(", ")
             )
         })
+}
+
+fn integration_admission_for(
+    root: &Path,
+    entry: &ClassifiedSeam,
+) -> Result<crate::analysis::new_test_target::NewTestTargetAdmission, String> {
+    let files = discover_rust_files(root)?;
+    let index = build_index(root, &files)?;
+    Ok(admit_new_integration_test(&entry.seam, &index))
 }
 
 fn proposed_file_display(selection: &RepairTargetSelection) -> Result<String, String> {
@@ -237,7 +245,14 @@ fn private_owner_stays_missing_without_an_inline_unit_proposal() -> Result<(), S
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
     let readiness = repair_packet_eligibility(entry).readiness;
+    let integration = integration_admission_for(&root.0, entry)?;
 
+    if integration.blocker != Some(NewTestProposalBlocker::PrivateOwner) {
+        return Err(format!(
+            "Integration producer must name PrivateOwner, got {:?}",
+            integration.blocker
+        ));
+    }
     if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection {
         return Err(format!(
             "private owner must not earn {:?} {:?}",
@@ -248,12 +263,6 @@ fn private_owner_stays_missing_without_an_inline_unit_proposal() -> Result<(), S
         return Err(format!(
             "expected Missing, got {:?}",
             readiness.target_selection
-        ));
-    }
-    let missing = readiness.missing_evidence.join(" | ");
-    if !missing.contains("private") && !missing.contains("visibility") {
-        return Err(format!(
-            "Missing must name the visibility blocker, got {missing:?}"
         ));
     }
     Ok(())
@@ -289,7 +298,14 @@ fn public_fn_inside_private_module_stays_missing() -> Result<(), String> {
     let classified = inventory_classified_seams_at(&root.0)?;
     let entry = boundary_entry(&classified)?;
     let readiness = repair_packet_eligibility(entry).readiness;
+    let integration = integration_admission_for(&root.0, entry)?;
 
+    if integration.blocker != Some(NewTestProposalBlocker::PrivateOwner) {
+        return Err(format!(
+            "Integration producer must name PrivateOwner, got {:?}",
+            integration.blocker
+        ));
+    }
     if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection {
         return Err(format!(
             "private-module owner must not earn {:?} {}",
@@ -301,12 +317,6 @@ fn public_fn_inside_private_module_stays_missing() -> Result<(), String> {
         return Err(format!(
             "expected Missing, got {:?}",
             readiness.target_selection
-        ));
-    }
-    let missing = readiness.missing_evidence.join(" | ");
-    if !missing.contains("private") && !missing.contains("visibility") {
-        return Err(format!(
-            "Missing must name the visibility blocker, got {missing:?}"
         ));
     }
     Ok(())
