@@ -401,9 +401,12 @@ fn assertion_primary_subject(text: &str) -> Option<String> {
 }
 
 fn macro_payload<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let trimmed = text.trim_start();
     let needle = format!("{name}!");
-    let start = text.find(&needle)?;
-    let after = text.get(start + needle.len()..)?.trim_start();
+    if !trimmed.starts_with(&needle) {
+        return None;
+    }
+    let after = trimmed.get(needle.len()..)?.trim_start();
     let after = after.strip_prefix('(')?;
     balanced_inner(after)
 }
@@ -1286,6 +1289,13 @@ mod tests {
         assert!(
             !assertion_observes_direct_collection("assert_eq!(items.push(1), ());", "items"),
             "asserting a second mutation must not confirm the production push"
+        );
+        assert!(
+            !assertion_observes_direct_collection(
+                "assert!(label == \"assert_eq!(items, expected)\");",
+                "items"
+            ),
+            "a quoted assert_eq! must not supply the collection observer"
         );
         Ok(())
     }

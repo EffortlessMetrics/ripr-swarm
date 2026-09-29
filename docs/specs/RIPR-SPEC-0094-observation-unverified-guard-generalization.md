@@ -227,6 +227,8 @@ subject** to be that same receiver:
   `other` and stay `observation_unverified`.
 - `assert_eq!(items.clear(), ())` and `assert_eq!(items.push(1), ())` observe
   the mutating call's return, not the collection, and stay unverified.
+- A quoted `assert_eq!(items, …)` inside another assertion does not confirm
+  the collection sink.
 - A return-value assertion, a string containing the callee name, or an
   unrelated mock does not confirm the collection sink.
 
