@@ -5175,21 +5175,30 @@ fn dunder_owner_needs_its_class_imported_from_the_owner_package() -> Result<(), 
         candidate_relations(init, &star),
         vec![("test_star".to_string(), "constructor_call")]
     );
-    // An import root other than the repository root or `src`.
-    let lib_owners = extract_owners(
-        Path::new("lib/pkg/cache.py"),
+    // A trailing part of the owner's module path names another module: the
+    // standard library's `collections`, or `util` below `src/pkg`.
+    let shadow_owners = extract_owners(
+        Path::new("src/mylib/collections.py"),
+        "class OrderedDict:\n    def __init__(self, n):\n        self.n = n + 1\n",
+    );
+    let shadow_init = flat_owner(&shadow_owners, "OrderedDict.__init__")?;
+    let stdlib_tests = extract_tests(
+        Path::new("tests/test_stdlib.py"),
+        "import collections\nfrom collections import OrderedDict\n\n\ndef test_from_stdlib():\n    assert OrderedDict(a=1)[\"a\"] == 1\n\n\ndef test_stdlib_member():\n    assert collections.OrderedDict(a=1)[\"a\"] == 1\n",
+    );
+    assert_eq!(stdlib_tests.len(), 2);
+    assert!(candidate_relations(shadow_init, &stdlib_tests).is_empty());
+    let nested_owners = extract_owners(
+        Path::new("src/pkg/util/cache.py"),
         "class Cache:\n    def __init__(self, n):\n        self.n = n\n",
     );
-    let lib_init = flat_owner(&lib_owners, "Cache.__init__")?;
-    let lib_tests = extract_tests(
-        Path::new("tests/test_lib.py"),
-        "from pkg.cache import Cache\n\n\ndef test_lib_layout():\n    assert Cache(3).n == 3\n",
+    let nested_init = flat_owner(&nested_owners, "Cache.__init__")?;
+    let middle_tests = extract_tests(
+        Path::new("tests/test_middle.py"),
+        "import util\nfrom util import Cache\n\n\ndef test_from_util():\n    assert Cache(3).n == 3\n\n\ndef test_util_member():\n    assert util.Cache(3).n == 3\n",
     );
-    assert_eq!(lib_tests.len(), 1);
-    assert_eq!(
-        candidate_relations(lib_init, &lib_tests),
-        vec![("test_lib_layout".to_string(), "constructor_call")]
-    );
+    assert_eq!(middle_tests.len(), 2);
+    assert!(candidate_relations(nested_init, &middle_tests).is_empty());
     Ok(())
 }
 

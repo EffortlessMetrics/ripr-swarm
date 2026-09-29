@@ -449,22 +449,20 @@ fn imports_owner_module(import: &PythonImport, owner: &PythonOwner) -> bool {
     module_contains_owner(&module, owner)
 }
 
-/// Whether dotted `module` names the owner's module or a package above it,
-/// under any import root: each of the owner's module paths is also tried
-/// without its leading segments (`pkg.cache` for `lib/pkg/cache.py`). A bare
-/// `src` layout root is not a package. Empty never matches.
+/// Whether dotted `module` names the owner's module or a package above it.
+/// Only the owner's own module paths count (repository root, or below
+/// `src`): a trailing part of one (`collections` for
+/// `src/mylib/collections.py`, `util.cache` for `src/pkg/util/cache.py`)
+/// can name an unrelated module, such as the standard library's. A bare `src`
+/// layout root is not a package. Empty never matches.
 fn module_contains_owner(module: &str, owner: &PythonOwner) -> bool {
     !module.is_empty()
         && module != "src"
         && owner_module_paths(&owner.file).iter().any(|path| {
-            std::iter::once(path.as_str())
-                .chain(path.match_indices('.').map(|(idx, _)| &path[idx + 1..]))
-                .any(|suffix| {
-                    suffix == module
-                        || suffix
-                            .strip_prefix(module)
-                            .is_some_and(|rest| rest.starts_with('.'))
-                })
+            path == module
+                || path
+                    .strip_prefix(module)
+                    .is_some_and(|rest| rest.starts_with('.'))
         })
 }
 
