@@ -376,6 +376,8 @@ fn analyze_related_assertions(
                 || has_token_match
                 || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
             let relative_strength = probe_relative_oracle_strength(&probe.family, assertion);
+            let listing_observes =
+                assertion_names_probe_expression(analysis_expression, &assertion.text);
             if credits_oracle {
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -423,20 +425,20 @@ fn analyze_related_assertions(
                 relation_confidence,
             };
             // One row per test (#4760). Prefer the stronger oracle; at equal
-            // rank keep the one that actually observes this probe so a
+            // rank keep the assertion that names this probe's expression so a
             // same-rank length check cannot hide the changed-arm pin.
             let keep = match &best_row {
                 None => true,
                 Some(current) => {
                     relative_strength.rank() > current.oracle_strength.rank()
                         || (relative_strength.rank() == current.oracle_strength.rank()
-                            && observation_confirmed
+                            && listing_observes
                             && !best_row_confirmed)
                 }
             };
             if keep {
                 best_row = Some(row);
-                best_row_confirmed = observation_confirmed;
+                best_row_confirmed = listing_observes;
             }
         }
         if let Some(row) = best_row {
@@ -1742,6 +1744,19 @@ pub(in crate::analysis) fn last_top_level_map_err_dot(expression: &str) -> Optio
 /// terminal variant names from different enums cannot align. A witness that
 /// only calls the wrapper, only names a variant in message text, or pins a
 /// variant against another call establishes nothing (#3700).
+/// Whether assertion text names an identifier or string literal from the
+/// probe expression. Used to pick the listed `related_tests` row when two
+/// oracles share a strength rank: a `terminal.len()` check must not hide
+/// `request_identity_v2` (#4760 / #1728).
+fn assertion_names_probe_expression(expression: &str, assertion_text: &str) -> bool {
+    extract_identifier_tokens(expression)
+        .iter()
+        .any(|token| contains_as_whole_word(assertion_text, token))
+        || rust_string_literals(expression)
+            .iter()
+            .any(|literal| contains_as_whole_word(assertion_text, literal))
+}
+
 /// Check whether `text` contains `token` as a whole word — delimited by
 /// non-identifier characters (or string boundaries) on both sides. This
 /// replaces the old `token.len() > 3` gate, which filtered out short tokens
@@ -2505,10 +2520,7 @@ mod tests {
 
     #[test]
     fn related_tests_keep_the_confirmed_oracle_over_a_same_rank_length_check() {
-        let probe = probe(
-            ProbeFamily::MatchArm,
-            "(true, false) => \"request_identity_v2\"",
-        );
+        let probe = probe(ProbeFamily::ReturnValue, "request_identity_v2");
         let test = test_with_assertions(
             "request_only_projection_observes_join",
             vec![

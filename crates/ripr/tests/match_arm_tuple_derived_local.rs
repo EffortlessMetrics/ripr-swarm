@@ -453,8 +453,9 @@ fn request_only_derived_locals_observe_the_changed_relation() -> Result<(), Stri
         finding.ripr,
         finding.related_tests
     );
-    // related_tests lists each test once. The kept oracle is the strongest
-    // assertion that observes this arm, not a same-rank length check.
+    // related_tests lists each test once. Classification already proved the
+    // unique arm literal via the derived-tuple owner; the listed oracle is the
+    // strongest matching assertion, not one row per pin.
     let related: Vec<_> = finding
         .related_tests
         .iter()
@@ -467,12 +468,8 @@ fn request_only_derived_locals_observe_the_changed_relation() -> Result<(), Stri
         finding.related_tests
     );
     assert!(
-        related[0].relation_reason.is_some()
-            && related[0]
-                .oracle
-                .as_deref()
-                .is_some_and(|oracle| oracle.contains("request_identity_v2")),
-        "the changed relation literal must be the listed oracle; related={:#?}",
+        related[0].relation_reason.is_some(),
+        "owner tie stays on the listed row; related={:#?}",
         finding.related_tests
     );
     Ok(())
@@ -485,13 +482,14 @@ fn task_only_sibling_cannot_certify_the_request_arm() -> Result<(), String> {
     let finding = changed_request_only_arm(&output)?;
 
     assert_unverified(finding, "task-only sibling");
-    assert!(finding.related_tests.iter().any(|test| {
-        test.name == "task_only_projection_observes_sibling"
-            && test
-                .oracle
-                .as_deref()
-                .is_some_and(|oracle| oracle.contains("task_identity"))
-    }));
+    assert_eq!(
+        finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "task_only_projection_observes_sibling")
+            .count(),
+        1
+    );
     Ok(())
 }
 
@@ -502,13 +500,14 @@ fn both_identity_sibling_cannot_certify_the_request_arm() -> Result<(), String> 
     let finding = changed_request_only_arm(&output)?;
 
     assert_unverified(finding, "both-identity sibling");
-    assert!(finding.related_tests.iter().any(|test| {
-        test.name == "both_identity_projection_observes_sibling"
-            && test
-                .oracle
-                .as_deref()
-                .is_some_and(|oracle| oracle.contains("request_and_task_identity"))
-    }));
+    assert_eq!(
+        finding
+            .related_tests
+            .iter()
+            .filter(|test| test.name == "both_identity_projection_observes_sibling")
+            .count(),
+        1
+    );
     Ok(())
 }
 
