@@ -268,10 +268,8 @@ fn python_guidance_rejects_unsafe_install_command_variants() {
         "uvx --from ripr ripr check",
     ] {
         let readme = format!("{PYTHON_README_TEXT}\n```console\n{command}\n```\n");
-        let violations = python_guidance::validate_package_readme_commands(
-            PYTHON_README_PATH,
-            &readme,
-        );
+        let violations =
+            python_guidance::validate_package_readme_commands(PYTHON_README_PATH, &readme);
         assert!(
             has_violation(&violations, "selects unrelated PyPI distribution `ripr`"),
             "accepted unsafe command `{command}`: {violations:#?}"
@@ -284,8 +282,7 @@ fn python_guidance_accepts_explicit_ripr_rs_commands() {
     let readme = format!(
         "{PYTHON_README_TEXT}\n```console\npip install --upgrade ripr-rs\nuv tool install ripr-rs\nuvx --from ripr-rs ripr check\n```\n"
     );
-    let violations =
-        python_guidance::validate_package_readme_commands(PYTHON_README_PATH, &readme);
+    let violations = python_guidance::validate_package_readme_commands(PYTHON_README_PATH, &readme);
     assert!(violations.is_empty(), "{violations:#?}");
 }
 

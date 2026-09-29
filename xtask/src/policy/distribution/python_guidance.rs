@@ -65,10 +65,7 @@ const WORKFLOW_FORBIDDEN_MARKERS: &[(&str, &str)] = &[
         "native SemVer used as wheel metadata",
         "metadata[\"Version\"] == expected_native_version",
     ),
-    (
-        "collapsed native/Python version variable",
-        "RIPR_VERSION",
-    ),
+    ("collapsed native/Python version variable", "RIPR_VERSION"),
 ];
 
 pub(super) fn validate_package_readme_commands(path: &str, text: &str) -> Vec<String> {
@@ -214,11 +211,9 @@ fn token_is(tokens: &[String], index: usize, expected: &str) -> bool {
 fn is_python_launcher(token: &str) -> bool {
     token == "python"
         || token == "python3"
-        || token
-            .strip_prefix("python3.")
-            .is_some_and(|suffix| {
-                !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
-            })
+        || token.strip_prefix("python3.").is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 fn is_unrelated_ripr_spec(token: &str) -> bool {

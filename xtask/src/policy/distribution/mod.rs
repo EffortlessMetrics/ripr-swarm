@@ -23,8 +23,7 @@ const PYTHON_MANIFEST_PATH: &str = "packaging/python/pyproject.toml";
 const PYTHON_README_PATH: &str = "packaging/python/README.md";
 const PYTHON_LICENSE_MIT_PATH: &str = "packaging/python/LICENSE-MIT";
 const PYTHON_LICENSE_APACHE_PATH: &str = "packaging/python/LICENSE-APACHE";
-const PYTHON_QUALIFICATION_WORKFLOW_PATH: &str =
-    ".github/workflows/python-wheel-qualification.yml";
+const PYTHON_QUALIFICATION_WORKFLOW_PATH: &str = ".github/workflows/python-wheel-qualification.yml";
 const ROOT_LICENSE_MIT_PATH: &str = "LICENSE-MIT";
 const ROOT_LICENSE_APACHE_PATH: &str = "LICENSE-APACHE";
 
