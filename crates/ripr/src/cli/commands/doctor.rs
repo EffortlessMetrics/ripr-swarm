@@ -190,7 +190,16 @@ fn print_doctor_start_here_guidance(root: &Path, git_runs: bool) {
     // Without a runnable git, every git-backed command below fails the same
     // way (#4735); a saved diff is the route that still works.
     if !git_runs {
-        println!("- Recommended first command: ripr check --diff PATH");
+        // Name the diagnosed root: `check` defaults to `.`, which is not the
+        // checkout when doctor ran with `--root` from elsewhere.
+        if root == Path::new(".") {
+            println!("- Recommended first command: ripr check --diff PATH");
+        } else {
+            println!(
+                "- Recommended first command: ripr check --root {} --diff PATH",
+                root.display()
+            );
+        }
         println!(
             "- Scope note: git could not run here, so supply the change as a saved unified diff (`git diff <base>...HEAD > change.patch` where Git is available, or `--diff -` to read stdin)."
         );

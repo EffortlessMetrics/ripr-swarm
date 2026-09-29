@@ -217,8 +217,11 @@ pub fn resolve_effective_base(
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
     let Some(explicit) = base else {
-        return resolve_default_base(root, git_timeout)
-            .map_err(|err| not_a_work_tree(root, git_timeout).unwrap_or(err));
+        return resolve_default_base(root, git_timeout).map_err(|err| {
+            git_not_found(root, git_timeout)
+                .or_else(|| not_a_work_tree(root, git_timeout))
+                .unwrap_or(err)
+        });
     };
 
     // No revision starts with `-`, and `git diff` would parse one as an option
@@ -241,6 +244,24 @@ pub fn resolve_effective_base(
                 )
             })),
         _ => Ok(explicit.to_string()),
+    }
+}
+
+/// The route that needs no Git, appended wherever Git itself is missing
+/// (#4735).
+const WITHOUT_GIT_ROUTE: &str =
+    ". Without Git, analyze a saved diff with `--diff PATH` (or `--diff -` to read it from stdin)";
+
+/// The accurate failure when no default base could resolve because Git is
+/// not on PATH (#4735). The default-base probes treat any Git failure as "ref
+/// absent", so without this the user is told to pass a `--base` that cannot
+/// resolve either. `None` when Git runs, or fails for another reason.
+fn git_not_found(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    match crate::git::run_git_output_with_deadline(root, &["--version"], git_timeout) {
+        Err(err) if crate::git::is_program_not_found(&err) => Some(format!(
+            "could not resolve a base (the analysis did not run): {err}{WITHOUT_GIT_ROUTE}"
+        )),
+        _ => None,
     }
 }
 
@@ -865,10 +886,7 @@ fn run_git_diff_bytes(
             return Err(err);
         }
         Err(err) if crate::git::is_program_not_found(&err) => {
-            return Err(format!(
-                "failed to run git diff: {err}. Without Git, analyze a saved diff with \
-                 `--diff PATH` (or `--diff -` to read it from stdin)"
-            ));
+            return Err(format!("failed to run git diff: {err}{WITHOUT_GIT_ROUTE}"));
         }
         Err(err) => return Err(format!("failed to run git diff: {err}")),
     };

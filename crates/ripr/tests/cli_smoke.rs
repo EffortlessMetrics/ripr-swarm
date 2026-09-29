@@ -18324,10 +18324,26 @@ fn missing_git_names_the_cause_and_the_diff_route() -> Result<(), String> {
         ));
     }
 
+    // The default-base route probes refs first; without Git it must still
+    // name Git, not ask for a `--base` that cannot resolve either.
+    let default_base = run(&["check", "--root", root])?;
+    let stderr = String::from_utf8_lossy(&default_base.stderr);
+    if default_base.status.code() != Some(2)
+        || !stderr.contains("git was not found on PATH")
+        || !stderr.contains("`--diff PATH`")
+    {
+        return Err(format!(
+            "default-base check without git: {:?}; stderr: {stderr}",
+            default_base.status.code()
+        ));
+    }
+
     let doctor = run(&["doctor", "--root", root])?;
     let stdout = String::from_utf8_lossy(&doctor.stdout);
     if !stdout.contains("! git not available; install Git or add it to PATH")
-        || !stdout.contains("- Recommended first command: ripr check --diff PATH")
+        || !stdout.contains(&format!(
+            "- Recommended first command: ripr check --root {root} --diff PATH"
+        ))
     {
         return Err(format!("doctor without git: {stdout}"));
     }
