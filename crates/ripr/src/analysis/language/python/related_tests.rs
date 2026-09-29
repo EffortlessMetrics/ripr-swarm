@@ -600,29 +600,35 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
 /// `name=value` line inside a multi-line call reads as a keyword argument,
 /// not an assignment.
 fn bracket_depth_at(text: &str, idx: usize) -> usize {
+    let bytes = &text.as_bytes()[..idx];
     let mut depth = 0usize;
-    let mut quote: Option<char> = None;
-    let mut escaped = false;
-    let mut comment = false;
-    for ch in text[..idx].chars() {
-        if comment {
-            comment = ch != '\n';
-        } else if escaped {
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if let Some(open) = quote {
-            if ch == open {
-                quote = None;
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'#' => {
+                cursor += bytes[cursor..]
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .unwrap_or(bytes.len() - cursor);
             }
-        } else {
-            match ch {
-                '\'' | '"' => quote = Some(ch),
-                '#' => comment = true,
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth = depth.saturating_sub(1),
-                _ => {}
+            quote @ (b'\'' | b'"') => {
+                let triple = bytes[cursor..].starts_with(&[quote; 3]);
+                let delimiter: &[u8] = if triple { &[quote; 3] } else { &[quote] };
+                cursor += delimiter.len();
+                while cursor < bytes.len() && !bytes[cursor..].starts_with(delimiter) {
+                    cursor += if bytes[cursor] == b'\\' { 2 } else { 1 };
+                }
+                cursor += delimiter.len();
             }
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                cursor += 1;
+            }
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                cursor += 1;
+            }
+            _ => cursor += 1,
         }
     }
     depth

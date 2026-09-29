@@ -636,8 +636,10 @@ fn module_call_credit_keeps_boundary_and_identity_guards() -> Result<(), String>
         // The local holds the owner's result only on some paths.
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100) or 0.15\n    assert rate == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100) if FLAG else 0.15\n    assert rate == 0.15\n",
-        // A keyword argument inside a multi-line call is not an assignment.
+        // A keyword argument inside a multi-line call is not an assignment,
+        // also after a docstring with an odd count of one quote character.
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    check(\n        rate=bulk_discount(100)\n    )\n    assert rate == 0.15\n",
+        "from src.subject import bulk_discount\n\ndef test_bulk():\n    \"\"\"It's the rate.\"\"\"\n    check(\n        rate=bulk_discount(100)\n    )\n    assert rate == 0.15\n",
     ] {
         let finding = classify_case(
             DISCOUNT_SOURCE,

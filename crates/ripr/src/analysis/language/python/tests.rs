@@ -371,6 +371,64 @@ class TestInherits(SharedMixin):
     );
 }
 
+/// Mixin members resolve along Python's C3 order, and only the last
+/// definition of a class name counts; a base defined later or twice is
+/// unknown, so its members are not collected.
+#[test]
+fn extract_tests_resolves_mixins_by_c3_order_and_last_definition() {
+    let tests = extract_tests(
+        Path::new("tests/test_mro.py"),
+        r#"
+class Base:
+    def test_limit(self):
+        helper()
+
+class Left(Base):
+    pass
+
+class Right(Base):
+    def test_limit(self):
+        pass
+
+class TestDiamond(Left, Right):
+    pass
+
+class Mixin:
+    def test_first(self):
+        pass
+
+class TestUsesFirstMixin(Mixin):
+    pass
+
+class Mixin:
+    def test_redefined(self):
+        helper()
+
+class TestForward(LaterBase):
+    pass
+
+class LaterBase:
+    def test_later(self):
+        helper()
+
+class TestTwice:
+    def __init__(self):
+        pass
+    def test_hidden_by_init(self):
+        helper()
+
+class TestTwice:
+    def test_last(self):
+        helper()
+"#,
+    );
+    let collected: Vec<&str> = tests
+        .iter()
+        .map(|test| test.qualified_name.as_str())
+        .collect();
+    assert_eq!(collected, vec!["Right.test_limit", "TestTwice.test_last"]);
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(

@@ -313,7 +313,7 @@ pub(super) fn collect_tests_from_statements(
                     ),
                 });
             }
-            Stmt::ClassDef(class) => {
+            Stmt::ClassDef(class) if local_classes.is_last_definition(class) => {
                 let class_is_unittest =
                     in_unittest_class || local_classes.unittest.contains(class.name.as_str());
                 if class_is_unittest
@@ -494,9 +494,11 @@ fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
 /// neither it nor a same-scope ancestor defines `__init__`/`__new__` or is a
 /// dataclass. A same-scope ancestor of a collected class that is not itself
 /// collected is a mixin; each of its `test*` members runs only if some
-/// collected subclass resolves that member to the mixin (the subclass's own
-/// definition or an earlier base wins, and an imported base in between makes
-/// the resolution unknown, so the member is not collected).
+/// collected subclass resolves that member to the mixin along its C3 method
+/// resolution order. An imported base, a base defined after the subclass, or
+/// a redefined name is external: reaching it first makes the resolution
+/// unknown, so the member is not collected. Only the last definition of a
+/// class name is collected, as the loaders see the module attribute.
 #[derive(Default)]
 struct LocalTestClasses<'a> {
     /// Classes collected under unittest, including mixins a unittest class
@@ -507,44 +509,45 @@ struct LocalTestClasses<'a> {
     mixins: BTreeSet<&'a str>,
     /// Per mixin, the `test*` members no collected subclass runs.
     hidden: BTreeMap<&'a str, BTreeSet<&'a str>>,
+    last_definitions: BTreeSet<*const ast::StmtClassDef>,
 }
 
 impl<'a> LocalTestClasses<'a> {
     fn of(statements: &'a [Stmt]) -> Self {
-        // Python keeps the last definition of a name.
-        let mut classes: BTreeMap<&'a str, &'a ast::StmtClassDef> = BTreeMap::new();
-        for stmt in statements {
-            if let Stmt::ClassDef(class) = stmt {
-                classes.insert(class.name.as_str(), class);
-            }
-        }
-        let bases = |class: &ast::StmtClassDef| -> Vec<String> {
-            class.bases.iter().filter_map(expr_full_name).collect()
+        let scope = ScopeClasses::of(statements);
+        let mut found = Self {
+            last_definitions: scope
+                .defs
+                .values()
+                .map(|(_, class)| *class as *const _)
+                .collect(),
+            ..Self::default()
         };
-        let mut found = Self::default();
         let mut own_unittest: BTreeSet<&'a str> = BTreeSet::new();
         let mut changed = true;
         while changed {
             changed = false;
-            for (name, class) in &classes {
+            for (name, (_, class)) in &scope.defs {
                 if !own_unittest.contains(name)
                     && (is_unittest_class(class)
-                        || bases(class)
+                        || scope
+                            .local_bases(name)
                             .iter()
-                            .any(|base| own_unittest.contains(base.as_str())))
+                            .any(|base| own_unittest.contains(base)))
                 {
                     own_unittest.insert(name);
                     changed = true;
                 }
             }
         }
-        for name in classes.keys() {
+        for name in scope.defs.keys() {
             if name.starts_with("Test")
                 && !own_unittest.contains(name)
-                && !ancestors_or_self(name, &classes).iter().any(|ancestor| {
-                    classes
+                && !scope.ancestors_or_self(name).iter().any(|ancestor| {
+                    scope
+                        .defs
                         .get(ancestor)
-                        .is_some_and(|c| blocks_pytest_collection(c))
+                        .is_some_and(|(_, class)| blocks_pytest_collection(class))
                 })
             {
                 found.pytest.insert(name);
@@ -552,7 +555,7 @@ impl<'a> LocalTestClasses<'a> {
         }
         let collected: BTreeSet<&'a str> = own_unittest.union(&found.pytest).copied().collect();
         for name in &collected {
-            for ancestor in ancestors_or_self(name, &classes) {
+            for ancestor in scope.ancestors_or_self(name) {
                 if !collected.contains(ancestor) {
                     found.mixins.insert(ancestor);
                     if own_unittest.contains(name) {
@@ -562,16 +565,20 @@ impl<'a> LocalTestClasses<'a> {
             }
         }
         found.unittest.extend(own_unittest.iter().copied());
+        let mros: BTreeMap<&'a str, Option<Vec<MroEntry<'a>>>> = collected
+            .iter()
+            .map(|name| (*name, scope.mro(name, &mut Vec::new())))
+            .collect();
         for mixin in &found.mixins {
-            let Some(class) = classes.get(mixin) else {
+            let Some((_, class)) = scope.defs.get(mixin) else {
                 continue;
             };
             let hidden: BTreeSet<&'a str> = test_member_names(class)
                 .into_iter()
                 .filter(|member| {
-                    !collected.iter().any(|name| {
-                        resolve_member(name, member, &classes, &mut BTreeSet::new())
-                            == Resolution::Class(mixin)
+                    !mros.values().any(|mro| {
+                        mro.as_ref()
+                            .is_some_and(|mro| scope.resolve_member(mro, member) == Some(*mixin))
                     })
                 })
                 .collect();
@@ -581,69 +588,149 @@ impl<'a> LocalTestClasses<'a> {
         }
         found
     }
+
+    /// Whether `class` is the last definition of its name in this scope, the
+    /// one pytest and unittest see as the module attribute.
+    fn is_last_definition(&self, class: &ast::StmtClassDef) -> bool {
+        self.last_definitions.contains(&(class as *const _))
+    }
 }
 
-/// `name` and its same-scope ancestors, each once.
-fn ancestors_or_self<'a>(
-    name: &'a str,
-    classes: &BTreeMap<&'a str, &'a ast::StmtClassDef>,
-) -> Vec<&'a str> {
-    let mut seen: Vec<&'a str> = Vec::new();
-    let mut stack = vec![name];
-    while let Some(current) = stack.pop() {
-        if seen.contains(&current) {
-            continue;
+/// The classes of one scope, by the last definition of each name.
+struct ScopeClasses<'a> {
+    /// Name -> (statement index, last definition).
+    defs: BTreeMap<&'a str, (usize, &'a ast::StmtClassDef)>,
+    /// Names defined more than once.
+    redefined: BTreeSet<&'a str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MroEntry<'a> {
+    Local(&'a str),
+    /// A base this scope does not define before the class (an import, a
+    /// forward reference, a redefined name): its members are unknown.
+    External(String),
+}
+
+impl<'a> ScopeClasses<'a> {
+    fn of(statements: &'a [Stmt]) -> Self {
+        let mut defs = BTreeMap::new();
+        let mut redefined = BTreeSet::new();
+        for (index, stmt) in statements.iter().enumerate() {
+            if let Stmt::ClassDef(class) = stmt
+                && defs.insert(class.name.as_str(), (index, class)).is_some()
+            {
+                redefined.insert(class.name.as_str());
+            }
         }
-        seen.push(current);
-        if let Some(class) = classes.get(current) {
-            for base in class.bases.iter().filter_map(expr_full_name) {
-                if let Some((&key, _)) = classes.get_key_value(base.as_str()) {
-                    stack.push(key);
+        Self { defs, redefined }
+    }
+
+    /// The bases of `name` in order, local when the scope defines the base
+    /// exactly once and before `name`. `object` and `TestCase` define no
+    /// `test*` member and are left out.
+    fn bases(&self, name: &str) -> Vec<MroEntry<'a>> {
+        let Some((index, class)) = self.defs.get(name) else {
+            return Vec::new();
+        };
+        class
+            .bases
+            .iter()
+            .filter_map(expr_full_name)
+            .filter(|base| !matches!(base.as_str(), "object" | "TestCase" | "unittest.TestCase"))
+            .map(|base| match self.defs.get_key_value(base.as_str()) {
+                Some((&key, (base_index, _)))
+                    if base_index < index && !self.redefined.contains(key) =>
+                {
+                    MroEntry::Local(key)
+                }
+                _ => MroEntry::External(base),
+            })
+            .collect()
+    }
+
+    fn local_bases(&self, name: &str) -> Vec<&'a str> {
+        self.bases(name)
+            .into_iter()
+            .filter_map(|base| match base {
+                MroEntry::Local(key) => Some(key),
+                MroEntry::External(_) => None,
+            })
+            .collect()
+    }
+
+    /// `name` and its local ancestors, each once.
+    fn ancestors_or_self(&self, name: &'a str) -> Vec<&'a str> {
+        let mut seen: Vec<&'a str> = Vec::new();
+        let mut stack = vec![name];
+        while let Some(current) = stack.pop() {
+            if !seen.contains(&current) {
+                seen.push(current);
+                stack.extend(self.local_bases(current));
+            }
+        }
+        seen
+    }
+
+    /// Python's C3 linearization of `name`, or None when it does not exist.
+    fn mro(&self, name: &'a str, visiting: &mut Vec<&'a str>) -> Option<Vec<MroEntry<'a>>> {
+        if visiting.contains(&name) {
+            return None;
+        }
+        visiting.push(name);
+        let bases = self.bases(name);
+        let mut sequences: Vec<Vec<MroEntry<'a>>> = Vec::new();
+        for base in &bases {
+            sequences.push(match base {
+                MroEntry::Local(key) => self.mro(key, visiting)?,
+                MroEntry::External(_) => vec![base.clone()],
+            });
+        }
+        sequences.push(bases);
+        visiting.pop();
+        let mut linear = vec![MroEntry::Local(name)];
+        loop {
+            sequences.retain(|sequence| !sequence.is_empty());
+            if sequences.is_empty() {
+                return Some(linear);
+            }
+            let head = sequences
+                .iter()
+                .map(|sequence| &sequence[0])
+                .find(|candidate| {
+                    !sequences
+                        .iter()
+                        .any(|sequence| sequence[1..].contains(candidate))
+                })?
+                .clone();
+            for sequence in &mut sequences {
+                if sequence[0] == head {
+                    sequence.remove(0);
                 }
             }
+            linear.push(head);
         }
     }
-    seen
-}
 
-#[derive(Debug, PartialEq, Eq)]
-enum Resolution<'a> {
-    Class(&'a str),
-    Missing,
-    Unknown,
-}
-
-/// Where `member` resolves on class `name`: its own definition, else its
-/// bases left to right, depth first. An imported base (other than `object`
-/// and `TestCase`, which define no `test*` member) makes it unknown.
-fn resolve_member<'a>(
-    name: &'a str,
-    member: &str,
-    classes: &BTreeMap<&'a str, &'a ast::StmtClassDef>,
-    visiting: &mut BTreeSet<&'a str>,
-) -> Resolution<'a> {
-    let Some(class) = classes.get(name) else {
-        return Resolution::Unknown;
-    };
-    if !visiting.insert(name) {
-        return Resolution::Unknown;
-    }
-    if test_member_names(class).contains(member) {
-        return Resolution::Class(name);
-    }
-    for base in class.bases.iter().filter_map(expr_full_name) {
-        let resolution = match classes.get_key_value(base.as_str()) {
-            Some((&key, _)) => resolve_member(key, member, classes, visiting),
-            None if matches!(base.as_str(), "object" | "TestCase" | "unittest.TestCase") => {
-                Resolution::Missing
+    /// The class `member` resolves to along `mro`, or None when it is
+    /// missing or an external base comes first.
+    fn resolve_member(&self, mro: &[MroEntry<'a>], member: &str) -> Option<&'a str> {
+        for entry in mro {
+            match entry {
+                MroEntry::Local(key) => {
+                    if self
+                        .defs
+                        .get(key)
+                        .is_some_and(|(_, class)| test_member_names(class).contains(member))
+                    {
+                        return Some(key);
+                    }
+                }
+                MroEntry::External(_) => return None,
             }
-            None => Resolution::Unknown,
-        };
-        if resolution != Resolution::Missing {
-            return resolution;
         }
+        None
     }
-    Resolution::Missing
 }
 
 /// A class pytest will not collect as a test class: it defines `__init__` or

@@ -95,9 +95,11 @@ Test discovery:
   file, and the `test`-prefixed methods of a same-file mixin that a collected
   test class inherits (#4562), directly or through another same-file mixin.
   A mixin member is collected only when some collected subclass resolves it
-  to that mixin: the subclass's own definition (a method or a
-  `test_x = None` assignment) or an earlier base wins, and an imported base
-  in between makes the resolution unknown, so the member is not collected.
+  to that mixin along Python's C3 method resolution order: the subclass's
+  own definition (a method or a `test_x = None` assignment) or an earlier
+  class in that order wins, and an imported base, a base defined after the
+  subclass or a redefined class name is unknown, so a member behind it is
+  not collected. Only the last definition of a class name is collected.
   An uninherited mixin is not collected, nor a `Test*` class that pytest
   skips because it or a same-file ancestor defines `__init__` or `__new__`
   or is a dataclass
