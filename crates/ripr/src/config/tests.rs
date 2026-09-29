@@ -1515,6 +1515,28 @@ fn a_valid_key_in_the_wrong_table_names_its_table() -> Result<(), String> {
 }
 
 #[test]
+fn a_config_error_summary_keeps_the_table_hint_but_no_source_text() -> Result<(), String> {
+    // #4532/#4534: doctor JSON and editor notices carry the summary, which
+    // must keep the allowlisted hint and drop the parser's source excerpt.
+    let Err(message) = parse_config("secret_marker_mode = 1\nmode = \"draft\"\n") else {
+        return Err("a top-level `mode` must be refused".to_string());
+    };
+    let summary = config_error_summary(&message);
+    assert!(
+        !summary.contains('\n') && !summary.contains("secret_marker"),
+        "summary must be one source-free line, got {summary}"
+    );
+    assert!(
+        summary.ends_with("; `mode` is a valid key, but it belongs under [analysis]"),
+        "summary must keep the hint, got {summary}"
+    );
+    // A line that only looks like a hint is file content and is dropped.
+    let forged = "TOML parse error\n`secret` is a valid key, but it belongs under [analysis]";
+    assert_eq!(config_error_summary(forged), "TOML parse error");
+    Ok(())
+}
+
+#[test]
 fn an_unknown_key_gets_no_table_hint() -> Result<(), String> {
     // The hint names a table only for real keys; a typo or a key shared by
     // two tables keeps the plain serde error.

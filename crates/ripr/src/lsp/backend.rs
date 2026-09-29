@@ -1558,22 +1558,18 @@ impl Backend {
     /// and the committed failure is re-disclosed by the next status
     /// publication.
     ///
-    /// `generic_client` adds a `window/showMessage` warning for clients
-    /// without the `riprEditor` integration (#4532): they render neither the
-    /// log nor `ripr/analysisStatus`, so without it analysis stops with
-    /// nothing on screen saying why. The client profile is not stored yet at
-    /// initialize, so the caller passes it from the negotiated profile.
-    async fn deliver_initialize_failure_disclosures(&self, warning: String, generic_client: bool) {
+    /// `shown` is the `window/showMessage` warning for clients without the
+    /// `riprEditor` integration (#4532): they render neither the log nor
+    /// `ripr/analysisStatus`, so without it analysis stops with nothing on
+    /// screen saying why. The client profile is not stored yet at
+    /// initialize, so the caller decides from the negotiated profile.
+    async fn deliver_initialize_failure_disclosures(&self, warning: String, shown: Option<String>) {
         self.initialize_failure_disclosure_omitted
             .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
-            self.client
-                .log_message(MessageType::WARNING, warning.clone())
-                .await;
-            if generic_client {
-                self.client
-                    .show_message(MessageType::WARNING, warning)
-                    .await;
+            self.client.log_message(MessageType::WARNING, warning).await;
+            if let Some(shown) = shown {
+                self.client.show_message(MessageType::WARNING, shown).await;
             }
             self.publish_analysis_status().await;
         })
@@ -2135,10 +2131,12 @@ impl Backend {
                     .configuration_failure()
                     .is_some_and(|failure| failure.message == bounded_failure_message(&error));
                 let warning = format!("ripr config load failed; analysis is paused: {error}");
+                let shown = config_failure_notice(&error);
                 self.set_configuration_failure(error);
                 self.publish_analysis_status().await;
                 if !repeated {
-                    self.disclose_configuration_reload_failure(warning).await;
+                    self.disclose_configuration_reload_failure(warning, shown)
+                        .await;
                 }
             }
         }
@@ -2147,19 +2145,15 @@ impl Backend {
     /// Log a config reload failure and, for clients without the `riprEditor`
     /// integration, show it (#4532). The VS Code extension renders the
     /// failure from `ripr/analysisStatus`.
-    async fn disclose_configuration_reload_failure(&self, warning: String) {
-        self.client
-            .log_message(MessageType::WARNING, warning.clone())
-            .await;
+    async fn disclose_configuration_reload_failure(&self, warning: String, shown: String) {
+        self.client.log_message(MessageType::WARNING, warning).await;
         let generic_client = self
             .client_features
             .lock()
             .map(|features| features.ripr_editor.is_none())
             .unwrap_or(true);
         if generic_client {
-            self.client
-                .show_message(MessageType::WARNING, warning)
-                .await;
+            self.client.show_message(MessageType::WARNING, shown).await;
         }
     }
 
@@ -3523,6 +3517,16 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
     )
 }
 
+/// The on-screen config failure notice (#4532): the source-free summary, not
+/// the parser's source excerpt, which stays in the local log
+/// (RIPR-SPEC-0007).
+fn config_failure_notice(error: &str) -> String {
+    format!(
+        "ripr config load failed; analysis is paused: {}",
+        crate::config::config_error_summary(error)
+    )
+}
+
 fn bounded_failure_message(message: &str) -> String {
     // Single-source bounding/redaction for LSP client-visible error text
     // (#1997): the implementation lives in the component-outcome module so
@@ -4094,9 +4098,13 @@ impl LanguageServer for Backend {
             // client await, so a wedged or undriven peer can delay only the
             // bounded disclosure window, never the failure itself.
             let warning = format!("ripr config load failed; analysis is paused: {error}");
+            let shown = config_failure_notice(&error);
             self.set_configuration_failure(error);
-            self.deliver_initialize_failure_disclosures(warning, profile.ripr_editor.is_none())
-                .await;
+            self.deliver_initialize_failure_disclosures(
+                warning,
+                profile.ripr_editor.is_none().then_some(shown),
+            )
+            .await;
         }
         // The profile store lands after the root application and config
         // failure handling because applying a workspace-root authority
@@ -4123,7 +4131,10 @@ impl LanguageServer for Backend {
             );
             self.deliver_initialize_failure_disclosures(
                 "ripr client feature profile could not be stored; analysis is paused".to_string(),
-                profile.ripr_editor.is_none(),
+                profile.ripr_editor.is_none().then(|| {
+                    "ripr client feature profile could not be stored; analysis is paused"
+                        .to_string()
+                }),
             )
             .await;
         }

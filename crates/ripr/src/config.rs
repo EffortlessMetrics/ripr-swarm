@@ -339,10 +339,31 @@ const KEY_HOME_TABLES: &[(&str, &str)] = &[
 fn misplaced_key_hint(error: &str) -> Option<String> {
     let (_, rest) = error.split_once("unknown field `")?;
     let (key, _) = rest.split_once('`')?;
-    let (_, table) = KEY_HOME_TABLES.iter().find(|(known, _)| *known == key)?;
-    Some(format!(
-        "\n`{key}` is a valid key, but it belongs under [{table}]"
-    ))
+    let (key, table) = KEY_HOME_TABLES.iter().find(|(known, _)| *known == key)?;
+    Some(format!("\n{}", misplaced_key_hint_line(key, table)))
+}
+
+fn misplaced_key_hint_line(key: &str, table: &str) -> String {
+    format!("`{key}` is a valid key, but it belongs under [{table}]")
+}
+
+/// A source-free summary of a config load error for surfaces that must not
+/// carry the TOML parser's source excerpt (doctor JSON, editor
+/// notifications; RIPR-SPEC-0007): the first line (path, parse location),
+/// plus the misplaced-key hint (#4534) when present. A hint line is kept
+/// only when it equals one built from the fixed key/table allowlist, so no
+/// file content passes through.
+pub(crate) fn config_error_summary(error: &str) -> String {
+    let first = error.lines().next().unwrap_or(error).trim();
+    let hint = error.lines().skip(1).map(str::trim).find(|line| {
+        KEY_HOME_TABLES
+            .iter()
+            .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+    });
+    match hint {
+        Some(hint) => format!("{first}; {hint}"),
+        None => first.to_string(),
+    }
 }
 
 #[cfg(test)]

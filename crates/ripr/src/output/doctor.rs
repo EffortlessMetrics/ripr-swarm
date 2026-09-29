@@ -451,8 +451,10 @@ impl DoctorReport {
 /// (RIPR-SPEC-0007, P2). The first line alone (path, "invalid ripr.toml",
 /// parse location) is enough to act on and contains no source text, so
 /// doctor's JSON evidence keeps only that line.
+/// The misplaced-key hint (#4534) is kept too: it names only a key and a
+/// table from a fixed allowlist, never file content.
 fn redact_config_parse_error(error: &str) -> String {
-    error.lines().next().unwrap_or(error).trim().to_string()
+    crate::config::config_error_summary(error)
 }
 
 /// Result of evaluating the doctor core checks, plus the raw config load
