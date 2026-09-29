@@ -186,6 +186,19 @@ cargo package -p ripr --list
 cargo publish -p ripr --dry-run
 ```
 
+The `release-negative-corpus` invocation above retains legacy smoke and does not admit a selected candidate.
+For admission-required execution, supply all three inputs to that existing
+command: `--controller-root <control-checkout>`,
+`--candidate-source-root <immutable-source-checkout>`, and
+`--candidate-artifact <controller-relative-registered-path>`. Partial inputs or
+an ineligible registry row refuse; this mode never falls back to smoke. The
+controller owns policy/registry bytes separately from the source HEAD/tree/ref.
+The package producer uses that source root and retains archive/executable byte
+custody for the installed doctor and authentic corpus chain. Ordinary archive
+entries must match raw committed source blobs; transformed/sparse checkouts and
+unsupported generated entries refuse. These unlocked checks do not authenticate
+provenance, select a release pin, or complete the full qualification matrix.
+
 For `0.11.0`, the Rust gap-repair support claim remains `usable alpha`.
 Fixture, installed-package, packaged-editor, bounded test-only transaction, and
 before/after receipt paths are proved when a valid route exists. The governed

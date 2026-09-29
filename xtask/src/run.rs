@@ -556,6 +556,49 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
     timeout: Duration,
     error_context: &str,
 ) -> Result<TimedBytesOutput, String> {
+    capture_bytes_with_input(
+        program,
+        args,
+        (cwd, None),
+        envs,
+        env_remove,
+        timeout,
+        error_context,
+    )
+}
+
+/// Bounded binary input/output for Git's batch protocol. The existing process
+/// owner retains child/descendant custody while stdin is written concurrently.
+pub(crate) fn capture_bytes_in_dir_with_input_timeout(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    input: &[u8],
+    env_remove: &[&str],
+    timeout: Duration,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    capture_bytes_with_input(
+        program,
+        args,
+        (cwd, Some(input)),
+        &[],
+        env_remove,
+        timeout,
+        error_context,
+    )
+}
+
+fn capture_bytes_with_input(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    envs: &[(&str, &str)],
+    env_remove: &[&str],
+    timeout: Duration,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    let (cwd, input) = source;
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd);
@@ -568,6 +611,9 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
     }
     // Same owned-subprocess spawn as `capture_output_with_timeout` (#3803).
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    if input.is_some() {
+        command.stdin(Stdio::piped());
+    }
     let mut child = OwnedProcess::spawn(command)
         .map_err(|err| format!("failed to run {error_context}: {err}"))?;
     let stdout = child
@@ -580,6 +626,27 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
         .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
     let (stdout_handle, stdout_rx) = spawn_byte_reader_channel(stdout);
     let (stderr_handle, stderr_rx) = spawn_byte_reader_channel(stderr);
+    let input_completion = if let Some(bytes) = input {
+        let mut stdin = child
+            .stdin_pipe()
+            .take()
+            .ok_or_else(|| format!("failed to capture stdin for {error_context}"))?;
+        let bytes = bytes.to_vec();
+        let (sender, receiver) = mpsc::channel();
+        // Closing stdin after the write supplies batch EOF. No join can hold the
+        // caller past the owned process deadline/drain grace.
+        let _input_writer = thread::Builder::new()
+            .name("bounded-process-stdin".to_string())
+            .spawn(move || {
+                let result = stdin.write_all(&bytes);
+                drop(stdin);
+                let _ = sender.send(result);
+            })
+            .map_err(|error| format!("start stdin writer for {error_context}: {error}"))?;
+        Some(receiver)
+    } else {
+        None
+    };
     let wait_outcome = wait_for_child_with_timeout(&mut child, started, timeout, error_context)?;
     let stdout = drain_byte_reader_bounded(
         stdout_rx,
@@ -595,6 +662,12 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
         "stderr",
         error_context,
     )?;
+    if let Some(receiver) = input_completion {
+        receiver
+            .recv_timeout(POST_KILL_DRAIN_GRACE)
+            .map_err(|error| format!("stdin completion for {error_context}: {error}"))?
+            .map_err(|error| format!("write stdin for {error_context}: {error}"))?;
+    }
     Ok(TimedBytesOutput {
         status: Some(wait_outcome.status),
         stdout,

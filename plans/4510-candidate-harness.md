@@ -1,6 +1,6 @@
 # #4510 prerequisite — verified shared extension plan
 
-Implementation NOT_RUN. The owning baseline below passed; it does not admit an installed candidate. Fresh all-state4510 body search returned[]. Reuse existing release.rs package/install authority, candidate_registry and OwnedProcess, not a new candidate selector/controller.
+Implementation in progress; successor compilation/runtime NOT_RUN. The owning baseline below passed; it does not admit an installed candidate. Fresh all-state4510 body search returned[]. Reuse existing release.rs package/install authority, candidate_registry and OwnedProcess, not a new candidate selector/controller.
 
 ## Existing seams and actual gaps
 
@@ -9,6 +9,22 @@ release.rs363 PackageInstallResult currently contains success/artifacts/details 
 candidate_registry.rs owns deny_unknown_fields CandidateIdentity169 (sha/tree/ref), ValidatedRegistry309, CandidateGrant315 and resolve_candidate_authority324: actual supplied bytes rawdigest -> registered release lifecycle row -> allowed operation. Current grant exposes registered_path/state/candidate_sha, so extend same validated authority internally to expose required complete candidate identity and row/manifest digests. No arbitrary newcandidate DTO may become admitted from suppliedstrings alone; package attribution needs exact sourceSHA/tree plus admitted registry bytes. No current eligiblepin => admission refuses, without choosing or freezing one.
 
 xtask/run.rs uses ripr::process_owner::OwnedProcess. capture_output_with_timeout475 already owns timeout/termination; capture_bytes_in_dir_with_timeout550 and capture_stdout_to_file_with_timeout607 provide narrower output/cwd forms. Extend this boundary for declared cwd/env and bounded stdout/stderr/rawbyte digests plus explicit termination/reap/cleanup states if needed. Do not create a second process runner. OwnedProcess Windows assign-before-execution Job Object containment already exists. Harness telemetry reuses this owner.
+
+## Tests-first discriminator receipt (f72, not successor proof)
+
+At `f72fda9dd301b11a8e0bfa05d99aad901f0817cf`, owning xtask compile passed.
+The actual separate Git source/controller fixture passed (1/0/0). Complete
+qualification arguments failed at unknown `--controller-root`; duplicate
+`--version` was incorrectly accepted: two intended behavioral RED controls,
+each 0/1/0 and native 101. Unsafe-input rejection passed through the existing
+unknown-flag path (preservation only). Successor source/package/install behavior
+is not proved by these tests-first results.
+
+Raw receipt: `target/ripr/reports/4510-tests-first/f72-tests-first-native/results.json`,
+SHA256 `5A9B06E1A44B74EC38527CED55070423B4EE47528CAEE96263A866AA28C8D30F`.
+Terminal scoped liveness found no owned PIDs/shared-target images; its receipt
+SHA256 is `E4E6728F208553C25DF7167448734F624F425941486F38C70CB304BBC7E4A406`.
+The shared target lease was explicitly released before source implementation.
 
 ## Selected first PR: actual admitted package subject for existing corpus
 

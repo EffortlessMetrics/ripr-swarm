@@ -16,15 +16,18 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::release::candidate_harness::{
+    AdmittedSource, AttributedArchive, CandidateExecution, QualificationInput,
+};
 #[cfg(test)]
 use super::release::release_temp_root;
 use super::release::{
     BOUNDARY_GAP_SEAM_ID, CommandResult, absolute_installed_binary, artifact_string,
     checkout_fixture_commit, command_details, create_authentic_repo_exposure_fixture, fixture_head,
-    git_worktree_is_clean, installed_ripr_binary, produce_authentic_chain_in_fixture,
-    read_crate_version, read_json_value, run_command_in_dir, run_fixture_git_command,
-    run_packaged_install, run_producer_check,
+    git_worktree_is_clean, installed_ripr_binary, read_crate_version, read_json_value,
+    run_command_in_dir, run_fixture_git_command, run_packaged_install,
 };
+use super::release::{produce_authentic_chain_with_execution, run_producer_with_execution};
 use super::release_server::{hex_lower, sha256_file};
 
 const NEGATIVE_WORK_DIR: &str = "target/ripr/release-negative-corpus";
@@ -52,6 +55,7 @@ const CONTENT_PLACEHOLDER: &str =
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ReleaseNegativeArgs {
     version: String,
+    qualification: Option<super::release::candidate_harness::QualificationInput>,
 }
 
 #[derive(Clone, Debug)]
@@ -151,7 +155,7 @@ struct CaseExecution {
 }
 
 struct CaseEnv<'a> {
-    binary: &'a Path,
+    binary: CandidateExecution<'a>,
     root: &'a Path,
     case_dir: &'a Path,
     before_sha: &'a str,
@@ -265,17 +269,22 @@ struct NegativeCorpusReport {
     baseline_cleanup: String,
     cases: Vec<CaseReceipt>,
     dispositions: Vec<(String, String)>,
+    qualification: Option<Value>,
+    evidence_root: String,
 }
 
 pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
     let args = parse_release_negative_args(args)?;
-    fs::create_dir_all(NEGATIVE_WORK_DIR)
-        .map_err(|err| format!("failed to create {NEGATIVE_WORK_DIR}: {err}"))?;
-    match run_negative_corpus(&args.version) {
+    match run_negative_corpus_with_input(&args.version, args.qualification.as_ref()) {
         Ok(report) => {
             let json = negative_corpus_json(&report)?;
-            crate::write_report("release-negative-corpus.json", &json)?;
-            crate::write_report(
+            write_corpus_report(
+                args.qualification.as_ref(),
+                "release-negative-corpus.json",
+                &json,
+            )?;
+            write_corpus_report(
+                args.qualification.as_ref(),
                 "release-negative-corpus.md",
                 &negative_corpus_markdown(&report),
             )?;
@@ -294,11 +303,17 @@ pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
                 "version": args.version,
                 "status": "fail",
                 "phase_error": phase_error.clone(),
+                "qualification_mode": if args.qualification.is_some() { "admission_required_refused_or_failed" } else { "legacy_smoke_unqualified" },
             });
             let body = serde_json::to_string_pretty(&report)
                 .map_err(|err| format!("render phase-failure report failed: {err}"))?;
-            crate::write_report("release-negative-corpus.json", &body)?;
-            crate::write_report(
+            write_corpus_report(
+                args.qualification.as_ref(),
+                "release-negative-corpus.json",
+                &body,
+            )?;
+            write_corpus_report(
+                args.qualification.as_ref(),
                 "release-negative-corpus.md",
                 &format!(
                     "# release-negative-corpus\n\nStatus: fail\n\nThe corpus run failed before the case matrix completed:\n\n```text\n{phase_error}\n```\n"
@@ -312,23 +327,114 @@ pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
     }
 }
 
-fn run_negative_corpus(version: &str) -> Result<NegativeCorpusReport, String> {
-    let (binary, candidate) = resolve_candidate(version)?;
-    let baseline = build_baseline(&binary)?;
-    let corpus_dir = Path::new(NEGATIVE_WORK_DIR);
+fn write_corpus_report(
+    input: Option<&QualificationInput>,
+    name: &str,
+    body: &str,
+) -> Result<(), String> {
+    if let Some(input) = input {
+        let controller = input
+            .controller_root()
+            .canonicalize()
+            .map_err(|error| format!("report controller root: {error}"))?;
+        let reports = controller.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|error| format!("create controller reports: {error}"))?;
+        fs::write(reports.join(name), body)
+            .map_err(|error| format!("write controller report: {error}"))
+    } else {
+        crate::write_report(name, body)
+    }
+}
+
+struct OwnedQualificationRoot(PathBuf);
+impl OwnedQualificationRoot {
+    fn finish(self) -> Result<(), String> {
+        fs::remove_dir_all(&self.0)
+            .map_err(|error| format!("remove owned qualification producer root: {error}"))
+    }
+}
+impl Drop for OwnedQualificationRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn run_negative_corpus_with_input(
+    version: &str,
+    input: Option<&QualificationInput>,
+) -> Result<NegativeCorpusReport, String> {
+    let qualified;
+    let legacy;
+    let mut owned_root = None;
+    let corpus_root;
+    let (execution, candidate, qualification) = if let Some(input) = input {
+        let source = AdmittedSource::admit(input, version)?;
+        if source.package_name() != "ripr" {
+            return Err("qualification corpus requires the actual ripr package".to_string());
+        }
+        let controller = input
+            .controller_root()
+            .canonicalize()
+            .map_err(|error| format!("controller root: {error}"))?;
+        let parent = controller.join(NEGATIVE_WORK_DIR);
+        fs::create_dir_all(&parent)
+            .map_err(|error| format!("create qualified evidence parent: {error}"))?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("qualification directory identity: {error}"))?
+            .as_nanos();
+        corpus_root = parent.join(format!("qualification-{}-{stamp}", std::process::id()));
+        fs::create_dir(&corpus_root)
+            .map_err(|error| format!("exclusive qualification evidence root: {error}"))?;
+        let path = corpus_root.join("owned-producer");
+        fs::create_dir(&path)
+            .map_err(|error| format!("exclusive qualification producer root: {error}"))?;
+        owned_root = Some(OwnedQualificationRoot(path.clone()));
+        qualified = AttributedArchive::produce(source, &path)?.install(&path)?;
+        let execution = CandidateExecution::Qualified(&qualified);
+        let version_result = execution.run(
+            &["--version".to_string()],
+            &controller,
+            "qualified candidate version",
+        )?;
+        super::release::validate_installed_version(
+            version_result.success,
+            &version_result.stdout,
+            version,
+        )?;
+        let identity = CandidateIdentity {
+            path: crate::normalize_path(qualified.binary()),
+            version_output: version_result.stdout.trim().to_string(),
+            sha256: format!("sha256:{}", sha256_file(qualified.binary())?),
+        };
+        (execution, identity, Some(qualified.custody_json()))
+    } else {
+        let (binary, identity) = resolve_candidate(version)?;
+        legacy = binary;
+        corpus_root = PathBuf::from(NEGATIVE_WORK_DIR);
+        (CandidateExecution::Legacy(&legacy), identity, None)
+    };
+    let corpus_dir = corpus_root.as_path();
+    let baseline = build_baseline(execution, corpus_dir)?;
     // Never let stale per-case receipts from an older matrix linger next to
     // a fresh run: the case evidence for this run starts empty (#2824).
-    let _ = fs::remove_dir_all(corpus_dir.join("cases"));
+    if input.is_none() {
+        let _ = fs::remove_dir_all(corpus_dir.join("cases"));
+    }
     let mut cases = Vec::new();
     for spec in case_specs() {
         cases.push(execute_case(
-            &spec, &binary, &candidate, &baseline, corpus_dir,
+            &spec, execution, &candidate, &baseline, corpus_dir,
         ));
     }
     let baseline_cleanup = match fs::remove_dir_all(&baseline.fixture_root) {
         Ok(()) => "removed".to_string(),
         Err(err) => format!("failed: {err}"),
     };
+    if let Some(root) = owned_root {
+        root.finish()?;
+    }
     let status = if baseline_cleanup == "removed" && cases.iter().all(|case| case.status == "pass")
     {
         "pass"
@@ -358,6 +464,8 @@ fn run_negative_corpus(version: &str) -> Result<NegativeCorpusReport, String> {
         baseline_cleanup,
         cases,
         dispositions: deferred_dispositions(),
+        qualification,
+        evidence_root: crate::normalize_path(corpus_dir),
     })
 }
 
@@ -443,17 +551,35 @@ fn resolve_candidate(version: &str) -> Result<(PathBuf, CandidateIdentity), Stri
 /// the shared journey producer and retain the immutable positive artifacts.
 /// Every failure path — chain production or retention — removes the external
 /// fixture root so a failed baseline never leaks it.
-fn build_baseline(binary: &Path) -> Result<BaselineContext, String> {
+fn build_baseline(
+    binary: CandidateExecution<'_>,
+    corpus_dir: &Path,
+) -> Result<BaselineContext, String> {
     let fixture = create_authentic_repo_exposure_fixture()?;
     let result = (|| {
-        produce_authentic_chain_in_fixture(
+        if matches!(binary, CandidateExecution::Qualified(_)) {
+            let doctor = binary.run(
+                &[
+                    "doctor".to_string(),
+                    "--root".to_string(),
+                    ".".to_string(),
+                    "--json".to_string(),
+                ],
+                &fixture.root,
+                "qualified installed doctor",
+            )?;
+            let value: Value = serde_json::from_str(&doctor.stdout)
+                .map_err(|error| format!("qualified doctor JSON: {error}"))?;
+            super::release::validate_doctor_result(doctor.success, &value)?;
+        }
+        produce_authentic_chain_with_execution(
             binary,
             &fixture.root,
             &fixture.before_commit,
             &fixture.after_commit,
         )
         .map_err(|error| format!("authentic baseline chain failed: {error}"))?;
-        let baseline_dir = Path::new(NEGATIVE_WORK_DIR).join("baseline");
+        let baseline_dir = corpus_dir.join("baseline");
         fs::create_dir_all(&baseline_dir)
             .map_err(|err| format!("create baseline retention dir failed: {err}"))?;
         let mut artifacts = Vec::new();
@@ -477,7 +603,7 @@ fn build_baseline(binary: &Path) -> Result<BaselineContext, String> {
 
 fn execute_case(
     spec: &CaseSpec,
-    binary: &Path,
+    binary: CandidateExecution<'_>,
     candidate: &CandidateIdentity,
     baseline: &BaselineContext,
     corpus_dir: &Path,
@@ -535,7 +661,7 @@ fn execute_case(
             .run_cwd
             .clone()
             .unwrap_or_else(|| workspace.clone());
-        let result = run_command_in_dir(binary, &execution.argv, &run_cwd, spec.id)?;
+        let result = binary.run(&execution.argv, &run_cwd, spec.id)?;
         receipt.exit_status = result.status;
         match &execution.expected {
             Expectation::Reject {
@@ -612,7 +738,7 @@ fn execute_case(
         }
 
         // Rerun the original command: the restored state must pass again.
-        let control = run_command_in_dir(binary, &execution.control_argv, &workspace, "control")?;
+        let control = binary.run(&execution.control_argv, &workspace, "control")?;
         if control.success {
             receipt.control_outcome = "pass".to_string();
         } else {
@@ -739,7 +865,7 @@ fn first_stderr_line(stderr: &str) -> String {
 // ---------------------------------------------------------------------------
 
 fn produce_case_chain(env: &CaseEnv) -> Result<(), String> {
-    produce_authentic_chain_in_fixture(env.binary, env.root, env.before_sha, env.after_sha)?;
+    produce_authentic_chain_with_execution(env.binary, env.root, env.before_sha, env.after_sha)?;
     Ok(())
 }
 
@@ -1524,7 +1650,7 @@ fn case_verify_replayed_against_another_pair(env: &CaseEnv) -> Result<CaseExecut
     )?;
     execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT, VERIFY_JSON])?;
     commit_empty(env.root, "corpus third state")?;
-    run_producer_check(env.binary, env.root, THIRD_ARTIFACT)?;
+    run_producer_with_execution(env.binary, env.root, THIRD_ARTIFACT)?;
     fs::copy(env.root.join(THIRD_ARTIFACT), env.root.join(AFTER_ARTIFACT))
         .map_err(|err| format!("replay third artifact as after failed: {err}"))?;
     execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT, VERIFY_JSON])?;
@@ -1736,7 +1862,12 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
     // The receipt for the retained target must issue but stay `unchanged` —
     // movement on seam Y can never strengthen seam X.
     let (before_two_seam, after_two_seam) = build_two_seam_commits(env.root, env.before_sha)?;
-    produce_authentic_chain_in_fixture(env.binary, env.root, &before_two_seam, &after_two_seam)?;
+    produce_authentic_chain_with_execution(
+        env.binary,
+        env.root,
+        &before_two_seam,
+        &after_two_seam,
+    )?;
     // Grip the producer output itself (#2824 review): the moved seam must be
     // the discounted_total boundary seam this fixture family pins, and the
     // retained target must be the loyalty seam this case constructed — never
@@ -2068,6 +2199,9 @@ fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String>
         "schema_version": "1",
         "version": report.version,
         "status": report.status,
+        "qualification": report.qualification,
+        "evidence_root": report.evidence_root,
+        "qualification_mode": if report.qualification.is_some() { "admitted_source_archive_installed_custody" } else { "legacy_smoke_unqualified" },
         "candidate": {
             "path": report.candidate.path,
             "version": report.candidate.version_output,
@@ -2108,6 +2242,11 @@ fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String>
 
 fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
     let mut body = String::new();
+    body.push_str(if report.qualification.is_some() {
+        "Mode: explicit admitted source/archive/installed custody. Unlocked byte checks are not authenticated provenance or full release qualification.\n\n"
+    } else {
+        "Mode: legacy smoke, unqualified; no selected candidate admission.\n\n"
+    });
     body.push_str("# release-negative-corpus\n\n");
     body.push_str(&format!("Status: {}\n\n", report.status));
     body.push_str(&format!(
@@ -2179,7 +2318,10 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
     for (case_id, disposition) in &report.dispositions {
         body.push_str(&format!("- `{case_id}`: {disposition}\n"));
     }
-    body.push_str("\nCase receipts and mutated evidence are retained under target/ripr/release-negative-corpus/cases/<case_id>/.\n");
+    body.push_str(&format!(
+        "\nCase receipts and mutated evidence are retained under `{}/cases/<case_id>/`.\n",
+        report.evidence_root
+    ));
     body
 }
 
@@ -2193,14 +2335,36 @@ fn md_escape_inline(value: &str) -> String {
 
 fn parse_release_negative_args(args: &[String]) -> Result<ReleaseNegativeArgs, String> {
     let mut version: Option<String> = None;
+    let mut controller_root = None;
+    let mut source_root = None;
+    let mut artifact = None;
     let mut index = 0;
     while index < args.len() {
-        match args[index].as_str() {
+        match args.get(index).ok_or_else(release_negative_usage)?.as_str() {
             "--version" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(release_negative_usage());
                 };
+                if version.is_some() || value.trim().is_empty() || value.starts_with('-') {
+                    return Err(release_negative_usage());
+                }
                 version = Some(value.clone());
+                index += 2;
+            }
+            "--controller-root" | "--candidate-source-root" | "--candidate-artifact" => {
+                let flag = args.get(index).ok_or_else(release_negative_usage)?;
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.trim().is_empty() && !value.starts_with('-'))
+                    .ok_or_else(release_negative_usage)?;
+                let slot = match flag.as_str() {
+                    "--controller-root" => &mut controller_root,
+                    "--candidate-source-root" => &mut source_root,
+                    _ => &mut artifact,
+                };
+                if slot.replace(PathBuf::from(value)).is_some() {
+                    return Err(release_negative_usage());
+                }
                 index += 2;
             }
             "--help" | "-h" => return Err(release_negative_usage()),
@@ -2218,11 +2382,29 @@ fn parse_release_negative_args(args: &[String]) -> Result<ReleaseNegativeArgs, S
     if version.trim().is_empty() {
         return Err(release_negative_usage());
     }
-    Ok(ReleaseNegativeArgs { version })
+    let qualification = match (controller_root, source_root, artifact) {
+        (None, None, None) => None,
+        (Some(controller_root), Some(source_root), Some(artifact)) => {
+            Some(super::release::candidate_harness::QualificationInput::new(
+                controller_root,
+                source_root,
+                artifact,
+            )?)
+        }
+        _ => {
+            return Err(
+                "qualification requires all three explicit root/artifact inputs".to_string(),
+            );
+        }
+    };
+    Ok(ReleaseNegativeArgs {
+        version,
+        qualification,
+    })
 }
 
 fn release_negative_usage() -> String {
-    "Usage: cargo xtask release-negative-corpus --version <version>".to_string()
+    "Usage: cargo xtask release-negative-corpus --version <version> [--controller-root <path> --candidate-source-root <path> --candidate-artifact <controller-relative-path>]".to_string()
 }
 
 /// Run the fixture's own test suite from inside a running `cargo test`
@@ -2305,6 +2487,9 @@ mod tests {
         if parsed.version != "0.10.0" {
             return Err(format!("unexpected version {}", parsed.version));
         }
+        if parsed.qualification.is_some() {
+            return Err("legacy invocation must not invent qualification authority".to_string());
+        }
         Ok(())
     }
 
@@ -2326,13 +2511,26 @@ mod tests {
     #[test]
     fn qualification_args_accept_complete_explicit_subject() -> Result<(), String> {
         let parsed = parse_release_negative_args(&args(&[
-            "--version", "0.11.0",
-            "--controller-root", "controller with spaces",
-            "--candidate-source-root", "candidate source é",
-            "--candidate-artifact", "docs/release-candidates/fixture-pin.json",
+            "--version",
+            "0.11.0",
+            "--controller-root",
+            "controller with spaces",
+            "--candidate-source-root",
+            "candidate source é",
+            "--candidate-artifact",
+            "docs/release-candidates/fixture-pin.json",
         ]))?;
         if parsed.version != "0.11.0" {
             return Err("qualification inputs changed the requested release".to_string());
+        }
+        let qualified = parsed
+            .qualification
+            .ok_or_else(|| "complete inputs were silently ignored".to_string())?;
+        if qualified.controller_root() != Path::new("controller with spaces")
+            || qualified.source_root() != Path::new("candidate source é")
+            || qualified.artifact() != Path::new("docs/release-candidates/fixture-pin.json")
+        {
+            return Err("qualification parser changed explicit input identity".to_string());
         }
         Ok(())
     }
@@ -2343,27 +2541,50 @@ mod tests {
             vec!["--controller-root", "controller"],
             vec!["--candidate-source-root", "source"],
             vec!["--candidate-artifact", "docs/release-candidates/pin.json"],
-            vec!["--controller-root", "controller", "--candidate-source-root", "source"],
+            vec![
+                "--controller-root",
+                "controller",
+                "--candidate-source-root",
+                "source",
+            ],
             vec!["--version", "0.12.0"],
         ] {
             let mut argv = args(&["--version", "0.11.0"]);
             argv.extend(args(&extra));
             if parse_release_negative_args(&argv).is_ok() {
-                return Err(format!("ambiguous qualification argv must reject: {argv:?}"));
+                return Err(format!(
+                    "ambiguous qualification argv must reject: {argv:?}"
+                ));
             }
         }
-        for flag in ["--controller-root", "--candidate-source-root", "--candidate-artifact"] {
+        for flag in [
+            "--controller-root",
+            "--candidate-source-root",
+            "--candidate-artifact",
+        ] {
             let mut argv = args(&[
-                "--version", "0.11.0", "--controller-root", "controller",
-                "--candidate-source-root", "source", "--candidate-artifact",
+                "--version",
+                "0.11.0",
+                "--controller-root",
+                "controller",
+                "--candidate-source-root",
+                "source",
+                "--candidate-artifact",
                 "docs/release-candidates/pin.json",
             ]);
             argv.extend(args(&[flag, "duplicate"]));
             if parse_release_negative_args(&argv).is_ok() {
-                return Err(format!("duplicate qualification flag must reject: {argv:?}"));
+                return Err(format!(
+                    "duplicate qualification flag must reject: {argv:?}"
+                ));
             }
         }
-        for flag in ["--version", "--controller-root", "--candidate-source-root", "--candidate-artifact"] {
+        for flag in [
+            "--version",
+            "--controller-root",
+            "--candidate-source-root",
+            "--candidate-artifact",
+        ] {
             let mut argv = args(&["--version", "0.11.0"]);
             argv.push(flag.to_string());
             if parse_release_negative_args(&argv).is_ok() {
@@ -2385,8 +2606,14 @@ mod tests {
             ("controller", "source", "docs\\..\\pin.json"),
         ] {
             let argv = args(&[
-                "--version", "0.11.0", "--controller-root", controller,
-                "--candidate-source-root", source, "--candidate-artifact", artifact,
+                "--version",
+                "0.11.0",
+                "--controller-root",
+                controller,
+                "--candidate-source-root",
+                source,
+                "--candidate-artifact",
+                artifact,
             ]);
             if parse_release_negative_args(&argv).is_ok() {
                 return Err(format!("unsafe qualification argv must reject: {argv:?}"));
@@ -3083,6 +3310,8 @@ mod tests {
             baseline_cleanup: "removed".to_string(),
             cases: vec![receipt],
             dispositions: deferred_dispositions(),
+            qualification: None,
+            evidence_root: NEGATIVE_WORK_DIR.to_string(),
         };
         let markdown = negative_corpus_markdown(&report);
         for needle in [

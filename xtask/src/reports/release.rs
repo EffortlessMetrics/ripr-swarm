@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tar::Archive;
 
+pub(crate) mod candidate_harness;
+
 const REPORT_WORK_DIR: &str = "target/ripr/release-readiness";
 const INSTALL_ROOT: &str = "target/ripr/release-readiness/install";
 const PILOT_OUT: &str = "target/ripr/release-readiness/pilot";
@@ -682,7 +684,11 @@ fn validate_binary_identity(workspace_digest: &str, installed_digest: &str) -> R
     Ok(())
 }
 
-fn validate_installed_version(success: bool, stdout: &str, version: &str) -> Result<(), String> {
+pub(crate) fn validate_installed_version(
+    success: bool,
+    stdout: &str,
+    version: &str,
+) -> Result<(), String> {
     if !success || !stdout.contains(&format!("ripr {version}")) {
         return Err(
             "installed binary version output did not identify the packaged crate version"
@@ -692,7 +698,7 @@ fn validate_installed_version(success: bool, stdout: &str, version: &str) -> Res
     Ok(())
 }
 
-fn validate_doctor_result(success: bool, doctor_json: &Value) -> Result<(), String> {
+pub(crate) fn validate_doctor_result(success: bool, doctor_json: &Value) -> Result<(), String> {
     if !success || doctor_json.get("status").and_then(Value::as_str) != Some("pass") {
         return Err(
             "installed ripr doctor did not report pass for the external fixture".to_string(),
@@ -1938,12 +1944,26 @@ pub(crate) fn produce_authentic_chain_in_fixture(
     before_commit: &str,
     after_commit: &str,
 ) -> Result<Vec<String>, String> {
+    produce_authentic_chain_with_execution(
+        candidate_harness::CandidateExecution::Legacy(binary),
+        root,
+        before_commit,
+        after_commit,
+    )
+}
+
+pub(crate) fn produce_authentic_chain_with_execution(
+    execution: candidate_harness::CandidateExecution<'_>,
+    root: &Path,
+    before_commit: &str,
+    after_commit: &str,
+) -> Result<Vec<String>, String> {
     let before_name = "before.repo-exposure.json";
     let after_name = "after.repo-exposure.json";
     checkout_fixture_commit(root, before_commit)?;
-    let _before = run_producer_check(binary, root, before_name)?;
+    let _before = run_producer_with_execution(execution, root, before_name)?;
     checkout_fixture_commit(root, after_commit)?;
-    let _after = run_producer_check(binary, root, after_name)?;
+    let _after = run_producer_with_execution(execution, root, after_name)?;
     validate_authentic_artifact(&root.join(before_name), before_commit, "before")?;
     validate_authentic_artifact(&root.join(after_name), after_commit, "after")?;
     let before_value = read_json_value(&root.join(before_name))?;
@@ -1958,7 +1978,7 @@ pub(crate) fn produce_authentic_chain_in_fixture(
                 .to_string(),
         );
     }
-    run_analysis_outcome_check(binary, root)?;
+    run_analysis_outcome_check(execution, root)?;
     let verify_args = vec![
         "agent".to_string(),
         "verify".to_string(),
@@ -1970,7 +1990,7 @@ pub(crate) fn produce_authentic_chain_in_fixture(
         after_name.to_string(),
         "--json".to_string(),
     ];
-    let verify = run_command_in_dir(binary, &verify_args, root, "authentic agent verify")?;
+    let verify = execution.run(&verify_args, root, "authentic agent verify")?;
     if !verify.success {
         return Err(format!(
             "authentic agent verify failed: {}",
@@ -1992,7 +2012,7 @@ pub(crate) fn produce_authentic_chain_in_fixture(
         "--out".to_string(),
         "agent-receipt.json".to_string(),
     ];
-    let receipt = run_command_in_dir(binary, &receipt_args, root, "authentic agent receipt")?;
+    let receipt = execution.run(&receipt_args, root, "authentic agent receipt")?;
     if !receipt.success || !root.join("agent-receipt.json").is_file() {
         return Err(format!(
             "authentic agent receipt failed: {}",
@@ -2014,6 +2034,18 @@ pub(crate) fn run_producer_check(
     root: &Path,
     artifact_name: &str,
 ) -> Result<Value, String> {
+    run_producer_with_execution(
+        candidate_harness::CandidateExecution::Legacy(binary),
+        root,
+        artifact_name,
+    )
+}
+
+pub(crate) fn run_producer_with_execution(
+    execution: candidate_harness::CandidateExecution<'_>,
+    root: &Path,
+    artifact_name: &str,
+) -> Result<Value, String> {
     let args = vec![
         "check".to_string(),
         "--root".to_string(),
@@ -2023,7 +2055,7 @@ pub(crate) fn run_producer_check(
         "--format".to_string(),
         "repo-exposure-json".to_string(),
     ];
-    let result = run_command_in_dir(binary, &args, root, "authentic repo-exposure producer")?;
+    let result = execution.run(&args, root, "authentic repo-exposure producer")?;
     if !result.success {
         return Err(format!(
             "producer check failed: {}",
@@ -2037,7 +2069,10 @@ pub(crate) fn run_producer_check(
     Ok(value)
 }
 
-fn run_analysis_outcome_check(binary: &Path, root: &Path) -> Result<(), String> {
+fn run_analysis_outcome_check(
+    execution: candidate_harness::CandidateExecution<'_>,
+    root: &Path,
+) -> Result<(), String> {
     let args = vec![
         "check".to_string(),
         "--root".to_string(),
@@ -2047,7 +2082,7 @@ fn run_analysis_outcome_check(binary: &Path, root: &Path) -> Result<(), String> 
         "--format".to_string(),
         "json".to_string(),
     ];
-    let result = run_command_in_dir(binary, &args, root, "authentic analysis outcome producer")?;
+    let result = execution.run(&args, root, "authentic analysis outcome producer")?;
     if !result.success {
         return Err(format!(
             "analysis outcome producer failed: {}",

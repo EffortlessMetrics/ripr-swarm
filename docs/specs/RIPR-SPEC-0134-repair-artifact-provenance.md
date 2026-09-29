@@ -168,6 +168,19 @@ after movement succeeds but discloses `historical_noncurrent`.
   different seam moves.
 - The editor repair-loop fixture consumes bound artifacts and records explicit
   currentness.
+- Selected-source execution of that existing corpus uses an all-or-none
+  `--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
+  The registry grants authority only to exact registered controller bytes;
+  actual source HEAD/tree/ref and raw committed input bytes are checked
+  independently. Qualified Cargo package/install use explicit owned roots.
+  Ordinary archive entries must match committed blobs; only Cargo's original
+  manifest, normalized manifest, lock and VCS metadata have explicit generated
+  rules. Archive and installed executable bytes are revalidated before
+  consumption by installed doctor and the authentic chain. Controller-owned
+  reports disclose `qualification_mode`, custody and the exclusive evidence
+  root. Without the group, the command remains unqualified legacy smoke;
+  partial/refused qualification never falls back. These unlocked checks are
+  not authenticated provenance or full release qualification (#4510).
 - The integrated installed-candidate negative corpus (`cargo xtask
   release-negative-corpus --version <version>`, #2824) runs the packaged
   candidate through the authentic readiness chain in a controlled external
