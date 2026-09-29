@@ -22,6 +22,9 @@ are scoped or reviewed.
   outcome and each limitation (#4721). In a repository written only in such
   languages, `ripr pilot` names them instead of an empty "none ranked"
   result with a test-then-compare loop, and `ripr doctor` lists them.
+  `ripr first-pr` reports no gap to assign there instead of a wrong-root
+  loop through `--root` and `ripr doctor`, and `ripr init` warns that the
+  configuration will report those changes as not analyzed.
 - TypeScript: a change inside a module-private helper now relates to tests
   that call an exported function reaching it in the same module, including a
   value a same-module factory built. unjs/defu tests call `defu(...)`, built
