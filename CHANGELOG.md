@@ -30,6 +30,13 @@ are scoped or reviewed.
   the finding told users to rewrite the file as strict JSON. Malformed
   files, including an unclosed block comment, still resolve no aliases and
   say the file could not be parsed. (#4549)
+- TypeScript/JavaScript preview: a test that loads its subject by directory,
+  such as `var mimeTypes = require('..')`, now relates to the owner. `.` and
+  `..` were not treated as relative specifiers, and a directory specifier did
+  not resolve to the module it loads, so ripr reported `no_static_path` for
+  code the test calls. A directory now resolves through its `package.json`
+  `main`, else its `index` file; a sibling file module still wins, and a
+  root-escaping or unresolvable `main` keeps the specifier unresolved.
 - TypeScript/JavaScript preview: a change inside a CommonJS export such as
   `exports.thrice = function thrice(x) { ... }` now maps to an owner. These
   assignments produced no owner, so the changed line yielded zero candidates

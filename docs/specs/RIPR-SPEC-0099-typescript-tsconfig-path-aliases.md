@@ -217,6 +217,17 @@ unique_file_for:
   2+ files found                     →  None (ambiguous, fail-closed)
 ```
 
+Relative-resolver amendment (#4546): the bare specifiers `.` and `..`
+(`require('..')`, `import x from '.'`) are relative, like `./` and `../`.
+With a known workspace root, an extensionless relative specifier whose
+in-root join names a real directory with no sibling file module
+(`<path>.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`) resolves to that directory's
+`package.json` `main` (a string, in-root, resolving to a supported file or
+a directory index) when the manifest exists, else to `<dir>/index`. An
+unreadable or invalid manifest, a non-string, absolute, root-escaping or
+unresolvable `main`, a symlink, or a join that escaped the root keeps the
+lexical module (fail-closed). The alias branch is unchanged.
+
 ### Disclosure limitation scope
 
 `typescript_path_alias_unresolved` fires on the FIRST uncredited test
