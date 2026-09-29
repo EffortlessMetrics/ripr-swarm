@@ -4,8 +4,6 @@ use crate::run::{
     tool_build_timeout,
 };
 use crate::verification_contracts::validate_json_file_against_schema;
-#[cfg(test)]
-use crate::verification_contracts::validate_value_against_schema;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::env;
@@ -1955,6 +1953,8 @@ mod tests {
     // drive the production CLI in process (argument parsing, ledger producer,
     // review-comments renderer, run receipt) and validate what it wrote with
     // the same validator `check-verification-contracts` uses.
+
+    use crate::verification_contracts::validate_value_against_schema;
 
     const GAP_LEDGER_ROUTE_SCHEMA: &str = "schemas/ripr/review-comments.schema.json";
 
