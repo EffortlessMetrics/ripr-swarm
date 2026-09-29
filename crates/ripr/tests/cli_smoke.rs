@@ -2595,10 +2595,10 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ripr first-pr - side effects and cost disclosure"));
-    assert!(stdout.contains("cost class:      varies with diff and workspace size"));
+    assert!(stdout.contains("cost class:      artifact composition only; runs no analysis"));
     assert!(stdout.contains(&format!("writes to:       {reports_arg}/")));
-    assert!(stdout.contains("cache location:  target/ripr/cache/"));
-    assert!(stdout.contains("git reads:       yes (diff between base and head)"));
+    assert!(stdout.contains("cache location:  none"));
+    assert!(stdout.contains("git reads:       yes (base and head preflight)"));
     assert!(stdout.contains("network:         none"));
     assert!(stdout.contains("Start here:"));
     // Summary and Wrote lines render the resolved locations with stable
@@ -5495,6 +5495,75 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
     Ok(())
 }
 
+/// #4445: a repo-scoped format still records `--base` as snapshot
+/// provenance and names `--diff` as an input, so an unresolvable base or a
+/// missing diff file exits 2 with empty stdout, like the diff-scoped
+/// formats. A resolvable base keeps working.
+#[test]
+fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("repo-scope-bad-base");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"scope\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn big(x: u32) -> bool {\n    x >= 10\n}\n",
+    )?;
+    std::fs::write(root.join(".gitignore"), "/target\n")?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["add", "."])?;
+    commit_repair_fixture(&root, &["-qm", "scope"])?;
+    let root_arg = root.display().to_string();
+    let missing_diff = root.join("no-such.diff").display().to_string();
+
+    for format in [
+        "repo-exposure-json",
+        "repo-sarif",
+        "agent-seam-packets-json",
+    ] {
+        for bad in [
+            ["--base", "no-such-ref-4445"],
+            ["--diff", missing_diff.as_str()],
+        ] {
+            let output = run_ripr(&[
+                "check", "--root", &root_arg, bad[0], bad[1], "--format", format,
+            ]);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{format} {bad:?}: stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "{format} {bad:?} wrote stdout on a failed invocation"
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(bad[1]),
+                "{format} {bad:?}: stderr does not name the rejected input: {stderr}"
+            );
+        }
+    }
+
+    let good = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--base",
+        "HEAD",
+        "--format",
+        "repo-exposure-json",
+    ]);
+    assert_success(&good);
+    let good: serde_json::Value = serde_json::from_slice(&good.stdout)?;
+    assert_eq!(good["artifact"]["analysis"]["base_revision"], "HEAD");
+    Ok(())
+}
+
 /// F15-12: a seam whose only related test lives inline in another crate has
 /// no test file the repair can edit. The before phase refuses before it
 /// writes any workflow artifact and never prints a completion line first, so
@@ -5798,6 +5867,25 @@ fn agent_repair_admits_a_focused_test_committed_between_the_phases()
         )),
         "{stderr}"
     );
+    // Exit 3 carries exactly one typed refusal document on stdout.
+    let document: serde_json::Value = serde_json::from_slice(&after.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert_eq!(document["schema_version"], "0.2", "{document:#}");
+    assert_eq!(document["attempt_id"], attempt_id.as_str(), "{document:#}");
+    assert!(
+        document["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("does not descend from")),
+        "{document:#}"
+    );
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains(&format!(
+                "`git reset --soft {before_head}` restores the prepared head"
+            ))),
+        "the refusal document carries the recovery: {document:#}"
+    );
     let (_, manifest) = sole_repair_attempt(&root)?;
     assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
     // The printed recovery finishes the same attempt.
@@ -6077,6 +6165,49 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
     ]);
     assert_failure(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("analysis input identities differ"));
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "drifted analysis inputs are a typed refusal on the standalone verify path too"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a refused verify renders nothing to its stdout (the verify artifact)"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #4331 review: an operational error that echoes a user path containing a
+/// refusal phrase stays an operational failure (exit 2), not a refusal.
+#[test]
+fn agent_verify_missing_snapshot_named_like_a_refusal_is_operational()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-refusal-named-path");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    for missing in [
+        "analysis input identities differ",
+        "no repository movement between before and after artifacts",
+    ] {
+        let output = run_ripr(&[
+            "agent",
+            "verify",
+            "--root",
+            &root.display().to_string(),
+            "--before",
+            missing,
+            "--after",
+            missing,
+            "--json",
+        ]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{missing}: {stderr}");
+        assert!(
+            stderr.contains(missing),
+            "the error names the path: {stderr}"
+        );
+    }
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -6571,6 +6702,15 @@ fn agent_verify_rejects_same_revision_pair_without_movement()
         String::from_utf8_lossy(&output.stderr).contains("no repository movement"),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a no-movement verify refusal is a typed refusal on the standalone verify path too"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "a refused verify renders nothing to its stdout (the verify artifact)"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -9027,7 +9167,21 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workspace.join("ripr.toml").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
-    assert!(workflow.contains("cargo install ripr --locked"));
+    // The steps use the generating version's CLI, so the install is pinned
+    // to it rather than taking the newest crates.io release.
+    assert!(workflow.contains(&format!(
+        "run: cargo install ripr --version {} --locked\n",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(!workflow.contains("cargo install ripr --locked"));
+    // A newer push cancels the older run of the same PR, so two runs never
+    // publish the same inline cards (#4448).
+    assert!(workflow.contains(
+        "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
+    ));
+    // Every third-party action is pinned to a commit SHA (#4452).
+    assert!(workflow.contains("dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"));
+    assert!(!workflow.contains("dtolnay/rust-toolchain@stable"));
     assert!(workflow.contains("ripr pilot"));
     assert!(workflow.contains("--format sarif"));
     assert!(workflow.contains("--format repo-sarif"));
@@ -10554,7 +10708,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         "changed owner: calculate_discount",
         "missing discriminator: amount == threshold",
         "recommended repair: strengthen test_calculate_discount_smoke in tests/test_pricing.py",
-        "verify: pytest tests/test_pricing.py::test_calculate_discount_smoke",
+        "verify: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke",
         "receipt status: unavailable_until_python_gap_ledger",
     ] {
         assert!(stdout.contains(needle), "missing stdout needle: {needle}");
@@ -10575,7 +10729,7 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
         r#""changed_owner": "calculate_discount""#,
         r#""missing_discriminator": "amount == threshold""#,
         r#""suggested_test_file": "tests/test_pricing.py""#,
-        r#""verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke""#,
+        r#""verify_command": "python -m pytest tests/test_pricing.py::test_calculate_discount_smoke""#,
     ] {
         assert!(
             summary_json.contains(needle),
@@ -10674,7 +10828,9 @@ fn python_check_safe_action(
 fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> Result<(), String> {
     let line = python_check_safe_action(
         "check-py-no-card",
-        "DISCOUNT_THRESHOLD = 10_000\n\n\ndef discounted_total(amount: int) -> int:\n    if amount > DISCOUNT_THRESHOLD:\n        return amount - amount // 10\n    return amount\n",
+        // A `global`-rebound constant stays unresolved (#4227), so no
+        // concrete boundary value and no repair card exist for it.
+        "DISCOUNT_THRESHOLD = 10_000\n\n\ndef configure(threshold):\n    global DISCOUNT_THRESHOLD\n    DISCOUNT_THRESHOLD = threshold\n\n\ndef discounted_total(amount: int) -> int:\n    if amount > DISCOUNT_THRESHOLD:\n        return amount - amount // 10\n    return amount\n",
         "amount > DISCOUNT_THRESHOLD",
         "amount >= DISCOUNT_THRESHOLD",
         "from pricing import discounted_total\n\n\ndef test_no_discount_below_threshold():\n    assert discounted_total(5_000) == 5_000\n\n\ndef test_discount_far_above_threshold():\n    assert discounted_total(20_000) == 18_000\n",
@@ -10947,10 +11103,17 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         )),
         "{stdout}"
     );
+    // The Python repair card is the top recommendation, so the closing block
+    // follows the card's route rather than sending the user to `ripr check`,
+    // which only leads back to pilot (rc rehearsal py-pricing).
     assert!(
-        stdout.contains(&format!(
-            "Next, analyze the changed code in these languages:\n  {command}\n"
-        )),
+        stdout.contains("Next, in order:\n  1. ripr first-pr --root ")
+            && stdout.contains("\n  3. python -m pytest ")
+            && stdout.contains("\n  4. run the receipt command step 1 printed\n"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Next, analyze the changed code in these languages:"),
         "{stdout}"
     );
     assert!(
@@ -14077,7 +14240,7 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
         .unwrap();
     let human = String::from_utf8_lossy(&output_human.stdout);
     assert!(
-        human.contains("uncommitted edits to tracked source are not in the analyzed diff"),
+        human.contains("uncommitted source and test changes were not analyzed"),
         "check --base HEAD with uncommitted edit must show Note in human output; got:\n{human}"
     );
     // The note must name the remedy that works. Staging does not change a
@@ -14093,15 +14256,17 @@ fn check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosur
     ignore_remove_dir_all(&root);
 }
 
-/// RIPR-SPEC-0112: a committed-history check reads each changed file from
-/// disk but places probes at the committed diff's line numbers. When a file in
-/// the diff also has uncommitted edits (an inline test is the common case),
-/// that file's findings can be misplaced or missing, so stderr names it. An
-/// edit only to a file outside the diff keeps the generic note alone.
+/// RIPR-SPEC-0112: a committed-history check reads every source and test file
+/// as committed at HEAD. An uncommitted test edit, or a new untracked test,
+/// must not move the counts while the note says the changes were not analyzed
+/// (0.11 RC walk: the summary moved 0 -> 1 while the note fired). `--worktree`
+/// must see the same edit, so the fixture discriminates. A README-only edit
+/// changes nothing an adapter reads and raises no note.
 #[test]
-fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn std::error::Error>> {
+fn check_base_reads_tests_as_committed_and_notes_only_source_changes()
+-> Result<(), Box<dyn std::error::Error>> {
     let root =
-        std::env::temp_dir().join(format!("ripr-0112-edited-diff-file-{}", std::process::id()));
+        std::env::temp_dir().join(format!("ripr-0112-committed-tests-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
@@ -14110,7 +14275,7 @@ fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn st
     run_git(&root, &["config", "user.name", "Test"])?;
     std::fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"edited-diff-file\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        "[package]\nname = \"committed-tests\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )?;
     std::fs::write(
         root.join("src/lib.rs"),
@@ -14118,86 +14283,61 @@ fn check_base_names_diff_files_with_uncommitted_edits() -> Result<(), Box<dyn st
     )?;
     std::fs::write(
         root.join("tests/ok.rs"),
-        "#[test]\nfn t() { assert!(edited_diff_file::ok(20)); }\n",
+        "#[test]\nfn t() { let _ = committed_tests::ok(20); }\n",
     )?;
+    std::fs::write(root.join("README.md"), "committed tests\n")?;
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-q", "-m", "base"])?;
     std::fs::write(
         root.join("src/lib.rs"),
         "pub fn ok(n: u32) -> bool { n >= 10 }\n",
     )?;
-    std::fs::write(root.join("README.md"), "edited diff file\n")?;
-    std::fs::write(root.join("src/naïve.rs"), "pub fn naive() -> u32 { 1 }\n")?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-q", "-m", "change"])?;
+    run_git(&root, &["commit", "-q", "-a", "-m", "change"])?;
     let root_str = root.to_string_lossy().into_owned();
-    let check = || run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
+    let check = |extra: &[&str]| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let mut args = vec!["check", "--root", root_str.as_str(), "--base", "HEAD~1"];
+        args.extend_from_slice(extra);
+        args.push("--json");
+        let output = run_ripr(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    let noted = |json: &serde_json::Value| json["unanalyzed_working_tree"] == true;
+    let committed = check(&[])?;
+    assert!(!noted(&committed));
+    let discriminating_test =
+        "#[test]\nfn t() { assert!(committed_tests::ok(10)); assert!(!committed_tests::ok(9)); }\n";
 
-    // Edit outside the diff only: generic disclosure, no per-file warning.
-    std::fs::write(
-        root.join("tests/ok.rs"),
-        "#[test]\nfn t() { assert!(edited_diff_file::ok(10)); }\n",
-    )?;
-    let outside = check();
-    let stderr = String::from_utf8_lossy(&outside.stderr);
-    assert!(String::from_utf8_lossy(&outside.stdout).contains("\"unanalyzed_working_tree\": true"));
-    assert!(!stderr.contains("also in the analyzed"), "{stderr}");
-
-    // Edit files in the diff: stderr names the source files and the
-    // recovery, keeps a non-ASCII path readable, and skips the README, which
-    // no adapter analyzes.
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "// moved\npub fn ok(n: u32) -> bool { n >= 10 }\n",
-    )?;
-    std::fs::write(root.join("README.md"), "edited again\n")?;
-    std::fs::write(root.join("src/naïve.rs"), "pub fn naive() -> u32 { 2 }\n")?;
-    let inside = check();
-    let stderr = String::from_utf8_lossy(&inside.stderr);
-    assert!(
-        stderr.contains(
-            "`src/lib.rs`, `src/naïve.rs` have uncommitted edits and are also in the analyzed `HEAD~1...HEAD` diff"
-        ),
-        "{stderr}"
+    // Uncommitted test edit: plain check keeps the committed result and notes
+    // the change; --worktree reads the edit and moves.
+    std::fs::write(root.join("tests/ok.rs"), discriminating_test)?;
+    let plain = check(&[])?;
+    assert_eq!(plain["summary"], committed["summary"]);
+    assert_eq!(plain["findings"], committed["findings"]);
+    assert!(noted(&plain));
+    let worktree = check(&["--worktree"])?;
+    assert_ne!(
+        worktree["summary"], committed["summary"],
+        "fixture must discriminate: the edited test changes a --worktree result"
     );
-    assert!(!stderr.contains("README.md"), "{stderr}");
-    assert!(stderr.contains("rerun with `--worktree`"), "{stderr}");
-    assert!(!stderr.contains("tests/ok.rs"), "{stderr}");
-    ignore_remove_dir_all(&root);
-    Ok(())
-}
+    run_git(&root, &["checkout", "-q", "--", "tests/ok.rs"])?;
 
-/// A source file name git would C-quote (here, one with a double quote) is
-/// still recognized by its extension and named in the edited-diff warning.
-#[cfg(unix)]
-#[test]
-fn check_base_names_edited_diff_files_git_would_quote() -> Result<(), Box<dyn std::error::Error>> {
-    let root =
-        std::env::temp_dir().join(format!("ripr-0112-quoted-diff-file-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("src"))?;
-    run_git(&root, &["init", "-q"])?;
-    run_git(&root, &["config", "user.email", "test@test.com"])?;
-    run_git(&root, &["config", "user.name", "Test"])?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"quoted-diff-file\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )?;
-    std::fs::write(root.join("src/lib.rs"), "mod quoted;\n")?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-q", "-m", "base"])?;
-    let quoted = root.join("src/quo\"ted.rs");
-    std::fs::write(&quoted, "pub fn q(n: u32) -> bool { n > 1 }\n")?;
-    run_git(&root, &["add", "."])?;
-    run_git(&root, &["commit", "-q", "-m", "change"])?;
-    std::fs::write(&quoted, "// edited\npub fn q(n: u32) -> bool { n > 1 }\n")?;
-    let root_str = root.to_string_lossy().into_owned();
-    let output = run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("`src/quo\"ted.rs` has uncommitted edits"),
-        "{stderr}"
-    );
+    // A new untracked test is not committed content either.
+    std::fs::write(root.join("tests/new.rs"), discriminating_test)?;
+    let untracked = check(&[])?;
+    assert_eq!(untracked["summary"], committed["summary"]);
+    assert!(noted(&untracked));
+    std::fs::remove_file(root.join("tests/new.rs"))?;
+
+    // A README edit changes nothing an adapter reads: no note.
+    std::fs::write(root.join("README.md"), "edited\n")?;
+    let readme = check(&[])?;
+    assert_eq!(readme["summary"], committed["summary"]);
+    assert!(!noted(&readme));
     ignore_remove_dir_all(&root);
     Ok(())
 }
@@ -14262,7 +14402,7 @@ fn check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclo
     let human = run_ripr(&["check", "--root", &root_str]);
     assert_success(&human);
     let human_stdout = String::from_utf8_lossy(&human.stdout);
-    if !human_stdout.contains("uncommitted edits to tracked source are not in the analyzed diff")
+    if !human_stdout.contains("uncommitted source and test changes were not analyzed")
         || !human_stdout.contains("add `--worktree`")
     {
         return Err(format!(
@@ -14523,7 +14663,7 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     let base_human_run = run_ripr(&["check", "--root", &root_str, "--base", "HEAD"]);
     assert_success(&base_human_run);
     let base_human = String::from_utf8_lossy(&base_human_run.stdout).into_owned();
-    if !base_human.contains("uncommitted edits to tracked source are not in the analyzed diff") {
+    if !base_human.contains("uncommitted source and test changes were not analyzed") {
         return Err(format!(
             "fixture precondition: a --base run on this dirty checkout must print the note:\n{base_human}"
         ));
@@ -14540,7 +14680,7 @@ fn check_with_a_diff_file_does_not_show_unanalyzed_working_tree_disclosure() -> 
     let human_run = run_ripr(&["check", "--root", &root_str, "--diff", &patch_str]);
     assert_success(&human_run);
     let human = String::from_utf8_lossy(&human_run.stdout).into_owned();
-    if human.contains("uncommitted edits to tracked source are not in the analyzed diff") {
+    if human.contains("uncommitted source and test changes were not analyzed") {
         return Err(format!(
             "a --diff run must not print the unanalyzed working tree note:\n{human}"
         ));
@@ -15156,6 +15296,44 @@ fn repair_route_manifest(
     )?)?)
 }
 
+/// Writes one receipt to both the compatibility projection and the digest-bound
+/// attempt-local artifact, then updates `terminal_artifacts` so status still
+/// reads this attempt's result.
+fn repair_route_write_terminal_receipt(
+    root: &Path,
+    attempt_id: &str,
+    receipt: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = serde_json::to_vec_pretty(receipt)?;
+    std::fs::write(root.join("target/ripr/reports/agent-receipt.json"), &bytes)?;
+    let manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(attempt_id)
+        .join("attempt.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    let digest = sha256_hex_bytes(&bytes);
+    let size = u64::try_from(bytes.len())?;
+    let Some(artifacts) = manifest["terminal_artifacts"].as_array_mut() else {
+        return Err("attempt retained no terminal_artifacts".into());
+    };
+    let Some(receipt_artifact) = artifacts
+        .iter_mut()
+        .find(|artifact| artifact["role"] == "agent_receipt")
+    else {
+        return Err("attempt retained no agent_receipt".into());
+    };
+    let relative = receipt_artifact["path"]
+        .as_str()
+        .ok_or("agent_receipt path missing")?
+        .to_string();
+    std::fs::write(root.join(&relative), &bytes)?;
+    receipt_artifact["sha256"] = serde_json::Value::String(digest);
+    receipt_artifact["bytes"] = serde_json::Value::from(size);
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(())
+}
+
 fn repair_route_attempt<'a>(
     report: &'a serde_json::Value,
     attempt_id: &str,
@@ -15205,6 +15383,17 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
     assert!(
         refused_stderr.contains("no repository movement"),
         "{refused_stderr}"
+    );
+    let refused_document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(
+        refused_document["kind"], "repair_after_refusal",
+        "{refused_document:#}"
+    );
+    assert!(
+        refused_document["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("no repository movement")),
+        "{refused_document:#}"
     );
     // Precondition: the attempt record holds the refusal and is still
     // awaiting the edit at the current HEAD.
@@ -15527,7 +15716,7 @@ fn agent_status_is_complete_only_for_an_advisory_improved_receipt_at_head()
         receipt["status"] = serde_json::Value::String("advisory".to_string());
         receipt["analysis_outcome_status"] = serde_json::Value::String("complete".to_string());
         receipt["analysis_outcome_error"] = serde_json::Value::Null;
-        std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+        repair_route_write_terminal_receipt(&root, &attempt_id, &receipt)?;
     }
     let manifest = repair_route_manifest(&root, &attempt_id)?;
     assert_eq!(manifest["state"], "ready_to_finish", "{manifest:#}");
@@ -15598,7 +15787,7 @@ fn agent_status_is_complete_only_for_an_advisory_improved_receipt_at_head()
     // A receipt that names a different after verdict is not this attempt's.
     receipt["repair_attempt"]["delta_sha256"] =
         serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
-    std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+    repair_route_write_terminal_receipt(&root, &attempt_id, &receipt)?;
     let report = repair_route_status(&root)?;
     let attempt = repair_route_attempt(&report, &attempt_id)?;
     assert_eq!(attempt["disposition"], "unconfirmed", "{report:#}");
@@ -15900,6 +16089,14 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains(&reset_sentence), "{stderr}");
+    let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains(&reset_sentence)),
+        "{document:#}"
+    );
     assert_eq!(
         repair_route_manifest(&root, &attempt_id)?["state"],
         "awaiting_edit"
@@ -15949,6 +16146,14 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     assert!(
         stderr.contains("ripr: analysis inputs changed after the before phase: Cargo.toml."),
         "precondition: the after phase names the changed input:\n{stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        json_strings(&document["narration"])
+            .iter()
+            .any(|line| line.contains("analysis inputs changed after the before phase: Cargo.toml")),
+        "{document:#}"
     );
 
     let manifest = repair_route_manifest(&root, &attempt_id)?;
@@ -16006,25 +16211,32 @@ fn repair_route_two_seam_workspace(label: &str) -> Result<PathBuf, Box<dyn std::
     Ok(root)
 }
 
-/// N3: the workflow keeps one receipt. When a later attempt's after phase
-/// replaces it, the earlier attempt's receipt is reported as superseded by
-/// that attempt (not "no receipt issued"), and the warning names the restart
-/// for its seam in case its gap is still open.
+/// #4572 first falsifier: finishing B must not destroy A's retained terminal
+/// result. The workflow receipt remains a one-slot compatibility projection
+/// (B replaces it), but status after a process restart still reads A's own
+/// outcome from attempt-local evidence — not B's result and not an artificial
+/// loss-of-receipt / superseded state.
 #[test]
-fn agent_status_reports_a_receipt_superseded_by_a_later_attempt()
+fn agent_status_retains_an_earlier_attempt_outcome_after_a_later_finish()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = repair_route_two_seam_workspace("status superseded receipt")?;
+    let root = repair_route_two_seam_workspace("status retain earlier receipt")?;
     let first = repair_route_attempt_id(&repair_route_before(&root)?)?;
     std::fs::write(
         root.join("tests/pricing.rs"),
         format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_NON_DISCRIMINATING_TEST}"),
     )?;
     assert_success(&repair_route_after(&root, &first));
-    let report = repair_route_status(&root)?;
+    let first_report = repair_route_status(&root)?;
+    let first_attempt = repair_route_attempt(&first_report, &first)?;
     assert_eq!(
-        repair_route_attempt(&report, &first)?["disposition"],
-        "gap_open",
+        first_attempt["disposition"], "gap_open",
         "precondition: the first attempt's own receipt leaves its gap open"
+    );
+    let first_status = first_attempt["receipt"]["status"].clone();
+    let first_movement = first_attempt["receipt"]["movement"].clone();
+    assert_eq!(
+        first_attempt["receipt"]["issued_for_attempt"], true,
+        "{first_report:#}"
     );
     run_git(&root, &["add", "tests"])?;
     repair_route_commit(&root, "first attempt's test")?;
@@ -16059,59 +16271,181 @@ fn agent_status_reports_a_receipt_superseded_by_a_later_attempt()
     assert_eq!(
         receipt["repair_attempt"]["attempt_id"],
         second.as_str(),
-        "precondition: the second attempt's receipt replaced the first one's"
+        "precondition: the compatibility projection now holds B's receipt"
     );
 
+    // Process restart: a fresh `ripr agent status` re-reads the files.
     let report = repair_route_status(&root)?;
     let earlier = repair_route_attempt(&report, &first)?;
-    assert_eq!(earlier["disposition"], "unconfirmed", "{report:#}");
     assert_eq!(
-        earlier["receipt"]["issued_for_attempt"], false,
-        "{report:#}"
+        earlier["disposition"], "gap_open",
+        "A must still report A's retained outcome after B finishes: {report:#}"
     );
+    assert_eq!(earlier["receipt"]["issued_for_attempt"], true, "{report:#}");
+    assert_eq!(earlier["receipt"]["status"], first_status, "{report:#}");
+    assert_eq!(earlier["receipt"]["movement"], first_movement, "{report:#}");
     assert_eq!(
         earlier["receipt"]["superseded_by"],
-        second.as_str(),
-        "{report:#}"
+        serde_json::Value::Null,
+        "a readable attempt-local result is not a superseded loss: {report:#}"
     );
+    let earlier_path = earlier["receipt"]["path"]
+        .as_str()
+        .ok_or("earlier receipt path missing")?;
+    assert!(
+        earlier_path.contains(&format!("repair-attempts/{first}/")),
+        "A's status must name the attempt-local receipt, not the one-slot projection: {earlier:#}"
+    );
+    let later = repair_route_attempt(&report, &second)?;
+    assert_eq!(later["receipt"]["issued_for_attempt"], true, "{report:#}");
     assert_eq!(
-        repair_route_attempt(&report, &second)?["receipt"]["superseded_by"],
+        later["receipt"]["superseded_by"],
         serde_json::Value::Null,
         "{report:#}"
     );
-    let warning = report["warnings"]
-        .as_array()
-        .and_then(|warnings| {
-            warnings.iter().find(|warning| {
-                warning["kind"] == "repair_receipt_unconfirmed"
-                    && warning["message"]
-                        .as_str()
-                        .is_some_and(|message| message.contains(&first))
-            })
-        })
-        .and_then(|warning| warning["message"].as_str())
-        .unwrap_or_default()
-        .to_string();
-    assert!(
-        warning.contains(&format!(
-            "was superseded by the receipt for repair attempt `{second}`"
-        )),
-        "{report:#}"
+    assert_ne!(
+        later["receipt"]["movement"], first_movement,
+        "B's outcome must stay distinct from A's so this is not a same-result coincidence: {report:#}"
     );
-    assert!(
-        warning.contains(&format!("--seam-id {REPAIR_ROUTE_SEAM} --phase before")),
-        "{warning}"
+
+    // Compatibility projection rewritten, removed, or bound to B must not
+    // change A's retained reading, and must not fall back to B.
+    std::fs::write(
+        root.join("target/ripr/reports/agent-receipt.json"),
+        "{not json",
+    )?;
+    let after_malformed = repair_route_status(&root)?;
+    let earlier = repair_route_attempt(&after_malformed, &first)?;
+    assert_eq!(earlier["disposition"], "gap_open", "{after_malformed:#}");
+    assert_eq!(
+        earlier["receipt"]["issued_for_attempt"], true,
+        "{after_malformed:#}"
     );
-    assert!(!warning.contains("no receipt at"), "{warning}");
+    assert_eq!(
+        earlier["receipt"]["movement"], first_movement,
+        "{after_malformed:#}"
+    );
+
+    std::fs::remove_file(root.join("target/ripr/reports/agent-receipt.json"))?;
+    let after_removed = repair_route_status(&root)?;
+    let earlier = repair_route_attempt(&after_removed, &first)?;
+    assert_eq!(earlier["disposition"], "gap_open", "{after_removed:#}");
+    assert_eq!(
+        earlier["receipt"]["issued_for_attempt"], true,
+        "{after_removed:#}"
+    );
+
     let markdown = repair_route_markdown(&root)?;
     assert!(
-        markdown.contains(&format!("receipt superseded by attempt `{second}`")),
+        !markdown.contains(&format!("receipt superseded by attempt `{second}`")),
         "{markdown}"
     );
+    assert!(markdown.contains("gap still open"), "{markdown}");
     assert!(
         !markdown.contains("no receipt issued for this attempt"),
         "{markdown}"
     );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// Attempt-local terminal evidence is content-bound. Removing it, changing its
+/// payload, or pointing the manifest at a path outside the attempt must not
+/// reconstruct A's outcome from B's compatibility receipt.
+#[test]
+fn agent_status_does_not_fall_back_to_another_attempt_when_local_receipt_is_unusable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_two_seam_workspace("status local receipt unusable")?;
+    let first = repair_route_attempt_id(&repair_route_before(&root)?)?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_NON_DISCRIMINATING_TEST}"),
+    )?;
+    assert_success(&repair_route_after(&root, &first));
+    run_git(&root, &["add", "tests"])?;
+    repair_route_commit(&root, "first attempt's test")?;
+
+    let root_arg = root.to_string_lossy().into_owned();
+    let second_before = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        REPAIR_ROUTE_SHIPPING_SEAM,
+        "--phase",
+        "before",
+    ]);
+    assert_success(&second_before);
+    let second = repair_route_attempt_id(
+        String::from_utf8_lossy(&second_before.stderr)
+            .lines()
+            .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+            .ok_or("second before phase printed no attempt command")?,
+    )?;
+    let mut shipping = std::fs::read_to_string(root.join("tests/shipping.rs"))?;
+    shipping.push_str(
+        "\n#[test]\nfn at_limit_is_heavy() {\n    assert_eq!(shipping_fee(10, 10), 25);\n}\n",
+    );
+    std::fs::write(root.join("tests/shipping.rs"), shipping)?;
+    assert_success(&repair_route_after(&root, &second));
+
+    let first_manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(&first)
+        .join("attempt.json");
+    let first_manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&first_manifest_path)?)?;
+    let terminal = first_manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("first attempt retained no terminal_artifacts")?;
+    let receipt_artifact = terminal
+        .iter()
+        .find(|artifact| artifact["role"] == "agent_receipt")
+        .ok_or("first attempt retained no agent_receipt")?;
+    let local_receipt = root.join(
+        receipt_artifact["path"]
+            .as_str()
+            .ok_or("agent_receipt path missing")?,
+    );
+    assert!(
+        local_receipt.starts_with(root.join("target/ripr/repair-attempts").join(&first)),
+        "retained receipt must stay under A's attempt directory: {}",
+        local_receipt.display()
+    );
+
+    std::fs::remove_file(&local_receipt)?;
+    let missing = repair_route_status(&root)?;
+    let earlier = repair_route_attempt(&missing, &first)?;
+    assert_ne!(
+        earlier["disposition"], "finished",
+        "a missing local result is not successful closure: {missing:#}"
+    );
+    assert_eq!(
+        earlier["receipt"]["issued_for_attempt"], false,
+        "{missing:#}"
+    );
+    assert_eq!(earlier["receipt"]["unavailable"], true, "{missing:#}");
+    assert_eq!(
+        earlier["receipt"]["superseded_by"],
+        serde_json::Value::Null,
+        "a declared local miss is unavailable, not a superseded projection of B: {missing:#}"
+    );
+    assert_ne!(
+        earlier["receipt"]["movement"],
+        repair_route_attempt(&missing, &second)?["receipt"]["movement"],
+        "must not project B's movement onto A: {missing:#}"
+    );
+
+    std::fs::write(&local_receipt, b"tampered-not-the-retained-receipt")?;
+    let tampered = repair_route_status(&root)?;
+    let earlier = repair_route_attempt(&tampered, &first)?;
+    assert_eq!(
+        earlier["receipt"]["issued_for_attempt"], false,
+        "{tampered:#}"
+    );
+    assert_eq!(earlier["receipt"]["unavailable"], true, "{tampered:#}");
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
@@ -17445,4 +17779,127 @@ fn history_commands_without_a_resolvable_default_base_fail_named() -> Result<(),
     } else {
         Err(failures.join("\n\n"))
     }
+}
+
+/// A cloned repository's `ripr.toml` must not choose a program for ripr to
+/// run. `[perl].executable = "sh"` plus a `ripr-facts` script in the checkout made
+/// `ripr check` (and the LSP sidecar on open/save, and `ripr doctor`) run
+/// repository code, because the managed argv starts with `ripr-facts`. The
+/// refused runs must leave no marker; the opted-in run must still reach the
+/// configured executable, so the gate is the only thing that changed.
+#[cfg(unix)]
+#[test]
+fn repo_config_perl_executable_runs_only_with_user_opt_in() -> Result<(), Box<dyn std::error::Error>>
+{
+    // Outside the ripr workspace: cargo points TMPDIR at target/, where root
+    // discovery would climb to this repository's Cargo.toml.
+    let root = unique_external_workspace("perl-executable-opt-in")?;
+    init_producer_fixture_repo(&root)?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[perl]\nproducer = \"perl-ripr-facts\"\nexecutable = \"sh\"\n",
+    )?;
+    std::fs::write(root.join("lib.pm"), "package Lib;\n1;\n")?;
+    let marker = root.join("repo-code-ran");
+    std::fs::write(
+        root.join("ripr-facts"),
+        format!("touch '{}'\n", marker.display()),
+    )?;
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let opt_in = "RIPR_ALLOW_REPO_PERL_EXECUTABLE";
+
+    let check = run_command_with_env(bin, &root, &["check", "--base", "HEAD"], &[(opt_in, "0")])?;
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        !marker.exists(),
+        "ripr check ran repository code without opt-in\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("ignoring [perl].executable `sh` from ripr.toml")
+            && stderr.contains(opt_in),
+        "refusal must name the ignored executable and the opt-in: {stderr}"
+    );
+
+    let doctor = run_command_with_env(bin, &root, &["doctor"], &[(opt_in, "0")])?;
+    let stdout = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        !marker.exists(),
+        "ripr doctor ran repository code without opt-in\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("ignoring [perl].executable `sh` from ripr.toml (not run)"),
+        "doctor must say the executable was not run: {stdout}"
+    );
+
+    let trusted = run_command_with_env(bin, &root, &["check", "--base", "HEAD"], &[(opt_in, "1")])?;
+    assert!(
+        marker.exists(),
+        "opted-in check must run the configured executable\nstderr:\n{}",
+        String::from_utf8_lossy(&trusted.stderr)
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #4374: an invalid `RIPR_GIT_TIMEOUT` stops `ripr check` with exit 2 and
+/// names the variable, instead of silently keeping the default deadline. An
+/// explicit `--git-timeout` still wins, so the bad env value is not read.
+#[test]
+fn check_rejects_invalid_ripr_git_timeout_env() -> Result<(), String> {
+    // Outside the repository, so the precedence run below cannot analyze it.
+    let workspace = unique_external_workspace("git-timeout-env")?;
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let root = workspace
+        .to_str()
+        .ok_or("workspace path is not valid UTF-8")?;
+
+    let invalid = run_ripr_with_env(&["check", "--root", root], &[("RIPR_GIT_TIMEOUT", "abc")]);
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    if invalid.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2 for RIPR_GIT_TIMEOUT=abc, got {:?}; stderr: {stderr}",
+            invalid.status.code()
+        ));
+    }
+    if !stderr.contains("RIPR_GIT_TIMEOUT requires a non-negative integer (seconds); got \"abc\"") {
+        return Err(format!(
+            "stderr does not name the variable and value: {stderr}"
+        ));
+    }
+
+    let explicit = run_ripr_with_env(
+        &["check", "--root", root, "--git-timeout", "5"],
+        &[("RIPR_GIT_TIMEOUT", "abc")],
+    );
+    let stderr = String::from_utf8_lossy(&explicit.stderr);
+    if stderr.contains("RIPR_GIT_TIMEOUT") {
+        return Err(format!(
+            "--git-timeout should take precedence over the env var: {stderr}"
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let non_utf8 = probe_command(env!("CARGO_BIN_EXE_ripr"))
+            .args(["check", "--root", root])
+            .env(
+                "RIPR_GIT_TIMEOUT",
+                std::ffi::OsString::from_vec(vec![0xff, b'5']),
+            )
+            .output()
+            .map_err(|e| format!("spawn ripr: {e}"))?;
+        let stderr = String::from_utf8_lossy(&non_utf8.stderr);
+        if non_utf8.status.code() != Some(2)
+            || !stderr.contains("RIPR_GIT_TIMEOUT must be valid UTF-8")
+        {
+            return Err(format!(
+                "non-UTF-8 RIPR_GIT_TIMEOUT should fail closed, got {:?}; stderr: {stderr}",
+                non_utf8.status.code()
+            ));
+        }
+    }
+    ignore_remove_dir_all(&workspace);
+    Ok(())
 }

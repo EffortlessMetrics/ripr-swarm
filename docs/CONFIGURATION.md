@@ -148,7 +148,7 @@ Missing `ripr.toml` is the normal first-run state; the command uses built-in
 defaults unless repo policy or explicit flags override them.
 
 ```text
-ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N]
+ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS]
 ```
 
 | Flag | Default | Notes |
@@ -215,6 +215,29 @@ of using partial evidence. `cargo xtask cache report` summarizes sharded
 families, largest shard sets, and orphan or incomplete shard sets. The
 `cargo xtask cache gc --dry-run` command still sees sharded entries because
 every shard lives under the cache base directory.
+
+File-fact, full/compact classified, classified-shard and corpus-fingerprint
+entries carry a domain-separated SHA-256 digest of their typed semantic body.
+This binds stored identity and every served field, including source text,
+completeness limits, lexical-fallback provenance and shard descriptors. JSON
+whitespace/object-key ordering does not affect integrity. Derived
+`FileFacts.role_provenance` is skipped by serialization and recomputed.
+
+The integrity generations are file facts `1.10`, full classified `1.16`, compact
+classified `0.23`, shards `0.22` and corpus fingerprints `0.3`. The integrity
+transition follows the unsigned nesting-budget generations from #4475. Older unsigned
+generations cold-recompute; no source migration is needed. Decoded key/schema
+mismatches invalidate before digest checking. Matching current entries with
+missing, invalid or mismatching digests are corruption; invalid file facts do
+not contribute known-file inventory. Undecodable JSON, including a digest with
+the wrong JSON type, remains decode corruption before identity comparison.
+Corrupt monolithic entries cannot fall back to shards; absent entries may use
+a complete valid matching shard set. One invalid shard rejects the whole set.
+
+These unkeyed checksums do not authenticate a writer able to replace the body
+and recompute its digest. This contract does not cover every cache family or
+provide provenance signatures. Reuse performs one semantic-body serialization
+and SHA-256 operation per envelope; no cache-speed improvement is claimed.
 
 To relocate the cache to a different directory (e.g., for a read-only
 source checkout):
@@ -286,10 +309,13 @@ ripr context [--root PATH] [--base REV | --diff PATH]
 ### `ripr doctor`
 
 ```text
-ripr doctor [--root PATH] [--json]
+ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
+`--profile analysis` (the default) keeps a missing or old toolchain advisory;
+`--profile source-build` makes it a failure. See
+[Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
 
 Use `--json` for the same core checks as the human report when onboarding an
 agent, editor, or CI wrapper:
@@ -792,8 +818,8 @@ The `badge-plus-*` and `repo-badge-plus-*` formats read
 neutral "needs test-efficiency" badge and warns on stderr. See
 [Badge adoption](BADGE_ADOPTION.md).
 
-The `context` command always returns JSON-shaped output regardless of
-`--format`.
+The `context` command does not accept `--format`; its output is always
+JSON-shaped, and `--json` is accepted for parity with `check`.
 
 ## `ripr.toml`
 
@@ -865,7 +891,7 @@ Use suppressions for accepted debt; Finding severities cannot be `off`.
 
 | Key | Default |
 | --- | --- |
-| `exposed` | `warning` |
+| `exposed` | `info` |
 | `weakly_exposed` | `warning` |
 | `reachable_unrevealed` | `warning` |
 | `no_static_path` | `warning` |
@@ -985,7 +1011,7 @@ languages continue. The accepted managed producer values are
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `producer` | string | none | Selects managed producer mode. Accepted values are `perl-ripr-facts`, `perllsp`, and `perl-lsp`. |
-| `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode. No producer is invoked merely because a default executable exists. |
+| `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode, but only when the user running ripr sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`; without it ripr ignores the key, says so, and uses the PATH default, so a cloned repository cannot choose a program for `ripr check`, `ripr doctor` or `ripr lsp` to run. No producer is invoked merely because a default executable exists. |
 | `timeout_ms` | integer | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` also resolves to `30000`; it does not disable the timeout. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. |
 

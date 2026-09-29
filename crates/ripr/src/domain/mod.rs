@@ -6,6 +6,7 @@ mod command_spec;
 pub mod context_packet;
 mod diagnostic_witness;
 mod evidence;
+mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
@@ -43,6 +44,11 @@ pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,
 };
+pub(crate) use feedback::{
+    ActorKind, FEEDBACK_NOTE_MAX_BYTES, FEEDBACK_SCHEMA_VERSION, FeedbackJudgment, FeedbackPayload,
+    FeedbackReason, FeedbackReceipt, ReferenceState, ResultIdentity, ReviewStatus,
+    classify_reference,
+};
 pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
@@ -52,6 +58,7 @@ pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]
 pub(crate) use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
+pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,

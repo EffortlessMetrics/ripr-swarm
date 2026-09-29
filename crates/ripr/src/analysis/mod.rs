@@ -2,11 +2,13 @@ pub(crate) mod cancellation;
 pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
+pub(crate) mod committed_source;
 mod diff;
 mod extract;
 mod facts;
 pub(crate) mod harness_projection;
 mod language;
+pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
 pub(crate) mod repair_route;
@@ -34,8 +36,9 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    committed_diff_files_with_uncommitted_edits, load_diff, load_worktree_diff, parse_unified_diff,
-    resolve_base_commit, resolve_effective_base, working_tree_has_tracked_changes,
+    load_diff, load_diff_range_with_deadline, load_worktree_diff, no_merge_base_diagnosis,
+    parse_unified_diff, resolve_base_commit, resolve_effective_base,
+    working_tree_has_tracked_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -59,11 +62,12 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
-    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory, SeamLimitInfo,
-    SeamLimitSource, apply_pilot_seam_budget,
+    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages, ScopedClassifiedSeamInventory,
+    SeamLimitInfo, SeamLimitSource, apply_pilot_seam_budget,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_at_with_config, inventory_seams_at_with_config,
+    inventory_diff_scoped_classified_seams_at_with_config,
+    inventory_diff_scoped_classified_seams_staged_at_with_config, inventory_seams_at_with_config,
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
@@ -690,6 +694,12 @@ pub struct AnalysisResult {
     /// otherwise, and `None` when no base was involved (diff-file/stdin
     /// inputs, repo-scope runs, subject-materialized runs).
     pub effective_base: Option<String>,
+    /// Tracked source and test files with uncommitted edits in a
+    /// committed-history run. The run read their `HEAD` content (or left a
+    /// staged addition out), so these are the edits a `--worktree` run would
+    /// add; they decide the uncommitted-edits note. Empty for every other
+    /// mode.
+    pub(crate) uncommitted_source_paths: Vec<String>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

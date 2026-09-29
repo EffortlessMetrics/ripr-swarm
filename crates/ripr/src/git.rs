@@ -112,9 +112,11 @@ pub(crate) fn run_git_output_with_deadline(
 }
 
 /// Longest working directory, in UTF-16 units and without the trailing
-/// separator, that `CreateProcessW` accepts from a process without a
-/// `longPathAware` manifest (`MAX_PATH` minus the terminator and the
-/// separator `SetCurrentDirectoryW` appends).
+/// separator, that `CreateProcessW` accepts (`MAX_PATH` minus the terminator
+/// and the separator `SetCurrentDirectoryW` appends). A `longPathAware`
+/// manifest does not lift it: on a host with `LongPathsEnabled=1`, a
+/// manifested Rust binary and PowerShell 7 both got error 267 for a
+/// 361-unit working directory (#4350 probe, 2026-09-29).
 const WINDOWS_MAX_WORKING_DIRECTORY_UNITS: usize = 258;
 
 /// Win32 codes `CreateProcessW` returns for a working directory it cannot
@@ -148,8 +150,12 @@ impl SpawnSite {
     /// Keeps the `failed to run …` family every caller and contract matches
     /// on. When Windows refuses a working directory past `MAX_PATH` (#4350)
     /// the raw `The directory name is invalid. (os error 267)` names neither
-    /// the cause nor a way out, and a newer Git cannot help: `git.exe`
-    /// refuses the same directory through `-C`. So that one case leads with
+    /// the cause nor a way out, and no other spawn shape helps: Git for
+    /// Windows refuses the same root through `-C` (even with
+    /// `core.longpaths`), through `GIT_DIR` (`'$GIT_DIR' too big`), and
+    /// through a short junction, because it resolves the junction back to the
+    /// long root before its work-tree commands (probe table on #4350,
+    /// issuecomment-5881212067). So that one case leads with
     /// the limit and the remedy, ahead of the long invocation text that
     /// bounded LSP status messages would otherwise truncate it behind.
     fn failure_message(&self, describe: &str, err: &std::io::Error) -> String {
@@ -266,12 +272,47 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
 /// The command is consumed by value: the owned subprocess authority
 /// (#3803) takes it over for the Job Object-backed spawn on Windows.
 pub(crate) fn collect_output_with_deadline_and_limit(
-    mut command: Command,
+    command: Command,
     timeout: Duration,
     max_output_bytes: usize,
     describe: &str,
 ) -> Result<Output, String> {
-    if timeout.is_zero() {
+    collect_output_with_optional_deadline_and_limit(
+        command,
+        Some(timeout),
+        max_output_bytes,
+        describe,
+    )
+}
+
+/// [`run_git_output_with_deadline_and_limit`] for a caller whose deadline is
+/// optional: `None` (for example `--git-timeout 0`) waits for Git without a
+/// deadline while still bounding captured output.
+pub(crate) fn run_git_output_with_optional_deadline_and_limit(
+    root: &Path,
+    args: &[&str],
+    timeout: Option<Duration>,
+    max_output_bytes: usize,
+) -> Result<Output, String> {
+    if max_output_bytes == 0 {
+        return Err("git output limit must be greater than zero".to_string());
+    }
+    let describe = format!("git -C {} {:?}", root.display(), args);
+    collect_output_with_optional_deadline_and_limit(
+        git_command(root, args),
+        timeout,
+        max_output_bytes,
+        &describe,
+    )
+}
+
+fn collect_output_with_optional_deadline_and_limit(
+    mut command: Command,
+    timeout: Option<Duration>,
+    max_output_bytes: usize,
+    describe: &str,
+) -> Result<Output, String> {
+    if timeout.is_some_and(|timeout| timeout.is_zero()) {
         return Err(format!(
             "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
         ));
@@ -292,7 +333,7 @@ pub(crate) fn collect_output_with_deadline_and_limit(
         .take()
         .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
 
-    let wait = poll_child(&mut child, Some(timeout), describe);
+    let wait = poll_child(&mut child, timeout, describe);
     let timed_out = !matches!(&wait, ChildWait::Exited(_));
     let drain_deadline = timed_out.then(|| Instant::now() + POST_KILL_DRAIN_GRACE);
     let stdout_result =
@@ -704,10 +745,10 @@ mod tests {
 
     /// Native control for #4350: the shared git authority, spawning under a
     /// real directory past `MAX_PATH`, reports the limit and the remedy
-    /// instead of `The directory name is invalid. (os error 267)`. The test
-    /// binary, like `ripr.exe`, carries no `longPathAware` manifest, so the
-    /// spawn is refused whatever the host's `LongPathsEnabled` policy says;
-    /// if a manifest is ever added this fails and names that change.
+    /// instead of `The directory name is invalid. (os error 267)`.
+    /// `CreateProcessW` refuses the working directory whatever the host's
+    /// `LongPathsEnabled` policy or the binary's manifest says; if Windows or
+    /// std ever lifts that, this fails and names the change.
     #[cfg(windows)]
     #[test]
     fn native_git_spawn_under_an_overlong_root_names_the_path_limit() -> Result<(), String> {
