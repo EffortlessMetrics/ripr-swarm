@@ -53,9 +53,7 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
     let workspace_text = match fs::read_to_string(WORKSPACE_MANIFEST_PATH) {
         Ok(text) => Some(text),
         Err(err) => {
-            violations.push(format!(
-                "failed to read {WORKSPACE_MANIFEST_PATH}: {err}"
-            ));
+            violations.push(format!("failed to read {WORKSPACE_MANIFEST_PATH}: {err}"));
             None
         }
     };
@@ -67,9 +65,11 @@ pub(crate) fn check_distribution_contract() -> Result<(), String> {
         }
     };
 
-    if let (Some(contract), Some(workspace_text), Some(crate_text)) =
-        (contract.as_ref(), workspace_text.as_deref(), crate_text.as_deref())
-    {
+    if let (Some(contract), Some(workspace_text), Some(crate_text)) = (
+        contract.as_ref(),
+        workspace_text.as_deref(),
+        crate_text.as_deref(),
+    ) {
         violations.extend(evaluate_contract(
             CONTRACT_PATH,
             contract,
@@ -106,12 +106,7 @@ fn evaluate_contract(
         Err(err) => violations.push(err),
     }
 
-    contract::validate_crate_manifest(
-        crate_path,
-        crate_text,
-        &contract.product,
-        &mut violations,
-    );
+    contract::validate_crate_manifest(crate_path, crate_text, &contract.product, &mut violations);
     violations
 }
 
