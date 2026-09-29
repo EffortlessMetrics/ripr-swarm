@@ -2,7 +2,11 @@ use super::related_tests::context::*;
 use super::related_tests::*;
 use super::*;
 use crate::analysis::facts::{FunctionSourceRole, WorkspaceRootAuthority, build_index};
+use crate::analysis::repair_route::{
+    RepairRouteState, is_safe_for_repair_packet, repair_packet_eligibility, repair_route_readiness,
+};
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+use crate::analysis::seam_classification::ClassifiedSeam;
 use crate::analysis::seam_inventory::inventory_seams_from_index;
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass};
 use std::fs;
@@ -13888,23 +13892,225 @@ fn constructor_field_evidence(
     test_source: &str,
     field: &str,
 ) -> Result<(TestGripEvidence, SeamGripClass), String> {
-    let production_path = PathBuf::from("crates/parser/src/hir/lower.rs");
+    let case = constructor_field_case(production, test_path, test_source, field)?;
+    Ok((case.classified.evidence.clone(), case.classified.class))
+}
+
+struct ConstructorFieldCase {
+    index: FixtureIndex,
+    seam: RepoSeam,
+    classified: ClassifiedSeam,
+}
+
+fn constructor_field_case(
+    production: &str,
+    test_path: &str,
+    test_source: &str,
+    field: &str,
+) -> Result<ConstructorFieldCase, String> {
+    constructor_field_case_at(
+        "crates/parser/src/hir/lower.rs",
+        production,
+        test_path,
+        test_source,
+        field,
+    )
+}
+
+fn constructor_field_case_at(
+    production_path: &str,
+    production: &str,
+    test_path: &str,
+    test_source: &str,
+    field: &str,
+) -> Result<ConstructorFieldCase, String> {
+    let production_path = PathBuf::from(production_path);
     let files = vec![
         (production_path.clone(), production),
         (PathBuf::from(test_path), test_source),
     ];
-    let index = index_from_files(&files)?;
-    let seams = inventory_seams_from_index(&[production_path], &index);
+    classified_from_files(&files, &production_path, field)
+}
+
+fn classified_from_files(
+    files: &[(PathBuf, &str)],
+    production_path: &Path,
+    field: &str,
+) -> Result<ConstructorFieldCase, String> {
+    let index = index_from_files(files)?;
+    let seams = inventory_seams_from_index(&[production_path.to_path_buf()], &index);
     let seam = seams
         .iter()
         .find(|seam| {
             seam.kind() == SeamKind::FieldConstruction
                 && record_field_name(seam.expression()) == Some(field.trim_end_matches(':'))
         })
+        .cloned()
         .ok_or_else(|| format!("field-construction seam for `{field}` must be inventoried"))?;
-    let evidence = evidence_for_seam(seam, &index);
-    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
-    Ok((evidence, class))
+    let evidence = evidence_for_seam(&seam, &index);
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    let classified = ClassifiedSeam {
+        seam: seam.clone(),
+        evidence,
+        class,
+    };
+    Ok(ConstructorFieldCase {
+        index,
+        seam,
+        classified,
+    })
+}
+
+const REFRESH_PLAN_PRODUCTION: &str = r#"
+pub struct DiagnosticRefreshPlan {
+    pub suppressed_payload_bytes: usize,
+    pub published_payload_bytes: usize,
+}
+
+pub fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: suppressed,
+        published_payload_bytes: published,
+    }
+}
+"#;
+
+fn refresh_plan_case(test_source: &str) -> Result<ConstructorFieldCase, String> {
+    let path = PathBuf::from("src/diagnostics.rs");
+    let source = format!("{REFRESH_PLAN_PRODUCTION}\n{test_source}");
+    classified_from_files(
+        &[(path.clone(), source.as_str())],
+        &path,
+        "suppressed_payload_bytes",
+    )
+}
+
+fn refresh_plan_split_case(test_source: &str) -> Result<ConstructorFieldCase, String> {
+    constructor_field_case_at(
+        "src/diagnostics.rs",
+        REFRESH_PLAN_PRODUCTION,
+        "tests/refresh.rs",
+        test_source,
+        "suppressed_payload_bytes",
+    )
+}
+
+const WEAK_TWO_BINDING_REFRESH_TEST: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        let changed_plan = diagnostic_refresh_plan(0, 8);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+        assert!(changed_plan.published_payload_bytes > 0);
+    }
+}
+"#;
+
+const WEAK_SINGLE_BINDING_REFRESH_TEST: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#;
+
+const WEAK_SPLIT_REFRESH_TEST: &str = r#"
+#[test]
+fn diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri() {
+    let unchanged = diagnostic_refresh_plan(8, 0);
+    assert!(unchanged.suppressed_payload_bytes > 0);
+}
+"#;
+
+fn required_field(seam: &RepoSeam) -> Result<String, String> {
+    match seam.required_discriminator() {
+        RequiredDiscriminator::FieldValue { field } => Ok(field.clone()),
+        other => Err(format!("expected FieldValue discriminator, got {other:?}")),
+    }
+}
+
+fn route_must_be_ready(case: &ConstructorFieldCase) -> Result<(), String> {
+    let eligibility = repair_packet_eligibility(&case.classified);
+    let readiness = repair_route_readiness(&case.classified);
+    let related = case
+        .classified
+        .evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
+        })
+        .or_else(|| {
+            case.classified
+                .evidence
+                .related_tests
+                .iter()
+                .find(|test| test.test_target.is_some())
+        });
+    let required = required_field(&case.seam)?;
+    let missing = &case.classified.evidence.missing_discriminators;
+    if case.classified.class != SeamGripClass::WeaklyGripped
+        || case.classified.evidence.activate.state != StageState::Yes
+        || case.classified.evidence.discriminate.state != StageState::Weak
+        || !missing.iter().any(|fact| fact.value == required)
+        || related.is_none()
+        || related.is_some_and(|test| test.test_target.is_none())
+        || related.is_some_and(|test| test.relation_reason != RelationReason::DirectOwnerCall)
+        || related.is_some_and(|test| test.oracle_strength != OracleStrength::Weak)
+        || readiness.state != RepairRouteState::Ready
+        || !eligibility.eligible()
+        || !is_safe_for_repair_packet(&case.classified)
+    {
+        return Err(format!(
+            "weak owner-result field observation must complete the producer route: class={:?}, activate={:?}, discriminate={:?}, missing={:?}, related={:?}, readiness={:?}, eligible={}",
+            case.classified.class,
+            case.classified.evidence.activate.state,
+            case.classified.evidence.discriminate.state,
+            missing,
+            related.cloned().map(|test| (
+                test.test_name,
+                test.relation_reason,
+                test.test_target.is_some(),
+                test.oracle_kind.clone(),
+                test.oracle_strength.clone()
+            )),
+            readiness.state,
+            eligibility.eligible()
+        ));
+    }
+    let Some(target) = related.and_then(|test| test.test_target.as_ref()) else {
+        return Err("ready route lost its producer target".to_string());
+    };
+    if target.provenance() != TestTargetProvenance::RustIndexFunction {
+        return Err(format!(
+            "ready route must use indexed target provenance, got {:?}",
+            target.provenance()
+        ));
+    }
+    Ok(())
+}
+
+fn route_must_stay_unready(case: &ConstructorFieldCase, label: &str) -> Result<(), String> {
+    let eligibility = repair_packet_eligibility(&case.classified);
+    if is_safe_for_repair_packet(&case.classified) || eligibility.eligible() {
+        return Err(format!(
+            "{label} must stay non-ready: class={:?}, activate={:?}, missing={:?}, eligible={}",
+            case.classified.class,
+            case.classified.evidence.activate.state,
+            case.classified.evidence.missing_discriminators,
+            eligibility.eligible()
+        ));
+    }
+    Ok(())
 }
 
 const CONSTRUCTOR_FIELD_PRODUCTION: &str = r#"
@@ -15103,6 +15309,610 @@ fn given_constant_not_declared_in_owner_file_then_boundary_is_a_named_limitation
             "an unresolvable constant is a limitation, not an actionable gap: {:?} / {:?}",
             evidence.activate, evidence.missing_discriminators
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn weak_owner_result_field_observation_completes_canonical_route() -> Result<(), String> {
+    let case = refresh_plan_case(WEAK_TWO_BINDING_REFRESH_TEST)?;
+    route_must_be_ready(&case)
+}
+
+#[test]
+fn compact_field_construction_path_emits_compatible_missing_fact() -> Result<(), String> {
+    let case = refresh_plan_case(WEAK_TWO_BINDING_REFRESH_TEST)?;
+    route_must_be_ready(&case)?;
+    let context = CompactGripContext::new(&case.index);
+    let compact = compact_evidence_for_seam(&case.seam, &context);
+    let required = required_field(&case.seam)?;
+    if compact.activate.state != StageState::Yes
+        || !compact
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == required)
+    {
+        return Err(format!(
+            "compact FieldConstruction path must reuse the same missing fact: activate={:?}, missing={:?}",
+            compact.activate.state, compact.missing_discriminators
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_owner_result_field_equality_stays_already_gripped() -> Result<(), String> {
+    let case = constructor_field_case(
+        CONSTRUCTOR_FIELD_PRODUCTION,
+        "crates/parser/tests/lower.rs",
+        r#"
+#[test]
+fn lower_body_preserves_storage() {
+    let statement = lower_ast("item".to_string(), "our".to_string());
+    assert_eq!(statement.storage, "our");
+}
+"#,
+        "storage",
+    )?;
+    let readiness = repair_route_readiness(&case.classified);
+    if case.classified.class != SeamGripClass::StronglyGripped
+        || case.classified.evidence.discriminate.state != StageState::Yes
+        || readiness.state != RepairRouteState::AlreadyGripped
+        || is_safe_for_repair_packet(&case.classified)
+    {
+        return Err(format!(
+            "exact field equality must stay AlreadyGripped: class={:?}, discriminate={:?}, readiness={:?}, eligible={}",
+            case.classified.class,
+            case.classified.evidence.discriminate.state,
+            readiness.state,
+            repair_packet_eligibility(&case.classified).eligible()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn proximity_related_test_with_unknown_activation_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_name_only_observes_other_plan() {
+        let other = other_plan();
+        assert!(other.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "a name-related test with unknown owner activation")?;
+    let required = required_field(&case.seam)?;
+    if case
+        .classified
+        .evidence
+        .missing_discriminators
+        .iter()
+        .any(|fact| fact.value == required)
+        && case.classified.evidence.activate.state != StageState::Yes
+    {
+        return Err(format!(
+            "unknown activation must not grow a compatible missing fact: activate={:?}, missing={:?}",
+            case.classified.evidence.activate.state,
+            case.classified.evidence.missing_discriminators
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_initializer_does_not_credit_owner_result_binding() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+fn wrap(plan: DiagnosticRefreshPlan) -> DiagnosticRefreshPlan { plan }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_wrapped_initializer() {
+        let unchanged = wrap(diagnostic_refresh_plan(8, 0));
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "wrapper(owner()) initializer")
+}
+
+#[test]
+fn unused_owner_call_beside_unrelated_object_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_unused_owner_call() {
+        let _ignored = diagnostic_refresh_plan(1, 0);
+        let other = other_plan();
+        assert!(other.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "unused owner call beside unrelated returned object")
+}
+
+#[test]
+fn shadowed_receiver_before_assertion_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_shadowed_receiver() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        let unchanged = other_plan();
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "receiver shadowed after owner call")
+}
+
+#[test]
+fn reassigned_receiver_before_assertion_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_reassigned_receiver() {
+        let mut unchanged = diagnostic_refresh_plan(8, 0);
+        unchanged = other_plan();
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "receiver reassigned before assertion")
+}
+
+#[test]
+fn field_read_before_binding_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_read_before_binding() {
+        let other = DiagnosticRefreshPlan {
+            suppressed_payload_bytes: 8,
+            published_payload_bytes: 0,
+        };
+        assert!(other.suppressed_payload_bytes > 0);
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        let _keep = unchanged.published_payload_bytes;
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "field read before owner-result binding")
+}
+
+#[test]
+fn nested_closure_binding_outside_assertion_scope_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_closure_local_binding() {
+        let make = || {
+            let unchanged = diagnostic_refresh_plan(8, 0);
+            unchanged
+        };
+        let other = DiagnosticRefreshPlan {
+            suppressed_payload_bytes: 8,
+            published_payload_bytes: 0,
+        };
+        assert!(other.suppressed_payload_bytes > 0);
+        let _keep = make;
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "closure-local owner-result binding")
+}
+
+#[test]
+fn qualified_same_name_callee_without_resolution_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+mod other {
+    pub fn diagnostic_refresh_plan(suppressed: usize, published: usize) -> super::DiagnosticRefreshPlan {
+        super::DiagnosticRefreshPlan {
+            suppressed_payload_bytes: suppressed,
+            published_payload_bytes: published,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_qualified_callee() {
+        let unchanged = other::diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "qualified same-name callee without exact resolution")
+}
+
+#[test]
+fn sibling_field_assertion_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_sibling_field() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.published_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "sibling-field assertion")
+}
+
+#[test]
+fn token_coincident_field_on_other_binding_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_token_collision() {
+        let unchanged = diagnostic_refresh_plan(1, 0);
+        let unchanged_copy = other_plan();
+        assert!(unchanged_copy.suppressed_payload_bytes > 0);
+        let _keep = unchanged.published_payload_bytes;
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "token-coincident field on another object")
+}
+
+#[test]
+fn helper_transfer_owner_result_stays_limited() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+fn helper() -> DiagnosticRefreshPlan {
+    diagnostic_refresh_plan(8, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_via_helper() {
+        let unchanged = helper();
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "helper-transfer result flow")
+}
+
+#[test]
+fn field_overwrite_before_observation_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_field_overwrite() {
+        let mut unchanged = diagnostic_refresh_plan(8, 0);
+        unchanged.suppressed_payload_bytes = 0;
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "field overwrite before observation")
+}
+
+#[test]
+fn method_same_name_callee_without_resolution_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+struct Helper;
+
+impl Helper {
+    fn diagnostic_refresh_plan(&self, suppressed: usize, published: usize) -> DiagnosticRefreshPlan {
+        diagnostic_refresh_plan(suppressed, published)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_method_callee() {
+        let unchanged = Helper.diagnostic_refresh_plan(8, 0);
+        assert!(unchanged.suppressed_payload_bytes > 0);
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "method same-name callee without exact resolution")
+}
+
+#[test]
+fn unrelated_strong_assertion_on_other_object_stays_non_ready() -> Result<(), String> {
+    let case = refresh_plan_case(
+        r#"
+pub fn other_plan() -> DiagnosticRefreshPlan {
+    DiagnosticRefreshPlan {
+        suppressed_payload_bytes: 8,
+        published_payload_bytes: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_refresh_plan_unrelated_strong() {
+        let unchanged = diagnostic_refresh_plan(8, 0);
+        let other = other_plan();
+        assert_eq!(other.suppressed_payload_bytes, 8);
+        let _keep = unchanged.published_payload_bytes;
+    }
+}
+"#,
+    )?;
+    route_must_stay_unready(&case, "unrelated strong assertion on another object")
+}
+
+#[test]
+fn changed_test_bytes_invalidate_target_admission() -> Result<(), String> {
+    let case = refresh_plan_case(WEAK_SINGLE_BINDING_REFRESH_TEST)?;
+    route_must_be_ready(&case)?;
+    let Some(test_path) = case
+        .index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.join("src/diagnostics.rs"))
+    else {
+        return Err("fixture lost workspace authority".to_string());
+    };
+    let current = fs::read_to_string(&test_path).map_err(|error| error.to_string())?;
+    fs::write(&test_path, format!("{current}// stale\n")).map_err(|error| error.to_string())?;
+    let evidence = evidence_for_seam(&case.seam, &case.index);
+    let classified = ClassifiedSeam {
+        seam: case.seam.clone(),
+        class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
+        evidence,
+    };
+    if is_safe_for_repair_packet(&classified) {
+        return Err("changed test bytes must not keep a repair packet".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_production_bytes_invalidate_target_admission() -> Result<(), String> {
+    let case = refresh_plan_split_case(WEAK_SPLIT_REFRESH_TEST)?;
+    route_must_be_ready(&case)?;
+    let Some(production_path) = case
+        .index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.join("src/diagnostics.rs"))
+    else {
+        return Err("fixture lost workspace authority".to_string());
+    };
+    let current = fs::read_to_string(&production_path).map_err(|error| error.to_string())?;
+    fs::write(&production_path, format!("{current}// stale\n"))
+        .map_err(|error| error.to_string())?;
+    let evidence = evidence_for_seam(&case.seam, &case.index);
+    let classified = ClassifiedSeam {
+        seam: case.seam.clone(),
+        class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
+        evidence,
+    };
+    if is_safe_for_repair_packet(&classified) {
+        return Err("changed production bytes must not keep a repair packet".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn different_package_identity_invalidates_target_admission() -> Result<(), String> {
+    let mut case = refresh_plan_split_case(WEAK_SPLIT_REFRESH_TEST)?;
+    route_must_be_ready(&case)?;
+    let test_file = PathBuf::from("tests/refresh.rs");
+    let Some(authority) = case.index.workspace_authority.as_mut() else {
+        return Err("fixture lost workspace authority".to_string());
+    };
+    let Some(file) = authority.files.get_mut(&test_file) else {
+        return Err("lost test file authority".to_string());
+    };
+    file.package_identity = "other-package".to_string();
+    let evidence = evidence_for_seam(&case.seam, &case.index);
+    let classified = ClassifiedSeam {
+        seam: case.seam.clone(),
+        class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
+        evidence,
+    };
+    if is_safe_for_repair_packet(&classified) {
+        return Err("different package identity must not keep a repair packet".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn symlink_escape_invalidates_target_admission() -> Result<(), String> {
+    let case = refresh_plan_split_case(WEAK_SPLIT_REFRESH_TEST)?;
+    route_must_be_ready(&case)?;
+    let Some(authority) = case.index.workspace_authority.as_ref() else {
+        return Err("fixture lost workspace authority".to_string());
+    };
+    let test_path = authority.root.join("tests/refresh.rs");
+    let outside = authority.root.parent().map(|parent| {
+        parent.join(format!(
+            "ripr-1981-outside-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ))
+    });
+    let Some(outside) = outside else {
+        return Err("could not place an outside path".to_string());
+    };
+    fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
+    let escaped = outside.join("refresh.rs");
+    let current = fs::read_to_string(&test_path).map_err(|error| error.to_string())?;
+    fs::write(&escaped, &current).map_err(|error| error.to_string())?;
+    fs::remove_file(&test_path).map_err(|error| error.to_string())?;
+    if let Err(error) = symlink_file(&escaped, &test_path) {
+        let _ = fs::remove_dir_all(&outside);
+        let privilege_missing = error.kind() == std::io::ErrorKind::PermissionDenied
+            || error.raw_os_error() == Some(1314);
+        if privilege_missing {
+            eprintln!(
+                "skipping symlink containment check: fixture creation is not permitted ({error})"
+            );
+            return Ok(());
+        }
+        return Err(format!(
+            "symlink containment fixture could not be created: {error}"
+        ));
+    }
+    let evidence = evidence_for_seam(&case.seam, &case.index);
+    let classified = ClassifiedSeam {
+        seam: case.seam.clone(),
+        class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
+        evidence,
+    };
+    let _ = fs::remove_dir_all(&outside);
+    if is_safe_for_repair_packet(&classified) {
+        return Err("symlink escape must not keep a repair packet".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn absent_workspace_authority_invalidates_target_admission() -> Result<(), String> {
+    let mut case = refresh_plan_case(WEAK_SINGLE_BINDING_REFRESH_TEST)?;
+    route_must_be_ready(&case)?;
+    case.index.workspace_authority = None;
+    let evidence = evidence_for_seam(&case.seam, &case.index);
+    let classified = ClassifiedSeam {
+        seam: case.seam.clone(),
+        class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
+        evidence,
+    };
+    if is_safe_for_repair_packet(&classified) {
+        return Err("absent authority must not keep a repair packet".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn duplicate_evidence_function_identity_invalidates_target() -> Result<(), String> {
+    let mut case = refresh_plan_case(WEAK_SINGLE_BINDING_REFRESH_TEST)?;
+    route_must_be_ready(&case)?;
+    let file = PathBuf::from("src/diagnostics.rs");
+    let Some(facts) = case.index.files.get_mut(&file) else {
+        return Err("lost indexed file facts".to_string());
+    };
+    let Some(function) = facts.functions.iter().find(|function| {
+        function.name
+            == "diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri"
+    }) else {
+        return Err("lost the evidence-role test function".to_string());
+    };
+    let duplicate = function.clone();
+    facts.functions.push(duplicate.clone());
+    case.index.functions.push(duplicate);
+    let evidence = evidence_for_seam(&case.seam, &case.index);
+    let classified = ClassifiedSeam {
+        seam: case.seam.clone(),
+        class: crate::analysis::seam_classification::classify_seam(&case.seam, &evidence),
+        evidence,
+    };
+    if is_safe_for_repair_packet(&classified) {
+        return Err(
+            "duplicate evidence-function identity must not keep a repair packet".to_string(),
+        );
     }
     Ok(())
 }

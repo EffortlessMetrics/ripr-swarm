@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Repo-seam `FieldConstruction` evidence now emits a compatible missing
+  `field_value` fact when a parser-backed direct owner-result binding is
+  observed only by a weak field oracle, and only after activation is already
+  known. Exact field equality stays already-gripped; wrappers, helper
+  transfer, shadows, sibling fields, token coincidence, unknown activation,
+  and failed target authority stay non-ready (#1981).
+
 - Security: Rust source discovery skips symlinked `.rs` entries, as the
   Python and TypeScript readers already did. A cloned repository or pull
   request that committed `src/zero.rs -> /dev/zero` made `ripr check` read

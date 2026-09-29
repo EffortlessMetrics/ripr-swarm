@@ -3,6 +3,16 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Repo-seam FieldConstruction missing facts need parser-backed owner-result identity (#1981)
+
+`CallFact`, `LetBindingFact`, and `ValueEnv` cannot prove that a local is the
+direct return of the seam owner. A nearby test name or a `.field` token on
+another object must not emit a compatible missing discriminator. Derive the
+fact only after activation is already `Yes`; nonempty `missing_discriminators`
+classifies `WeaklyGripped` before `ActivationUnknown`, so an unconditional
+field fact would invent actionability. Keep helper-transfer and qualified or
+method callees as named limitations until a later producer can resolve them.
+
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 
 A rotating family of suite failures under parallel cargo builds (observed

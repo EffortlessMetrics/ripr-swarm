@@ -178,6 +178,21 @@ evidence record names `constructor_field_owner_ambiguous` with repair route
 `analysis/constructor-field-observation`. RIPR must not choose one owner or
 promote the seam from the ambiguous path.
 
+A `field_construction` seam whose related test already activates the owner and
+weakly observes one constructed field on a parser-backed *direct* owner-result
+binding emits a compatible `RequiredDiscriminator::FieldValue` missing fact
+after that activation decision is known. The fact value is the seam's existing
+field identity; the producer must not invent a concrete expected value. The
+binding's initializer must *be* a captured call of the exact owner (a bare
+identifier callee), not a wrapper, method, qualified path, helper-transfer, or
+an expression that merely contains the call. Credit a later field read only in
+the same supported function scope and only before shadow, reassignment, field
+overwrite, or mutable escape. Exact owner-result field equality stays
+already-gripped and must not grow a missing fact. A name-related or
+proximity-related test with unknown owner activation must not receive a missing
+fact that would reclassify the seam as weakly gripped. Helper-transfer and
+unresolved callees remain named limitations, not ready repair routes.
+
 ## Non-Goals
 
 This spec does not require:
@@ -243,7 +258,13 @@ Tests for this spec will be added as the implementation work items land:
 - `analysis/repo-seam-inventory-v1`: golden tests for seam inventory output
 against fixture repos.
 - `analysis/test-grip-evidence-v1`: tests that evidence attaches to the
-correct seam and cites the correct related tests.
+  correct seam and cites the correct related tests.
+- `analysis/test-grip-evidence` owner-result field facts: a weak direct
+  owner-result field observation completes the producer-owned missing
+  `field_value` fact after known activation; exact field equality stays
+  already-gripped; wrapper, helper-transfer, shadow, reassignment, sibling
+  field, token coincidence, unknown activation, and failed target authority
+  stay non-ready.
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining
