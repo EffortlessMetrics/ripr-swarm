@@ -260,8 +260,8 @@ impl EscapingReach {
     /// Scans the workspace, or `None` when any Rust file in it cannot be
     /// scanned completely, or the scan is cut short. Files a symlinked
     /// directory reaches are not listed; the symlink alias covers them.
-    /// Directory listing reads the working tree, so a file that exists only
-    /// at `HEAD` is not scanned here.
+    /// Under a committed-source overlay, files deleted from the working tree
+    /// are scanned from `HEAD`.
     fn scan(workspace_root: &Path) -> Option<Self> {
         let mut files = Vec::new();
         let mut symlink_targets = Vec::new();
@@ -289,6 +289,15 @@ impl EscapingReach {
                 } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
                     files.push(lexical(&normalize(&path)));
                 }
+            }
+        }
+        // A committed-history run reads `HEAD`: a file deleted from the
+        // working tree still belongs to the committed tree.
+        for relative in
+            crate::analysis::committed_source::committed_paths_missing_on_disk(workspace_root)
+        {
+            if relative.ends_with(".rs") {
+                files.push(lexical(&normalize(&workspace_root.join(relative))));
             }
         }
         let mut roots = Vec::new();
@@ -988,6 +997,47 @@ mod tests {
             context.module_graph_orphans.is_empty(),
             "{:?}",
             context.module_graph_orphans
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn escaping_scan_reads_committed_files_missing_from_disk() -> Result<(), String> {
+        // Re-review on #4556: at `HEAD`, `a/src/gen.rs` reaches `b`'s
+        // undeclared file through `#[path]`; the working tree deleted it.
+        let root = fixture(
+            "committed-missing",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers=['a','b']\n"),
+                ("a/Cargo.toml", MANIFEST),
+                ("a/src/lib.rs", "mod gen;\n"),
+                ("b/Cargo.toml", MANIFEST),
+                ("b/src/lib.rs", ""),
+                ("b/src/reached.rs", ""),
+            ],
+        )?;
+        let worktree = evidence_for(&root, &["b/src/reached.rs"]);
+        assert!(
+            worktree
+                .module_graph_orphans
+                .contains(Path::new("b/src/reached.rs")),
+            "fixture control: the working tree has no edge to the file"
+        );
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [(
+                "a/src/gen.rs",
+                Some(b"#[path = \"../../b/src/reached.rs\"]\nmod reached;\n".as_slice()),
+            )],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || evidence_for(&root, &["b/src/reached.rs"]),
+        );
+        assert!(
+            committed.module_graph_orphans.is_empty(),
+            "{:?}",
+            committed.module_graph_orphans
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
