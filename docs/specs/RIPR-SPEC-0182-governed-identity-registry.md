@@ -1,4 +1,4 @@
-# RIPR-SPEC-0181: Governed identity registry and compatibility map
+# RIPR-SPEC-0182: Governed identity registry and compatibility map
 
 Status: proposed
 
