@@ -98,7 +98,7 @@ fn decorator_cases(source: &str, call: &ast::ExprCall) -> Option<Vec<Vec<(String
             Some(_) => {}
         }
     }
-    let names = argnames_list(argnames?)?;
+    let (names, bare_single) = argnames_list(argnames?)?;
     let rows = match argvalues? {
         Expr::List(list) => &list.elts,
         Expr::Tuple(tuple) => &tuple.elts,
@@ -106,7 +106,7 @@ fn decorator_cases(source: &str, call: &ast::ExprCall) -> Option<Vec<Vec<(String
     };
     rows.iter()
         .map(|row| {
-            let values = row_values(row, names.len())?;
+            let values = row_values(row, names.len(), bare_single)?;
             Some(
                 names
                     .iter()
@@ -122,7 +122,12 @@ fn decorator_cases(source: &str, call: &ast::ExprCall) -> Option<Vec<Vec<(String
         .collect()
 }
 
-fn argnames_list(expr: &Expr) -> Option<Vec<String>> {
+/// The argnames, and whether a single-name row is a bare value. pytest
+/// unpacks rows as tuples unless argnames is a string naming exactly one
+/// parameter (`"x"` takes `[1, 2]`; `("x",)` takes `[(1,), (2,)]`).
+fn argnames_list(expr: &Expr) -> Option<(Vec<String>, bool)> {
+    let is_string =
+        matches!(expr, Expr::Constant(constant) if matches!(constant.value, ast::Constant::Str(_)));
     let names: Vec<String> = match expr {
         Expr::Constant(constant) => match &constant.value {
             ast::Constant::Str(text) => text
@@ -136,7 +141,8 @@ fn argnames_list(expr: &Expr) -> Option<Vec<String>> {
         Expr::Tuple(tuple) => string_elements(&tuple.elts)?,
         _ => return None,
     };
-    (!names.is_empty()).then_some(names)
+    let bare_single = is_string && names.len() == 1;
+    (!names.is_empty()).then_some((names, bare_single))
 }
 
 fn string_elements(elements: &[Expr]) -> Option<Vec<String>> {
@@ -152,18 +158,25 @@ fn string_elements(elements: &[Expr]) -> Option<Vec<String>> {
         .collect()
 }
 
-/// The values of one argvalues row, unwrapping `pytest.param(...)`.
-fn row_values(row: &Expr, arity: usize) -> Option<Vec<&Expr>> {
+/// The values of one argvalues row, unwrapping `pytest.param(...)`. A
+/// `pytest.param` with any keyword but `id=` (`marks=` skip or xfail) may
+/// never run as a passing case, so it records nothing.
+fn row_values(row: &Expr, arity: usize, bare_single: bool) -> Option<Vec<&Expr>> {
     if let Expr::Call(call) = row
         && expr_full_name(&call.func)
             .is_some_and(|name| name == "param" || name.ends_with(".param"))
     {
-        if call.args.iter().any(|arg| matches!(arg, Expr::Starred(_))) {
+        if call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)))
+            || call
+                .keywords
+                .iter()
+                .any(|keyword| keyword.arg.as_ref().is_none_or(|arg| arg.as_str() != "id"))
+        {
             return None;
         }
         return (call.args.len() == arity).then(|| call.args.iter().collect());
     }
-    if arity == 1 {
+    if bare_single {
         return (!matches!(row, Expr::Starred(_))).then(|| vec![row]);
     }
     let elements = match row {
@@ -228,6 +241,15 @@ mod tests {
     }
 
     #[test]
+    fn single_name_sequence_argnames_unpack_their_rows() {
+        let source = "@pytest.mark.parametrize((\"a\",), [(1,), [2]])\ndef test_x(a):\n    pass\n";
+        assert_eq!(
+            cases(source),
+            Some(vec![pairs(&[("a", "1")]), pairs(&[("a", "2")])])
+        );
+    }
+
+    #[test]
     fn stacked_decorators_form_a_product() {
         let source = "@pytest.mark.parametrize(\"a\", [1, 2])\n@pytest.mark.parametrize(\"b\", [3])\ndef test_x(a, b):\n    pass\n";
         assert_eq!(
@@ -249,6 +271,11 @@ mod tests {
             "@pytest.mark.parametrize(\"a\", [1], **options)",
             "@pytest.mark.parametrize(\"a\", [1])\n@pytest.mark.parametrize(\"a\", [2])",
             "@pytest.mark.slow",
+            // A skipped or xfail case may never run as a passing case.
+            "@pytest.mark.parametrize(\"a\", [1, pytest.param(0, marks=pytest.mark.skip)])",
+            "@pytest.mark.parametrize(\"a\", [pytest.param(0, marks=[pytest.mark.xfail])])",
+            // pytest unpacks rows for a list/tuple argnames, even of one name.
+            "@pytest.mark.parametrize([\"a\"], [1, 2])",
         ] {
             let source = format!("{decorator}\ndef test_x(a, b=0):\n    pass\n");
             assert_eq!(cases(&source), None, "{decorator}");

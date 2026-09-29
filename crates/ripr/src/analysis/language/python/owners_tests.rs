@@ -17,7 +17,7 @@ use rustpython_parser::{
     ast::{self, Expr, Ranged, Stmt},
     text_size::TextRange,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 #[cfg(test)]
@@ -268,7 +268,10 @@ pub(super) fn collect_tests_from_statements(
                     decorators: decorator_names(&function.decorator_list),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
-                    parametrize: parametrize_cases(source, &function.decorator_list),
+                    // pytest does not parametrize unittest methods.
+                    parametrize: (framework == "pytest")
+                        .then(|| parametrize_cases(source, &function.decorator_list))
+                        .flatten(),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(
@@ -295,7 +298,10 @@ pub(super) fn collect_tests_from_statements(
                     decorators: decorator_names(&function.decorator_list),
                     fixtures: fixture_parameter_names(&function.args, framework),
                     parametrized: is_parametrized(&function.decorator_list),
-                    parametrize: parametrize_cases(source, &function.decorator_list),
+                    // pytest does not parametrize unittest methods.
+                    parametrize: (framework == "pytest")
+                        .then(|| parametrize_cases(source, &function.decorator_list))
+                        .flatten(),
                     framework,
                     assertions: collect_assertions_from_statements(&function.body, source),
                     constant_rebinding: python_test_rebinding(
@@ -314,6 +320,7 @@ pub(super) fn collect_tests_from_statements(
                 {
                     let class_name = class.name.to_string();
                     let nested_class_context = qualified_test_name(class_context, &class_name);
+                    let first = out.len();
                     collect_tests_from_statements(
                         file,
                         source,
@@ -323,6 +330,24 @@ pub(super) fn collect_tests_from_statements(
                         imports,
                         out,
                     );
+                    // A mixin method that every collected subclass overrides
+                    // never runs.
+                    if let Some(hidden) = local_classes.hidden.get(class.name.as_str()) {
+                        let mut index = first;
+                        while index < out.len() {
+                            if out[index].qualified_name
+                                == qualified_test_name(
+                                    Some(&nested_class_context),
+                                    &out[index].name,
+                                )
+                                && hidden.contains(out[index].name.as_str())
+                            {
+                                out.remove(index);
+                            } else {
+                                index += 1;
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -475,19 +500,28 @@ fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
 struct LocalTestClasses<'a> {
     unittest: BTreeSet<&'a str>,
     mixins: BTreeSet<&'a str>,
+    /// Per mixin that is not itself collected, the test methods every
+    /// collected subclass overrides.
+    hidden: BTreeMap<&'a str, BTreeSet<&'a str>>,
 }
 
 impl<'a> LocalTestClasses<'a> {
     fn of(statements: &'a [Stmt]) -> Self {
-        let classes: Vec<(&'a str, Vec<String>, bool)> = statements
+        let class_defs: Vec<&'a ast::StmtClassDef> = statements
             .iter()
             .filter_map(|stmt| match stmt {
-                Stmt::ClassDef(class) => Some((
+                Stmt::ClassDef(class) => Some(class),
+                _ => None,
+            })
+            .collect();
+        let classes: Vec<(&'a str, Vec<String>, bool)> = class_defs
+            .iter()
+            .map(|class| {
+                (
                     class.name.as_str(),
                     class.bases.iter().filter_map(expr_full_name).collect(),
                     is_unittest_class(class),
-                )),
-                _ => None,
+                )
             })
             .collect();
         let mut found = Self::default();
@@ -506,8 +540,13 @@ impl<'a> LocalTestClasses<'a> {
                 }
             }
         }
+        let is_pytest_collected = |name: &str| {
+            class_defs
+                .iter()
+                .any(|class| class.name.as_str() == name && is_pytest_class(class))
+        };
         for (name, bases, _) in &classes {
-            if found.unittest.contains(name) || name.starts_with("Test") {
+            if found.unittest.contains(name) || is_pytest_collected(name) {
                 for base in bases {
                     if let Some((mixin, _, _)) = classes
                         .iter()
@@ -531,12 +570,59 @@ impl<'a> LocalTestClasses<'a> {
             })
             .collect();
         found.unittest.extend(unittest_mixins);
+        let collected = |name: &str| found.unittest.contains(name) || is_pytest_collected(name);
+        let mut hidden = BTreeMap::new();
+        for mixin in found
+            .mixins
+            .iter()
+            .copied()
+            .filter(|mixin| !collected(mixin))
+        {
+            let mut overridden: Option<BTreeSet<&'a str>> = None;
+            for class in class_defs.iter().filter(|class| {
+                collected(class.name.as_str())
+                    && class
+                        .bases
+                        .iter()
+                        .filter_map(expr_full_name)
+                        .any(|base| base == mixin)
+            }) {
+                let own = test_method_names(class);
+                overridden = Some(match overridden {
+                    Some(seen) => seen.intersection(&own).copied().collect(),
+                    None => own,
+                });
+            }
+            if let Some(overridden) = overridden.filter(|set| !set.is_empty()) {
+                hidden.insert(mixin, overridden);
+            }
+        }
+        found.hidden = hidden;
         found
     }
 }
 
+/// pytest collects `Test*` classes, except one defining `__init__`.
 fn is_pytest_class(class: &ast::StmtClassDef) -> bool {
     class.name.as_str().starts_with("Test")
+        && method_names_with(class, |name| name == "__init__").is_empty()
+}
+
+fn test_method_names(class: &ast::StmtClassDef) -> BTreeSet<&str> {
+    method_names_with(class, |name| name.starts_with("test"))
+}
+
+fn method_names_with(class: &ast::StmtClassDef, keep: impl Fn(&str) -> bool) -> BTreeSet<&str> {
+    class
+        .body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.as_str()),
+            Stmt::AsyncFunctionDef(function) => Some(function.name.as_str()),
+            _ => None,
+        })
+        .filter(|name| keep(name))
+        .collect()
 }
 
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {

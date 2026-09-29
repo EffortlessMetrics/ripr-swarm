@@ -288,6 +288,22 @@ class UnusedMixin(object):
 class Helper:
     def test_not_a_test_class(self):
         helper()
+
+class CheckMixin:
+    def test_shared(self):
+        helper()
+    def test_overridden(self):
+        helper()
+
+class TestFirst(CheckMixin):
+    def test_overridden(self):
+        pass
+
+class TestWithInit(CheckMixin):
+    def __init__(self):
+        pass
+    def test_never_collected(self):
+        helper()
 "#,
     );
     let collected: Vec<(&str, &str)> = tests
@@ -300,6 +316,8 @@ class Helper:
             ("TzFoldMixin.testFoldPositiveUTCOffset", "unittest"),
             ("GettzTest.testGettz", "unittest"),
             ("ZoneInfoGettzTest.testZoneInfoNewInstance", "unittest"),
+            ("CheckMixin.test_shared", "pytest"),
+            ("TestFirst.test_overridden", "pytest"),
         ]
     );
 }

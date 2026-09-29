@@ -37,11 +37,13 @@
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
 use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
-    call_arglists_with_offsets, call_segment_keyword_name, split_top_level_args,
+    call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
+    split_top_level_args,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, import_source_module_matches_owner, owner_module_callees,
-    owner_module_paths, strongest_assertion, test_body_binds_local,
+    PythonRelatedCandidate, import_source_module_matches_owner, is_python_identifier_char,
+    owner_module_callees, owner_module_paths, python_text_hides_code, strongest_assertion,
+    test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
@@ -630,6 +632,7 @@ fn bind_call_arguments(
             .as_ref()
             .is_some_and(|parametrize| parametrize.binds(value))
             && !test_body_binds_local(test, value)
+            && !case_name_may_be_rebound(&test.body_text, value)
         {
             case_arguments.push((name, value.to_string()));
         }
@@ -801,4 +804,100 @@ fn canonical_decimal(text: &str) -> Option<String> {
     } else {
         magnitude
     })
+}
+
+/// Whether a parametrize argname may name something other than the case
+/// value where the owner call reads it (#4612 review). Beyond the ordinary
+/// rebinding forms, any nested scope (`lambda`, `def`, `class`) may shadow it
+/// with a parameter, and a tuple or loop target (`a, x = ...`, `for i, x in`),
+/// an `import`, `global`, `nonlocal`, `del` or `case` line may rebind it.
+/// Fails closed: an unreadable header or any such shape counts as rebound.
+fn case_name_may_be_rebound(test_text: &str, name: &str) -> bool {
+    let Some(body) = test_body_after_header(test_text) else {
+        return true;
+    };
+    let live_words = |word: &str| -> Vec<usize> {
+        body.match_indices(word)
+            .map(|(idx, _)| idx)
+            .filter(|&idx| {
+                let end = idx + word.len();
+                !body[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == '.' || is_python_identifier_char(ch))
+                    && !body[end..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_python_identifier_char)
+                    && !python_text_hides_code(body, idx)
+            })
+            .collect()
+    };
+    if ["lambda", "def", "class"]
+        .iter()
+        .any(|keyword| !live_words(keyword).is_empty())
+    {
+        return true;
+    }
+    let mentions = live_words(name);
+    if mentions.is_empty() {
+        return false;
+    }
+    let line_of = |idx: usize| {
+        let start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
+        let end = body[idx..]
+            .find('\n')
+            .map_or(body.len(), |offset| idx + offset);
+        (start, end)
+    };
+    // A loop or comprehension target: the name between `for` and `in`.
+    let in_loop_target = live_words("for").into_iter().any(|for_idx| {
+        let (_, line_end) = line_of(for_idx);
+        let target = &body[for_idx + 3..line_end];
+        let target = target.find(" in ").map_or(target, |end| &target[..end]);
+        mentions
+            .iter()
+            .any(|&idx| idx > for_idx && idx < for_idx + 3 + target.len())
+    });
+    in_loop_target
+        || mentions.iter().any(|&idx| {
+            let (line_start, line_end) = line_of(idx);
+            let line = body[line_start..line_end].trim_start();
+            ["import ", "from ", "global ", "nonlocal ", "del ", "case "]
+                .iter()
+                .any(|keyword| line.starts_with(keyword))
+                || assignment_target_before(&body[line_start..line_end], idx - line_start)
+        })
+}
+
+/// Whether a top-level `=` (not `==`, `<=`, `>=`, `!=`, and not a keyword
+/// argument inside brackets) follows the byte offset `at` on this line.
+fn assignment_target_before(line: &str, at: usize) -> bool {
+    let bytes = line.as_bytes();
+    let mut depth = 0usize;
+    for (idx, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'=' if depth == 0 && idx > at => {
+                let prev = idx.checked_sub(1).map(|prev| bytes[prev]);
+                let next = bytes.get(idx + 1).copied();
+                if next != Some(b'=') && !prev.is_some_and(|prev| b"=<>!".contains(&prev)) {
+                    return true;
+                }
+            }
+            b'#' => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The test function's text after its `def ...(...):` header.
+fn test_body_after_header(text: &str) -> Option<&str> {
+    let def = text.find("def ")?;
+    let open = def + text[def..].find('(')?;
+    let close = matching_call_paren(text, open)?;
+    let colon = close + text[close..].find(':')?;
+    text.get(colon + 1..)
 }

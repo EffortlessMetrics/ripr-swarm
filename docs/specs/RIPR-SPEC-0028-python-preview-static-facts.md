@@ -93,7 +93,9 @@ Test discovery:
 - `unittest.TestCase` subclasses and their default `test`-prefixed methods,
   including classes that reach `TestCase` through a base defined in the same
   file, and the `test`-prefixed methods of a same-file mixin that a collected
-  test class inherits (#4562); an uninherited mixin is not collected
+  test class inherits (#4562); an uninherited mixin is not collected, nor a
+  mixin method that every collected subclass overrides, nor a `Test*` class
+  that defines `__init__` (pytest does not collect it)
 - parametrized tests via `@pytest.mark.parametrize` (recognised
   syntactically)
 - pytest fixture and parameter names captured from test function signatures
@@ -352,9 +354,15 @@ parametrize argname (`bulk_discount(quantity)`) expands into one call per
 generated case, binding each case's literal argvalue (#4559). Cases are
 recorded only when statically certain: string or list/tuple argnames, a
 list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
-unwrapped), stacked decorators as a product of at most 256 cases. Argvalues
-named by a variable, `indirect=`, starred rows, and an argname the test body
-rebinds leave the call unresolved. When no strong related call binds a literal
+unwrapped), stacked decorators as a product of at most 256 cases. A
+single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
+Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
+with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
+unittest method (pytest does not parametrize it), and an argname the test
+body may rebind leave the call unresolved. Any nested `lambda`/`def`/`class`
+in the test, a tuple or loop target naming the argname, and an
+`import`/`global`/`nonlocal`/`del`/`case` line naming it count as a possible
+rebinding. When no strong related call binds a literal
 argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
@@ -412,8 +420,8 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `strong_oracle_observes_owner_call_through_module` (`direct`) credits a free
   function whose strong oracle calls it through a module-identified spelling
   (`utils.sign(0) == 0`, `pkg.utils.sign(...)`, a function-local import) or
-  asserts a local the same test bound once to such a call (`result =
-  utils.sign(0)`; #4567). Those calls also bind boundary activation, so the
+  asserts a local the same test bound once to such a call as its whole value
+  (`result = utils.sign(0)`, not `result = utils.sign(0) or 1`; #4567). Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
 
 These fields are advisory preview evidence; they do not change the

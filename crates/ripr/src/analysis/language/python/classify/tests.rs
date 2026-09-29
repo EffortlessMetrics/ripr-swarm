@@ -495,6 +495,44 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
     Ok(())
 }
 
+/// #4612 review: an on-boundary case does not count as observed when the
+/// case may never run (`marks=` skip), when the name reaching the owner call
+/// may be another binding (a lambda parameter, a tuple or loop target), or
+/// when the test is a unittest method, which pytest does not parametrize.
+#[test]
+fn shadowed_or_unrun_parametrize_cases_are_not_observed() -> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50, pytest.param(100, marks=pytest.mark.skip)])\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    check = lambda quantity: bulk_discount(quantity) == 0.0\n    assert check(50)\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    for _, quantity in [(0, 50)]:\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    _, quantity = (0, 50)\n    assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nimport unittest\nfrom src.subject import bulk_discount\n\nclass TestBulk(unittest.TestCase):\n    @pytest.mark.parametrize(\"quantity\", [100])\n    def test_bulk_discount(self, quantity):\n        self.assertEqual(bulk_discount(quantity), 0.0)\n",
+    ] {
+        let finding = classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?;
+        assert!(
+            !observed(&finding, "quantity == 100"),
+            "{tests}: {finding:?}"
+        );
+    }
+    // Positive control: a keyword argument passing the case name is not a
+    // rebinding, so the on-boundary case is still observed.
+    let finding = classify_case(
+        DISCOUNT_SOURCE,
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [100])\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity=quantity) == 0.0\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert!(observed(&finding, "quantity == 100"), "{finding:?}");
+    Ok(())
+}
+
 /// #4565: `patch.object(module, "owner")` replaces the owner, so the call in
 /// the test hits the mock. It is the same runtime substitution limit as
 /// `monkeypatch.setattr`, in context-manager and decorator form; the same
@@ -542,6 +580,7 @@ fn module_qualified_and_result_local_owner_output_is_observed() -> Result<(), St
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100)\n    assert rate == 0.15\n",
         "from src import subject\n\ndef test_bulk():\n    rate = subject.bulk_discount(100)\n    assert rate == 0.15\n",
         "def test_bulk():\n    from src.subject import bulk_discount\n    assert bulk_discount(100) == 0.15\n",
+        "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(\n        100,\n    )  # whole call\n    assert rate == 0.15\n",
     ] {
         let finding = classify_case(
             DISCOUNT_SOURCE,
@@ -581,6 +620,9 @@ fn module_call_credit_keeps_boundary_and_identity_guards() -> Result<(), String>
     for tests in [
         "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100)\n    rate += 0\n    assert rate == 0.15\n",
         "from src import other\n\ndef test_bulk():\n    assert other.bulk_discount(100) == 0.15\n",
+        // The local holds the owner's result only on some paths.
+        "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100) or 0.15\n    assert rate == 0.15\n",
+        "from src.subject import bulk_discount\n\ndef test_bulk():\n    rate = bulk_discount(100) if FLAG else 0.15\n    assert rate == 0.15\n",
     ] {
         let finding = classify_case(
             DISCOUNT_SOURCE,

@@ -17,7 +17,8 @@ are scoped or reviewed.
   `x > 0` -> `x >= 0` change kept the oracle's `exposed` verdict although the
   mutant survives both cases. Each statically certain parametrize case now
   binds its literal argvalue, so the finding is `weakly_exposed` and names
-  `x == 0` as the missing boundary (#4559).
+  `x == 0` as the missing boundary (#4559). A case marked skip or xfail, or
+  an argname a lambda, loop or tuple target may shadow, binds nothing.
 - Python: a test that imports a package and calls the owner through its
   submodule attribute (`import click` then `click.utils._expand_args(...)`)
   is now related to the owner, and so is an owner in a package

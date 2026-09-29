@@ -554,26 +554,42 @@ pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Ve
 /// through one of `callees` (`result = utils.sign(0)`), so an assertion on the
 /// local observes the owner's output (#4567).
 pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<String> {
-    let mut locals: Vec<String> = test
-        .body_text
-        .lines()
-        .filter_map(|line| {
-            let (target, value) = line.trim().split_once('=')?;
-            let target = target.trim();
-            let value = value.trim_start();
-            (super::static_limits::is_simple_python_identifier(target)
-                && !value.starts_with('=')
-                && callees.iter().any(|callee| {
-                    value
-                        .strip_prefix(callee.as_str())
-                        .is_some_and(|rest| rest.trim_start().starts_with('('))
-                })
-                && assignment_count(&test.body_text, target) == 1
-                && !binds_other_than_assignment(test, target)
-                && !test.fixtures.iter().any(|fixture| fixture == target))
-            .then(|| target.to_string())
-        })
-        .collect();
+    let body = test.body_text.as_str();
+    let mut locals = Vec::new();
+    let mut line_start = 0usize;
+    for line in body.split_inclusive('\n') {
+        let start = line_start;
+        line_start += line.len();
+        let Some(eq) = line.find('=') else {
+            continue;
+        };
+        let (target, value) = (line[..eq].trim(), &line[eq + 1..]);
+        let value_start = start + eq + 1 + (value.len() - value.trim_start().len());
+        let value = value.trim_start();
+        // The whole assigned value must be the owner call, so the local holds
+        // its result on every path (`r = sign(0)`, not `r = sign(0) or 1`).
+        let is_whole_call = callees.iter().any(|callee| {
+            value.strip_prefix(callee.as_str()).is_some_and(|rest| {
+                let open = value_start + callee.len() + (rest.len() - rest.trim_start().len());
+                rest.trim_start().starts_with('(')
+                    && super::no_behavior::matching_call_paren(body, open).is_some_and(|close| {
+                        let after = body[close + 1..].split('\n').next().unwrap_or_default();
+                        let after = after.trim();
+                        after.is_empty() || after.starts_with('#')
+                    })
+            })
+        });
+        if super::static_limits::is_simple_python_identifier(target)
+            && !value.starts_with('=')
+            && is_whole_call
+            && !python_text_hides_code(body, start + (line.len() - line.trim_start().len()))
+            && assignment_count(body, target) == 1
+            && !binds_other_than_assignment(test, target)
+            && !test.fixtures.iter().any(|fixture| fixture == target)
+        {
+            locals.push(target.to_string());
+        }
+    }
     locals.sort();
     locals.dedup();
     locals
@@ -1154,7 +1170,7 @@ fn is_dotted_python_identifier(name: &str) -> bool {
 /// Whether `idx` sits in a comment or string: a `#` or an open quote earlier on
 /// the same line, or an open triple-quoted string (docstring) from an earlier
 /// line.
-fn python_text_hides_code(text: &str, idx: usize) -> bool {
+pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
     python_prefix_hides_code(line_prefix_before(text, idx))
         || inside_triple_quoted_string(text, idx)
 }
