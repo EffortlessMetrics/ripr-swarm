@@ -81,7 +81,12 @@ impl AttributedArchive {
 
     pub(crate) fn install(self, owned_root: &Path) -> Result<InstalledCandidate, String> {
         self.revalidate()?;
-        let extracted = owned_root.join("extracted");
+        // Cargo 1.95 stops workspace ancestor discovery at target/package.
+        // Keep attributed manifests unchanged while isolating this owned extraction.
+        let package_boundary = owned_root.join("target/package");
+        std::fs::create_dir_all(&package_boundary)
+            .map_err(|error| format!("create owned Cargo package boundary: {error}"))?;
+        let extracted = package_boundary.join("extracted");
         std::fs::create_dir(&extracted)
             .map_err(|error| format!("create owned extraction root: {error}"))?;
         for (path, file) in &self.inventory {
