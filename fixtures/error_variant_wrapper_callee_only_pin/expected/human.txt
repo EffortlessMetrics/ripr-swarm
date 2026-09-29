@@ -11,12 +11,15 @@ Start here:
   State: top_gap
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
   File: fixtures/error_variant_wrapper_callee_only_pin/input/src/lib.rs:26
-  Static exposure: weakly_exposed (warning, confidence 0.92)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
   Missing discriminator: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
   Related test: tests/errors.rs:4 try_parse_summary_pins_malformed_source
-  Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing…
+  Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically
+    establish that this boxed wrapper conversion carries the callee's error variant, so an existing
+    exact downcast witness is not statically creditable. Verify via real mutation testing or deeper
+    conversion modeling.
   Evidence:
     - reach yes: Related tests appear to reach parse_summary: try_parse_summary_pins_malformed_source
     - infection yes: Reachable tests can plausibly activate this changed behavior

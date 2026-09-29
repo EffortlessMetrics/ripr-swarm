@@ -15,11 +15,13 @@ Start here:
   File: src/pricing.ts:6
   Language: typescript
   Language status: preview
-  Static exposure: no_static_path (warning, confidence 0.40)
-  Why no_static_path: no related test was found that reaches this change
+  Static exposure: no path (no_static_path, warning, confidence 0.40)
+  Why no path: no related test was found that reaches this change
   Changed behavior: export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };
   Missing discriminator: No trusted TypeScript module-initializer observer for `DEFAULT_FEE_RULE`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but…
-  Next step: TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer…
+  Next step: TypeScript preview advisory: module initializer observer is missing context; add a
+    direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer
+    when safe, and keep helper-derived or dynamic initialization evidence advisory.
   Evidence:
     - reach no: 0 related test(s) found for owner `DEFAULT_FEE_RULE`
     - infection unknown: TypeScript preview adapter does not yet model infection.
@@ -30,7 +32,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
 
 Hidden:
-  1 lower-priority finding(s) omitted from default human output.
+  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

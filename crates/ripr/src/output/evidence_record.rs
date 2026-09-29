@@ -506,7 +506,7 @@ pub(crate) fn actionability_for(
             ),
             RepairRouteState::Ready if related_test => (
                 "actionable_related_test_extension",
-                "extend the nearest related test with the missing discriminator",
+                "add a focused test with the missing discriminator next to the nearest related test",
             ),
             RepairRouteState::Ready if missing_discriminator || candidate_values => (
                 "actionable_focused_test",
@@ -1789,6 +1789,7 @@ mod tests {
                         owner: None,
                     }),
                 }],
+                new_test_target: None,
             },
             seam,
             class,
@@ -1851,6 +1852,7 @@ mod tests {
                     reason: "external TypeScript oracle visibility is unresolved".to_string(),
                     flow_sink: None,
                 }],
+                new_test_target: None,
             },
             seam,
             class,
@@ -1919,6 +1921,7 @@ mod tests {
                 discriminate: stage(StageState::Weak, "broad assertion mentions target"),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                new_test_target: None,
             },
             seam,
             class: SeamGripClass::ActivationUnknown,
