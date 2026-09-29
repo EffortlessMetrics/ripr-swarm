@@ -3104,12 +3104,12 @@ mod tests {
         ] {
             for missing in [None, Some("amount == discount_threshold")] {
                 let reason = reason_for(entry, state, missing);
-                if !reason.contains(&format!("Static evidence state is {state}"))
-                    || reason.contains("a focused test can strengthen")
-                    || reason.contains("names missing discriminator")
-                {
+                let expected = format!(
+                    "Static evidence state is {state}; no repair test is offered by this card. Inspect the producer-owned evidence and policy state."
+                );
+                if reason != expected {
                     return Err(format!(
-                        "non-actionable state {state} gained repair copy: {reason}"
+                        "non-actionable state {state} changed: expected {expected}, got {reason}"
                     ));
                 }
             }
@@ -3123,9 +3123,13 @@ mod tests {
             ));
         }
         let fallback = reason_for(entry, "actionable", None);
-        if !fallback.contains("a focused test can strengthen the named seam.") {
+        let expected_fallback = format!(
+            "Static evidence class is {}; a focused test can strengthen the named seam.",
+            entry.seam.class.as_str()
+        );
+        if fallback != expected_fallback {
             return Err(format!(
-                "actionable fallback reason lost its repair guidance: {fallback}"
+                "actionable fallback reason changed: expected {expected_fallback}, got {fallback}"
             ));
         }
         Ok(())
