@@ -1855,10 +1855,8 @@ fn lexical_fallback_limitations<'a>(
     };
     let mut limitations = Vec::new();
     for path in changed_paths {
-        let Some(facts) = index
-            .files
-            .get(path)
-            .filter(|facts| facts.used_lexical_fallback)
+        let Some(facts) =
+            rust_index::find_file_facts(index, path).filter(|facts| facts.used_lexical_fallback)
         else {
             continue;
         };
