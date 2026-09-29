@@ -9636,6 +9636,8 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_call_assert_eq_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_test_split_calls_do_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::let_bound_boundary_call_asserted_later_pairs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::typed_let_bound_boundary_call_asserted_later_pairs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::let_binding_name_requires_keyword_boundary_and_allows_type_ascription",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::two_parameter_equal_args_in_assert_eq_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::weak_assertion_on_boundary_call_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::activation_equality_fact_pairs_when_call_args_are_not_probe_literals"

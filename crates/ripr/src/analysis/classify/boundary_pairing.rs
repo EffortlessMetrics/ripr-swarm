@@ -134,7 +134,15 @@ fn let_binding_name_for_call(
 
 fn let_binding_name(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    let rest = trimmed.strip_prefix("let")?.trim_start();
+    let rest = trimmed.strip_prefix("let")?;
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    let rest = rest.trim_start();
     let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
     let name: String = rest
         .chars()
@@ -144,7 +152,9 @@ fn let_binding_name(line: &str) -> Option<String> {
         return None;
     }
     let after = rest.get(name.len()..)?.trim_start();
-    after.starts_with('=').then_some(name)
+    let (before_eq, _) = after.split_once('=')?;
+    let before_eq = before_eq.trim();
+    (before_eq.is_empty() || before_eq.starts_with(':')).then_some(name)
 }
 
 fn owner_call_activates_boundary(
@@ -340,6 +350,54 @@ mod tests {
             ),
             "let got = gate(10); assert_eq!(got, true) must pair"
         );
+    }
+
+    #[test]
+    fn typed_let_bound_boundary_call_asserted_later_pairs() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut bound = test_summary(
+            "bound",
+            "let got: bool = gate(10);\nassert_eq!(got, true);",
+            vec![call("gate", "let got: bool = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        bound.calls[0].line = 1;
+        bound.assertions[0].line = 2;
+        bound.end_line = 3;
+        assert!(
+            has_same_test_boundary_oracle_pairing(
+                &probe,
+                Some(&owner),
+                &[&bound],
+                &ActivationEvidence::default(),
+            ),
+            "let got: bool = gate(10); assert_eq!(got, true) must pair"
+        );
+    }
+
+    #[test]
+    fn let_binding_name_requires_keyword_boundary_and_allows_type_ascription() {
+        assert_eq!(
+            let_binding_name("let got = gate(10);").as_deref(),
+            Some("got")
+        );
+        assert_eq!(
+            let_binding_name("let mut got = gate(10);").as_deref(),
+            Some("got")
+        );
+        assert_eq!(
+            let_binding_name("let got: bool = gate(10);").as_deref(),
+            Some("got")
+        );
+        assert_eq!(
+            let_binding_name("let mut got: bool = gate(10);").as_deref(),
+            Some("got")
+        );
+        assert_eq!(let_binding_name("letter = gate(10);"), None);
+        assert_eq!(let_binding_name("let_got = gate(10);"), None);
+        assert_eq!(let_binding_name("let _ = gate(10);"), None);
     }
 
     #[test]
