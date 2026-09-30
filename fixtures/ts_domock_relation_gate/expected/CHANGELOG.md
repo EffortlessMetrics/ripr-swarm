@@ -1,24 +1,12 @@
 # Golden Output Changes
 
-## Pending — ts_mock_forms_owner_module (1)
-
-Reason:
-RIPR-SPEC-0026: new fixture for #4294, renamed vi import plus typed import() mock of the owner module
-
-Command:
-`cargo xtask goldens bless ts_mock_forms_owner_module --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — ts_mock_forms_owner_module (2)
+## Pending — ts_domock_relation_gate (1)
 
 Reason:
 RIPR-SPEC-0122: bounded human surfaces disclose their windows - related-test and observed-value caps, digest missing-discriminator and related-test totals, Hidden block names omitted findings by file:line (class) with the all-base-side distinction (#4320); RIPR-SPEC-0152: all-base-side runs name base-side evidence instead of a lower-priority framing
 
 Command:
-`cargo xtask goldens bless ts_mock_forms_owner_module --reason "..."`
+`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
 
 Updated:
 - `expected/check.json`

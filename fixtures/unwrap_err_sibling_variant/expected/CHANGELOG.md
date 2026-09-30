@@ -250,3 +250,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_sibling_variant (22)
+
+Reason:
+RIPR-SPEC-0122: bounded human surfaces disclose their windows - related-test and observed-value caps, digest missing-discriminator and related-test totals, Hidden block names omitted findings by file:line (class) with the all-base-side distinction (#4320); RIPR-SPEC-0152: all-base-side runs name base-side evidence instead of a lower-priority framing
+
+Command:
+`cargo xtask goldens bless unwrap_err_sibling_variant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_sibling_variant (23)
+
+Reason:
+RIPR-SPEC-0122: bounded human surfaces disclose their windows - related-test and observed-value caps, digest missing-discriminator and related-test totals, Hidden block names omitted findings by file:line (class) with the all-base-side distinction (#4320); RIPR-SPEC-0152: all-base-side runs name base-side evidence instead of a lower-priority framing
+
+Command:
+`cargo xtask goldens bless unwrap_err_sibling_variant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

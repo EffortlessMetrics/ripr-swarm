@@ -1,6 +1,7 @@
 use crate::app::{CheckOutput, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::{ExposureClass, Finding, LanguageId};
+use crate::output::path::display_path;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
 use std::collections::BTreeSet;
@@ -10,7 +11,11 @@ use super::sections::{one_line, render_finding_digest_with_config};
 pub(crate) struct HumanTriage<'a> {
     pub(crate) state: HumanTriageState,
     pub(crate) selected: Option<&'a Finding>,
-    pub(crate) omitted_findings: usize,
+    /// Every considered (non-suppressed) finding the default human render does
+    /// not show: the lower-ranked candidates plus, when nothing was
+    /// candidate-actionable, all of them. #4320 names them in `Hidden:` by
+    /// `file:line (class)` so a reader can confirm coverage without a rerun.
+    pub(crate) omitted: Vec<&'a Finding>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,13 +54,13 @@ pub(crate) fn select_human_triage<'a>(
         })
         .collect();
     let mut selected = None;
+    let mut considered: Vec<&Finding> = Vec::new();
     let mut visible_findings: usize = 0;
-    let mut considered_findings: usize = 0;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
-        considered_findings += 1;
+        considered.push(finding);
         // Candidate-actionable eligibility (#3281): "Start here" names a
         // current candidate-side obligation. Base-side evidence and
         // unresolved subjects remain counted findings (the hidden-count
@@ -90,10 +95,20 @@ pub(crate) fn select_human_triage<'a>(
             }
         },
     );
+    // #4320: the hidden set is every considered finding except the one
+    // selected finding. Identity (not value equality): all references come
+    // from the same `output.findings` slice.
+    let omitted: Vec<&Finding> = match selected {
+        Some(selected) => considered
+            .into_iter()
+            .filter(|finding| !std::ptr::eq(*finding, selected))
+            .collect(),
+        None => considered,
+    };
     HumanTriage {
         state,
         selected,
-        omitted_findings: considered_findings.saturating_sub(usize::from(selected.is_some())),
+        omitted,
     }
 }
 
@@ -111,7 +126,16 @@ pub(crate) fn render_human_triage(
             "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.\n",
         ),
         HumanTriageState::NoActionableGap => {
-            if triage.selected.is_none() && !output.findings.is_empty() {
+            if triage.selected.is_none() && !triage.omitted.is_empty() {
+                // #4320: findings exist but the #3281 candidate filter hid
+                // every one — the run is all base-side evidence, not a policy
+                // suppression. Claiming suppression contradicts the
+                // suppression block (which listed nothing) and misleads the
+                // reader about what happened to the findings.
+                out.push_str(
+                    "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n",
+                );
+            } else if triage.selected.is_none() && !output.findings.is_empty() {
                 out.push_str(
                     "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable.\n",
                 );
@@ -195,18 +219,52 @@ pub(crate) fn render_human_triage(
     // the dominant case in fixture output. When nothing is omitted, keep only the
     // format pointers under a `More:` heading; the count line stays for the real
     // truncation case, where it is the whole point of the section.
-    if triage.omitted_findings == 0 {
+    //
+    // #4320: when something IS hidden, the block names it — by
+    // `file:line (class)`, so a reader can confirm a file they care about was
+    // covered without a rerun — and distinguishes the all-base-side case, where
+    // nothing was candidate-actionable and a lower-priority framing would
+    // misdescribe the run.
+    if triage.omitted.is_empty() {
         out.push_str("\nMore:\n");
     } else {
         out.push_str("\nHidden:\n");
-        out.push_str(&format!(
-            "  {} lower-priority finding(s) omitted from default human output.\n",
-            triage.omitted_findings
-        ));
+        if triage.selected.is_none() {
+            out.push_str(&format!(
+                "  All {} finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.\n",
+                triage.omitted.len()
+            ));
+        } else {
+            out.push_str(&format!(
+                "  {} lower-priority finding(s) omitted from default human output.\n",
+                triage.omitted.len()
+            ));
+        }
+        let listed = triage.omitted.len().min(HIDDEN_FINDINGS_LISTED);
+        for finding in triage.omitted.iter().take(listed) {
+            out.push_str(&format!(
+                "    - {}:{} ({})\n",
+                display_path(&finding.probe.location.file),
+                finding.probe.location.line,
+                finding.class.as_str()
+            ));
+        }
+        let remaining = triage.omitted.len() - listed;
+        if remaining > 0 {
+            out.push_str(&format!(
+                "    - … and {remaining} more omitted finding(s); every identity is in --format json.\n"
+            ));
+        }
     }
     out.push_str("  Full evidence: rerun with --format human-full\n");
     out.push_str("  Machine data: rerun with --format json\n\n");
 }
+
+/// #4320: the `Hidden:` list names omitted findings so the reader can confirm
+/// coverage without a rerun, but the default surface stays bounded: beyond
+/// this window the list discloses the remainder instead of printing every
+/// identity.
+const HIDDEN_FINDINGS_LISTED: usize = 20;
 
 /// An exposed preview finding has nothing to repair, in any preview language.
 const EXPOSED_PREVIEW_SAFE_ACTION: &str = "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it.\n";

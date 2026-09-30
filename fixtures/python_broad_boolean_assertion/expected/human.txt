@@ -19,7 +19,7 @@ Start here:
   Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/priority.py:is_priority:return_value:return_value:amount>=100
   Changed behavior: return amount >= 100
-  Missing discriminator: Related Python test reaches `is_priority` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the returned value.
+  Missing discriminator (1 of 2): Related Python test reaches `is_priority` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the returned value.
   Related test: tests/test_priority.py:4 test_priority_amount
   Suggested test file: tests/test_priority.py
   Suggested test: test_priority_amount

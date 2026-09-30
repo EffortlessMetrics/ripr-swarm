@@ -14,7 +14,7 @@ Start here:
   Static exposure: weakly_exposed (warning, confidence 0.66)
   Why weakly_exposed: the evidence path is partially complete — see full form for details
   Changed behavior: Ok(build_response(expected_id, trimmed.trim())?)
-  Related test: tests/protocol.rs:4 validates_ready_response
+  Related test (1 of 4): tests/protocol.rs:4 validates_ready_response
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
   Evidence:
     - reach yes: Related tests appear to reach expect_response: validates_ready_response
@@ -27,5 +27,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
+    - fixtures/guarded_result_match_owner_observation/input/src/lib.rs:46 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

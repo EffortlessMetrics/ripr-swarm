@@ -4,6 +4,18 @@ use crate::output::preview_actionability::{
     is_preview_actionability_evidence_line, is_preview_actionability_missing_summary,
 };
 
+/// #4320: the human evidence window shows at most this many related tests per
+/// finding (`--format json` carries more plus `related_tests_total`). Number of
+/// reaching tests is core exposure evidence, so a window that does not say it
+/// is a window reads as the whole evidence.
+const MAX_RELATED_TESTS_SHOWN: usize = 5;
+
+/// #4320: the human evidence window shows at most this many observed values
+/// per finding (`--format json` serializes the full list). Observed values are
+/// the raw material for writing the missing-discriminator test, so an unmarked
+/// cap can hide the one boundary value the reader needs.
+const MAX_OBSERVED_VALUES_SHOWN: usize = 8;
+
 pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
     let mut lines = vec![
         format!(
@@ -42,7 +54,7 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         ));
     }
 
-    for test in finding.related_tests.iter().take(5) {
+    for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
         let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
             "related test {}:{} {} uses {} {} oracle",
@@ -57,12 +69,29 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         }
         lines.push(line);
     }
+    let related_tests_total = finding.related_tests.len();
+    if related_tests_total > MAX_RELATED_TESTS_SHOWN {
+        lines.push(format!(
+            "related tests (showing {MAX_RELATED_TESTS_SHOWN} of {related_tests_total}; more in --format json)"
+        ));
+    }
 
-    for value in finding.activation.observed_values.iter().take(8) {
+    let observed_values_total = finding.activation.observed_values.len();
+    for value in finding
+        .activation
+        .observed_values
+        .iter()
+        .take(MAX_OBSERVED_VALUES_SHOWN)
+    {
         let context = display_label(value.context.as_str());
         lines.push(format!(
             "observed {} value {} at line {}",
             context, value.value, value.line
+        ));
+    }
+    if observed_values_total > MAX_OBSERVED_VALUES_SHOWN {
+        lines.push(format!(
+            "observed values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; full list in --format json)"
         ));
     }
 

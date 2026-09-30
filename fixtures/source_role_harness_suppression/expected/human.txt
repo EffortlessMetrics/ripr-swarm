@@ -15,12 +15,12 @@ Start here:
   Why propagation_unknown: the path from the changed behavior to an observable sink is not statically clear
   Changed behavior: amount >= threshold
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
-  Related test: tests/contract.rs:19 contract_journey
+  Related test (1 of 3): tests/contract.rs:19 contract_journey
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
   Evidence:
     - reach yes: Related tests appear to reach price: contract_journey
     - infection yes: Detected related test input at the changed boundary
-    - 14 more evidence line(s) hidden
+    - 15 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/source_role_harness_suppression/input --diff fixtures/source_role_harness_suppression/diff.patch --mode fast probe:src_lib.rs:predicate:34000fd8
@@ -28,5 +28,6 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
+    - fixtures/source_role_harness_suppression/input/src/lib.rs:1 (static_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -27,6 +27,10 @@ Next: drill into the top finding:
 
 Hidden:
   4 lower-priority finding(s) omitted from default human output.
+    - fixtures/binding_predicate_scope_controls/input/src/lib.rs:12 (static_unknown)
+    - fixtures/binding_predicate_scope_controls/input/src/lib.rs:21 (static_unknown)
+    - fixtures/binding_predicate_scope_controls/input/src/lib.rs:27 (static_unknown)
+    - fixtures/binding_predicate_scope_controls/input/src/lib.rs:34 (static_unknown)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
