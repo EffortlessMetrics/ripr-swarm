@@ -437,7 +437,7 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::given_ungripped_seam_when_packet_is_rendered_then_task_is_write_targeted_test",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::given_strongly_gripped_seam_when_packets_are_requested_then_no_actionable_packet_is_emitted",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::given_related_tests_when_packet_is_rendered_then_oracle_kind_and_strength_are_present",
-  "crates/ripr/src/output/agent_seam_packets.rs::tests::schema_version_is_pinned_to_zero_five",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::schema_version_is_pinned_to_the_current_constant",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::actionable_packet_carries_a_suggested_test_command_marked_not_yet_runnable",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::actionable_packet_states_the_edit_cage_it_will_enforce",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::inspection_packet_carries_an_empty_edit_surface",
@@ -7227,9 +7227,12 @@ tests = [
   "crates/ripr/src/analysis/diff/parse/stream/tests.rs::declared_ranges_reject_line_zero_and_unusable_end_coordinates",
   "crates/ripr/src/analysis/diff/parse/stream/tests.rs::excess_body_counter_overflow_keeps_only_usable_advisory_coordinates",
   "crates/ripr/src/analysis/diff/parse/stream/tests.rs::malformed_hunk_counts_are_not_duplicated_by_later_boundaries",
+  "crates/ripr/src/analysis/diff/parse.rs::tests::line_one_bom_presence_is_recorded_per_path",
   "crates/ripr/src/analysis/diff/parse.rs::tests::parser_rejects_hunk_whose_declared_range_overflows",
   "crates/ripr/src/analysis/diff/parse/stream/tests.rs::complete_declared_hunks_preserve_ordinary_and_quarantined_controls",
   "crates/ripr/tests/cli_smoke.rs::truncated_declared_hunk_is_incomplete_through_file_and_stdin",
+  "crates/ripr/src/analysis/pipeline.rs::tests::bom_only_rewrite_does_not_disclose_eol_churn",
+  "crates/ripr/src/analysis/pipeline.rs::tests::bom_only_rewrite_is_excluded_from_the_eol_pairing",
   "crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_projects_parser_limitation_and_distinguishes_complete_zero",
   "crates/ripr/src/analysis/pipeline.rs::tests::truncated_diff_after_file_header_projects_incomplete_outcome",
   "crates/ripr/src/analysis/pipeline.rs::tests::truncated_section_after_complete_hunk_projects_incomplete_outcome",
@@ -7930,6 +7933,8 @@ spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
   "crates/ripr/src/output/human.rs::tests::digest_next_step_keeps_the_remedy_clause",
   "crates/ripr/src/output/human.rs::tests::digest_next_step_line_counts_its_label_against_the_budget",
+  "crates/ripr/src/output/human.rs::tests::digest_names_all_five_stage_states_and_keeps_the_remainder_disclosure",
+  "crates/ripr/src/output/human.rs::tests::digest_compact_discriminator_token_mirrors_the_full_evidence_line",
   "crates/ripr/src/output/human.rs::tests::human_output_glosses_stop_reasons",
   "crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose",
   "crates/ripr/src/domain/language.rs::tests::wrapper_error_binding_gloss_has_no_whitespace_runs",
@@ -10072,4 +10077,76 @@ outputs = [
 ]
 metrics = [
   "same_test_boundary_oracle_pairing",
+]
+[[behavior]]
+id = "RIPR-SPEC-0187"
+name = "rich command metadata projected into human help and inventories"
+spec = "docs/specs/RIPR-SPEC-0187-command-metadata-human-projection.md"
+tests = [
+  "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
+  "crates/ripr/src/cli/command_metadata.rs::tests::every_public_catalog_row_is_described",
+  "crates/ripr/src/cli/command_metadata.rs::tests::readonly_row_declaring_a_product_write_is_rejected",
+  "crates/ripr/src/cli/command_metadata.rs::tests::write_claim_without_an_output_role_is_rejected",
+  "crates/ripr/src/cli/command_metadata.rs::tests::state_change_without_a_state_target_is_rejected",
+  "crates/ripr/src/cli/command_metadata.rs::tests::mutation_claim_is_rejected_everywhere",
+  "crates/ripr/src/cli/command_metadata.rs::tests::projection_cost_with_analysis_work_is_rejected",
+  "crates/ripr/src/cli/command_metadata.rs::tests::test_run_without_its_compile_is_rejected",
+  "crates/ripr/src/cli/command_metadata.rs::tests::next_route_outside_the_catalog_is_rejected",
+  "crates/ripr/src/cli/command_metadata.rs::tests::runtime_mutation_claim_token_in_summary_is_rejected",
+  "crates/ripr/src/cli/command_metadata.rs::tests::human_surfaces_agree_with_the_typed_tables",
+  "crates/ripr/src/cli/command_metadata.rs::tests::duplicated_help_all_listing_line_is_reported",
+  "crates/ripr/src/cli/command_metadata.rs::tests::hierarchy_doc_commands_resolve_to_catalog_rows",
+  "crates/ripr/src/cli/command_metadata.rs::tests::pinned_task_rows_match_the_hierarchy_doc_labels",
+  "crates/ripr/tests/cli_help_hierarchy.rs::exhaustive_help_marks_non_public_rows_visibly",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/command_metadata.rs",
+  "crates/ripr/src/cli/help/overview.rs",
+  "crates/ripr/src/cli/help.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0187-command-metadata-human-projection.md",
+  "docs/COMMAND_HIERARCHY.md",
+]
+metrics = [
+  "command_metadata_entries",
+  "command_metadata_violations",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0188"
+name = "windows trailing-component root disclosure"
+spec = "docs/specs/RIPR-SPEC-0188-windows-trailing-component-root-disclosure.md"
+tests = [
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_rebound_root_is_accepted_and_disclosed",
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_root_resolving_to_an_existing_file_names_the_condition",
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_unaddressable_root_names_the_normalized_name",
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_metadata_not_found_failure_names_the_normalized_name",
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_interior_rebound_root_is_accepted_and_disclosed",
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_interior_root_resolving_to_a_file_names_the_condition",
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_interior_root_missing_leaf_names_the_stripped_component",
+  "crates/ripr/src/cli/commands_context.rs::tests::windows_interior_and_final_stripped_names_both_components",
+  "crates/ripr/src/cli/commands_context.rs::tests::stripped_component_detection_matches_final_and_interior_components",
+  "crates/ripr/src/cli/commands_context.rs::tests::normalized_path_names_the_written_spelling",
+  "crates/ripr/src/cli/commands_context.rs::tests::plain_directory_root_is_accepted",
+  "crates/ripr/src/cli/commands_context.rs::tests::plain_missing_root_keeps_the_generic_refusal",
+  "crates/ripr/src/cli/commands_context.rs::tests::plain_existing_file_keeps_the_generic_refusal",
+  "crates/ripr/src/cli/commands_context.rs::tests::plain_interior_layout_keeps_the_generic_behavior",
+  "crates/ripr/src/cli/commands_context.rs::tests::stripped_component_detection_rejects_plain_names_and_directory_references",
+]
+code = [
+  "crates/ripr/src/cli/commands_context.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/cli/rerun.rs",
+  "crates/ripr/src/cli/commands/swarm/ingest.rs",
+  "crates/ripr/src/cli/commands/swarm/queue.rs",
+  "crates/ripr/src/cli/commands/swarm/queue_live.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0188-windows-trailing-component-root-disclosure.md",
+]
+metrics = [
+  "windows_root_disclosure_shapes",
 ]

@@ -338,6 +338,13 @@ pub(super) fn print_rerun_help() {
     println!("{RERUN_HELP}");
 }
 
+/// Test-only access to the two rendered human discovery surfaces, for the
+/// projection-agreement checks in `command_metadata` (issue #4823).
+#[cfg(test)]
+pub(crate) fn discovery_surfaces() -> (&'static str, &'static str) {
+    (overview::HELP, overview::HELP_ALL)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -526,6 +533,20 @@ mod tests {
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
+    }
+
+    #[test]
+    fn check_help_names_the_latency_trace_env_and_mode_cost_class() {
+        // #4946(d): every repo-exposure env var a check user can set is
+        // documented on the same "Environment variables:" surface; this one
+        // was the last omission.
+        assert!(CHECK_HELP.contains("RIPR_REPO_EXPOSURE_LATENCY_TRACE"));
+        assert!(CHECK_HELP.contains("emits diagnostic phase/cache"));
+        assert!(CHECK_HELP.contains("Presence enables tracing"));
+        // #4946(c): the --mode entry orients on the cost class, not only the
+        // index scope, so a caller can predict the wall-clock difference.
+        assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
+        assert!(CHECK_HELP.contains("order of magnitude longer"));
     }
 
     #[test]

@@ -53,6 +53,7 @@ map is:
 | `ripr agent brief` | `schema_version` | `0.1` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
+| `ripr agent repair --phase before --json` success stdout | `schema_version` | `0.5` |
 | `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
 | `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
 | `ripr agent status` | `schema_version` | `0.1` |
@@ -320,6 +321,13 @@ identity agree and the analysis-outcome validator accepts the artifact.
 the typed outcome and its `limitations[]` rather than infer completeness from
 `findings` or `probes`. For `unsupported_input` and
 `partial_with_limitations`, zero findings is explicitly not a clean result.
+
+`eol_only_churn` (#4952) is a churn-shape disclosure, not an incomplete-analysis
+limitation: a changed file's lines pair identical before/after text at the same
+positions, so the churn is line-ending-only and probes treat the text as
+unchanged. It is the one limitation kind that may ride on a complete outcome
+(`complete_with_findings` / `complete_no_findings`); every other kind marks the
+outcome incomplete. Human output renders it without the incomplete-scope hedge.
 
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
@@ -7017,8 +7025,9 @@ Field contract:
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
 --result-json <result-json> --authorize --json` is the only explicit process
-execution surface in the agent loop. It accepts one schema `0.5` producer
-envelope containing exactly one packet, and executes only the direct,
+execution surface in the agent loop. It accepts one producer
+envelope carrying the current agent-packet schema version (currently `0.5`)
+containing exactly one packet, and executes only the direct,
 no-network, no-write `ripr agent verify` route. The current ripr executable is
 used; shell text is never interpreted.
 
@@ -14030,9 +14039,32 @@ Field contract:
   in-flight `0.3` contract had not yet closed. `0.4` adds the producer-owned
   `analysis_outcome_status` and `analysis_outcome` envelope so packet
   consumers cannot mistake seam-budget completion for diff-analysis
-  completeness.
+  completeness. `0.5` adds the optional envelope-level `repair_attempt`
+  continuation block (#4329), present only in the `ripr agent repair
+  --phase before` success stdout; every other projection (`ripr agent
+  packet`, `agent-seam-packets-json`, gap-ledger packets) keeps the `0.4`
+  shape and only the version string moves.
   Reason and confidence vocabularies are documented in the
   `repo-exposure.json` field contract above.
+- `repair_attempt` — optional envelope-level continuation block, present
+  only in the `ripr agent repair --phase before --json` success stdout.
+  It names the durable transaction the packet was prepared
+  for so a driver that captures only stdout can complete the before →
+  edit → after loop without reading stderr narration:
+  `attempt_id` (the closed-form repair attempt identity, also the
+  `--attempt` value), `manifest_path` (the durable attempt manifest the
+  after phase consumes), `next_command` (the exact `ripr agent repair …
+  --phase after` command to run after the focused test edit, including
+  the authorization placeholder suffix for trust-bound attempts), and
+  `packet_path` (the root-resolved workflow packet path the document was
+  rendered from, ending in `target/ripr/workflow/agent-packet.json`).
+  Every other envelope member
+  is the retained packet envelope unchanged; the stdout document is not an
+  input to the attempt's digest bindings — the packet file is. Both the
+  document and the stderr narration print only after the attempt is
+  durably published, so a refused preparation never emits a success
+  document. Without `--json`, stdout is a short prose summary whose final
+  line names the same next command.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.

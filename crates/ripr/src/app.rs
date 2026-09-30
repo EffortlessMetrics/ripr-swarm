@@ -47,6 +47,10 @@ pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 /// `forbidden_files`, `must_not_change`, #4330): the packet now states the
 /// cage its repair will enforce, derived from the same recommended target the
 /// cage authority consumes, so the disclosure cannot drift from enforcement.
+/// `0.5` also adds the optional envelope-level `repair_attempt` continuation
+/// block carried by the `ripr agent repair --phase before --json` success
+/// stdout (#4329); every other projection keeps the `0.4` shape and only the
+/// version string moves.
 pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.5";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::check_with_progress;
@@ -69,9 +73,10 @@ pub(crate) use explain::{
     explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_and_navigation_mode,
 };
-pub(crate) use navigation::{FindingNavigation, finding_navigation};
+pub(crate) use navigation::{FindingDrillIn, FindingNavigation, finding_navigation};
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
+    repo_inventory_with_progress,
 };
 
 use crate::analysis::{AnalysisMode, PreviewLanguageAdvisory};
@@ -287,13 +292,18 @@ pub(crate) fn render_check_with_config(
     output::render::render_check_with_config(output, format, config)
 }
 
-pub(crate) fn render_check_with_config_and_navigation(
+/// Renders with navigation while reporting repo-scope progress boundaries to
+/// `progress` for the full-repo audit-path formats (#4945).
+pub(crate) fn render_check_with_config_and_navigation_and_progress(
     output: &CheckOutput,
     format: &OutputFormat,
     config: &RiprConfig,
-    navigation: Option<&FindingNavigation>,
+    drill_in: Option<&FindingDrillIn>,
+    progress: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
-    output::render::render_check_with_config_and_navigation(output, format, config, navigation)
+    output::render::render_check_with_config_and_navigation_and_progress(
+        output, format, config, drill_in, progress,
+    )
 }
 
 #[cfg(test)]
