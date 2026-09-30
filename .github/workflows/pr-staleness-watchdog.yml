@@ -12,26 +12,36 @@ name: PR Staleness Watchdog
 # preferred option (bounded auto-dispatch: a 9-hour dark window costs more
 # than a rare double-run):
 #
-# - Every 30 minutes, list open PRs and, for each head SHA, ask the Actions
-#   API whether routed-rust.yml has ANY run (any event, any status) for that
-#   SHA. Zero runs for the head SHA is the staleness discriminator itself, so
-#   no separate age threshold is maintained.
+# - Every 30 minutes, list open PRs and, for each head SHA, ask the checks
+#   API whether the required `Ripr Rust Small Result` check run exists on
+#   that SHA. Zero runs for the head SHA is one dark cause (#4937), but run
+#   existence alone is not the discriminator: an unrelated `labeled` event
+#   produces a same-workflow run whose result job renames itself to the
+#   non-required `Ripr Rust Small Ignored Label Event` (routed-rust.yml:228;
+#   two of the three runs on #4923's opened head), so coverage is judged by
+#   the presence of the exact check branch protection requires.
 # - Dark heads get one `gh workflow run routed-rust.yml --ref <head branch>`
 #   dispatch (a same-repo PR branch exists on origin by definition). The
 #   dispatched run admits the route unconditionally
 #   (routed-rust.yml:38) and posts `Ripr Rust Small Result` on the head SHA —
-#   exactly what satisfied protection in the #4528 incident.
+#   exactly what satisfied protection in the #4528 incident. The dispatched
+#   route exercises the small gates with workflow_dispatch semantics: the
+#   `pull_request`-scoped PR-evidence steps (rust-gates.yml "PR evidence")
+#   do not re-run, the same evidence level as the manual incident remedy;
+#   wiring PR evidence into the dispatched route is a separate change to the
+#   shared required lane.
 #
 # Bounds:
 # - max 5 dispatches per watchdog run;
 # - drafts are skipped;
 # - fork PRs (head repo != this repository) are skipped, matching
 #   routed-rust.yml's own untrusted-PR guard (routed-rust.yml:61,69);
-# - the pre-dispatch run-existence check dedupes successive sweeps. That check
-#   is racy against run-list propagation right after a dispatch, so the next
-#   sweep could re-dispatch the same head once; the per-run cap plus the
-#   30-minute cadence bound that blast radius to a rare single double-run
-#   instead of the hours-dark alternative.
+# - the pre-dispatch required-check check dedupes successive sweeps. That
+#   check is racy while a dispatched run's check runs are still being
+#   created right after a dispatch, so the next sweep could re-dispatch the
+#   same head once; the per-run cap plus the 30-minute cadence bound that
+#   blast radius to a rare single double-run instead of the hours-dark
+#   alternative.
 #
 # No PR comments are posted: the dispatched run itself delivers the required
 # `Ripr Rust Small Result` check to the PR head, which is the state a human or
@@ -53,6 +63,7 @@ on:
 permissions:
   contents: read
   actions: write
+  checks: read
 
 jobs:
   watchdog:
@@ -72,6 +83,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           WATCHED_WORKFLOW: routed-rust.yml
+          REQUIRED_CHECK: Ripr Rust Small Result
           MAX_DISPATCHES: "5"
         run: |
           set -euo pipefail
@@ -81,7 +93,7 @@ jobs:
           {
             echo "### PR Staleness Watchdog"
             echo ""
-            echo "Dark = no \`$WATCHED_WORKFLOW\` run of any event for the PR head SHA (#4937)."
+            echo "Dark = no \`$REQUIRED_CHECK\` check run on the PR head SHA (#4937)."
             echo "Cap: $MAX_DISPATCHES dispatch(es) per sweep. No PR comments are posted;"
             echo "the dispatched run itself delivers the required \`Ripr Rust Small Result\` check."
             echo ""
@@ -99,9 +111,9 @@ jobs:
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
-              count="$(gh api "repos/$REPOSITORY/actions/workflows/$WATCHED_WORKFLOW/runs?head_sha=$head_sha&per_page=1" --jq '.total_count')"
+              count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
-                disposition="covered ($count run(s) for head)"
+                disposition="covered ($count required check(s) on head)"
               elif [ "$dispatched" -ge "$MAX_DISPATCHES" ]; then
                 disposition="DARK; skip: per-run cap reached"
               else
@@ -109,12 +121,12 @@ jobs:
                 if gh workflow run "$WATCHED_WORKFLOW" --repo "$REPOSITORY" --ref="$head_ref"; then
                   dispatched=$((dispatched + 1))
                   disposition="DARK; dispatched"
-                  # Existence check after dispatch: the pre-dispatch count was
-                  # zero, so any run now listed for this head SHA is the run
-                  # this dispatch created. The list can lag the dispatch by a
-                  # few seconds; when it does, the next sweep's pre-check sees
-                  # the run and dedupes.
-                  new_run="$(gh api "repos/$REPOSITORY/actions/workflows/$WATCHED_WORKFLOW/runs?head_sha=$head_sha&per_page=1" --jq '.workflow_runs[0] | [.id, .html_url] | @tsv' 2>/dev/null || true)"
+                  # Audit-link lookup after dispatch: a run now listed for
+                  # this head SHA is the run this dispatch created. The list
+                  # can lag; an empty list formats as a lone tab under @tsv,
+                  # so the filter must emit nothing instead; the next sweep's
+                  # pre-check dedupes when the run appears later.
+                  new_run="$(gh api "repos/$REPOSITORY/actions/workflows/$WATCHED_WORKFLOW/runs?head_sha=$head_sha&per_page=1" --jq 'if (.workflow_runs | length) == 0 then empty else .workflow_runs[0] | [.id, .html_url] | @tsv end' 2>/dev/null || true)"
                   if [ -n "$new_run" ]; then
                     run_cell="[${new_run%%$'\t'*}](${new_run#*$'\t'})"
                   else

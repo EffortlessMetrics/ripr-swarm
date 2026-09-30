@@ -781,11 +781,15 @@ the `routed-rust.yml` run for a pushed PR head SHA, leaving a PR blocked with
 no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 #4923 ~35 minutes).
 `.github/workflows/pr-staleness-watchdog.yml` runs every 30 minutes, finds open
-same-repo, non-draft PR heads with zero `routed-rust.yml` runs for the head
-SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
-remedy used during the incidents — capped at 5 dispatches per sweep. The next
-sweep's run-existence check dedupes; its racy window after a dispatch is
-bounded by the cap plus the 30-minute cadence. No PR comments are posted: the
+same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
+head SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
+remedy used during the incidents — capped at 5 dispatches per sweep. The
+required check, not run existence, is the discriminator: an unrelated `labeled`
+event produces a same-workflow run whose result job renames itself to the
+non-required `Ripr Rust Small Ignored Label Event` (`routed-rust.yml:228`; two
+of the three runs on #4923's opened head). The next sweep's required-check
+check dedupes; its racy window after a dispatch is bounded by the cap plus the
+30-minute cadence. No PR comments are posted: the
 dispatched run itself delivers the required `Ripr Rust Small Result` check,
 and each sweep's summary table is the audit trail. The alert-only alternative
 (report the dark head instead of dispatching; zero duplicate-gate risk by
@@ -793,8 +797,8 @@ construction) was deferred, not rejected:
 
 ```text
 # To flip to alert-only (issue #4937 option ii): replace the dispatch step in
-# pr-staleness-watchdog.yml with a summary-only report and drop the
-# `actions: write` permission.
+# .github/workflows/pr-staleness-watchdog.yml with a summary-only report and
+# drop the `actions: write` permission.
 ```
 
 ### Self-Hosted Runner Placement
