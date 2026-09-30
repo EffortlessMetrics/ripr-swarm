@@ -13125,9 +13125,16 @@ fn check_workspace_shape() -> Result<(), String> {
 fn check_architecture() -> Result<(), String> {
     let records = read_pipe_records("policy/architecture.txt", 3)?;
     let files = tracked_files()?;
+    let rule_globs = records
+        .iter()
+        .filter(|record| !record[0].starts_with('!'))
+        .map(|record| record[0].as_str())
+        .collect::<Vec<_>>();
     let mut file_texts = Vec::new();
     for file in &files {
-        file_texts.push((file.clone(), read_text_lossy(Path::new(file))?));
+        if rule_globs.iter().any(|glob| glob_matches(glob, file)) {
+            file_texts.push((file.clone(), read_text_lossy(Path::new(file))?));
+        }
     }
     let mut violations = architecture_rule_violations(&records, &file_texts);
 
@@ -13177,7 +13184,7 @@ fn check_architecture() -> Result<(), String> {
             ],
             rerun_command: "cargo xtask check-architecture",
             exception_template: Some(
-                "glob|forbidden_pattern|reason\n!glob|forbidden_pattern|reason (scoped exception: suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)",
+                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)",
             ),
         },
         &violations,
@@ -13186,14 +13193,15 @@ fn check_architecture() -> Result<(), String> {
 
 /// Applies `policy/architecture.txt` records to the tracked file texts.
 /// Plain records are deny rules (`glob|forbidden_pattern|reason`). A record
-/// whose glob is prefixed `!` is a scoped exception
-/// (`!glob|forbidden_pattern|reason`): it suppresses a deny-rule violation
-/// only when BOTH the file path and the exact forbidden pattern match, so one
-/// narrow exception can never weaken a rule for other files or other
-/// patterns (#4146). An exception that suppresses nothing is itself a
-/// violation, mirroring the count-policy stale/orphan convention (#2413):
-/// exception budget that matches nothing is invisible slack, so the entry
-/// must be removed or the denied usage restored.
+/// whose first field is prefixed `!` is a scoped exception
+/// (`!path|forbidden_pattern|reason`): it suppresses a deny-rule violation
+/// only when BOTH the literal file path and the exact forbidden pattern
+/// match. Exception paths are literal tracked-file paths, never globs, so
+/// one entry can never waive a rule for other files or other patterns
+/// (#4146). An exception that suppresses nothing is itself a violation,
+/// mirroring the count-policy stale/orphan convention (#2413): exception
+/// budget that matches nothing is invisible slack, so the entry must be
+/// removed or the denied usage restored.
 fn architecture_rule_violations(
     records: &[Vec<String>],
     file_texts: &[(String, String)],
@@ -13217,8 +13225,8 @@ fn architecture_rule_violations(
             let exception_index =
                 exceptions
                     .iter()
-                    .position(|(exception_glob, exception_pattern, _)| {
-                        exception_pattern == forbidden && glob_matches(exception_glob, path)
+                    .position(|(exception_path, exception_pattern, _)| {
+                        exception_pattern == forbidden && exception_path == path
                     });
             match exception_index {
                 Some(index) => suppressed[index] = true,
@@ -13229,10 +13237,10 @@ fn architecture_rule_violations(
         }
     }
 
-    for ((exception_glob, exception_pattern, _), suppressed) in exceptions.iter().zip(&suppressed) {
+    for ((exception_path, exception_pattern, _), suppressed) in exceptions.iter().zip(&suppressed) {
         if !suppressed {
             violations.push(format!(
-                "!{exception_glob} exception for `{exception_pattern}` is stale: it matches no current architecture violation; remove the entry or restore the denied usage"
+                "!{exception_path} exception for `{exception_pattern}` is stale: it matches no current architecture violation; remove the entry or restore the denied usage"
             ));
         }
     }
@@ -13369,6 +13377,35 @@ mod architecture_rule_tests {
         );
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains(RUNNER_TESTS_PATH));
+    }
+
+    #[test]
+    fn wildcard_exception_suppresses_nothing_and_is_stale() {
+        // Exception paths are literal, never globs: a wildcarded exception
+        // cannot act as a blanket waiver for every matching file.
+        let wildcard = record("!crates/ripr/src/analysis/**|crate::output|temporary waiver");
+        let violations = architecture_rule_violations(
+            &[record(BROAD_RULE), wildcard],
+            &[(
+                RUNNER_TESTS_PATH.to_string(),
+                "crate::output::human::render_finding(&observed);".to_string(),
+            )],
+        );
+        assert_eq!(
+            violations.len(),
+            2,
+            "wildcard exception must neither suppress nor be silently ignored: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(RUNNER_TESTS_PATH))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is stale"))
+        );
     }
 }
 
