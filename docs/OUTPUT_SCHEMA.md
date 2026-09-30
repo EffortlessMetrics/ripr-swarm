@@ -13785,7 +13785,7 @@ schema bump.
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "scope": "repo",
   "packets_total": 12565,
   "packets": [
