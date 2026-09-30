@@ -1533,6 +1533,87 @@ fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() {
     );
 }
 
+/// Small single-crate fixture with `include_unchanged_tests = false` set in
+/// `ripr.toml` plus a one-file diff, for the config-driven exclusion pins.
+/// The tests analyze the live temp tree and may write caches under it, so
+/// they never point the binary at this repository.
+fn config_unchanged_fixture(tag: &str) -> Result<std::path::PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let root = std::env::temp_dir().join(format!("ripr-cli-smoke-{tag}-{stamp}"));
+    std::fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("create src dir: {error}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname=\"ripr-cli-smoke-unchanged\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+    )
+    .map_err(|error| format!("write Cargo.toml: {error}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|error| format!("write src/lib.rs: {error}"))?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[analysis]\ninclude_unchanged_tests = false\n",
+    )
+    .map_err(|error| format!("write ripr.toml: {error}"))?;
+    std::fs::write(
+        root.join("control.diff"),
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n+pub fn over_threshold(amount: i32, threshold: i32, margin: i32) -> bool {\n",
+    )
+    .map_err(|error| format!("write control.diff: {error}"))?;
+    Ok(root)
+}
+
+#[test]
+fn check_config_driven_no_unchanged_tests_names_the_config_knob() -> Result<(), String> {
+    // #4946(a) review: when the exclusion comes from ripr.toml rather than
+    // the CLI flag, the note must name the config knob and its repair route;
+    // "drop the flag" is unreachable advice because there is no positive CLI
+    // counterpart, so the flag phrase must stay absent.
+    let root = config_unchanged_fixture("config-unchanged")?;
+    let root_arg = root.display().to_string();
+    let diff_arg = root.join("control.diff").display().to_string();
+    let out = run_ripr(&["check", "--root", &root_arg, "--diff", &diff_arg]);
+    assert_success(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("[analysis] include_unchanged_tests = false"),
+        "the config-driven exclusion must be disclosed with the owning knob; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Set it to true or remove it from ripr.toml"),
+        "the note must name the config repair route; got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Drop the flag"),
+        "config-driven exclusion must not advise dropping the flag; got:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn check_repo_formats_do_not_claim_the_unchanged_tests_index_tradeoff() -> Result<(), String> {
+    // #4946(a) review: repo-scoped formats run their own corpus walks that
+    // never read `include_unchanged_tests`, so the smaller/faster-index note
+    // must stay absent there even when the config sets it false.
+    let root = config_unchanged_fixture("repo-unchanged")?;
+    let root_arg = root.display().to_string();
+    let out = run_ripr(&["check", "--root", &root_arg, "--format", "repo-badge-json"]);
+    assert_success(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("unchanged tests are excluded from the index"),
+        "repo-scoped formats must not claim an index narrowing they do not perform; got:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 #[test]
 fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");

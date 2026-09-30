@@ -570,19 +570,34 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
              Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml)."
         );
     }
-    // #4946(a): restate the --no-unchanged-tests tradeoff where the user
-    // waits. Fires on the EFFECTIVE setting after `apply_to_check_input`, so
-    // a repo ripr.toml with `include_unchanged_tests = false` is disclosed
-    // too. stderr only: stdout and every machine format are unchanged. Like
-    // the mode-fast notice above, this sits before the gap-ledger and
-    // repo-exposure-json early returns so repo-scoped formats keep the note
-    // (the shared index selection narrows repo runs the same way).
-    if !input.include_unchanged_tests {
+    // #4946(a): restate the unchanged-tests tradeoff where the user waits.
+    // Fires on the EFFECTIVE setting after `apply_to_check_input`, and only
+    // on the paths that actually consume it: the diff-scoped pipeline
+    // narrows the index from `input.include_unchanged_tests`
+    // (`analysis/workspace/select.rs` narrows every mode when it is false),
+    // while repo-scoped formats run their own corpus walks that never read
+    // this setting, so a smaller/faster-index claim there would be false
+    // (#4946 review). The repair route names the knob that owns the value —
+    // the CLI flag when it was passed, `[analysis] include_unchanged_tests`
+    // otherwise — because there is no positive CLI counterpart, so "drop
+    // the flag" is unreachable advice for the config-driven case (#4946
+    // review). stderr only: stdout and every machine format are unchanged.
+    if !input.include_unchanged_tests && !format.is_repo_scope() {
+        let (knob, repair) = if explicit.include_unchanged_tests {
+            (
+                "--no-unchanged-tests",
+                "Drop the flag to restore default test recall.",
+            )
+        } else {
+            (
+                "[analysis] include_unchanged_tests = false",
+                "Set it to true or remove it from ripr.toml to restore default test recall.",
+            )
+        };
         eprintln!(
-            "ripr: unchanged tests are excluded from the index (--no-unchanged-tests): \
-             Reach evidence cannot name tests the diff does not touch, in exchange \
-             for a much smaller, faster index. Drop the flag to restore default \
-             test recall."
+            "ripr: unchanged tests are excluded from the index ({knob}): Reach evidence \
+             cannot name tests the diff does not touch, in exchange for a much smaller, \
+             faster index. {repair}"
         );
     }
     // #2901: OraclePolicy (snapshot_strength, mock_expectation_strength,

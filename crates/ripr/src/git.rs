@@ -625,8 +625,10 @@ pub(crate) fn poll_child(
                         ChildWait::TimedOut(format!(
                             "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the \
                              {timeout_ms}ms deadline (process terminated). Repair route: \
-                             raise the deadline or disable it with 0 via --git-timeout \
-                             SECS or RIPR_GIT_TIMEOUT=<seconds>, then re-run."
+                             raise or disable the git deadline (0 disables it) — \
+                             --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI \
+                             runs, the gitTimeoutMs initialization option for editor \
+                             sessions — then re-run."
                         )),
                         || child.terminate_tree(),
                     );
@@ -1295,15 +1297,23 @@ mod tests {
         }
         // #4946(b): the timeout message names both deadline knobs and the
         // 0-disables escape, matching diff_scope_oversized's in-message
-        // repair-route pattern — the error alone must be repairable.
+        // repair-route pattern — the error alone must be repairable. The
+        // same shared wait also serves the editor sidecar, whose deadline is
+        // configured by `gitTimeoutMs`, so the route names that knob too
+        // (#4946 review).
         if !err.contains("--git-timeout") || !err.contains("RIPR_GIT_TIMEOUT") {
             return Err(format!(
                 "timeout error should name the deadline knobs, got: {err}"
             ));
         }
-        if !err.contains("disable it with 0") {
+        if !err.contains("0 disables it") {
             return Err(format!(
                 "timeout error should name the 0-disables escape, got: {err}"
+            ));
+        }
+        if !err.contains("gitTimeoutMs") {
+            return Err(format!(
+                "timeout error should name the editor-session deadline knob, got: {err}"
             ));
         }
         // Kill+reap proof without a wall-clock bound: drive the same
