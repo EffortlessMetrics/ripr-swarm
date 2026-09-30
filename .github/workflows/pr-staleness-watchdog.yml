@@ -121,12 +121,12 @@ jobs:
                 if gh workflow run "$WATCHED_WORKFLOW" --repo "$REPOSITORY" --ref="$head_ref"; then
                   dispatched=$((dispatched + 1))
                   disposition="DARK; dispatched"
-                  # Audit-link lookup after dispatch: a run now listed for
-                  # this head SHA is the run this dispatch created. The list
-                  # can lag; an empty list formats as a lone tab under @tsv,
-                  # so the filter must emit nothing instead; the next sweep's
-                  # pre-check dedupes when the run appears later.
-                  new_run="$(gh api "repos/$REPOSITORY/actions/workflows/$WATCHED_WORKFLOW/runs?head_sha=$head_sha&per_page=1" --jq 'if (.workflow_runs | length) == 0 then empty else .workflow_runs[0] | [.id, .html_url] | @tsv end' 2>/dev/null || true)"
+                  # Audit-link lookup: the newest workflow_dispatch run for
+                  # this head (a label run is event=pull_request, never this
+                  # link). The list can lag; an empty list formats as a lone
+                  # tab under @tsv, so the filter must emit nothing instead;
+                  # the next sweep dedupes when the run appears later.
+                  new_run="$(gh api "repos/$REPOSITORY/actions/workflows/$WATCHED_WORKFLOW/runs?head_sha=$head_sha&event=workflow_dispatch&per_page=1" --jq 'if (.workflow_runs | length) == 0 then empty else .workflow_runs[0] | [.id, .html_url] | @tsv end' 2>/dev/null || true)"
                   if [ -n "$new_run" ]; then
                     run_cell="[${new_run%%$'\t'*}](${new_run#*$'\t'})"
                   else
