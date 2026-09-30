@@ -240,7 +240,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (2)
+## Pending — ts_pkg_discovery_no_package (1)
 
 Reason:
 RIPR-SPEC-0027: predicate boundary witness; no strong assertion observes an owner call at the changed comparison boundary, so the predicate downgrades from exposed to weakly_exposed
@@ -253,7 +253,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (3)
+## Pending — ts_pkg_discovery_no_package (2)
 
 Reason:
 RIPR-SPEC-0082/RIPR-SPEC-0122 wording owner change (PR #3978): Why lines re-derived from reach/observe stage state, preview notes use language display names with singular file counts, recovery detail lines end with exactly one period; mechanical re-render of unchanged fixture evidence
@@ -265,7 +265,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (4)
+## Pending — ts_pkg_discovery_no_package (3)
 
 Reason:
 RIPR-SPEC-0122 (#4216): TS/JS preview safe next action is terminal for a closed repair packet (quotes the validator's why_not_actionable) and says no repair for an exposed finding
@@ -277,7 +277,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (5)
+## Pending — ts_pkg_discovery_no_package (4)
 
 Reason:
 RIPR-SPEC-0122 (#4216 review): closed-packet TS/JS safe action bounds the quoted reason, drops the causal 'so', and asks unknown-class findings for a manual check
@@ -289,7 +289,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (6)
+## Pending — ts_pkg_discovery_no_package (5)
 
 Reason:
 RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
@@ -301,7 +301,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (7)
+## Pending — ts_pkg_discovery_no_package (6)
 
 Reason:
 RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
@@ -315,7 +315,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (8)
+## Pending — ts_pkg_discovery_no_package (7)
 
 Reason:
 RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
@@ -327,7 +327,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — ts_pkg_discovery_no_package (9)
+## Pending — ts_pkg_discovery_no_package (8)
 
 Reason:
 RIPR-SPEC-0122: bounded human surfaces disclose their windows - related-test and observed-value caps, digest missing-discriminator and related-test totals, Hidden block names omitted findings by file:line (class) with the all-base-side distinction (#4320); RIPR-SPEC-0152: all-base-side runs name base-side evidence instead of a lower-priority framing
@@ -337,4 +337,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (9)
+
+Reason:
+#4324 / RIPR-SPEC-0122: the bounded digest names all five stage states on one compact Evidence line (reach, infection, propagation, observation, discriminator) instead of letting the positional 2-line detail window hide the decisive stages behind a bare count; the detail window keeps its two lines and the remainder line now reads `N more detail line(s) in --format human-full`. JSON output is unchanged.
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
 - `expected/human.txt`
