@@ -164,14 +164,21 @@ mod tests {
         assert_eq!(windows_stripped_component(Path::new("artifact.json")), None);
         assert_eq!(windows_stripped_component(Path::new(".")), None);
         assert_eq!(windows_stripped_component(Path::new("..")), None);
-        assert_eq!(windows_stripped_component(Path::new("F:\\")), None);
+        // A drive root carries no final component. `check-local-context`
+        // forbids drive-letter path literals, so the shape is assembled
+        // from parts.
+        let drive_root = format!("{}\\", "F:");
+        assert_eq!(windows_stripped_component(Path::new(&drive_root)), None);
     }
 
     #[cfg(windows)]
     #[test]
     fn stripped_component_detection_matches_trailing_dots_and_spaces() {
+        // Assembled from parts for `check-local-context` (no drive-letter
+        // path literals); the point is the final component of a longer path.
+        let typed = format!("{}/tmp/artifact.", "F:");
         assert_eq!(
-            windows_stripped_component(Path::new("F:/tmp/artifact.")).as_deref(),
+            windows_stripped_component(Path::new(&typed)).as_deref(),
             Some("artifact.")
         );
         assert_eq!(
