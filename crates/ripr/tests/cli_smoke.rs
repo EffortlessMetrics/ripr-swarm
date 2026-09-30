@@ -5603,8 +5603,13 @@ fn agent_repair_names_output_redirected_into_the_checkout() -> Result<(), Box<dy
                 manifest["after"]["verdict"]["status"], "violated",
                 "{manifest}"
             );
+            // #4330 packets state `forbidden_files` explicitly (the production
+            // anchor), and the cage classifies an edit to that file against
+            // the stated rule — ForbiddenPath, not the generic
+            // OutsideAllowedSurface this assertion carried before the packet
+            // carried the forbidden list.
             assert!(
-                stderr.contains("ripr:   src/lib.rs (OutsideAllowedSurface)"),
+                stderr.contains("ripr:   src/lib.rs (ForbiddenPath)"),
                 "{stderr}"
             );
             assert!(
