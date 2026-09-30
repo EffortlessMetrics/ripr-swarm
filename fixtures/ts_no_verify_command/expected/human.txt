@@ -18,15 +18,15 @@ Start here:
   Static exposure: weak (weakly_exposed, warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (a >= 0) {
-  Missing discriminator: Related test reaches `multiply` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a…
+  Missing discriminator (1 of 2): Related test reaches `multiply` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a…
   Related test: tests/calculator.test.ts:3 multiply returns expected for positive inputs
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `a == 0`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available.
-  Evidence:
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach yes: 1 related test(s) found for owner `multiply`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 4 more evidence line(s) hidden
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/ts_no_verify_command/input --diff fixtures/ts_no_verify_command/diff.patch --mode fast probe:src_calculator.ts:typescript_preview:45007a54

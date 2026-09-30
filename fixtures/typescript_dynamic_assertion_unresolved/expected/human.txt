@@ -18,15 +18,15 @@ Start here:
   Static exposure: weak (weakly_exposed, warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (value < min) {
-  Missing discriminator: Related tests reach `clamp` with a strong oracle, but no strong assertion observes a `clamp(...)` call at the changed predicate boundary `value == min`; inputs on one side of the…
+  Missing discriminator (1 of 2): Related tests reach `clamp` with a strong oracle, but no strong assertion observes a `clamp(...)` call at the changed predicate boundary `value == min`; inputs on one side of the…
   Related test: tests/clamp.test.ts:6 clamps below minimum
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `value == min`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available.
-  Evidence:
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach yes: 1 related test(s) found for owner `clamp`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 4 more evidence line(s) hidden
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/typescript_dynamic_assertion_unresolved/input --diff fixtures/typescript_dynamic_assertion_unresolved/diff.patch --mode fast probe:src_clamp.ts:typescript_preview:bd179af5

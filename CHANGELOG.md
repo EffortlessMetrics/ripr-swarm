@@ -11,6 +11,18 @@ are scoped or reviewed.
 
 ### Added
 
+- CLI: the seven full-repo audit-path formats (`repo-seams-json`,
+  `repo-seams-md`, `repo-exposure-json`, `repo-exposure-summary-json`,
+  `repo-exposure-md`, `repo-sarif`, `agent-seam-packets-json`) are no longer
+  fully silent. Every invocation prints one stderr line naming the expected
+  cost class before the run begins, and the walk now projects the same
+  `ripr progress:` producer stages as the diff path (`loading_input`,
+  `analyzing`, `building_output`, `completed [repo]`, throttled heartbeats,
+  fail-closed `failed`/`cancelled`). The warm-rerun clause is honest per
+  format: the classified/compact-classified formats disclose seam-facts
+  cache reuse on warm reruns, while the raw `repo-seams-*` formats disclose
+  that every run pays the full walk. Stdout is unchanged; the disclosure
+  line survives `--quiet` while the progress stream does not (#4945).
 - CLI: one typed public command catalog now owns RIPR command paths, aliases,
   and public/compatibility/advanced/internal classification, with parser and
   typo-suggestion two-way parity. Human help, workflow discovery, and
@@ -23,6 +35,13 @@ are scoped or reviewed.
   isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
   zero-subject, or mismatched rows cannot pass. No PyPI credentials or
   publication (#4631).
+- CI: `windows-advisory.yml` runs an always-on `windows-advisory-subset` job on
+  every subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
+  `labeled`): the #4921 `lsp::gap_artifacts` lib tests, the #4918
+  cache-warning smoke, and Windows `cargo clippy -p ripr --all-targets`,
+  advisory under the lane contract (test/lint verdicts never gate; missing or
+  zero-subject evidence fails the job). The label-gated full suite is
+  unchanged (#4938).
 - LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
   sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
   unchanged save/refresh, production/related/unrelated edits, rename, config
@@ -42,6 +61,22 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CLI argument errors now name the fix on every command. `ripr context`
+  no-finding errors carry `ripr explain`'s remediation suffix on both the
+  fresh and `--from` paths; `ripr check --format`, `ripr outcome`, and
+  `ripr calibrate` value errors enumerate the accepted names with a near-miss
+  suggestion; `ripr doctor` names a repeated `--root` and a rejected
+  positional instead of calling a documented flag unknown, and no longer
+  consumes a known flag as the `--root` path; a subcommand that rejects
+  `--version` points at `ripr --version` (`ripr lsp --version` keeps its
+  local contract); numeric flags follow the `--git-timeout` shape with the
+  typed value, and `ripr context --max-related-tests 0` parses again — zero
+  suppresses related tests, matching the config surface
+  ([#4318](https://github.com/EffortlessMetrics/ripr-swarm/issues/4318)).
+- Perl preview findings with an unavailable test runner now disclose that
+  limitation and ask for runner verification instead of saying no test change
+  is needed solely because static evidence aligns with the changed sink
+  ([#4146](https://github.com/EffortlessMetrics/ripr-swarm/issues/4146)).
 - Repo-seam `FieldConstruction` evidence now emits a compatible missing
   `field_value` fact when a parser-backed direct owner-result binding is
   observed only by a weak field oracle, and only after activation is already
@@ -69,6 +104,12 @@ are scoped or reviewed.
   `ripr check` on this repository printed 723 identical-shape lines before the
   one warning that mattered. A build now prints one line naming the count and
   the first reason; a single bad entry keeps its old message (#4888).
+- That same warning no longer stays silent on native Windows. A cache base
+  that is a regular file makes every Windows file-fact read report `NotFound`
+  — the same kind as an ordinary miss — so the count-and-reason line never
+  printed and the run looked cleanly cached. A once-per-build probe of the
+  cache base now emits `cache dir is not a directory: <path>` and the build
+  re-parses in memory; a missing or usable cache base stays silent (#4918).
 - An unchanged Rust test file that the reference parser refuses is no longer
   a silent related-test hole. If a classified owner consults that
   lexical-fallback file (the file contributed a related test, or it calls the

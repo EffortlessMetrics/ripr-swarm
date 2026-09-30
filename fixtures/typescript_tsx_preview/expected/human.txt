@@ -18,15 +18,15 @@ Start here:
   Static exposure: weak (weakly_exposed, warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount >= threshold) {
-  Missing discriminator: Only heuristic TypeScript test links were found for `PriceTag`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `PriceTag`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Related test: tests/card.test.tsx:1 renders discounted price
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == threshold`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available.
-  Evidence:
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach weak: 1 related test(s) found for owner `PriceTag`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 4 more evidence line(s) hidden
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/typescript_tsx_preview/input --diff fixtures/typescript_tsx_preview/diff.patch --mode fast probe:src_card.tsx:typescript_preview:a9c4e691

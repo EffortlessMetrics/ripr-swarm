@@ -19,17 +19,17 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/users.py:build_user:field_value:field_construction:return_user_active=true
   Changed behavior: return User(active=True)
-  Missing discriminator: Related Python test reaches `build_user` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed field or object value.
+  Missing discriminator (1 of 2): Related Python test reaches `build_user` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed field or object value.
   Related test: tests/test_users.py:4 test_build_user_smoke
   Suggested test file: tests/test_users.py
   Suggested test: test_build_user_smoke
   Test node: tests/test_users.py::test_build_user_smoke
   Verify command: python -m pytest tests/test_users.py::test_build_user_smoke (high)
   Next step: Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `result.active == True`.
-  Evidence:
+  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     - reach yes: 1 related Python test(s) found for owner `build_user`
     - infection yes: Changed Python field or attribute construction can alter object state: `return User(active=True)`
-    - 5 more evidence line(s) hidden
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/python_model_field_repair_gap/input --diff fixtures/python_model_field_repair_gap/diff.patch --mode fast probe:src_users.py:python_preview:d214fcc1

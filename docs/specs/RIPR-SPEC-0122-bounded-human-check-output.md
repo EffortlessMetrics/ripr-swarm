@@ -110,6 +110,28 @@ exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
 short evidence summary.
 
+The evidence summary leads with one compact line naming all five stage states,
+because evidence ordering is pipeline-ordered (reach, infection, propagation,
+observation, discriminator) and a purely positional detail window hides the
+decisive stages behind a remainder count (#4324):
+
+```text
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+```
+
+Every stage always carries an evidence line, so the compact line names all
+five stages for every finding and never silently drops one. The discriminator
+token keeps the full evidence line's semantic: the `discriminate` stage grades
+the strongest related oracle, so on a non-`exposed` finding a `yes` grade
+renders as `missing` (a named missing discriminating input exists) or
+`not established` rather than claiming a discriminator the digest
+simultaneously reports missing. The per-stage prose detail stays in the
+bounded window beneath it: the first two detail lines render verbatim, and
+when detail remains the line
+`- N more detail line(s) in --format human-full` discloses the count and names
+the recovery format. `--format human-full` still renders every evidence line,
+and no machine format reads the compact line.
+
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
 command; for a Python preview finding it is a repair card from the Python
@@ -327,6 +349,16 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_suggests_rooted_out_dir`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_discloses_related_tests_cap`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_discloses_observed_values_cap`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_observed_values_pointer_names_json_cap_beyond_it`
+- `crates/ripr/src/output/human.rs::tests::digest_related_test_line_carries_the_total`
+- `crates/ripr/src/output/human.rs::tests::digest_missing_discriminator_discloses_one_of_n_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_lists_omitted_findings_by_file_line_and_class`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_all_base_side_run_names_base_side_evidence`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping
