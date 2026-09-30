@@ -17,7 +17,7 @@ Start here:
   Missing discriminator: No detected boundary input for the changed predicate
   Related test: tests/fees.rs:4 heavy_crate_pays_fragile_fee_and_eu_tax
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
-  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator yes
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator not established
     - reach yes: Related tests appear to reach fragile_fee: heavy_crate_pays_fragile_fee_and_eu_tax
     - infection weak: Related tests contain the changed boundary literal [2000] only outside the changed owner's inputs (for example as an expected value); no test input at the changed…
     - 9 more detail line(s) in --format human-full

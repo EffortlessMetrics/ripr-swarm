@@ -2900,6 +2900,49 @@ mod tests {
         );
     }
 
+    /// #4324 review: the `discriminate` stage grades the strongest related
+    /// oracle, so a non-`exposed` finding can carry a `yes` grade while the
+    /// digest simultaneously names the missing discriminating input. The
+    /// compact token keeps the full evidence line's semantic and must not
+    /// read `discriminator yes` in that case.
+    #[test]
+    fn digest_compact_discriminator_token_mirrors_the_full_evidence_line() {
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate =
+            stage(StageState::Yes, Confidence::High, "strong oracle grade");
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == discount_threshold".to_string(),
+            reason: "no related test call uses the boundary value".to_string(),
+            flow_sink: None,
+        }];
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.contains(
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator missing\n"
+            ),
+            "a yes oracle grade on a non-exposed finding must not read as a present discriminator; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("discriminator yes"),
+            "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
+        );
+
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        assert!(
+            digest.contains("· discriminator not established\n"),
+            "without a named missing discriminator the token keeps the full line's wording; got:\n{digest}"
+        );
+    }
+
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized
     // by the shared prefix) renders as a concrete "Where to look" pointer.
     #[test]

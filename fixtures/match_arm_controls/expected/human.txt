@@ -17,7 +17,7 @@ Start here:
   Missing discriminator: final_label == "beta"
   Related test: tests/classify.rs:4 computed_label_is_word
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
-  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator yes
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     - reach yes: Related tests appear to reach classify_computed: computed_label_is_word
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 7 more detail line(s) in --format human-full

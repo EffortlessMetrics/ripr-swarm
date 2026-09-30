@@ -141,7 +141,7 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
             finding.ripr.infect.state.as_str(),
             finding.ripr.propagate.state.as_str(),
             finding.ripr.reveal.observe.state.as_str(),
-            finding.ripr.reveal.discriminate.state.as_str(),
+            compact_discriminator_token(finding),
         ));
         for line in evidence.iter().take(2) {
             out.push_str(&format!("    - {}\n", one_line(line)));
@@ -154,6 +154,25 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
         }
     }
     out
+}
+
+/// Compact discriminator token for the #4324 stage-states line. The
+/// `discriminate` stage grades the strongest related oracle, not whether that
+/// oracle distinguishes the changed behavior, so for a non-`exposed` finding
+/// a `yes` grade must not read as "a discriminator exists" — the digest may
+/// simultaneously name the missing discriminating input. Mirror the semantic
+/// `discriminator_evidence_line` keeps for the full evidence line: only an
+/// `exposed` finding (or a non-`yes` grade) prints the bare state.
+fn compact_discriminator_token(finding: &Finding) -> &'static str {
+    let stage = &finding.ripr.reveal.discriminate;
+    if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
+        return stage.state.as_str();
+    }
+    if finding.activation.missing_discriminators.is_empty() {
+        "not established"
+    } else {
+        "missing"
+    }
 }
 
 /// Collapse a possibly-multi-line value to one bounded display line.

@@ -17,7 +17,7 @@ Start here:
   Missing discriminator: decisions.iter().filter(|d| d.decision == "blocking").count() == 0
   Related test: src/lib.rs:25 single_blocking_decision_reports_its_reason
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
-  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator yes
+  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator missing
     - reach yes: Related tests appear to reach blocking_reason: single_blocking_decision_reports_its_reason
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 6 more detail line(s) in --format human-full

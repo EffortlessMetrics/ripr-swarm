@@ -17,7 +17,7 @@ Start here:
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
   Related test: tests/lower.rs:4 lower_ast_only_checks_name
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
-  Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator yes
+  Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator not established
     - reach yes: Related tests appear to reach lower_statement: lower_ast_only_checks_name
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full

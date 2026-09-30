@@ -17,7 +17,7 @@ Start here:
   Missing discriminator: No detected boundary input for the changed predicate
   Related test: tests/pricing.rs:8 discounted_total_at_boundary
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
-  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator yes
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator not established
     - reach yes: Related tests appear to reach discounted_total: discounted_total_at_boundary
     - infection weak: Tests have literals [90], but no detected value matches changed boundary [100]
     - 6 more detail line(s) in --format human-full
