@@ -3,6 +3,9 @@ use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_f
 use std::path::Path;
 
 pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(), String> {
+    // Detected once: every branch below keys on the same typed final
+    // component.
+    let stripped = windows_stripped_component(root);
     match std::fs::metadata(root) {
         Ok(metadata) if metadata.is_dir() => {
             // #4951: Windows strips trailing dots and spaces from the final
@@ -19,7 +22,7 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
         // existing entry here — that is not the same condition as a
         // genuinely missing path, and the generic refusal conflated them
         // (#4951). Name the resolution instead.
-        Ok(_) if windows_stripped_component(root).is_some() => {
+        Ok(_) if stripped.is_some() => {
             let resolved = resolved_display(root);
             Err(format!(
                 "{command_name} root {} resolves to {resolved}, which is not a directory on this platform \
@@ -30,8 +33,12 @@ pub(super) fn ensure_command_root(root: &Path, command_name: &str) -> Result<(),
         // Nothing exists under the normalized name. A typed trailing-dot or
         // trailing-space final component can never exist as typed on
         // Windows (#4951); say which name the platform actually looks for.
-        Err(_) if windows_stripped_component(root).is_some() => {
-            let normalized = windows_stripped_component(root)
+        // NotFound only: any other metadata failure (a file-typed parent,
+        // permissions) says nothing about the normalized name, so it keeps
+        // the generic refusal instead of claiming absence.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && stripped.is_some() => {
+            let normalized = stripped
+                .as_deref()
                 .unwrap_or_default()
                 .trim_end_matches(['.', ' '])
                 .to_string();
@@ -259,6 +266,27 @@ mod tests {
         );
         assert!(error.contains("\"x\""), "{error}");
         assert!(error.contains("pass a path without them"), "{error}");
+        Ok(())
+    }
+
+    // Windows maps a file-typed parent to NotFound (ERROR_PATH_NOT_FOUND), so
+    // the normalized name genuinely has no directory under it there and the
+    // typed-name disclosure is literally true. The NotFound-only gate exists
+    // for every OTHER error kind (permissions, ...): those leave existence
+    // unknown, and claiming "does not exist" from them would be a false
+    // repair signal, so they keep the generic refusal.
+    #[cfg(windows)]
+    #[test]
+    fn windows_metadata_not_found_failure_names_the_normalized_name() -> Result<(), String> {
+        let root = test_root("parent-is-file")?;
+        let _guard = Guard(root.clone());
+        std::fs::write(root.join("f.rs"), b"x").map_err(|e| e.to_string())?;
+        let typed = root.join("f.rs").join("x.");
+        let error = ensure_command_root(&typed, "check")
+            .err()
+            .unwrap_or_default();
+        assert!(error.contains("cannot be addressed as typed"), "{error}");
+        assert!(error.contains("\"x\""), "{error}");
         Ok(())
     }
 }
