@@ -55,10 +55,11 @@ concurrency:
 #     touching path handling, fixtures, or process/IO code.
 #   - workflow_dispatch: manual run; `repeat_nested_alias` adds three isolated
 #     native repetitions for #4377 only when requested.
-#   - every `pull_request` event (and the schedule/dispatch triggers above)
-#     also runs the small always-on advisory subset job below
-#     (`windows-advisory-subset`, #4938); the full suite keeps its
-#     label/schedule/dispatch selection unchanged.
+#   - every subscribed `pull_request` action (`opened`, `synchronize`,
+#     `reopened`, `labeled`; `unlabeled` stays omitted per #4380) and the
+#     schedule/dispatch triggers above also run the small always-on advisory
+#     subset job below (`windows-advisory-subset`, #4938); the full suite
+#     keeps its label/schedule/dispatch selection unchanged.
 #
 # The suite runs **twice** on purpose, because one sample cannot separate a
 # reproducible failure from a load-dependent flake.
@@ -267,7 +268,9 @@ jobs:
   # (cache-unusable warning silent on native Windows), and #4921 (gap_artifacts
   # tests failing on a POSIX-only test root) were each caught only because
   # someone ran the suite or clippy natively on Windows. This job runs on every
-  # `pull_request` event -- no labels -- and covers exactly that family:
+  # subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
+  # `labeled` -- no labels required; `unlabeled` stays omitted per #4380) and
+  # covers exactly that family:
   #
   #   - lsp::gap_artifacts: the #4921 class;
   #   - the #4918 cache-warning smoke, which runs the real `ripr` binary with
@@ -278,9 +281,11 @@ jobs:
   #     of the required Linux clippy lane).
   #
   # Same advisory contract as the rest of the lane: test and lint outcomes
-  # never fail this job -- they become PASS/FAIL verdicts in the step summary
-  # and the job log; missing evidence (a command that never wrote its status
-  # file) does fail it. Steady state is ~5 minutes with a warm cache; the
+  # never fail this job -- they become PASS/FAIL verdicts in the step summary,
+  # the job log, and target/windows-subset-verdict.md; missing evidence (a
+  # command that never wrote its status file or its log, a failed log
+  # capture, or a cargo run that exited 0 without executing a single test)
+  # does fail it. Steady state is ~5 minutes with a warm cache; the
   # timeout ceiling is higher because the first run on a fresh dependency
   # graph legitimately exceeds that budget and a stuck runner must still be
   # bounded. `windows-ci`/`full-ci` remain unchanged: they opt into the full
@@ -309,47 +314,63 @@ jobs:
       - name: Run lsp::gap_artifacts subset (advisory, #4921)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; printf '%s\n' "${PIPESTATUS[0]}" > target/subset-gap-artifacts.status; exit 0
+          mkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
 
       - name: Run cache-warning smoke subset (advisory, #4918)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; printf '%s\n' "${PIPESTATUS[0]}" > target/subset-cache-warning.status; exit 0
+          mkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
 
       - name: Run clippy subset (advisory, #4337)
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; printf '%s\n' "${PIPESTATUS[0]}" > target/subset-clippy.status; exit 0
+          mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
 
-      # Verdicts go to the job log and the step summary, for the same reason
-      # the full suite above writes three copies: neither is gated, so a reader
-      # who can see the run must be able to see the verdict. This step never
+      # Verdicts go to the job log, the step summary, and
+      # target/windows-subset-verdict.md -- the same three copies the full
+      # suite above keeps -- because none of them is gated, so a reader who
+      # can see the run must be able to see the verdict. This step never
       # fails on a FAIL verdict; the next step owns the non-advisory evidence
       # contract.
       - name: Summarize subset verdicts
         shell: bash
         run: |
-          printf '## Windows advisory subset (#4938)\n\nAdvisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n' >> "$GITHUB_STEP_SUMMARY"
-          for label in subset-gap-artifacts subset-cache-warning subset-clippy; do
-            status_file="target/${label}.status"
-            if [ ! -f "$status_file" ]; then
-              echo "- ${label}: not_run (no status file)" | tee -a "$GITHUB_STEP_SUMMARY"
-            elif [ "$(cat "$status_file")" = "0" ]; then
-              echo "- ${label}: PASS" | tee -a "$GITHUB_STEP_SUMMARY"
-            else
-              echo "- ${label}: FAIL (exit $(cat "$status_file"))" | tee -a "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+          {
+            printf '## Windows advisory subset (#4938)\n\n'
+            printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
+            for label in subset-gap-artifacts subset-cache-warning subset-clippy; do
+              status_file="target/${label}.status"
+              if [ ! -f "$status_file" ]; then
+                echo "- ${label}: not_run (no status file)"
+              elif [ "$(cat "$status_file")" = "0" ]; then
+                echo "- ${label}: PASS"
+              else
+                echo "- ${label}: FAIL (exit $(cat "$status_file"))"
+              fi
+            done
+          } | tee target/windows-subset-verdict.md >> "$GITHUB_STEP_SUMMARY"
 
       # Evidence generation is not advisory (lane contract above): a command
-      # that never wrote its status file fails the job instead of passing
-      # silently. The explicit `exit 1` matters: a loop whose body is a bare
+      # that never wrote its status file or its log fails the job instead of
+      # passing silently, and so does a cargo run that exited 0 without
+      # executing a single test (a zero-match name filter is silent green,
+      # #4938). The explicit `exit 1` matters: a loop whose body is a bare
       # `test` would otherwise report only the last label's status.
-      - name: Fail on missing subset evidence
+      - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
           for label in subset-gap-artifacts subset-cache-warning subset-clippy; do
             test -f "target/${label}.status" || exit 1
+            test -f "target/${label}.log" || exit 1
+          done
+          for label in subset-gap-artifacts subset-cache-warning; do
+            if [ "$(cat "target/${label}.status")" = "0" ]; then
+              executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
+              if [ "$executed" -eq 0 ]; then
+                echo "${label}: cargo exited 0 but no test executed; the name filter no longer matches any test" >&2
+                exit 1
+              fi
+            fi
           done
 
       - name: Upload subset evidence
