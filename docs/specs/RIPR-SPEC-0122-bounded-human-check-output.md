@@ -110,6 +110,23 @@ exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
 short evidence summary.
 
+The evidence summary leads with one compact line naming all five stage states,
+because evidence ordering is pipeline-ordered (reach, infection, propagation,
+observation, discriminator) and a purely positional detail window hides the
+decisive stages behind a remainder count (#4324):
+
+```text
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator yes
+```
+
+Every stage always carries an evidence line, so the compact line names all
+five stages for every finding and never silently drops one. The per-stage
+prose detail stays in the bounded window beneath it: the first two detail
+lines render verbatim, and when detail remains the line
+`- N more detail line(s) in --format human-full` discloses the count and names
+the recovery format. `--format human-full` still renders every evidence line,
+and no machine format reads the compact line.
+
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
 command; for a Python preview finding it is a repair card from the Python

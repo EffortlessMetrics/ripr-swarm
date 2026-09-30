@@ -2866,6 +2866,40 @@ mod tests {
         );
     }
 
+    /// #4324: evidence ordering is pipeline-ordered, so a positional 2-line
+    /// window hid propagation/observation/discriminator behind a bare count.
+    /// The digest names all five stage states compactly — every stage always
+    /// has a line, so no stage is ever silently dropped — and keeps the
+    /// 2-line detail window with an honest remainder disclosure that names
+    /// the recovery format.
+    #[test]
+    fn digest_names_all_five_stage_states_and_keeps_the_remainder_disclosure() {
+        let finding = sample_finding();
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.contains(
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator no\n"
+            ),
+            "digest must name all five stage states; got:\n{digest}"
+        );
+        // sample_finding carries flow-sink, related-test and observed-value
+        // lines beyond the five stage lines, so the window cannot show
+        // everything and the remainder disclosure must fire.
+        assert!(
+            digest.contains("more detail line(s) in --format human-full"),
+            "digest must keep an honest remainder disclosure; got:\n{digest}"
+        );
+        assert!(
+            digest.lines().all(|line| line.chars().count() <= 180),
+            "the compact stage line stays within the display budget; got:\n{digest}"
+        );
+    }
+
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized
     // by the shared prefix) renders as a concrete "Where to look" pointer.
     #[test]
