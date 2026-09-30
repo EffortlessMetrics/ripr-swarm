@@ -11,9 +11,10 @@ use crate::output::preview_actionability::{
 const MAX_RELATED_TESTS_SHOWN: usize = 5;
 
 /// #4320: the human evidence window shows at most this many observed values
-/// per finding (`--format json` serializes the full list). Observed values are
-/// the raw material for writing the missing-discriminator test, so an unmarked
-/// cap can hide the one boundary value the reader needs.
+/// per finding (`--format json` keeps its own ranked 32-value window and
+/// discloses the pre-cap count as `observed_values_total`). Observed values
+/// are the raw material for writing the missing-discriminator test, so an
+/// unmarked cap can hide the one boundary value the reader needs.
 const MAX_OBSERVED_VALUES_SHOWN: usize = 8;
 
 pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
@@ -86,8 +87,18 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         ));
     }
     if observed_values_total > MAX_OBSERVED_VALUES_SHOWN {
+        // #4320 review: the pointer must not promise more than the target
+        // carries. `--format json` holds every value only up to its own
+        // ranked cap of 32; beyond that, both formats are windows and the
+        // wording says so instead of claiming a full list.
+        let json_cap = crate::output::observed_values::MAX_OBSERVED_VALUES_PER_FINDING;
+        let json_window = if observed_values_total > json_cap {
+            format!("--format json keeps a ranked {json_cap}")
+        } else {
+            "full list in --format json".to_string()
+        };
         lines.push(format!(
-            "observed values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; full list in --format json)"
+            "observed values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
         ));
     }
 

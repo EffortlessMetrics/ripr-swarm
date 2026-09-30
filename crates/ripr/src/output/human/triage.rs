@@ -140,13 +140,13 @@ pub(crate) fn render_human_triage(
         HumanTriageState::NoActionableGap => {
             if triage.selected.is_none() && !triage.omitted.is_empty() {
                 // #4320: findings exist but the #3281 candidate filter hid
-                // every one — the run is all base-side evidence, not a policy
-                // suppression. Claiming suppression contradicts the
-                // suppression block (which listed nothing) and misleads the
-                // reader about what happened to the findings.
-                out.push_str(
-                    "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n",
-                );
+                // every one — the run is not a policy suppression. Claiming
+                // suppression contradicts the suppression block (which listed
+                // nothing) and misleads the reader about what happened to the
+                // findings. #4320 review: the framing must also keep the
+                // currentness distinction — `unresolved_subject` is the
+                // explicit unknown, not base-side evidence.
+                out.push_str(&no_selection_safe_action_line(&triage.omitted));
             } else if triage.selected.is_none() && !output.findings.is_empty() {
                 out.push_str(
                     "  Safe next action: all findings are suppressed by policy; review the suppression block before treating this run as actionable.\n",
@@ -245,11 +245,7 @@ pub(crate) fn render_human_triage(
     } else {
         out.push_str("\nHidden:\n");
         if triage.selected.is_none() {
-            out.push_str(&format!(
-                "  All {} finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence{}.\n",
-                triage.omitted.len(),
-                omitted_identity_suffix(&triage.omitted)
-            ));
+            out.push_str(&no_selection_hidden_line(&triage.omitted));
         } else {
             out.push_str(&format!(
                 "  {} lower-priority finding(s) omitted from default human output{}.\n",
@@ -282,6 +278,87 @@ pub(crate) fn render_human_triage(
 /// this window the list discloses the remainder instead of printing every
 /// identity.
 const HIDDEN_FINDINGS_LISTED: usize = 20;
+
+/// The currentness mix of a no-selection run. `unresolved_subject` is the
+/// explicit unknown (#3281) — not base-side evidence — so the #4320
+/// no-selection framing must name the actual mix instead of promoting every
+/// unselected finding to a base-side claim (#4320 review).
+enum NoSelectionMix {
+    AllBaseSide,
+    AllUnresolved,
+    Mixed { base_side: usize, unresolved: usize },
+}
+
+fn no_selection_mix(omitted: &[&Finding]) -> NoSelectionMix {
+    let base_side = omitted
+        .iter()
+        .filter(|finding| {
+            matches!(
+                finding.source_currentness,
+                crate::domain::SourceCurrentness::BaseDeleted
+                    | crate::domain::SourceCurrentness::MovedOrRenamed
+            )
+        })
+        .count();
+    let unresolved = omitted
+        .iter()
+        .filter(|finding| {
+            finding.source_currentness == crate::domain::SourceCurrentness::UnresolvedSubject
+        })
+        .count();
+    match (base_side, unresolved) {
+        (0, 0) => NoSelectionMix::AllBaseSide,
+        (_, 0) => NoSelectionMix::AllBaseSide,
+        (0, _) => NoSelectionMix::AllUnresolved,
+        (b, u) => NoSelectionMix::Mixed {
+            base_side: b,
+            unresolved: u,
+        },
+    }
+}
+
+/// The `Hidden:` count line for a run where nothing was candidate-actionable.
+fn no_selection_hidden_line(omitted: &[&Finding]) -> String {
+    let suffix = omitted_identity_suffix(omitted);
+    match no_selection_mix(omitted) {
+        NoSelectionMix::AllBaseSide => format!(
+            "  All {} finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence{}.\n",
+            omitted.len(),
+            suffix
+        ),
+        NoSelectionMix::AllUnresolved => format!(
+            "  All {} finding(s) have unresolved subject currentness — not established base-side or candidate edit targets; rerun with --format human-full for the full evidence{}.\n",
+            omitted.len(),
+            suffix
+        ),
+        NoSelectionMix::Mixed {
+            base_side,
+            unresolved,
+        } => format!(
+            "  None of the {} finding(s) is a candidate edit target ({} base-side, {} unresolved currentness) — rerun with --format human-full for the full evidence{}.\n",
+            omitted.len(),
+            base_side,
+            unresolved,
+            suffix
+        ),
+    }
+}
+
+/// The safe-next-action line for a run where nothing was candidate-actionable.
+fn no_selection_safe_action_line(omitted: &[&Finding]) -> String {
+    match no_selection_mix(omitted) {
+        NoSelectionMix::AllBaseSide => {
+            "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n".to_string()
+        }
+        NoSelectionMix::AllUnresolved => {
+            "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n".to_string()
+        }
+        NoSelectionMix::Mixed { base_side, unresolved } => format!(
+            "  Safe next action: no finding is a candidate edit target ({} base-side, {} unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n",
+            base_side, unresolved
+        ),
+    }
+}
 
 /// #4395(b): the Hidden count line names omitted preview / non-Rust identity
 /// from fields already on those findings. This is not the #2615 availability
