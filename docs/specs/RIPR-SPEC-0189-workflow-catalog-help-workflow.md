@@ -87,17 +87,17 @@ Authority:
    repository: an integration test snapshots the working tree before and
    after and requires byte identity.
 10. Every table row and graph edge is load-bearing: removing any required
-    step, family edge, or recovery route from the production table fails a
-    test, so the catalog cannot silently shed content. Graph edges come only
-    from declared family producers and recovery routes — there are no
-    implicit adjacent-step edges — and every required step must produce at
-    least one result family, so removing a single family fails the check
-    even when the remaining edges still connect the step chain. Workflow
-    content mirrors real producers: the repair handoff selects a seam ID
-    from the pilot packet (a `probe:` finding ID is not a seam ID), and the
-    PR-evidence workflow feeds `ripr outcome` two preserved raw
-    `repo-exposure-json` snapshots, keeping the `pr-evidence` wrapper packet
-    out of the outcome inputs.
+    step or family edge from the production table fails a test, and the
+    recovery block cannot be emptied, so the catalog cannot silently shed
+    content. Graph edges come only from declared family producers and
+    recovery routes — there are no implicit adjacent-step edges — and every
+    required step must produce at least one result family, so removing a
+    single family fails the check even when the remaining edges still
+    connect the step chain. Workflow content mirrors real producers: the
+    repair handoff selects a seam ID from the pilot packet (a `probe:`
+    finding ID is not a seam ID), and the PR-evidence workflow feeds
+    `ripr outcome` two preserved raw `repo-exposure-json` snapshots, keeping
+    the `pr-evidence` wrapper packet out of the outcome inputs.
 
 `workflow_catalog()` lookup is static data. It does not run analysis, spawn a
 process, open a network, mutate a workspace, or write a product artifact.

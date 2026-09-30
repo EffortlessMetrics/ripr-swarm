@@ -778,6 +778,9 @@ pub(crate) fn workflow_catalog_violations(
         if row.result_families.is_empty() {
             violations.push(format!("workflow {label:?} declares no result families"));
         }
+        if row.recovery.is_empty() {
+            violations.push(format!("workflow {label:?} declares no recovery routes"));
+        }
 
         // Host-independent text (required control 8): no backslashes or URLs
         // can leak host-specific quoting or environments into rendered output.
