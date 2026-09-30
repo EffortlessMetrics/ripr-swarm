@@ -141,10 +141,12 @@ pub(crate) fn render_full_with_config_and_navigation(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    let mut findings_rendered = 0usize;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
+        findings_rendered += 1;
         out.push_str(&render_finding_with_config(finding, config));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
@@ -155,9 +157,12 @@ pub(crate) fn render_full_with_config_and_navigation(
     }
     // #4321: a `--worktree` run without `--write-artifact` has no artifact for
     // drill-in commands to replay; say so and name the route instead of
-    // dropping the block silently.
+    // dropping the block silently. The note only points at ids it actually
+    // printed — an all-suppressed run states the route without the pointer.
     if let Some(FindingDrillIn::WorktreeReplayNeedsArtifact) = drill_in {
-        out.push_str(&FindingDrillIn::worktree_replay_note(None));
+        out.push_str(&FindingDrillIn::worktree_replay_note_full(
+            findings_rendered > 0,
+        ));
         out.push('\n');
     }
     render_all_no_path_disclosure(&mut out, output);
@@ -2476,6 +2481,64 @@ mod tests {
         assert!(
             !rendered.contains("Drill in:"),
             "commands replaying a different analysis must not print; got:\n{rendered}"
+        );
+    }
+
+    /// #4924 review: the full-form replay route must not point at ids it did
+    /// not print — when policy suppresses every finding, no `id:` line exists
+    /// above the note, so the route prints without the id pointer.
+    #[test]
+    fn worktree_full_omits_the_id_pointer_when_every_finding_is_suppressed() {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: Some(CheckSuppressionOutcome {
+                policy_path: "policy/ripr-suppressions.toml".to_string(),
+                suppressed: vec![SuppressedCheckFinding {
+                    finding_id,
+                    selector: "src/**".to_string(),
+                }],
+                warnings: Vec::new(),
+            }),
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let drill_in = crate::app::FindingDrillIn::WorktreeReplayNeedsArtifact;
+        let rendered = super::render_full_with_config_and_navigation(
+            &output,
+            &crate::config::RiprConfig::default(),
+            Some(&drill_in),
+        );
+
+        assert!(
+            rendered.contains("Next: this worktree run has no artifact to replay"),
+            "the replay route must still print under full suppression; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Finding ids print above."),
+            "the note must not claim ids it did not print; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("  id: "),
+            "a fully suppressed run prints no finding blocks; got:\n{rendered}"
         );
     }
 

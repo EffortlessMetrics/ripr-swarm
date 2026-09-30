@@ -234,7 +234,7 @@ pub(crate) fn render_human_triage(
             Some(FindingDrillIn::WorktreeReplayNeedsArtifact) => {
                 out.push_str(&format!(
                     "\n{}\n",
-                    FindingDrillIn::worktree_replay_note(Some(&finding.id))
+                    FindingDrillIn::worktree_replay_note(&finding.id)
                 ));
             }
             None => {}

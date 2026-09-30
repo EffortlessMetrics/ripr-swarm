@@ -4,9 +4,7 @@ use super::{
 };
 use crate::analysis;
 use crate::app::causal_projection::CausalDeltaArtifact;
-use crate::app::{
-    AnalysisProgressSink, CheckOutput, FindingDrillIn, repo_inventory_with_progress,
-};
+use crate::app::{AnalysisProgressSink, CheckOutput, FindingDrillIn, repo_inventory_with_progress};
 use crate::config::RiprConfig;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;

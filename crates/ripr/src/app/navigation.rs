@@ -45,23 +45,29 @@ pub(crate) enum FindingDrillIn {
 impl FindingDrillIn {
     /// The one-line replay route printed in place of drill-in commands on a
     /// `--worktree` run without `--write-artifact` (#4321). The bounded
-    /// digest names its selected finding; the full form points at the ids it
-    /// prints with every finding.
-    pub(crate) fn worktree_replay_note(top_finding_id: Option<&str>) -> String {
-        match top_finding_id {
-            Some(id) => format!(
-                "Next: this worktree run has no artifact to replay — rerun with \
-                 --write-artifact, then `ripr explain --from <artifact> {id}` drills into the \
-                 top finding; a committed-history replay would not match this analysis."
-            ),
-            None => concat!(
-                "Next: this worktree run has no artifact to replay — rerun with ",
-                "--write-artifact, then `ripr explain --from <artifact> <finding id>`; a ",
-                "committed-history replay would not match this analysis. Finding ids print ",
-                "above.",
-            )
-            .to_string(),
+    /// digest names its selected finding.
+    pub(crate) fn worktree_replay_note(top_finding_id: &str) -> String {
+        format!(
+            "Next: this worktree run has no artifact to replay — rerun with \
+             --write-artifact, then `ripr explain --from <artifact> {top_finding_id}` drills into the \
+             top finding; a committed-history replay would not match this analysis."
+        )
+    }
+
+    /// The full-form replay route (#4321). `ids_printed_above` states whether
+    /// finding ids actually printed above the note — an all-suppressed run
+    /// must not claim they did (devin review on #4924).
+    pub(crate) fn worktree_replay_note_full(ids_printed_above: bool) -> String {
+        let mut note = concat!(
+            "Next: this worktree run has no artifact to replay — rerun with ",
+            "--write-artifact, then `ripr explain --from <artifact> <finding id>`; a ",
+            "committed-history replay would not match this analysis.",
+        )
+        .to_string();
+        if ids_printed_above {
+            note.push_str(" Finding ids print above.");
         }
+        note
     }
 }
 
