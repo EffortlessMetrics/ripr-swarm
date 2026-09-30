@@ -1,5 +1,29 @@
 # Golden Output Changes
 
+## Pending — boundary_gap (6)
+
+Reason:
+#4307 residual: the front panel's guidance-route top issue
+(`top_issue_from_guidance`) still synthesized a per-surface `ripr agent verify`
+line without the persisted redirect, so the summary-only case did not write the
+`agent-verify.json` artifact a receipt reads. It now reuses the shared
+`agent_verify_command` builder (ADR-0019), matching the review-card surface the
+landed RIPR-SPEC-0068 batch already covers for repair-start inputs.
+Classification, placement, actionability, receipt and gate decisions are
+unchanged.
+
+Command:
+The `summary-only/pr-review-front-panel.{json,md}` pins were hand-edited to the
+builder's exact root-anchored redirect (`<cwd>/` placeholder per the #3872
+rule); the corpus test projects the renderer cwd before comparing and before
+re-blessing, so `RIPR_UPDATE_FIXTURES=1 cargo test -p ripr --lib
+output::pr_review_front_panel::tests::pr_review_front_panel_matches_fixture_corpus
+-- --exact` reproduces the Markdown pin and asserts the JSON pin unchanged.
+
+Updated:
+- `expected/pr-review-front-panel/summary-only/pr-review-front-panel.json`
+- `expected/pr-review-front-panel/summary-only/pr-review-front-panel.md`
+
 ## Pending — boundary_gap (5)
 
 Reason:
@@ -616,6 +640,17 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — boundary_gap (9)
+
+Reason:
+#4324 / RIPR-SPEC-0122: the bounded digest names all five stage states on one compact Evidence line (reach, infection, propagation, observation, discriminator) instead of letting the positional 2-line detail window hide the decisive stages behind a bare count; the detail window keeps its two lines and the remainder line now reads `N more detail line(s) in --format human-full`. JSON output is unchanged.
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — boundary_gap (10)
 
 Reason:
 RIPR-SPEC-0122: #4321 additive per-finding id lines in human-full (drill-in identifiers)

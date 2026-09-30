@@ -19,17 +19,17 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/render.py:render:predicate_boundary:predicate:def_render_name_verbose=true
   Changed behavior: def render(name, verbose=True):
-  Missing discriminator: A strong Python oracle reaches `render`, but every related call passes `verbose` explicitly, so the changed default value is never exercised; static evidence cannot confirm the…
+  Missing discriminator (1 of 2): A strong Python oracle reaches `render`, but every related call passes `verbose` explicitly, so the changed default value is never exercised; static evidence cannot confirm the…
   Related test: tests/test_render.py:4 test_render_explicit_verbose_false
   Suggested test file: tests/test_render.py
   Suggested test: test_render_explicit_verbose_false
   Test node: tests/test_render.py::test_render_explicit_verbose_false
   Verify command: python -m pytest tests/test_render.py::test_render_explicit_verbose_false (high)
   Next step: Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `call `render` without `verbose``.
-  Evidence:
+  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     - reach yes: 1 related Python test(s) found for owner `render`
     - infection yes: Changed Python expression can alter preview-classified predicate behavior: `def render(name, verbose=True):`
-    - 5 more evidence line(s) hidden
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/python_adversarial_default_value_overridden/input --diff fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast probe:src_render.py:python_preview:bc1138cb
