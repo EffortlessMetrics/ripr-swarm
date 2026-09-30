@@ -148,3 +148,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_first (11)
+
+Reason:
+RIPR-SPEC-0005: agent seam packet schema_version 0.4 to 0.5 (#4329); version-string-only flip - the additive repair_attempt continuation rides only the repair-before --json success stdout, never this check.json projection
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
