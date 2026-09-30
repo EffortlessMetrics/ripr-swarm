@@ -18,15 +18,15 @@ Start here:
   Static exposure: weak (weakly_exposed, warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: profile.status = status;
-  Missing discriminator: Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
+  Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `updateProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
   Related test: tests/profile.test.ts:1 updates and records status
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `profile.status == status`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available.
-  Evidence:
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach weak: 1 related test(s) found for owner `updateProfile`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 5 more evidence line(s) hidden
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/typescript_effect_probe_shapes/input --diff fixtures/typescript_effect_probe_shapes/diff.patch --mode fast probe:src_profile.ts:typescript_preview:7c5ce045
@@ -34,6 +34,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
+    - src/profile.ts:5 (weakly_exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

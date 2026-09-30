@@ -18,15 +18,15 @@ Start here:
   Static exposure: weak (weakly_exposed, warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (base >= 0) {
-  Missing discriminator: Related tests reach `computePrice` with a strong oracle, but no strong assertion observes a `computePrice(...)` call at the changed predicate boundary `base == 0`; inputs on one…
+  Missing discriminator (1 of 2): Related tests reach `computePrice` with a strong oracle, but no strong assertion observes a `computePrice(...)` call at the changed predicate boundary `base == 0`; inputs on one…
   Related test: tests/pricing.test.ts:3 computePrice returns expected
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `base == 0`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available.
-  Evidence:
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach yes: 1 related test(s) found for owner `computePrice`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 4 more evidence line(s) hidden
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/ts_dynamic_oracle/input --diff fixtures/ts_dynamic_oracle/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0335115b

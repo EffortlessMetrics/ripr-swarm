@@ -23,6 +23,13 @@ are scoped or reviewed.
   isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
   zero-subject, or mismatched rows cannot pass. No PyPI credentials or
   publication (#4631).
+- CI: `windows-advisory.yml` runs an always-on `windows-advisory-subset` job on
+  every subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
+  `labeled`): the #4921 `lsp::gap_artifacts` lib tests, the #4918
+  cache-warning smoke, and Windows `cargo clippy -p ripr --all-targets`,
+  advisory under the lane contract (test/lint verdicts never gate; missing or
+  zero-subject evidence fails the job). The label-gated full suite is
+  unchanged (#4938).
 - LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
   sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
   unchanged save/refresh, production/related/unrelated edits, rename, config
@@ -42,6 +49,18 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CLI argument errors now name the fix on every command. `ripr context`
+  no-finding errors carry `ripr explain`'s remediation suffix on both the
+  fresh and `--from` paths; `ripr check --format`, `ripr outcome`, and
+  `ripr calibrate` value errors enumerate the accepted names with a near-miss
+  suggestion; `ripr doctor` names a repeated `--root` and a rejected
+  positional instead of calling a documented flag unknown, and no longer
+  consumes a known flag as the `--root` path; a subcommand that rejects
+  `--version` points at `ripr --version` (`ripr lsp --version` keeps its
+  local contract); numeric flags follow the `--git-timeout` shape with the
+  typed value, and `ripr context --max-related-tests 0` parses again — zero
+  suppresses related tests, matching the config surface
+  ([#4318](https://github.com/EffortlessMetrics/ripr-swarm/issues/4318)).
 - Perl preview findings with an unavailable test runner now disclose that
   limitation and ask for runner verification instead of saying no test change
   is needed solely because static evidence aligns with the changed sink
