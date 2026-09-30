@@ -114,6 +114,8 @@ second stage vocabulary.
 5. A TTY run that finishes under 250ms emits no stage spray.
 6. A blocked analyzing stage keeps emitting heartbeats at most one per 8
    seconds of stage time; no 10s window of a minutes-long stage is silent.
+   The STANDARD policy places no per-run count ceiling, so the former
+   16-line cap is gone (#4957).
 
 ## Test Mapping
 
