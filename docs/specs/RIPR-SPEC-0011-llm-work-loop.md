@@ -157,6 +157,7 @@ The status report uses schema version `0.1`:
     "reason": "agent packet artifact is missing",
     "command": "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > target/ripr/workflow/agent-packet.json"
   },
+  "test_run": null,
   "warnings": []
 }
 ```
@@ -409,11 +410,21 @@ interprets it through the receipt owner (`output::agent_receipt`):
 - anything else (an `invalid` or `incomplete` improved receipt, a new or
   resolved seam, or no receipt issued for the attempt): `unconfirmed`. The seam
   is not restarted and a `repair_receipt_unconfirmed` warning says why.
-- the workflow receipt is bound to another attempt: the workflow keeps one
-  receipt, so a later attempt's after phase superseded this attempt's.
-  `receipt.superseded_by` names that attempt; the reading is `unconfirmed`,
-  because the earlier outcome can no longer be read, and the warning names the
-  new-attempt command for the seam in case its gap is still open.
+- the attempt retained a terminal receipt: status reads that attempt-local
+  artifact (hashes, path, and after-verdict binding) even when the
+  compatibility file now holds another attempt's receipt. Replacing, deleting,
+  or corrupting `target/ripr/reports/agent-receipt.json` does not change the
+  retained reading.
+- a declared attempt-local receipt is missing, digest-mismatched, path-escaped,
+  or bound to a different after verdict: `receipt.unavailable` is true and the
+  reading is `unconfirmed`. Status does not fall back to another attempt's
+  compatibility receipt.
+- a legacy manifest with no `terminal_artifacts` whose workflow receipt is bound
+  to another attempt: the workflow keeps one compatibility receipt, so a later
+  attempt's after phase superseded this attempt's. `receipt.superseded_by` names
+  that attempt; the reading is `unconfirmed`, because the earlier outcome cannot
+  be reconstructed, and the warning names the new-attempt command for the seam
+  in case its gap is still open.
 
 An after phase that refuses after selecting its attempt records the refusal on
 the attempt (`last_after_refusal`, owned by `app::repair_attempt`): the final
@@ -546,6 +557,18 @@ The LLM work loop must not:
 - No automatic edits, generated tests, runtime mutation execution, speculative
   LSP features, or new public crates are added.
 
+## Amendment (#4396): selected-root editor command copy
+
+The LSP action payload keeps `root: "."` as a portable role, while its
+copyable command binds the selected workspace as an absolute `--root`. The VS
+Code copy handler accepts a fixed agent-loop action only when its command body
+exactly matches the server template for the selected workspace (or its realpath)
+and an output redirect, when present, names the declared artifact under that
+**same** root spelling. Relative redirects, another workspace root, traversal,
+extra shell tokens, and ambiguous quoting fail closed. The separate gap command
+labels retain their own bounded legacy contract. Copying a command is advisory;
+it does not execute the command or grant edit authority.
+
 ## Test Mapping
 
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_reports_missing_artifacts_and_next_commands`
@@ -578,6 +601,8 @@ The LLM work loop must not:
 - `crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once`
 - `crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots`
+- `editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)`
+- `editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions`
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_json_is_structured_and_advisory`
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_markdown_lists_commands_and_boundaries`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_json_selects_changed_seam`
@@ -619,6 +644,8 @@ The LLM work loop must not:
 - `crates/ripr/src/agent/loop_commands.rs` owns internal command and artifact
   templates for status, brief, LSP copy actions, pilot next commands, generated
   CI paths, and cockpit missing-input commands.
+- `editors/vscode/src/client.ts` validates copied LSP command templates against
+  the selected workspace root and artifact redirect before clipboard write.
 - `crates/ripr/src/agent/provenance.rs` hashes receipt artifacts with SHA-256.
 - `crates/ripr/src/cli/agent.rs` parses the status, start, and review-summary
   subcommands.

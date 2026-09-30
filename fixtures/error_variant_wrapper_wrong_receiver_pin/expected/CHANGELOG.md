@@ -51,7 +51,32 @@ Updated:
 ## Pending — error_variant_wrapper_wrong_receiver_pin (5)
 
 Reason:
-RIPR-SPEC-0122: bounded human surfaces disclose their windows - related-test and observed-value caps, digest missing-discriminator and related-test totals, Hidden block names omitted findings by file:line (class) with the all-base-side distinction (#4320); RIPR-SPEC-0152: all-base-side runs name base-side evidence instead of a lower-priority framing
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (6)
+
+Reason:
+RIPR-SPEC-0122: digest Next step wraps instead of cutting the remedy; stop reasons carry a gloss; boxed-wrapper limitation text has no whitespace runs (#4323)
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (7)
+
+Reason:
+RIPR-SPEC-0021: emitted related tests keep relation-confidence order so the primary Related test is the strongest relation
 
 Command:
 `cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`

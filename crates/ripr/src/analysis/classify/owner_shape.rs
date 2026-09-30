@@ -391,8 +391,10 @@ mod tests {
                 FunctionSourceRole::Production
             },
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         }
     }
 

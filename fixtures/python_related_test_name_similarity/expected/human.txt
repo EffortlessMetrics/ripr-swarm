@@ -4,19 +4,19 @@ root: fixtures/python_related_test_name_similarity/input
 
 Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
 
-Changed file(s) by language: python: 1, rust: 0.
+Changed file(s) by language: python: 1.
 
-Analysis outcome: complete_with_findings (analysis complete).
+Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
 Start here:
-  State: preview_limited
+  State: preview language, advisory only (preview_limited)
   Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.
   File: src/pricing.py:2
   Language: python
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/pricing.py:apply_discount:return_value:return_value:amount-10
   Changed behavior: return amount - 10
   Missing discriminator: Only heuristic Python test links were found for `apply_discount`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion.
@@ -35,4 +35,4 @@ More:
   Machine data: rerun with --format json
 
 
-Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

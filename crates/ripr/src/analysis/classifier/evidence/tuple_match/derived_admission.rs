@@ -8,9 +8,10 @@
 
 use crate::analysis::classify::ProbeContext;
 use crate::analysis::rust_index::find_file_facts;
+use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
-use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode, ast};
+use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 
 pub(super) fn admits(context: &ProbeContext<'_>) -> bool {
     admits_inner(context).unwrap_or(false)
@@ -19,6 +20,16 @@ pub(super) fn admits(context: &ProbeContext<'_>) -> bool {
 fn admits_inner(context: &ProbeContext<'_>) -> Option<bool> {
     let owner = context.owner_fn?;
     let facts = find_file_facts(context.index, &owner.file)?;
+    // `canonical_owner_roles` requires these exact parameter names, so a
+    // file that never spells one cannot admit. Checking before the parse
+    // skips a whole-file reparse per probe (profiled: ~16% of a `ripr
+    // check` on this repository) without changing any verdict.
+    if !CANONICAL_PARAMETER_NAMES
+        .iter()
+        .all(|name| facts.source.contains(name))
+    {
+        return Some(false);
+    }
     let root = parsed(&facts.source)?;
     let function = named_function(&root, &owner.name)?;
     if !canonical_owner_roles(&function)? {
@@ -40,17 +51,20 @@ fn admits_inner(context: &ProbeContext<'_>) -> Option<bool> {
     top_level_projection_observes(&test_function, &owner.name, &result)
 }
 
+/// The parameter names `canonical_owner_roles` pins with `has_exact_parameter`.
+const CANONICAL_PARAMETER_NAMES: [&str; 3] = ["receipt_request_ids", "request_set", "task_id"];
+
 /// First-slice authority is the canonical helper boundary only. Merely finding
 /// any owner parameter or any `.contains` call cannot assign semantic roles.
 fn canonical_owner_roles(function: &ast::Fn) -> Option<bool> {
     if !canonical_receipt_iteration(function)?
         || !has_exact_parameter(
             function,
-            "receipt_request_ids",
+            CANONICAL_PARAMETER_NAMES[0],
             "&BTreeMap<String,Vec<String>>",
         )?
-        || !has_exact_parameter(function, "request_set", "&BTreeSet<String>")?
-        || !has_exact_parameter(function, "task_id", "&str")?
+        || !has_exact_parameter(function, CANONICAL_PARAMETER_NAMES[1], "&BTreeSet<String>")?
+        || !has_exact_parameter(function, CANONICAL_PARAMETER_NAMES[2], "&str")?
     {
         return Some(false);
     }
@@ -491,8 +505,7 @@ fn compact(text: &str) -> String {
 }
 
 fn parsed(source: &str) -> Option<ast::SourceFile> {
-    let parse = SourceFile::parse(source, Edition::CURRENT);
-    parse.errors().is_empty().then(|| parse.tree())
+    parse_clean_source_file(source).map(|parse| parse.tree())
 }
 
 fn named_function(root: &ast::SourceFile, name: &str) -> Option<ast::Fn> {

@@ -75,7 +75,59 @@ Updated:
 ## Pending — python_same_stem_sibling_owner_not_related (7)
 
 Reason:
-RIPR-SPEC-0122: bounded human surfaces disclose their windows - related-test and observed-value caps, digest missing-discriminator and related-test totals, Hidden block names omitted findings by file:line (class) with the all-base-side distinction (#4320); RIPR-SPEC-0152: all-base-side runs name base-side evidence instead of a lower-priority framing
+RIPR-SPEC-0028: the unpaired def header of the new loyalty_price owner (line 10) is no longer a probe because its body lines carry their own added probes; body findings unchanged
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+RIPR-SPEC-0028: the module-constant threshold DISCOUNT_THRESHOLD now resolves to 10000, so discounted_total names amount == DISCOUNT_THRESHOLD, gets a Python repair card and a Next step, and the Safe next action moves from the no-repair-card row to the apply-the-next-step row (#4227); loyalty_price claims unchanged
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (8)
+
+Reason:
+RIPR-SPEC-0122: integrate first-hour output fixes with Python and TypeScript boundary packets
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (9)
+
+Reason:
+RIPR-SPEC-0122: bounded human check output leads the exposure line with the plain word the summary uses (weak, no path, unknown) before the schema value
+RIPR-SPEC-0122: Python pytest verify commands now emit python -m pytest so a flat-layout package imports from the repository root; wording only, no exposure class change
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (10)
+
+Reason:
+RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
+RIPR-SPEC-0122: Hidden remainder names omitted preview-language identity (#4395); formatting-only, no class or JSON change.
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (11)
+
+Reason:
+RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
 
 Command:
 `cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`

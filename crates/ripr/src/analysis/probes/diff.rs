@@ -3,8 +3,9 @@ use super::super::rust_index::{
     RustIndex, SyntaxNodeFact, changed_nodes_for_lines, extract_identifier_tokens, find_file_facts,
     find_owner_function,
 };
+use super::SeededProbe;
 use super::binding_predicate::{
-    BindingPredicateResolution, ChangedBindingPredicateUse, masked_brace_delta, masked_paren_delta,
+    BindingPredicateResolution, masked_brace_delta, masked_paren_delta,
     resolve_changed_binding_uses,
 };
 use super::classify::{
@@ -14,16 +15,12 @@ use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::{diff_probe_id, normalize_expression};
 use super::lexical::classify_changed_line;
+use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
 use crate::analysis::language::changed_let_binding;
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
 use std::path::Path;
-
-/// One seeded probe plus the #3294 changed-binding relation when the
-/// probe was retargeted from a changed `let` initializer to its
-/// same-function predicate use.
-pub(crate) type ProbeWithRelation = (Probe, Option<ChangedBindingPredicateUse>);
 
 /// Test surface: the probe vec without the #3294 relations. Production
 /// callers use [`probes_for_file_with_relations`].
@@ -31,7 +28,7 @@ pub(crate) type ProbeWithRelation = (Probe, Option<ChangedBindingPredicateUse>);
 pub(crate) fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) -> Vec<Probe> {
     probes_for_file_with_relations(root, changed, index)
         .into_iter()
-        .map(|(probe, _)| probe)
+        .map(|seeded| seeded.probe)
         .collect()
 }
 
@@ -39,7 +36,7 @@ pub(crate) fn probes_for_file_with_relations(
     root: &Path,
     changed: &ChangedFile,
     index: &RustIndex,
-) -> Vec<ProbeWithRelation> {
+) -> Vec<SeededProbe> {
     let mut probes = Vec::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
@@ -77,6 +74,9 @@ pub(crate) fn probes_for_file_with_relations(
         ) {
             continue;
         }
+        if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
+            continue;
+        }
         let parser_shapes =
             parser_probe_shapes_for_changed_line(index, &changed.path, added.new_side_line, text);
         let parser_shapes = parser_shapes
@@ -101,36 +101,32 @@ pub(crate) fn probes_for_file_with_relations(
                 }
                 emitted_parser_shapes.push(key);
                 let canonical_text = canonical_probe_text(text, shape.text);
+                let parser_span = parser_span_for_canonical_shape(&canonical_text, &shape);
                 let canonical_line = ChangedLine {
                     line: shape.start_line,
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
-                probes.push((
-                    build_probe(
-                        &build_context,
-                        &canonical_line,
-                        shape.family,
-                        nearby_removed_line(shape.start_line, &canonical_text, changed),
-                        Some(canonical_text),
-                    ),
-                    None,
-                ));
+                let probe = build_probe(
+                    &build_context,
+                    &canonical_line,
+                    shape.family,
+                    nearby_removed_line(shape.start_line, &canonical_text, changed),
+                    Some(canonical_text.clone()),
+                );
+                probes.push(SeededProbe::maybe_with_span(probe, parser_span));
             }
             continue;
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
-                probes.push((
-                    build_probe(
-                        &build_context,
-                        added,
-                        shape.family,
-                        nearby_removed_line(added.new_side_line, text, changed),
-                        Some(text.to_string()),
-                    ),
-                    None,
-                ));
+                probes.push(SeededProbe::from_probe(build_probe(
+                    &build_context,
+                    added,
+                    shape.family,
+                    nearby_removed_line(added.new_side_line, text, changed),
+                    Some(text.to_string()),
+                )));
             }
             continue;
         }
@@ -149,16 +145,13 @@ pub(crate) fn probes_for_file_with_relations(
             continue;
         }
         for family in families {
-            probes.push((
-                build_probe(
-                    &build_context,
-                    added,
-                    family,
-                    nearby_removed_line(added.new_side_line, text, changed),
-                    Some(text.to_string()),
-                ),
-                None,
-            ));
+            probes.push(SeededProbe::from_probe(build_probe(
+                &build_context,
+                added,
+                family,
+                nearby_removed_line(added.new_side_line, text, changed),
+                Some(text.to_string()),
+            )));
         }
     }
 
@@ -182,16 +175,13 @@ pub(crate) fn probes_for_file_with_relations(
             if has_matching_added_line(removed, &family, changed) {
                 continue;
             }
-            probes.push((
-                build_probe(
-                    &build_context,
-                    removed,
-                    family,
-                    Some(text.to_string()),
-                    None,
-                ),
+            probes.push(SeededProbe::from_probe(build_probe(
+                &build_context,
+                removed,
+                family,
+                Some(text.to_string()),
                 None,
-            ));
+            )));
         }
     }
 
@@ -260,7 +250,7 @@ fn retarget_changed_binding_predicates(
     added: &ChangedLine,
     text: &str,
     changed_lines: &[usize],
-) -> Option<Vec<ProbeWithRelation>> {
+) -> Option<Vec<SeededProbe>> {
     let (binding, initializer) = changed_let_binding(text)?;
     // Only a complete single-line declaration retargets: a multi-line
     // initializer's first added line would otherwise retarget with a
@@ -302,7 +292,7 @@ fn retarget_changed_binding_predicates(
             new_side_line: use_site.predicate_line,
             text: use_site.predicate_expression.clone(),
         };
-        retargeted.push((
+        retargeted.push(SeededProbe::retargeted(
             build_probe(
                 context,
                 &predicate_line,
@@ -310,7 +300,7 @@ fn retarget_changed_binding_predicates(
                 before_initializer.clone(),
                 Some(use_site.initializer.clone()),
             ),
-            Some(use_site),
+            use_site,
         ));
     }
     (!retargeted.is_empty()).then_some(retargeted)
@@ -325,18 +315,80 @@ fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
     }
 }
 
+fn parser_span_for_canonical_shape(
+    canonical_text: &str,
+    shape: &super::classify::ParserProbeShape<'_>,
+) -> Option<ParserByteSpan> {
+    if canonical_text != shape.text {
+        return None;
+    }
+    ParserByteSpan::same_line(shape.text, shape.start_byte)
+}
+
 /// Scan `probes` in order; for any id that appears more than once, rewrite the
 /// 2nd+ occurrences to append `.2`, `.3`, … (ordinal-based collision suffix).
-fn dedup_probe_ids(probes: &mut [ProbeWithRelation]) {
+fn dedup_probe_ids(probes: &mut [SeededProbe]) {
     use std::collections::HashMap;
     let mut seen: HashMap<String, u32> = HashMap::new();
-    for (probe, _) in probes.iter_mut() {
-        let count = seen.entry(probe.id.0.clone()).or_insert(0);
+    for seeded in probes.iter_mut() {
+        let count = seen.entry(seeded.probe.id.0.clone()).or_insert(0);
         *count += 1;
         if *count > 1 {
-            probe.id.0 = format!("{}.{}", probe.id.0, count);
+            seeded.probe.id.0 = format!("{}.{}", seeded.probe.id.0, count);
         }
     }
+}
+
+/// Whether an added `text` line is only the one-line signature of a NEW
+/// function whose body lines are added too: the owner starts on this line, no
+/// line of its span was removed and no removed line declared a function of the
+/// same name (so the signature did not change, even when git pairs the old
+/// signature with an unrelated inserted line), and another added line in the
+/// span carries the behavior. A signature has no runtime behavior of its own
+/// (Rust has no default arguments), so probing it only repeats the body
+/// findings. Multi-line signatures and one-line bodies keep their probes.
+fn opens_new_function_with_added_body(
+    index: &RustIndex,
+    changed: &ChangedFile,
+    line: usize,
+    text: &str,
+) -> bool {
+    if !text.contains("fn ") || !text.ends_with('{') || text.matches('{').count() != 1 {
+        return false;
+    }
+    let Some(function) = find_owner_function(index, &changed.path, line) else {
+        return false;
+    };
+    function.start_line == line
+        && function.end_line > line
+        && !changed.removed_lines.iter().any(|removed| {
+            (function.start_line..=function.end_line).contains(&removed.new_side_line)
+                || declares_fn_named(&removed.text, &function.name)
+        })
+        && changed.added_lines.iter().any(|other| {
+            other.new_side_line > line
+                && other.new_side_line <= function.end_line
+                && !should_ignore_changed_line(other.text.trim())
+        })
+}
+
+/// Whether `text` holds `fn <name>` (raw `r#` spelling included).
+fn declares_fn_named(text: &str, name: &str) -> bool {
+    text.match_indices("fn").any(|(start, _)| {
+        let keyword_starts = start == 0
+            || !text.as_bytes()[start - 1].is_ascii_alphanumeric()
+                && text.as_bytes()[start - 1] != b'_';
+        let rest = &text[start + 2..];
+        let declared = rest.trim_start();
+        let declared = declared.strip_prefix("r#").unwrap_or(declared);
+        keyword_starts
+            && rest.len() != declared.len()
+            && declared.starts_with(name)
+            && !declared[name.len()..]
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    })
 }
 
 /// Tests are the instrument, not the surface under test: a probe on a line
@@ -814,8 +866,10 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 3,
@@ -848,6 +902,142 @@ mod tests {
                 .iter()
                 .any(|sink| sink == "branch result")
         );
+    }
+
+    fn require_find(source: &str, needle: &str, label: &str) -> Result<usize, String> {
+        source
+            .find(needle)
+            .ok_or_else(|| format!("{label} {needle:?} missing from {source:?}"))
+    }
+
+    fn require_second(source: &str, needle: &str) -> Result<(usize, usize), String> {
+        let first = require_find(source, needle, "first")?;
+        let rest = source
+            .get(first.saturating_add(1)..)
+            .ok_or_else(|| format!("slice after first {needle:?} is not a scalar boundary"))?;
+        let second = rest
+            .find(needle)
+            .map(|offset| first.saturating_add(1).saturating_add(offset))
+            .ok_or_else(|| format!("second {needle:?} missing from {source:?}"))?;
+        Ok((first, second))
+    }
+
+    fn predicate_shape(
+        start_byte: usize,
+        text: &str,
+    ) -> super::super::classify::ParserProbeShape<'_> {
+        super::super::classify::ParserProbeShape {
+            family: ProbeFamily::Predicate,
+            start_line: 2,
+            start_byte,
+            text,
+            standalone_call: false,
+            unsafe_boundary: false,
+        }
+    }
+
+    #[test]
+    fn canonical_parser_span_skips_string_decoy_on_the_same_line() -> Result<(), String> {
+        const PREDICATE: &str = "montant_é > discount_threshold";
+        let path = PathBuf::from("src/lib.rs");
+        let source = concat!(
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {\n",
+            "    let decoy = \"montant_é > discount_threshold\"; if montant_é > discount_threshold { false } else { true }\n",
+            "}\n",
+        );
+        let (decoy, producer) = require_second(source, PREDICATE)?;
+        if decoy >= producer {
+            return Err(format!("decoy {decoy} is not before producer {producer}"));
+        }
+        let line = source
+            .lines()
+            .nth(1)
+            .ok_or_else(|| "missing predicate line".to_string())?
+            .to_string();
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: line,
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "    let decoy = \"montant_é > discount_threshold\"; if montant_é > discount_threshold { true } else { false }".to_string(),
+            }],
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: source.to_string(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId("price".to_string()),
+                        name: "price".to_string(),
+                        file: path.clone(),
+                        start_line: 1,
+                        end_line: 3,
+                        body: source.to_string(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        source_role: FunctionSourceRole::Production,
+                        attrs: vec![],
+                        impl_attrs: Vec::new(),
+                        nested_fn_names: Vec::new(),
+                        let_bindings: Vec::new(),
+                        impl_context: Default::default(),
+                    }],
+                    probe_shapes: vec![ProbeShapeFact {
+                        start_line: 2,
+                        end_line: 2,
+                        start_byte: producer,
+                        kind: PROBE_SHAPE_PREDICATE.to_string(),
+                        text: PREDICATE.to_string(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+        let seeded = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+        let predicate = seeded
+            .iter()
+            .find(|item| item.probe.family == ProbeFamily::Predicate)
+            .ok_or_else(|| "predicate probe missing".to_string())?;
+        assert_eq!(
+            predicate.parser_span,
+            Some(crate::analysis::diagnostic_origin::ParserByteSpan {
+                start_byte: producer,
+            })
+        );
+        assert_ne!(
+            predicate.parser_span.map(|span| span.start_byte),
+            Some(decoy)
+        );
+        assert_eq!(predicate.probe.expression, PREDICATE);
+        Ok(())
+    }
+
+    #[test]
+    fn parser_span_is_dropped_when_canonical_text_differs_from_shape() {
+        let shape = predicate_shape(12, "montant_é > discount_threshold");
+        assert_eq!(
+            parser_span_for_canonical_shape("let _ = montant_é > discount_threshold;", &shape),
+            None
+        );
+        assert_eq!(
+            parser_span_for_canonical_shape(shape.text, &shape),
+            Some(ParserByteSpan { start_byte: 12 })
+        );
+    }
+
+    #[test]
+    fn parser_span_is_dropped_for_multiline_shape_text() {
+        let shape = predicate_shape(0, "montant_é >\ndiscount_threshold");
+        assert_eq!(parser_span_for_canonical_shape(shape.text, &shape), None);
     }
 
     #[test]
@@ -898,8 +1088,10 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     probe_shapes: vec![ProbeShapeFact {
                         start_line: 10,
@@ -967,6 +1159,67 @@ mod tests {
             return Err(format!(
                 "isolated field edit borrowed unchanged outer shape: {probe:?}"
             ));
+        }
+        Ok(())
+    }
+
+    /// R3 (OSS replay, tokio-rs/bytes 7930d93): the emitted probes, not only
+    /// the lexical classifier, keep a macro-argument arrow out of
+    /// `match_arm` on both diff sides, while real arms and `macro_rules!`
+    /// rule arms keep it.
+    #[test]
+    fn probes_for_file_keeps_macro_argument_arrows_out_of_match_arm() -> Result<(), String> {
+        let path = PathBuf::from("src/buf_impl.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(20, "Some(v) => v + 1,"),
+                line(30, "buf_try_get_impl!(le => self, i64, 8);"),
+            ],
+            removed_lines: vec![
+                line(40, "buf_try_get_impl!(be => self, i64, 8);"),
+                line(50, "macro_rules! choose { ($v:expr) => { $v } }"),
+            ],
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let families_at = |number: usize| -> Vec<ProbeFamily> {
+            probes
+                .iter()
+                .filter(|probe| probe.location.line == number)
+                .map(|probe| probe.family.clone())
+                .collect()
+        };
+        for number in [30, 40] {
+            let families = families_at(number);
+            if families.is_empty() || families.contains(&ProbeFamily::MatchArm) {
+                return Err(format!(
+                    "macro call on line {number} must probe without match_arm: {families:?}"
+                ));
+            }
+        }
+        for number in [20, 50] {
+            let families = families_at(number);
+            if !families.contains(&ProbeFamily::MatchArm) {
+                return Err(format!(
+                    "arm on line {number} must keep match_arm: {families:?}"
+                ));
+            }
         }
         Ok(())
     }
@@ -1041,8 +1294,10 @@ mod tests {
                         literals: vec![],
                         source_role,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1214,6 +1469,103 @@ mod tests {
         assert_eq!(probe_lines, vec![28, 29, 30, 32], "probes: {probes:?}");
     }
 
+    fn loyalty_index_and_change(removed_signature: bool) -> (RustIndex, ChangedFile) {
+        let source = "pub fn loyalty_price(amount: u64, member_years: u32) -> u64 {\n    if member_years >= 5 {\n        amount - amount * 5 / 100\n    } else {\n        amount\n    }\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.files.insert(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let added_lines = source
+            .lines()
+            .enumerate()
+            .filter(|(offset, _)| !removed_signature || *offset == 0)
+            .map(|(offset, text)| ChangedLine {
+                line: offset + 1,
+                new_side_line: offset + 1,
+                text: text.to_string(),
+            })
+            .collect();
+        let removed_lines = if removed_signature {
+            vec![ChangedLine {
+                line: 1,
+                new_side_line: 1,
+                text: "pub fn loyalty_price(amount: u64, member_years: u8) -> u64 {".to_string(),
+            }]
+        } else {
+            Vec::new()
+        };
+        (
+            index,
+            ChangedFile {
+                path,
+                added_lines,
+                removed_lines,
+            },
+        )
+    }
+
+    /// RC walk: the signature of a new function repeated its body findings as
+    /// a `static_unknown` (later `no_static_path`) probe of its own; TS and
+    /// Python skip the same line.
+    #[test]
+    fn probes_for_file_skips_signature_line_of_new_function_with_added_body() {
+        let (index, changed) = loyalty_index_and_change(false);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 2),
+            "premise: the body predicate is probed: {probes:?}"
+        );
+        assert!(
+            probes.iter().all(|probe| probe.location.line != 1),
+            "{probes:?}"
+        );
+    }
+
+    #[test]
+    fn probes_for_file_keeps_changed_signature_line() {
+        let (index, changed) = loyalty_index_and_change(true);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 1),
+            "{probes:?}"
+        );
+    }
+
+    /// Review of #4428: git can pair the old signature with an unrelated
+    /// inserted line, so a changed signature whose body also changed would
+    /// read as a new function. A removed `fn` of the same name keeps it.
+    #[test]
+    fn probes_for_file_keeps_changed_signature_when_git_pairs_it_elsewhere() {
+        let (index, mut changed) = loyalty_index_and_change(false);
+        changed.removed_lines.push(ChangedLine {
+            line: 1,
+            new_side_line: 40,
+            text: "pub fn loyalty_price(amount: u64) -> u64 {".to_string(),
+        });
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 1),
+            "{probes:?}"
+        );
+    }
+
+    #[test]
+    fn declares_fn_named_matches_only_the_declared_name() {
+        assert!(declares_fn_named("pub async fn price(a: u8) {", "price"));
+        assert!(declares_fn_named("fn r#price() {", "price"));
+        assert!(!declares_fn_named("pub fn prices(a: u8) {", "price"));
+        assert!(!declares_fn_named("let fnprice = price(1);", "price"));
+        assert!(!declares_fn_named("price(1)", "price"));
+    }
+
     /// F1 (#4216 row 5 review): a lone `} else {` on either side is the
     /// whole change, so it keeps its probe; a structural line is skipped
     /// only when its contiguous run holds a behavioral line.
@@ -1356,8 +1708,10 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1629,8 +1983,10 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1640,9 +1996,11 @@ mod tests {
 
         let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
 
-        let [(probe, relation)] = probes.as_slice() else {
+        let [seeded] = probes.as_slice() else {
             return Err(format!("expected one retargeted probe, got {probes:?}"));
         };
+        let probe = &seeded.probe;
+        let relation = &seeded.binding_relation;
         if probe.family != ProbeFamily::Predicate {
             return Err(format!("expected predicate family, got {probe:?}"));
         }
@@ -1700,8 +2058,10 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1711,10 +2071,10 @@ mod tests {
 
         let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
 
-        let [(probe, relation)] = probes.as_slice() else {
+        let [seeded] = probes.as_slice() else {
             return Err(format!("expected the generic probe only, got {probes:?}"));
         };
-        if probe.family != ProbeFamily::StaticUnknown || relation.is_some() {
+        if seeded.probe.family != ProbeFamily::StaticUnknown || seeded.binding_relation.is_some() {
             return Err(format!(
                 "shadowed binding must keep the generic path: {probes:?}"
             ));
@@ -1761,8 +2121,10 @@ mod tests {
                         literals: vec![],
                         source_role: FunctionSourceRole::Production,
                         attrs: vec![],
+                        impl_attrs: Vec::new(),
                         nested_fn_names: Vec::new(),
                         let_bindings: Vec::new(),
+                        impl_context: Default::default(),
                     }],
                     ..FileFacts::default()
                 },
@@ -1777,7 +2139,10 @@ mod tests {
         if probes.len() != 2 {
             return Err(format!("expected two direct probes, got {probes:?}"));
         }
-        if probes.iter().any(|(_, relation)| relation.is_some()) {
+        if probes
+            .iter()
+            .any(|seeded| seeded.binding_relation.is_some())
+        {
             return Err(format!(
                 "no retarget may attach to a changed predicate: {probes:?}"
             ));

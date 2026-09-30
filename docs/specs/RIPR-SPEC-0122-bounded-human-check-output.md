@@ -71,20 +71,33 @@ view:
 Header
 Summary counts
 Start here:
-  State: top_gap | no_actionable_gap | preview_limited | static_limited | missing_scope
+  State: <plain words> (top_gap | no_actionable_gap | preview_limited | static_limited | missing_scope)
   One selected finding or safe next action
 Hidden:                                    (only when N > 0)
-  N lower-priority finding(s) omitted from default human output.
+  N lower-priority finding(s) omitted from default human output [(language identity)].
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 ```
+
+Human lines lead with plain words and keep the stable id in parentheses, so a
+reader does not need the internal vocabulary and a script can still match the
+id: `State: a test gap to inspect or repair (top_gap)`, `Analysis outcome:
+findings below (analysis complete; complete_with_findings).` and `Static exposure: weak
+(weakly_exposed, warning, confidence 0.92)`. The ids and their meanings are
+unchanged.
 
 The trailing block is state-dependent, because a `Hidden:` heading over a
 literal `0 lower-priority finding(s) omitted` line claims a suppressed
 remainder that does not exist:
 
 - `N > 0` — the heading is `Hidden:` and the count line is rendered. The
-  omission is the reason the section exists.
+  omission is the reason the section exists. When any omitted finding carries
+  preview `language_status` or a non-Rust `language`, the count line appends
+  a parenthetical identity breakdown from those fields (`Python preview: 1`).
+  Unlabeled preview remainder uses `preview-language: N` rather than inventing
+  a language name. Rust-only remainder stays the count line with no breakdown.
+  This reads finding identity already on the omitted records; it is not the
+  language-availability projection owned by #2615.
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -96,6 +109,13 @@ When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
 short evidence summary.
+
+Start here ranks a finding with a repair route ahead of one without. For a
+stable finding the route is a recommended next step or suggested verify
+command; for a Python preview finding it is a repair card from the Python
+repair-card authority. A card-less Python finding therefore never hides a
+carded one, so `check` does not report "no repair card" while `ripr pilot` and
+`ripr first-pr` route a card for the same diff. Classification is unchanged.
 
 The digest's discriminator line label reflects the discriminator state:
 
@@ -140,6 +160,10 @@ selector is deterministic:
    carry generic next-step text.
 4. Class, gap metadata, related tests, missing evidence, confidence, path, and
    line provide stable tie-breakers.
+
+The selected finding's `Next step` is never truncated, because the guidance
+ends with its remedy (#4323). Text within the digest line budget stays on one
+line; longer guidance wraps onto four-space continuation lines.
 
 ### Triage states
 
@@ -201,6 +225,13 @@ completeness, with the shared repair-packet validator as the only authority:
 `ripr check --format human-full` and the `text-full` alias render the previous
 full per-finding evidence report. This format is diff-scoped like `human` and
 is not a repo-scoped format.
+
+When `ripr check` renders `human-full` itself, each rendered finding ends with
+a `Drill in:` block holding the same `ripr explain` / `ripr context --at`
+commands the bounded digest prints for its top finding (#4379). The digest
+sends readers to `human-full` for full evidence, so that rerun must not lose
+the only runnable next commands. Library renders without CLI navigation omit
+the block.
 
 ### Repo-scope warnings
 
@@ -268,6 +299,7 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_does_not_select_exposed_over_non_exposed_repair`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_missing_scope_as_start_here_state`
+- `crates/ripr/src/output/human.rs::tests::start_here_prefers_a_python_finding_with_a_repair_card`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_keeps_preview_language_in_preview_limited_state`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_prefers_stable_gap_over_preview_with_route`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_no_actionable_gap_when_all_findings_suppressed`
@@ -364,4 +396,6 @@ suggested write cannot fail on the same missing base.
    two format pointers and no `Hidden:` heading and no
    `0 lower-priority finding(s) omitted` line.
 10. A run that omitted at least one finding renders `Hidden:` with the non-zero
-    count line above the same two format pointers.
+    count line above the same two format pointers. When the omitted set includes
+    preview-language or non-Rust identity, that line names the per-language
+    counts; a Rust-only remainder stays the count line alone.
