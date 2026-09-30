@@ -36,6 +36,19 @@ Options:
                  safe boundaries. Non-preemptible operations can overrun it.
                  Use an outer orchestration wrapper for a hard process bound.
 
+Environment variables:
+  RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES
+                                 Maximum analyzable closure files one guidance
+                                 dispatch admits before failing closed as
+                                 review_guidance_oversized, before the corpus
+                                 is loaded. The run receipt carries the named
+                                 `review_guidance_oversized` limitation and no
+                                 guidance artifacts are published. Default: 800.
+  RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES
+                                 Byte budget over the guidance payload (changed
+                                 diff text plus closure corpus) for the same
+                                 named refusal. Default: 268435456 (256 MiB).
+
 The review-comments command writes a bounded advisory PR guidance report as
 JSON plus a sibling Markdown file. It joins existing static seam evidence with
 the changed-line diff by default and only places line guidance on changed

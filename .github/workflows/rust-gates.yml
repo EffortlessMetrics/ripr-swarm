@@ -283,6 +283,14 @@ jobs:
           # a hung producer wastes at most one hour — the scope guard
           # still caps memory).
           RIPR_PR_EVIDENCE_TIMEOUT_SECS: "3600"
+          # The review-guidance pass refuses closures above its 800-file
+          # default ceiling before materializing the corpus (#4388). This
+          # workspace measured 790 analyzable Rust files at that change, so
+          # the default headroom is ~10 files and ordinary growth would trip
+          # the ceiling in this required gate; 2000 keeps the lane admitted
+          # while the default still protects 16 GB consumers at the #3768
+          # measured scale (deaths at 1,600-1,700 indexed files).
+          RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES: "2000"
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check

@@ -21,6 +21,37 @@ pub(crate) struct AnalyzableRustCorpus {
     pub(crate) fingerprint: Option<String>,
 }
 
+/// Stat-only size of the analyzable corpus: the file count and total source
+/// bytes an index build over the workspace would read. Nothing is read or
+/// materialized, so a caller can refuse an over-ceiling payload before the
+/// corpus is loaded (#4388).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CorpusPayloadSize {
+    pub(crate) file_count: usize,
+    pub(crate) total_bytes: u64,
+}
+
+/// Measure the analyzable corpus without loading it: same discovery the
+/// inventory uses, then metadata-only byte totals. A file whose metadata
+/// cannot be read fails closed — the later index build could not read it
+/// either.
+pub(crate) fn analyzable_corpus_payload_size(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<CorpusPayloadSize, String> {
+    let corpus = discover_analyzable_rust_corpus(root, config)?;
+    let mut total_bytes = 0u64;
+    for path in &corpus.analyzable {
+        let metadata = std::fs::metadata(root.join(path))
+            .map_err(|err| format!("stat {} failed: {err}", path.display()))?;
+        total_bytes = total_bytes.saturating_add(metadata.len());
+    }
+    Ok(CorpusPayloadSize {
+        file_count: corpus.analyzable.len(),
+        total_bytes,
+    })
+}
+
 /// Walk `root` and keep the generated-Rust files `ripr check` skips out of
 /// the inventory corpus. The fingerprint covers only analyzable files so a
 /// generated-file edit does not bust the seam cache.
