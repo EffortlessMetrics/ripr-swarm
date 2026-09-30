@@ -239,7 +239,9 @@ pub(crate) fn receipt_binding(
             // can select one with the receipt's own `--attempt` flag instead
             // of rerunning to discover them.
             let restart = format!(
-                "ripr agent repair --root {root_display} --seam-id {seam_id} --phase before"
+                "ripr agent repair --root {} --seam-id {} --phase before",
+                shell_arg(&root_display),
+                shell_arg(seam_id)
             );
             let ids = matches
                 .iter()
@@ -1903,7 +1905,19 @@ fn select_awaiting_repair_attempt_by_seam(
     // matches, not an operational error (#4332), so the refusal still names
     // the start command.
     let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(&manifests_root) {
-        Ok(entries) => entries.filter_map(Result::ok).collect(),
+        Ok(entries) => {
+            // A failed directory entry is an operational error, not a silent
+            // skip: a partial listing must never masquerade as a complete one
+            // and misselect the sole awaiting attempt or advise a false
+            // found-zero start (review finding on #4332).
+            let mut collected = Vec::new();
+            for entry in entries {
+                collected.push(entry.map_err(|error| {
+                    format!("read {} failed: {error}", manifests_root.display())
+                })?);
+            }
+            collected
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(format!("read {} failed: {error}", manifests_root.display())),
     };

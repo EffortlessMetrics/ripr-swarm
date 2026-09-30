@@ -1960,17 +1960,18 @@ mod tests {
 
     #[test]
     fn agent_receipt_rejects_a_blank_attempt_id() {
-        let error = parse_agent_receipt_options(&args(&[
-            "--verify-json",
-            "v.json",
-            "--seam-id",
-            "s",
-            "--attempt",
-            "  ",
-            "--json",
-        ]))
-        .expect_err("a blank --attempt id is a usage error");
-        assert_eq!(error, "agent receipt --attempt requires a non-empty ID");
+        assert_eq!(
+            parse_agent_receipt_options(&args(&[
+                "--verify-json",
+                "v.json",
+                "--seam-id",
+                "s",
+                "--attempt",
+                "  ",
+                "--json",
+            ])),
+            Err("agent receipt --attempt requires a non-empty ID".to_string())
+        );
     }
 
     #[test]

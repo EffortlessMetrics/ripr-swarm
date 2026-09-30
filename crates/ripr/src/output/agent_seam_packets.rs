@@ -2108,7 +2108,17 @@ fn task_for(entry: &ClassifiedSeam) -> &'static str {
     // Only reached through the packet queue pre-filter
     // (`repair_packet_queue_visible`); under that filter the authority's
     // fail-closed flip reduces to producer route readiness.
-    if is_safe_for_repair_packet(entry) {
+    //
+    // The recommended target must also be a test surface (#4330 cage
+    // contract): a producer-owned inline-module proposal names a production
+    // file, and advertising it as `allowed_edit_surface` alongside the
+    // must-not-change production statement would promise an edit surface the
+    // cage's own policy text forbids. Those seams render as inspection
+    // packets, matching the evidence-record and pilot-command gating of the
+    // same check.
+    if is_safe_for_repair_packet(entry)
+        && crate::analysis::is_test_surface_path(&recommended_test_for(entry).file)
+    {
         TASK_WRITE_TARGETED_TEST
     } else {
         "inspect_static_limitation"
@@ -6457,6 +6467,60 @@ mod tests {
             packet["allowed_edit_surface"],
             serde_json::json!([]),
             "inspection packet must allow no edits: {json}"
+        );
+        Ok(())
+    }
+
+    /// A producer-owned inline-module proposal names a production file. It
+    /// must never ride an actionable packet: advertising it as
+    /// `allowed_edit_surface` alongside the must-not-change production
+    /// statement would promise an edit surface the cage's own policy forbids,
+    /// so the seam renders as inspection-only with an empty surface.
+    #[test]
+    fn inline_module_proposal_packet_is_inspection_only_without_an_edit_surface()
+    -> Result<(), String> {
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        };
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+        }];
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind: NewTestKind::InlineUnit,
+                file: PathBuf::from("src/pricing.rs"),
+                owner: "pricing::discounted_total".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            region: None,
+            blocker: None,
+        });
+        // Pin both preconditions so the demotion below is attributable to the
+        // non-test recommended target, not to route readiness.
+        assert!(
+            is_safe_for_repair_packet(&entry),
+            "fixture must be route-ready so only the surface check demotes it"
+        );
+        assert_eq!(
+            recommended_test_for(&entry).file.replace('\\', "/"),
+            "src/pricing.rs",
+            "fixture must recommend the production-file inline module"
+        );
+        let json = render_agent_seam_packets_json(&[entry], None);
+        let value = parsed_envelope(&json)?;
+        let packet = &value["packets"][0];
+        if packet["task"] != "inspect_static_limitation" {
+            return Err(format!(
+                "a production-file inline proposal must not advertise an actionable edit surface: {json}"
+            ));
+        }
+        assert_eq!(
+            packet["allowed_edit_surface"],
+            serde_json::json!([]),
+            "the inspection packet must allow no edits: {json}"
         );
         Ok(())
     }

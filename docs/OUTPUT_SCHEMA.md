@@ -14278,8 +14278,13 @@ Field contract:
   artifact directories (`agent start --out`, `agent repair --phase before`,
   `agent receipt --out`), and the manual loop docs
   (`docs/TARGETED_TEST_WORKFLOW.md`, `docs/LLM_OPERATOR_GUIDE.md`) teach the
-  directory setup as its own step. The command works under bash, cmd.exe, and
-  PowerShell alike. `after_snapshot_command` captures the static evidence after
+  directory setup as its own step. A shell opens the redirect before `ripr`
+  runs and creates no parent directories, so in a fresh workspace the
+  snapshot command fails at the redirect under bash, cmd.exe, and PowerShell
+  alike until the workflow directory exists (verified on a fresh workspace:
+  each shell refuses the missing `target/ripr/workflow`, and the snapshot
+  succeeds in each once it is created — per-shell setup commands are in the
+  manual loop docs). `after_snapshot_command` captures the static evidence after
   the edit;
   `verify_after_edit` writes the verify artifact consumed by the receipt
   command. `receipt_after_verify` is a seam-scoped command for a one-seam
