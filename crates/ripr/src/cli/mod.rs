@@ -10,6 +10,7 @@ mod commands_options;
 mod commands_timestamps;
 mod execute;
 mod help;
+mod help_json;
 mod parse;
 mod progress;
 mod rerun;
