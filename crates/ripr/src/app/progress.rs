@@ -146,12 +146,17 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// The repo-scoped formats drive the seam walkers from the render layer, so
 /// this is the repo-scope analog of [`crate::app::check_with_progress`]: the same closed
 /// stage vocabulary at the same [`AnalysisProgressScope::Repo`] scope, emitted
-/// around the walk the caller owns. `LoadingInput` covers corpus discovery,
-/// `Analyzing` the walk/classification compute, `BuildingOutput` the assembly
-/// callback, and `Completed` the producer boundary. The CLI projection holds
-/// `Completed` until the command has committed stdout. An early return through
-/// either closure drops the run, which fail-closes as `failed` (or
-/// `cancelled`) exactly like the diff-scoped path.
+/// around the walk the caller owns. `LoadingInput` opens the run at the
+/// diff-path's entry boundary and is followed immediately by `Analyzing`:
+/// the inventory closures own corpus discovery and the walk/classification
+/// compute together, and no separate discovery/compute boundary exists
+/// without re-plumbing the inventory signatures, so `Analyzing` is the one
+/// honest coarse stage for the whole walk (heartbeats report under it).
+/// `BuildingOutput` covers the assembly callback and `Completed` the producer
+/// boundary. The CLI projection holds `Completed` until the command has
+/// committed stdout. An early return through either closure drops the run,
+/// which fail-closes as `failed` (or `cancelled`) exactly like the
+/// diff-scoped path.
 pub(crate) fn repo_inventory_with_progress<T, R>(
     sink: Option<&dyn AnalysisProgressSink>,
     inventory: impl FnOnce() -> Result<T, String>,
@@ -664,7 +669,16 @@ mod tests {
                 },
                 |_| Err("assembly failed".to_string()),
             );
-            assert!(result.is_err(), "{name} closure failure must propagate");
+            let expected_error = if failing {
+                "inventory failed"
+            } else {
+                "assembly failed"
+            };
+            assert_eq!(
+                result,
+                Err(expected_error.to_string()),
+                "{name} closure error must propagate verbatim"
+            );
             let events = recorder.events();
             assert_eq!(stages(&events), expected, "{name} must fail-close");
             assert!(
