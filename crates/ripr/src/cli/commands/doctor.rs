@@ -40,6 +40,14 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
             }
             "--root" => {
                 let value = match arguments.next().map(String::as_str) {
+                    // A known doctor flag in the value position means the
+                    // root was omitted; consuming it ran the report against a
+                    // directory named after the flag (#4318 review). The
+                    // pre-#4318 parser answered `missing value for --root`
+                    // here. Other dash-prefixed paths stay legitimate values.
+                    Some("--help" | "-h" | "--json" | "--profile" | "--root") => {
+                        return Err("missing value for --root".to_string());
+                    }
                     Some(value) => value,
                     None => return Err("missing value for --root".to_string()),
                 };
@@ -2297,6 +2305,20 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    /// #4318 review: a known doctor flag in the `--root` value position means
+    /// the root was omitted, not that a directory named `--json` was chosen.
+    /// The report must not run against a path named after a flag.
+    #[test]
+    fn doctor_reports_a_missing_root_value_when_a_known_flag_follows() {
+        for flag in ["--json", "--profile", "--root", "--help", "-h"] {
+            assert_eq!(
+                doctor(&args(&["--root", flag])),
+                Err("missing value for --root".to_string()),
+                "a known flag cannot be the --root value: {flag}"
+            );
+        }
     }
 
     #[test]

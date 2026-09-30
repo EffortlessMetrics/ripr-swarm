@@ -23,6 +23,16 @@ pub(super) fn parse_positive_usize(value: &str, flag: &str) -> Result<usize, Str
     parse_positive_integer::<usize>(value, flag)
 }
 
+/// Caps like `--max-related-tests` are render knobs where zero is a valid
+/// input: the context packet then renders zero related tests, matching what
+/// a `reports.max_related_tests = 0` config already permits. Only a
+/// malformed or overflowing value is an error (#4318 review).
+pub(super) fn parse_non_negative_usize(value: &str, flag: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|_parse_err| format!("{flag} requires a non-negative integer; got {value:?}"))
+}
+
 pub(super) fn parse_positive_u64(value: &str, flag: &str) -> Result<u64, String> {
     parse_positive_integer::<u64>(value, flag)
 }
