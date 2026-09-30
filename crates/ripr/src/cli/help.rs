@@ -187,7 +187,7 @@ pub(super) fn print_help_all() {
 }
 
 /// `ripr help workflow [name]`: bounded, non-executing workflow guidance
-/// (RIPR-SPEC-0188). The render is pure static text from the typed workflow
+/// (RIPR-SPEC-0189). The render is pure static text from the typed workflow
 /// catalog; it performs no repository discovery, analysis, compilation, test,
 /// child-process, network, mutation, or product-artifact work.
 pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {

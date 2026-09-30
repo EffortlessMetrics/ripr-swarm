@@ -1,4 +1,4 @@
-# RIPR-SPEC-0188: Typed workflow catalog and bounded `help workflow` discovery
+# RIPR-SPEC-0189: Typed workflow catalog and bounded `help workflow` discovery
 
 Status: proposed
 

@@ -1,6 +1,6 @@
 //! Typed workflow catalog and bounded `help workflow` discovery.
 //!
-//! RIPR-SPEC-0188 / issue #4824 (command-discovery C3). The C1 catalog
+//! RIPR-SPEC-0189 / issue #4824 (command-discovery C3). The C1 catalog
 //! ([`crate::cli::command_catalog`]) owns command identity and the C2 metadata
 //! table ([`crate::cli::command_metadata`]) owns per-command cost, side
 //! effects, and artifacts; this module owns workflow identity: ordered command

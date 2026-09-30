@@ -4,7 +4,7 @@ pub(super) enum CliCommand {
     /// `ripr help --all`: the exhaustive command reference.
     HelpAll,
     /// `ripr help workflow [name]`: bounded, non-executing workflow
-    /// guidance (RIPR-SPEC-0188 / #4824). `None` lists the workflow
+    /// guidance (RIPR-SPEC-0189 / #4824). `None` lists the workflow
     /// identities; `Some(name)` renders one workflow.
     HelpWorkflow(Option<String>),
     Version,
@@ -73,7 +73,7 @@ impl CliCommand {
                     return Ok(Self::HelpAll);
                 }
                 // `ripr help workflow [name]` is the bounded workflow-discovery
-                // route (RIPR-SPEC-0188): it intercepts before the
+                // route (RIPR-SPEC-0189): it intercepts before the
                 // command-local rewrite because `workflow` is not a command.
                 if command_args.first().is_some_and(|arg| arg == "workflow") {
                     return help_workflow_command(&command_args[1..]);
