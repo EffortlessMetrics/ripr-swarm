@@ -1,4 +1,4 @@
-# RIPR-SPEC-0187: Windows trailing-component root disclosure
+# RIPR-SPEC-0188: Windows trailing-component root disclosure
 
 Status: proposed
 
