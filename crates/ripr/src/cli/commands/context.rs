@@ -78,9 +78,10 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             }
             "--max-related-tests" => {
                 i += 1;
-                max_tests = expect_value(args, i, "--max-related-tests")?
-                    .parse::<usize>()
-                    .map_err(|err| format!("invalid --max-related-tests: {err}"))?;
+                max_tests = crate::cli::commands_numeric::parse_positive_usize(
+                    expect_value(args, i, "--max-related-tests")?,
+                    "--max-related-tests",
+                )?;
                 explicit_max_tests = true;
             }
             "--json" => input.format = OutputFormat::Json,
@@ -134,7 +135,7 @@ mod tests {
             "many",
         ]));
         assert!(
-            matches!(result, Err(message) if message.starts_with("invalid --max-related-tests:"))
+            matches!(result, Err(message) if message.starts_with("--max-related-tests requires a positive integer"))
         );
     }
 

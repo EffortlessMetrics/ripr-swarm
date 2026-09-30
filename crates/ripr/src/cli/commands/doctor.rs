@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     let mut json_output = false;
     let mut profile = output::doctor::DoctorProfile::Analysis;
-    let mut root_args: Vec<&str> = Vec::new();
+    let mut root: Option<String> = None;
     let mut arguments = args.iter();
     while let Some(arg) = arguments.next() {
         match arg.as_str() {
@@ -38,15 +38,32 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
                     None => return Err("missing value for --profile".to_string()),
                 };
             }
-            _ => root_args.push(arg.as_str()),
+            "--root" => {
+                let value = match arguments.next().map(String::as_str) {
+                    Some(value) => value,
+                    None => return Err("missing value for --root".to_string()),
+                };
+                // #4318: a repeated documented flag is a usage mistake with a
+                // name of its own; accusing `--root` of being unknown sends
+                // the user to help for a flag they already used.
+                if let Some(existing) = &root {
+                    return Err(format!(
+                        "doctor accepts at most one --root; found both {existing:?} and {value:?}. Run `ripr doctor --help`."
+                    ));
+                }
+                root = Some(value.to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(unknown_argument("doctor", other));
+            }
+            other => {
+                return Err(format!(
+                    "doctor does not accept positional arguments; got {other:?}; pass the workspace root with `--root <path>`. Run `ripr doctor --help`."
+                ));
+            }
         }
     }
-    let root = match root_args.as_slice() {
-        [] => PathBuf::from("."),
-        ["--root"] => return Err("missing value for --root".to_string()),
-        ["--root", value] => PathBuf::from(value),
-        [other, ..] => return Err(unknown_argument("doctor", other)),
-    };
+    let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
 
     if json_output {
         return doctor_json(&root, profile);
@@ -1827,6 +1844,32 @@ mod tests {
         assert_eq!(
             doctor(&args(&["--bogus"])),
             Err("unknown doctor argument \"--bogus\". Run `ripr doctor --help`.".to_string())
+        );
+    }
+
+    /// #4318: a repeated documented flag is not an unknown argument. The
+    /// error names the real condition and echoes both values.
+    #[test]
+    fn doctor_rejects_a_second_root_by_naming_the_condition() {
+        assert_eq!(
+            doctor(&args(&["--root", "a", "--root", "b"])),
+            Err(
+                "doctor accepts at most one --root; found both \"a\" and \"b\". Run `ripr doctor --help`."
+                    .to_string()
+            )
+        );
+    }
+
+    /// #4318: a positional is not an unknown flag either; the error points at
+    /// the flag that carries a root instead of the help screen alone.
+    #[test]
+    fn doctor_rejects_positional_arguments_by_naming_the_condition() {
+        assert_eq!(
+            doctor(&args(&["some/path"])),
+            Err(
+                "doctor does not accept positional arguments; got \"some/path\"; pass the workspace root with `--root <path>`. Run `ripr doctor --help`."
+                    .to_string()
+            )
         );
     }
 

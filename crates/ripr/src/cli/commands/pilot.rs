@@ -434,7 +434,7 @@ mod tests {
     fn pilot_rejects_non_positive_max_seams() {
         assert_eq!(
             parse_pilot_options(&args(&["--max-seams", "0"])),
-            Err("invalid --max-seams: expected a positive integer".to_string())
+            Err("--max-seams requires a positive integer; got \"0\"".to_string())
         );
     }
 
@@ -442,7 +442,7 @@ mod tests {
     fn pilot_rejects_non_positive_timeout() {
         assert_eq!(
             parse_pilot_options(&args(&["--timeout-ms", "0"])),
-            Err("invalid --timeout-ms: expected a positive integer".to_string())
+            Err("--timeout-ms requires a positive integer; got \"0\"".to_string())
         );
     }
 
