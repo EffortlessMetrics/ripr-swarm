@@ -1056,7 +1056,7 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
-        assert!(rendered.contains("State: no_actionable_gap"), "{rendered}");
+        assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
         assert!(
             rendered.contains(
                 "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
