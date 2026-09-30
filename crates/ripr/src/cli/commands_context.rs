@@ -106,6 +106,20 @@ pub(super) fn windows_root_rebind_note(root: &Path, command_name: &str) -> Optio
 /// addressable, so the vector is empty. Ordered as typed; prefix, root, `.`
 /// and `..` components carry no strippable name, so directory references
 /// never match.
+/// The shared stripped-name predicate: whether this platform's path
+/// normalization strips trailing dots and spaces from this component name
+/// (#4951). Detection and normalization must agree on exactly these names,
+/// so both read this one predicate instead of holding duplicate suffix
+/// checks that could diverge.
+///
+/// A name made only of dots or spaces (for example `...`) trims to an empty
+/// component, and collecting into `PathBuf` drops an empty component, so the
+/// normalized spelling can name a path shorter than the one the platform
+/// actually addresses; no caller compensates for that today.
+fn is_windows_stripped(name: &str) -> bool {
+    name.ends_with('.') || name.ends_with(' ')
+}
+
 pub(super) fn windows_stripped_components(path: &Path) -> Vec<String> {
     if !cfg!(windows) {
         return Vec::new();
@@ -115,7 +129,7 @@ pub(super) fn windows_stripped_components(path: &Path) -> Vec<String> {
             std::path::Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
             _ => None,
         })
-        .filter(|name| name.ends_with('.') || name.ends_with(' '))
+        .filter(|name| is_windows_stripped(name))
         .collect()
 }
 
@@ -128,7 +142,7 @@ pub(super) fn windows_normalized_path(path: &Path) -> std::path::PathBuf {
         .map(|component| match component {
             std::path::Component::Normal(name) => {
                 let text = name.to_string_lossy();
-                if text.ends_with('.') || text.ends_with(' ') {
+                if is_windows_stripped(&text) {
                     std::ffi::OsString::from(text.trim_end_matches(['.', ' ']))
                 } else {
                     name.to_os_string()
