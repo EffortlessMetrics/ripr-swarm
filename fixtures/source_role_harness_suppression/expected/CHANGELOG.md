@@ -142,3 +142,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (8)
+
+Reason:
+RIPR-SPEC-0122: bounded human surfaces disclose their windows - post-merge re-bless of the #4320 caps disclosure on the merged tree (origin/main digest Evidence line)
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
