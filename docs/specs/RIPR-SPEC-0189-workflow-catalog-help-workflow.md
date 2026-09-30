@@ -44,17 +44,17 @@ table. Each row is keyed by a stable kebab-case workflow identity and carries:
 - ordered required steps and optional steps; each step names a catalog
   command plus a role line, and mirrors the step command's cost, operation,
   and side-effect flags from the C2 metadata table;
-- result families: every family names its outcome and routes next to either a
-  registered command, a `stop:` terminal state, or an explicit `limitation:`;
+- result families: every family names its producing step, its outcome, and
+  exactly one typed next route: a registered command, a `stop:` terminal
+  state, or an explicit `limitation:`;
 - artifacts read and written, recovery routes from the first command,
   stop conditions, advanced/control alternatives, and a non-empty limitations
   statement.
 
 Authority:
 
-1. Every step and every advanced alternative is classified Public or
-   Compatibility, and the classification must match the C1 catalog class of
-   the step's command.
+1. Every step is classified Public or Compatibility, matching the C1 catalog
+   class of the step's command; every advanced alternative is Advanced class.
 2. The validator rejects missing, duplicate, and cyclic edges, and required
    roles unreachable from the workflow's first command. Recovery routes that
    return to the first command are retry loops, not cycles.
@@ -69,13 +69,17 @@ Authority:
 6. The `repair-gap` workflow's first required step is `ripr agent repair`,
    the ordinary public route; its advanced alternatives are all Advanced class
    control surfaces, and its rendered guidance states the non-claims (ripr
-   never performs the edit, never runs the authorized test command itself,
-   never closes an attempt because a command was shown).
+   never performs the edit, never closes an attempt because a command was
+   shown) and the bounded verify claim: the verify phase runs the authorized
+   test command only for a trust-bound attempt with explicit
+   `--verify-authorized` and a matching authority, and refuses otherwise.
 7. An unknown workflow name fails with an `unknown workflow` error whose
    suggestions come only from workflow identities (ids and aliases), never
    from command spellings; the failure family stays distinct from the
    `unknown command` family, and flag-shaped or overlong input is a usage
-   error, not an unknown-workflow lookup.
+   error, not an unknown-workflow lookup. Aliases are checked against every
+   canonical id in the table, so an alias equal to a later workflow's id is
+   rejected even though lookup resolves first match.
 8. Rendered output is bounded and host-independent: no absolute workspace
    paths, no host-specific separators, and a single-workflow render that stays
    within a fixed size budget.
@@ -84,7 +88,16 @@ Authority:
    after and requires byte identity.
 10. Every table row and graph edge is load-bearing: removing any required
     step, family edge, or recovery route from the production table fails a
-    test, so the catalog cannot silently shed content.
+    test, so the catalog cannot silently shed content. Graph edges come only
+    from declared family producers and recovery routes — there are no
+    implicit adjacent-step edges — and every required step must produce at
+    least one result family, so removing a single family fails the check
+    even when the remaining edges still connect the step chain. Workflow
+    content mirrors real producers: the repair handoff selects a seam ID
+    from the pilot packet (a `probe:` finding ID is not a seam ID), and the
+    PR-evidence workflow feeds `ripr outcome` two preserved raw
+    `repo-exposure-json` snapshots, keeping the `pr-evidence` wrapper packet
+    out of the outcome inputs.
 
 `workflow_catalog()` lookup is static data. It does not run analysis, spawn a
 process, open a network, mutate a workspace, or write a product artifact.
@@ -99,7 +112,9 @@ process, open a network, mutate a workspace, or write a product artifact.
   declared outputs, a step cost contradicting the metadata row, a result
   family routing to an unregistered command, a missing workflow tag, a
   repair-route fixture violating the repair-gap law, a cyclic edge fixture,
-  and an edge-removal fixture against the production table.
+  an edge-removal fixture against the production table, a single-family
+  removal that leaves its producing step without outcomes, and an alias that
+  collides with a later workflow's canonical id.
 - Rendered `help workflow` lists the five identities in sorted order with the
   bounded-render footer; rendered `help workflow repair-gap` carries the
   Purpose, Commands, Result families, and Limitations sections.
@@ -138,8 +153,8 @@ process, open a network, mutate a workspace, or write a product artifact.
   integrity, the five-denominator presence, listing sort/bound/host
   independence, render determinism, alias resolution, the unknown-workflow
   suggestion family, the repair-gap law, and the missing/duplicate/cycle/
-  classification/artifact-claim/tag/repair-route/edge-removal contradiction
-  fixtures.
+  classification/artifact-claim/tag/repair-route/edge-removal/
+  single-family-removal/forward-alias-collision contradiction fixtures.
 - `crates/ripr/src/cli/command.rs` unit tests pin the `help workflow [name]`
   parser grammar, including the usage-error family for flags and extra
   arguments.

@@ -12,8 +12,8 @@
 //! Out of scope for this slice: `help --json` (RIPR-SPEC-0189 / #4825), command
 //! execution, and any change to underlying command behavior. The repair
 //! workflow consumes the durable-attempt contract; it never re-implements the
-//! #2927 lifecycle and never implies ripr performs the user edit, runs tests,
-//! or closes an attempt.
+//! #2927 lifecycle and never implies ripr performs the user edit, runs tests
+//! without explicit verify authorization, or closes an attempt.
 
 use crate::cli::command_catalog::{CommandCatalogEntry, CommandClass, catalog};
 use crate::cli::command_metadata::{
@@ -91,9 +91,13 @@ pub(crate) struct WorkflowStep {
 
 /// One expected result/state family and its typed next route. Every named
 /// family routes onward, stops, or names an explicit limitation (required
-/// control 4).
+/// control 4), and names the step command that produces it, so removing one
+/// family cannot silently reassign later outcomes to earlier steps.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WorkflowResultFamily {
+    /// The producing step command; must be one of this workflow's required or
+    /// optional steps.
+    pub(crate) from: &'static str,
     pub(crate) family: &'static str,
     pub(crate) next: WorkflowNext,
 }
@@ -176,28 +180,47 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
                 &[],
             ),
         ],
-        optional_steps: &[step(
-            "cmd:diff",
-            "deliver the raw diff-scoped JSON report when a machine-readable view helps",
-            CommandCost::Analysis,
-            CommandOperation::ReadOnly,
-            true,
-            &[],
-        )],
+        optional_steps: &[
+            step(
+                "cmd:diff",
+                "deliver the raw diff-scoped JSON report when a machine-readable view helps",
+                CommandCost::Analysis,
+                CommandOperation::ReadOnly,
+                true,
+                &[],
+            ),
+            step(
+                "cmd:pilot",
+                "select the seam ID for the repair handoff from the pilot packet's top actionable seams; a probe: finding ID is not a seam ID",
+                CommandCost::Workspace,
+                CommandOperation::WritesArtifacts,
+                true,
+                &["target/ripr/pilot packet (--out overrides)"],
+            ),
+        ],
         result_families: &[
             WorkflowResultFamily {
+                from: "cmd:check",
                 family: "top actionable gap named",
                 next: WorkflowNext::Command("cmd:explain"),
             },
             WorkflowResultFamily {
+                from: "cmd:explain",
                 family: "finding explained",
                 next: WorkflowNext::Command("cmd:context"),
             },
             WorkflowResultFamily {
+                from: "cmd:context",
                 family: "handoff context collected",
+                next: WorkflowNext::Command("cmd:pilot"),
+            },
+            WorkflowResultFamily {
+                from: "cmd:pilot",
+                family: "seam selected for repair",
                 next: WorkflowNext::Command("cmd:agent.repair"),
             },
             WorkflowResultFamily {
+                from: "cmd:check",
                 family: "no actionable gap",
                 next: WorkflowNext::Terminal(
                     "stop: the diff is already covered; there is nothing to route onward",
@@ -208,6 +231,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         artifacts_written: &[
             "stdout findings (redirect to target/ripr/reports/ when a file is needed)",
             "--write-artifact PATH reusable findings artifact",
+            "target/ripr/pilot packet (--out overrides) with the optional pilot step",
         ],
         recovery: &[
             WorkflowRecoveryRoute {
@@ -222,6 +246,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         stop_conditions: &[
             "explicit refusal when no diff can be resolved",
             "context collection reaches its --max-related-tests bound",
+            "agent repair refuses a probe: finding ID; re-select a seam ID from the pilot packet",
         ],
         advanced_alternatives: &[],
         limitations: "guidance only: these commands analyze static evidence; ripr never compiles, runs tests, or edits source from this workflow.",
@@ -273,14 +298,22 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         )],
         result_families: &[
             WorkflowResultFamily {
+                from: "cmd:doctor",
                 family: "environment ready",
                 next: WorkflowNext::Command("cmd:pilot"),
             },
             WorkflowResultFamily {
+                from: "cmd:pilot",
                 family: "pilot packet written",
                 next: WorkflowNext::Command("cmd:check"),
             },
             WorkflowResultFamily {
+                from: "cmd:check",
+                family: "gap confirmed against the diff",
+                next: WorkflowNext::Command("cmd:first-pr"),
+            },
+            WorkflowResultFamily {
+                from: "cmd:first-pr",
                 family: "adoption packet composed",
                 next: WorkflowNext::Terminal("stop: follow the packet's one next action"),
             },
@@ -350,21 +383,31 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         ],
         result_families: &[
             WorkflowResultFamily {
+                from: "cmd:agent.repair",
                 family: "before phase published",
                 next: WorkflowNext::Terminal(
                     "stop: perform the authorized edit, then run the after phase",
                 ),
             },
             WorkflowResultFamily {
+                from: "cmd:agent.repair",
                 family: "after phase recorded",
                 next: WorkflowNext::Terminal(
                     "stop: read the attempt status and the issued receipt",
                 ),
             },
             WorkflowResultFamily {
+                from: "cmd:agent.repair",
                 family: "verify refused",
                 next: WorkflowNext::Limitation(
                     "the refusal without --verify-authorized and a matching authority is recorded on the attempt",
+                ),
+            },
+            WorkflowResultFamily {
+                from: "cmd:rerun",
+                family: "static evidence re-evaluated",
+                next: WorkflowNext::Terminal(
+                    "stop: read the updated rerun report before deciding the next phase",
                 ),
             },
         ],
@@ -396,7 +439,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
             "cmd:agent.receipt",
             "cmd:agent.review-summary",
         ],
-        limitations: "ripr never performs the edit, never runs the authorized test command itself, and never closes an attempt because a command was shown; durable attempt creation, continuation, and status follow the repair-attempt contract. Static movement, verification, receipt issuance, and external edit authority stay separate.",
+        limitations: "ripr never performs the edit and never closes an attempt because a command was shown; the verify phase runs the authorized test command only for a trust-bound attempt with explicit --verify-authorized and a matching authority, and refuses otherwise. Durable attempt creation, continuation, and status follow the repair-attempt contract; static movement, verification, receipt issuance, and external edit authority stay separate.",
     },
     WorkflowCatalogEntry {
         id: "compose-pr-evidence",
@@ -405,22 +448,23 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         purpose: "Compose the movement receipt set that evidences one PR's test-gap work.",
         applicability: "A PR needs its before/after exposure and movement receipt prepared for review.",
         prerequisites: &[
-            "a resolvable base and head for the PR diff",
-            "a writable target/ripr/pr/ directory",
+            "a git repository with the PR diff range",
+            "two preserved repo-exposure snapshots, one before and one after the change",
+            "a writable target/ripr/ directory for reports",
         ],
-        first_command: "cmd:pr-evidence",
+        first_command: "cmd:check",
         steps: &[
             step(
-                "cmd:pr-evidence",
-                "capture the diff-scoped repo-exposure snapshot; keep one save before and one after the change",
+                "cmd:check",
+                "save the before exposure snapshot with ripr check --format repo-exposure-json > before.repo-exposure.json; after the edit, repeat under a second path (re-running overwrites in place)",
                 CommandCost::Analysis,
                 CommandOperation::WritesArtifacts,
                 true,
-                &["target/ripr/pr/repo-exposure.json"],
+                &[],
             ),
             step(
                 "cmd:outcome",
-                "render the movement receipt between the two saved snapshots",
+                "render the movement receipt between the two preserved snapshots (--before before.repo-exposure.json --after after.repo-exposure.json)",
                 CommandCost::Small,
                 CommandOperation::WritesArtifacts,
                 false,
@@ -443,42 +487,61 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
                 &["target/ripr/reports/pr-evidence-ledger.json"],
             ),
         ],
-        optional_steps: &[step(
-            "cmd:review-comments",
-            "draft advisory review comments from saved artifacts; drafts are never posted",
-            CommandCost::Analysis,
-            CommandOperation::WritesArtifacts,
-            true,
-            &["target/ripr/review/comments.json"],
-        )],
+        optional_steps: &[
+            step(
+                "cmd:pr-evidence",
+                "compose the PR packet wrapper for the PR body; its repo-exposure.json is a wrapper, not an outcome --before/--after input",
+                CommandCost::Analysis,
+                CommandOperation::WritesArtifacts,
+                true,
+                &["target/ripr/pr/repo-exposure.json"],
+            ),
+            step(
+                "cmd:review-comments",
+                "draft advisory review comments from saved artifacts; drafts are never posted",
+                CommandCost::Analysis,
+                CommandOperation::WritesArtifacts,
+                true,
+                &["target/ripr/review/comments.json"],
+            ),
+        ],
         result_families: &[
             WorkflowResultFamily {
-                family: "exposure snapshot saved",
+                from: "cmd:check",
+                family: "before and after snapshots saved",
                 next: WorkflowNext::Command("cmd:outcome"),
             },
             WorkflowResultFamily {
+                from: "cmd:outcome",
                 family: "movement receipt rendered",
                 next: WorkflowNext::Command("cmd:pr-summary"),
             },
             WorkflowResultFamily {
+                from: "cmd:pr-summary",
                 family: "summary composed",
                 next: WorkflowNext::Command("cmd:pr-ledger.record"),
             },
             WorkflowResultFamily {
+                from: "cmd:pr-ledger.record",
                 family: "ledger record appended",
                 next: WorkflowNext::Terminal("stop: attach the reports to the PR"),
             },
+            WorkflowResultFamily {
+                from: "cmd:pr-evidence",
+                family: "PR packet composed",
+                next: WorkflowNext::Terminal("stop: paste the packet into the PR body"),
+            },
         ],
-        artifacts_read: &["the PR diff range", "saved repo-exposure snapshots"],
+        artifacts_read: &["the PR diff range", "two preserved repo-exposure snapshots"],
         artifacts_written: &[
-            "target/ripr/pr/repo-exposure.json",
             "a rendered receipt file with --out PATH",
             "target/ripr/reports/pr-evidence-summary.json",
             "target/ripr/reports/pr-evidence-ledger.json",
+            "target/ripr/pr/repo-exposure.json with the optional pr-evidence step",
         ],
         recovery: &[
             WorkflowRecoveryRoute {
-                when: "a report input is malformed",
+                when: "outcome refuses a snapshot missing the seams or findings array",
                 route: "cmd:check",
             },
             WorkflowRecoveryRoute {
@@ -488,10 +551,11 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         ],
         stop_conditions: &[
             "explicit refusal on malformed inputs",
+            "outcome refuses snapshots that are not raw repo-exposure or check-output JSON; the pr-evidence packet wrapper is not an outcome input",
             "the ledger append is durable only when --out-jsonl is explicit",
         ],
         advanced_alternatives: &[],
-        limitations: "projections only: no command posts review comments, reruns analysis, or changes gate authority from this workflow.",
+        limitations: "projections only: no command posts review comments, reruns analysis, or changes gate authority from this workflow; the outcome step consumes preserved raw snapshots, not the pr-evidence wrapper packet.",
     },
     WorkflowCatalogEntry {
         id: "adopt-ci",
@@ -558,18 +622,22 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         ],
         result_families: &[
             WorkflowResultFamily {
+                from: "cmd:init",
                 family: "configuration installed",
                 next: WorkflowNext::Command("cmd:config.validate"),
             },
             WorkflowResultFamily {
+                from: "cmd:config.validate",
                 family: "configuration valid",
                 next: WorkflowNext::Command("cmd:doctor"),
             },
             WorkflowResultFamily {
+                from: "cmd:doctor",
                 family: "environment ready",
                 next: WorkflowNext::Command("cmd:policy.readiness"),
             },
             WorkflowResultFamily {
+                from: "cmd:policy.readiness",
                 family: "readiness rendered",
                 next: WorkflowNext::Terminal(
                     "stop: review the advisory report; the workflow stays non-blocking",
@@ -603,14 +671,17 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
 ];
 
 /// The governed workflow catalog accessor, integrity-checked like the C1 and
-/// C2 tables.
+/// C2 tables. The check runs only under debug assertions: release builds pay
+/// nothing for the static table.
 pub(crate) fn workflow_catalog() -> &'static [WorkflowCatalogEntry] {
-    let violations = workflow_catalog_violations(catalog(), metadata(), WORKFLOWS);
-    debug_assert!(
-        violations.is_empty(),
-        "workflow catalog integrity failed: {violations:?}"
-    );
-    let _ = violations;
+    #[cfg(debug_assertions)]
+    {
+        let violations = workflow_catalog_violations(catalog(), metadata(), WORKFLOWS);
+        debug_assert!(
+            violations.is_empty(),
+            "workflow catalog integrity failed: {violations:?}"
+        );
+    }
     WORKFLOWS
 }
 
@@ -631,6 +702,9 @@ pub(crate) fn workflow_catalog_violations(
     let mut ids = std::collections::BTreeSet::<&str>::new();
     let mut aliases = std::collections::BTreeSet::<&str>::new();
     let mut claimed_tags = std::collections::BTreeSet::<&str>::new();
+    // Every canonical id is known up front, so an alias that collides with a
+    // *later* row's id is rejected too, not only earlier ones.
+    let all_ids: std::collections::BTreeSet<&str> = workflows.iter().map(|row| row.id).collect();
 
     for row in workflows {
         let label = row.id;
@@ -646,7 +720,7 @@ pub(crate) fn workflow_catalog_violations(
                     "workflow {label:?} alias {alias:?} is not kebab-case"
                 ));
             }
-            if *alias == row.id || ids.contains(alias) || !aliases.insert(alias) {
+            if *alias == row.id || all_ids.contains(alias) || !aliases.insert(alias) {
                 violations.push(format!(
                     "workflow {label:?} alias {alias:?} collides with another identity"
                 ));
@@ -926,26 +1000,48 @@ fn workflow_role_violations(
 }
 
 /// Required control 2 (connectivity) and 3 (order independence): the role
-/// graph is walked from names, never from table position, so reordering the
-/// source rows cannot change the verdict; a cycle or a stranded required role
-/// fails the check.
+/// graph is walked from declared family sources and recovery routes, never
+/// from table position, so reordering the source rows cannot change the
+/// verdict; a cycle or a stranded required role fails the check. Every
+/// required step must produce at least one result family, so removing one
+/// family cannot silently leave a step without its declared outcomes.
 fn workflow_graph_violations(row: &WorkflowCatalogEntry, violations: &mut Vec<String>) {
     let label = row.id;
-    // Family edges are positional: family[i] is the outcome of steps[i]
-    // (the last step owns any families beyond the step count). A family that
-    // routes back to its own producing step is a stay-route, not an edge.
+    let step_names: std::collections::BTreeSet<&str> = row
+        .steps
+        .iter()
+        .chain(row.optional_steps.iter())
+        .map(|step| step.command)
+        .collect();
+
+    // Family edges come from the declared producer of each family, so
+    // removing a family removes exactly its edges; there are no implicit
+    // adjacent-step edges that could mask the loss. A family that routes back
+    // to its own producing step is a stay-route, not an edge.
     let mut edges: Vec<(&str, &str)> = Vec::new();
-    for window in row.steps.windows(2) {
-        edges.push((window[0].command, window[1].command));
+    for family in row.result_families {
+        if !step_names.contains(family.from) {
+            violations.push(format!(
+                "workflow {label:?} result family {:?} names producer {:?} that is not a workflow step",
+                family.family, family.from
+            ));
+        }
+        if let WorkflowNext::Command(target) = family.next
+            && family.from != target
+        {
+            edges.push((family.from, target));
+        }
     }
-    for (index, family) in row.result_families.iter().enumerate() {
-        if let WorkflowNext::Command(target) = family.next {
-            let Some(source) = row.steps.get(index).or_else(|| row.steps.last()) else {
-                continue;
-            };
-            if source.command != target {
-                edges.push((source.command, target));
-            }
+    for step in row.steps {
+        if !row
+            .result_families
+            .iter()
+            .any(|family| family.from == step.command)
+        {
+            violations.push(format!(
+                "workflow {label:?} required role {:?} produces no result family",
+                step.command
+            ));
         }
     }
     for recovery in row.recovery {
@@ -960,9 +1056,14 @@ fn workflow_graph_violations(row: &WorkflowCatalogEntry, violations: &mut Vec<St
     }
 
     // Cycle detection over the declared edges.
+    let mut nodes: std::collections::BTreeSet<&str> = step_names;
+    for (from, to) in &edges {
+        nodes.insert(from);
+        nodes.insert(to);
+    }
     let mut visited = std::collections::BTreeSet::<&str>::new();
     let mut in_stack = std::collections::BTreeSet::<&str>::new();
-    for node in row.steps.iter().map(|step| step.command) {
+    for node in nodes.iter().copied() {
         if visited.contains(node) {
             continue;
         }
@@ -1442,14 +1543,20 @@ mod tests {
         let rendered = render_workflow("repair-gap")?;
         for non_claim in [
             "never performs the edit",
-            "never runs the authorized test command",
             "never closes an attempt",
+            "--verify-authorized and a matching authority",
         ] {
             if !rendered.contains(non_claim) {
                 return Err(format!(
                     "repair-gap render lost the non-claim {non_claim:?}"
                 ));
             }
+        }
+        if rendered.contains("never runs the authorized test command itself") {
+            return Err(
+                "repair-gap render still claims ripr never runs the verify command; the verify phase runs it when explicitly authorized"
+                    .to_string(),
+            );
         }
         Ok(())
     }
@@ -1483,8 +1590,8 @@ mod tests {
 
     #[test]
     fn cyclic_workflow_edge_is_rejected() -> Result<(), String> {
-        // Route the "handoff context collected" family back to the first
-        // command; with the positional family edges this closes
+        // Route the "handoff context collected" family (produced by
+        // cmd:context) back to the first command; this closes
         // check -> explain -> context -> check.
         let rows = with_mutated_row("inspect-change", |row| {
             let mut families: Vec<WorkflowResultFamily> = row.result_families.to_vec();
@@ -1504,7 +1611,43 @@ mod tests {
         let rows = with_mutated_row("inspect-change", |row| {
             row.result_families = leaked_families(Vec::new());
         })?;
-        expect_single_violation(&rows, "declares no result families")
+        let violations = workflow_catalog_violations(catalog(), metadata(), &rows);
+        if violations
+            .iter()
+            .any(|violation| violation.contains("declares no result families"))
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "expected a missing-families violation, got {violations:?}"
+        ))
+    }
+
+    #[test]
+    fn removing_one_result_family_is_rejected() -> Result<(), String> {
+        // Removing a single family must not silently pass: its producing step
+        // loses its declared outcome even though the remaining family edges
+        // still connect the step chain.
+        let rows = with_mutated_row("inspect-change", |row| {
+            let mut families: Vec<WorkflowResultFamily> = row.result_families.to_vec();
+            if families.len() < 2 {
+                return;
+            }
+            families.remove(1); // "finding explained", produced by cmd:explain
+            row.result_families = leaked_families(families);
+        })?;
+        expect_single_violation(&rows, "produces no result family")
+    }
+
+    #[test]
+    fn alias_collision_with_a_later_workflow_id_is_rejected() -> Result<(), String> {
+        // An alias that equals the canonical id of a *later* row must still
+        // collide; the first-match lookup would otherwise resolve the later
+        // id to the earlier workflow.
+        let rows = with_mutated_row("inspect-change", |row| {
+            row.aliases = Box::leak(vec!["guided-adoption"].into_boxed_slice());
+        })?;
+        expect_single_violation(&rows, "collides with another identity")
     }
 
     #[test]

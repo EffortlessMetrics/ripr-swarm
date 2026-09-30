@@ -10164,6 +10164,8 @@ tests = [
   "crates/ripr/src/cli/workflow_catalog.rs::tests::duplicate_required_role_is_rejected",
   "crates/ripr/src/cli/workflow_catalog.rs::tests::cyclic_workflow_edge_is_rejected",
   "crates/ripr/src/cli/workflow_catalog.rs::tests::removing_a_workflow_edge_is_rejected",
+  "crates/ripr/src/cli/workflow_catalog.rs::tests::removing_one_result_family_is_rejected",
+  "crates/ripr/src/cli/workflow_catalog.rs::tests::alias_collision_with_a_later_workflow_id_is_rejected",
   "crates/ripr/src/cli/workflow_catalog.rs::tests::non_public_step_classification_is_rejected",
   "crates/ripr/src/cli/workflow_catalog.rs::tests::advanced_alternative_must_be_advanced_class",
   "crates/ripr/src/cli/workflow_catalog.rs::tests::step_cost_contradicting_command_metadata_is_rejected",
