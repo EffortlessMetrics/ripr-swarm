@@ -10100,6 +10100,10 @@ code = [
   "crates/ripr/src/cli/commands_context.rs",
   "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/cli/rerun.rs",
+  "crates/ripr/src/cli/commands/swarm/ingest.rs",
+  "crates/ripr/src/cli/commands/swarm/queue.rs",
+  "crates/ripr/src/cli/commands/swarm/queue_live.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0187-windows-trailing-component-root-disclosure.md",

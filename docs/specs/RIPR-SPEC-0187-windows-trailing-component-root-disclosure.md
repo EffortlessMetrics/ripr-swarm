@@ -139,10 +139,10 @@ sibling consumer of the same detection/normalization authority owned in
    `<T>\f` and the resolves-to-non-directory condition.
 3. `check --root <T>/x.` where nothing exists under `<T>/x` → NotFound
    refusal names `"x"` as the normalization.
-4. `check --root <T>/x./missing` where `<T>/x` exists but has no `child` →
+4. `check --root <T>/x./missing` where `<T>/x` exists but has no `missing` →
    refusal names `"x." normalizes to "x"` (interior stripped component).
-5. `check --root <T>/x./y.` where neither exists → refusal names both rebinds
-   in typed order.
+5. `check --root <T>/x./y.` where neither exists → refusal names both
+   normalizations in typed order.
 6. Off Windows, or any name without trailing dots or spaces → generic
    acceptance or generic refusal, with no Windows text.
 
@@ -174,9 +174,11 @@ shape tests and five portable controls):
   (detection authority), `windows_root_rebind_note` (shape 1),
   `windows_normalized_path` (normalized spelling), and `resolved_display`
   (resolved path rendered in a user-retypable form).
-- `crates/ripr/src/cli/commands/check.rs` and
-  `crates/ripr/src/cli/commands/agent.rs` — command entry points validating
-  their roots through `ensure_command_root`.
+- `crates/ripr/src/cli/commands/check.rs`,
+  `crates/ripr/src/cli/commands/agent.rs`, `crates/ripr/src/cli/rerun.rs`, and
+  `crates/ripr/src/cli/commands/swarm/{ingest,queue,queue_live}.rs` — command
+  entry points validating their roots through `ensure_command_root`
+  (`check`, the `agent` subcommands, `rerun`, `swarm ingest`, `swarm queue`).
 
 ## Metrics
 
