@@ -142,6 +142,43 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     Ok(())
 }
 
+/// Non-public rows are visibly distinct in the exhaustive reference
+/// (issue #4823): advanced rows carry an `[advanced]` line marker and the
+/// compatibility alias carries `[compatibility]`, so a reader can tell the
+/// primary surface from control and legacy commands without opening each
+/// help page. The projection is validated against the typed tables in
+/// `command_metadata::tests::human_surfaces_agree_with_the_typed_tables`.
+#[test]
+fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["help", "--all"])?);
+    for needle in [
+        "ripr agent start --root . --seam-id ID [--out target/ripr/workflow] [advanced]",
+        "ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [advanced]",
+        "ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json [advanced]",
+        "ripr agent verify --root . --before before.json --after after.json --json [advanced]",
+        "ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json [advanced]",
+        "ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json [advanced]",
+        "ripr agent review-summary --root . [--json] [advanced]",
+        "ripr start-here [same options as first-pr] [compatibility]",
+    ] {
+        assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
+    }
+    // The primary public rows stay unmarked.
+    for needle in [
+        "ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]",
+        "ripr agent status --root . [--json]",
+    ] {
+        let marked = format!("{needle} [advanced]");
+        if stdout.contains(&marked) {
+            return Err(format!(
+                "public row unexpectedly carries a class marker: {needle}"
+            ));
+        }
+        assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
+    }
+    Ok(())
+}
+
 /// The help screens are the exhaustive reference, so a line on one is a claim
 /// about what the command accepts. Each needle below was wrong against source
 /// until this test existed: the repair rows printed `--phase verify` forms that
