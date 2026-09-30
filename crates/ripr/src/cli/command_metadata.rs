@@ -170,21 +170,24 @@ const READS_ONLY: CommandEffects = CommandEffects {
     may_start_child_process: false,
 };
 
-const ANALYSIS_ONLY: CommandEffects = CommandEffects {
+/// Analysis rows recompute static facts and may start one bounded child
+/// process (Git revision resolution through `crate::git`, or a workspace
+/// index probe); they never compile, run tests, or use the network.
+const ANALYSIS_RUNNER: CommandEffects = CommandEffects {
     may_run_analysis: true,
     may_compile: false,
     may_run_tests: false,
     may_run_mutation: false,
     may_use_network: false,
-    may_start_child_process: false,
+    may_start_child_process: true,
 };
 
-/// Family effect blocks. Commands whose after phase executes an authorized
-/// test command compile, run tests, and spawn a child process.
-const TEST_COMMAND_RUNNER: CommandEffects = CommandEffects {
+/// The verify-execute child is exactly one bounded `ripr agent verify --json`
+/// projection over saved snapshots; no compile, no test run, no network.
+const VERIFY_PACKET_RUNNER: CommandEffects = CommandEffects {
     may_run_analysis: false,
-    may_compile: true,
-    may_run_tests: true,
+    may_compile: false,
+    may_run_tests: false,
     may_run_mutation: false,
     may_use_network: false,
     may_start_child_process: true,
@@ -225,7 +228,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:init",
-        summary: "Install a non-blocking advisory CI workflow (and optional config).",
+        summary: "Install the ripr.toml configuration (and, with --ci, an advisory workflow).",
         task: "Add advisory CI",
         workflows: &["setup"],
         operation: CommandOperation::StateChanging,
@@ -233,18 +236,20 @@ const METADATA: &[CommandMetadata] = &[
         effects: READS_ONLY,
         primary_inputs: &["the selected repository root"],
         outputs: CommandOutputs {
-            default: Some(".github/workflows/ripr.yml"),
-            optional: &["ripr.toml when accepted"],
+            default: Some("ripr.toml"),
+            optional: &[".github/workflows/ripr.yml with --ci github"],
         },
-        state_target: Some("the repository's GitHub Actions workflow set and optional ripr.toml"),
+        state_target: Some(
+            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci",
+        ),
         json_support: false,
-        example: "ripr init --ci github",
+        example: "ripr init",
         next_routes: &["doctor", "check"],
         stop_states: &[
             "explicit refusal",
             "existing workflow kept when writing cannot finish",
         ],
-        limitations: "writes an advisory, non-blocking workflow for review; never edits source, gates merges, or contacts the network.",
+        limitations: "writes ripr.toml by default and an advisory, non-blocking workflow only with --ci github; never edits source, gates merges, or contacts the network.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -296,7 +301,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["adoption", "inspect-change"],
         operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Workspace,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &["the current git diff or workspace"],
         outputs: CommandOutputs {
             default: Some("target/ripr/pilot packet (--out overrides)"),
@@ -365,7 +370,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["review"],
         operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "--base and --head revisions",
             "cooperative time budget (default 120000 ms)",
@@ -633,14 +638,17 @@ const METADATA: &[CommandMetadata] = &[
         primary_inputs: &["policy-operations JSON (--current)"],
         outputs: CommandOutputs {
             default: Some("target/ripr/reports/policy-history.json (--out overrides)"),
-            optional: &["target/ripr/reports/policy-history.md"],
+            optional: &[
+                "target/ripr/reports/policy-history.md",
+                "--out-jsonl PATH append-only JSONL history",
+            ],
         },
-        state_target: Some(".ripr/policy-history.jsonl, appended for later history runs"),
+        state_target: Some(".ripr/policy-history.jsonl, appended only when --out-jsonl names it"),
         json_support: true,
         example: "ripr policy history --current target/ripr/reports/policy-operations.json",
         next_routes: &["policy operations", "policy readiness"],
         stop_states: &["explicit refusal on malformed inputs"],
-        limitations: "appends to the durable history ledger; the JSONL append is the state change, not the rendered report.",
+        limitations: "appends to the durable history ledger only when --out-jsonl names it; without that flag it writes the rendered reports and no history.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1368,17 +1376,10 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["repair-loop"],
         operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
-        effects: CommandEffects {
-            may_run_analysis: true,
-            may_compile: true,
-            may_run_tests: true,
-            may_run_mutation: false,
-            may_use_network: false,
-            may_start_child_process: true,
-        },
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "--seam-id or --attempt identity",
-            "the authorized verify command for after and verify phases",
+            "the authorized verify route for the after phase (--verify-authorized)",
         ],
         outputs: CommandOutputs {
             default: Some("target/ripr/workflow/ (before and after snapshots)"),
@@ -1391,7 +1392,7 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[
             "--phase verify refuses without --verify-authorized and a matching authority",
         ],
-        limitations: "after and verify phases run only the authorized test command; no network, no mutation, no source edits by ripr itself.",
+        limitations: "before and after phases record static snapshots and the verify phase composes `ripr agent verify` snapshot comparison; ripr never compiles or runs tests itself (test execution stays outside ripr). No network, no mutation, no source edits by ripr itself.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1443,7 +1444,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["repair-loop", "editor-agent"],
         operation: CommandOperation::ReadOnly,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &["the current diff (--diff, --base, --files, or --seam-id)"],
         outputs: CommandOutputs {
             default: None,
@@ -1464,7 +1465,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["repair-loop", "editor-agent"],
         operation: CommandOperation::ReadOnly,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &["--seam-id, or --gap-ledger with --gap-id"],
         outputs: CommandOutputs {
             default: None,
@@ -1501,12 +1502,12 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:agent.verify-execute",
-        summary: "Execute the packet's authorized verify command and record the result.",
+        summary: "Execute the packet's authorized verify projection and record the result.",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop", "editor-agent"],
         operation: CommandOperation::WritesArtifacts,
-        cost: CommandCost::Analysis,
-        effects: TEST_COMMAND_RUNNER,
+        cost: CommandCost::Small,
+        effects: VERIFY_PACKET_RUNNER,
         primary_inputs: &["repair packet JSON (--packet)"],
         outputs: CommandOutputs {
             default: Some("--result-json PATH (the recorded verify outcome)"),
@@ -1517,7 +1518,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json",
         next_routes: &["agent receipt"],
         stop_states: &["refusal without --authorize and a matching authority"],
-        limitations: "runs only the packet's authorized command; no network, no mutation.",
+        limitations: "executes exactly one bounded `ripr agent verify --json` child projection over saved snapshots; it compiles nothing, runs no tests, and uses no network.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1634,7 +1635,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["inspect-change"],
         operation: CommandOperation::ReadOnly,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &["--base and --head revisions (--root . when omitted)"],
         outputs: CommandOutputs {
             default: None,
@@ -1653,20 +1654,20 @@ const METADATA: &[CommandMetadata] = &[
         summary: "Analyze the current diff and name the top actionable gap.",
         task: "Inspect one change",
         workflows: &["inspect-change"],
-        operation: CommandOperation::ReadOnly,
+        operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &["the current diff (--base, --worktree, or --diff PATH)"],
         outputs: CommandOutputs {
             default: None,
-            optional: &[],
+            optional: &["--write-artifact PATH reusable findings artifact"],
         },
         state_target: None,
         json_support: true,
         example: "ripr check --base REV",
         next_routes: &["explain", "context", "agent repair"],
         stop_states: &["explicit refusal when no diff can be resolved"],
-        limitations: "writes results to stdout by convention; shell redirection to target/ripr/reports/check.json is the report path.",
+        limitations: "writes results to stdout by convention; shell redirection to target/ripr/reports/check.json is the report path and --write-artifact PATH also saves the reusable findings artifact.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1676,7 +1677,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["inspect-change"],
         operation: CommandOperation::ReadOnly,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "finding id or file:line",
             "the current diff (--base or --diff)",
@@ -1700,7 +1701,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["inspect-change"],
         operation: CommandOperation::ReadOnly,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "finding id or file:line (--at)",
             "the current diff (--base or --diff)",
@@ -1745,7 +1746,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["editor-agent"],
         operation: CommandOperation::ReadOnly,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &["the opened workspace"],
         outputs: CommandOutputs {
             default: None,
@@ -1877,7 +1878,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["pr-evidence"],
         operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
-        effects: ANALYSIS_ONLY,
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &["--base and --head revisions"],
         outputs: CommandOutputs {
             default: Some("target/ripr/pr/repo-exposure.json"),
@@ -1935,33 +1936,26 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:rerun",
-        summary: "Re-run one changed test and report whether the gap closed.",
+        summary: "Re-evaluate static evidence affected by one edited Rust test.",
         task: "Repair a selected Rust gap",
         workflows: &["inspect-change", "repair-loop"],
-        operation: CommandOperation::ReadOnly,
+        operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
-        effects: CommandEffects {
-            may_run_analysis: false,
-            may_compile: true,
-            may_run_tests: true,
-            may_run_mutation: false,
-            may_use_network: false,
-            may_start_child_process: true,
-        },
+        effects: ANALYSIS_RUNNER,
         primary_inputs: &[
             "changed test path (--changed-test)",
             "optional before artifact (--before)",
         ],
         outputs: CommandOutputs {
             default: None,
-            optional: &[],
+            optional: &["--out PATH targeted-rerun report JSON (stdout when omitted)"],
         },
         state_target: None,
         json_support: true,
         example: "ripr rerun --changed-test PATH[::TEST_NODE]",
         next_routes: &["check", "receipt write"],
         stop_states: &["explicit refusal when the changed test cannot be resolved"],
-        limitations: "runs the named test command; --out PATH saves the report JSON, stdout is the default surface.",
+        limitations: "recomputes static evidence only; it never compiles or runs the edited test. --out PATH saves the report JSON, stdout is the default surface.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2177,8 +2171,15 @@ pub(crate) fn human_projection_violations(help: &str, help_all: &str) -> Vec<Str
         }
     }
     let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let mut seen_lines: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for (path, line) in &listing {
         seen.insert(path);
+        // The grouped listing promises one line per command; the same path may
+        // legitimately appear on distinct lines (agent repair phases, rerun
+        // selectors), but an identical line twice is an inventory drift.
+        if !seen_lines.insert(line) {
+            violations.push(format!("help --all lists the identical line twice: {line}"));
+        }
         let Some(entry) = entries.iter().find(|entry| entry.path == *path) else {
             violations.push(format!(
                 "help --all listing has unknown command {path:?}: {line}"
@@ -2421,15 +2422,15 @@ mod tests {
 
     #[test]
     fn readonly_row_declaring_a_product_write_is_rejected() -> Result<(), String> {
-        let rows = with_mutated_row("cmd:check", |row| {
-            row.outputs.default = Some("target/ripr/reports/check.json");
+        let rows = with_mutated_row("cmd:explain", |row| {
+            row.outputs.default = Some("target/ripr/reports/explain.json");
         })?;
         expect_single_violation(&rows, "read-only but declares product writes")
     }
 
     #[test]
     fn write_claim_without_an_output_role_is_rejected() -> Result<(), String> {
-        let rows = with_mutated_row("cmd:check", |row| {
+        let rows = with_mutated_row("cmd:explain", |row| {
             row.operation = CommandOperation::WritesArtifacts;
         })?;
         expect_single_violation(&rows, "writes artifacts but declares no output role")
@@ -2461,8 +2462,8 @@ mod tests {
 
     #[test]
     fn test_run_without_its_compile_is_rejected() -> Result<(), String> {
-        let rows = with_mutated_row("cmd:rerun", |row| {
-            row.effects.may_compile = false;
+        let rows = with_mutated_row("cmd:check", |row| {
+            row.effects.may_run_tests = true;
         })?;
         expect_single_violation(&rows, "runs tests without the compile")
     }
@@ -2491,6 +2492,23 @@ mod tests {
             return Ok(());
         }
         Err(format!("human projection violations: {violations:?}"))
+    }
+
+    #[test]
+    fn duplicated_help_all_listing_line_is_reported() -> Result<(), String> {
+        // The same path may appear on distinct lines (agent repair phases,
+        // rerun selectors); an identical line twice is inventory drift.
+        let help_all = "Setup:\n  ripr check --base REV  Analyze the diff.\n  ripr check --base REV  Analyze the diff.\nWhat it does:\n";
+        let violations = human_projection_violations("ripr", help_all);
+        if violations
+            .iter()
+            .any(|violation| violation.contains("lists the identical line twice"))
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "expected a duplicate-line violation, got: {violations:?}"
+        ))
     }
 
     #[test]

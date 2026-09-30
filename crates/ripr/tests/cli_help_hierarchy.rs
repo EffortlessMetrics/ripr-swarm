@@ -168,11 +168,13 @@ fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
         "ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]",
         "ripr agent status --root . [--json]",
     ] {
-        let marked = format!("{needle} [advanced]");
-        if stdout.contains(&marked) {
-            return Err(format!(
-                "public row unexpectedly carries a class marker: {needle}"
-            ));
+        for marker in ["[advanced]", "[compatibility]"] {
+            let marked = format!("{needle} {marker}");
+            if stdout.contains(&marked) {
+                return Err(format!(
+                    "public row unexpectedly carries a class marker: {needle} {marker}"
+                ));
+            }
         }
         assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
     }

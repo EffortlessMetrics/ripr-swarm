@@ -127,8 +127,9 @@ open a network, mutate a workspace, or write a product artifact.
 
 - `crates/ripr/src/cli/command_metadata.rs` unit tests cover production-table
   integrity, full public-row coverage, the eight contradiction fixtures, the
-  rendered-surface agreement check, and the hierarchy-doc resolution and
-  pinned-label checks.
+  rendered-surface agreement check (including the negative fixture that an
+  identical duplicated `help --all` listing line is reported), and the
+  hierarchy-doc resolution and pinned-label checks.
 - `crates/ripr/tests/cli_help_hierarchy.rs` pins the rendered `[advanced]` and
   `[compatibility]` markers against the built binary.
 
