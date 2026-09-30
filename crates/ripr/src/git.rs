@@ -623,7 +623,10 @@ pub(crate) fn poll_child(
                         describe,
                         "timeout",
                         ChildWait::TimedOut(format!(
-                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
+                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the \
+                             {timeout_ms}ms deadline (process terminated). Repair route: \
+                             raise the deadline or disable it with 0 via --git-timeout \
+                             SECS or RIPR_GIT_TIMEOUT=<seconds>, then re-run."
                         )),
                         || child.terminate_tree(),
                     );
@@ -1288,6 +1291,19 @@ mod tests {
         if !err.contains("exceeded the 50ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
+            ));
+        }
+        // #4946(b): the timeout message names both deadline knobs and the
+        // 0-disables escape, matching diff_scope_oversized's in-message
+        // repair-route pattern — the error alone must be repairable.
+        if !err.contains("--git-timeout") || !err.contains("RIPR_GIT_TIMEOUT") {
+            return Err(format!(
+                "timeout error should name the deadline knobs, got: {err}"
+            ));
+        }
+        if !err.contains("disable it with 0") {
+            return Err(format!(
+                "timeout error should name the 0-disables escape, got: {err}"
             ));
         }
         // Kill+reap proof without a wall-clock bound: drive the same

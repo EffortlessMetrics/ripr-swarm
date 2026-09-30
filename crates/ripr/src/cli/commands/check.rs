@@ -570,6 +570,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
              Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml)."
         );
     }
+    // #4946(a): restate the --no-unchanged-tests tradeoff where the user
+    // waits. Fires on the EFFECTIVE setting after `apply_to_check_input`, so
+    // a repo ripr.toml with `include_unchanged_tests = false` is disclosed
+    // too. stderr only: stdout and every machine format are unchanged. Like
+    // the mode-fast notice above, this sits before the gap-ledger and
+    // repo-exposure-json early returns so repo-scoped formats keep the note
+    // (the shared index selection narrows repo runs the same way).
+    if !input.include_unchanged_tests {
+        eprintln!(
+            "ripr: unchanged tests are excluded from the index (--no-unchanged-tests): \
+             Reach evidence cannot name tests the diff does not touch, in exchange \
+             for a much smaller, faster index. Drop the flag to restore default \
+             test recall."
+        );
+    }
     // #2901: OraclePolicy (snapshot_strength, mock_expectation_strength,
     // broad_error_strength) is consumed only by the Rust adapter. Python,
     // Perl, and TypeScript silently ignore it. Warn when a non-Rust language

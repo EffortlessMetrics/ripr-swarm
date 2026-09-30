@@ -1497,6 +1497,43 @@ fn check_human_output_reports_sample_findings() {
 }
 
 #[test]
+fn check_no_unchanged_tests_restates_the_recall_tradeoff_on_stderr() {
+    // #4946(a): the flag's recall/cost tradeoff is restated on stderr where
+    // the user waits, and only while the flag is actually active.
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff();
+    assert!(diff.exists());
+    let diff = diff.display().to_string();
+
+    let with_flag = run_ripr(&[
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--no-unchanged-tests",
+    ]);
+    assert_success(&with_flag);
+    let stderr = String::from_utf8_lossy(&with_flag.stderr);
+    assert!(
+        stderr.contains("unchanged tests are excluded from the index"),
+        "the active flag must restate its tradeoff on stderr; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Reach evidence cannot name tests the diff does not touch"),
+        "the note must name the recall effect, not only the speedup; got:\n{stderr}"
+    );
+
+    let without_flag = run_ripr(&["check", "--root", &root, "--diff", &diff]);
+    assert_success(&without_flag);
+    let stderr = String::from_utf8_lossy(&without_flag.stderr);
+    assert!(
+        !stderr.contains("unchanged tests are excluded from the index"),
+        "the default run must not claim the flag is active; got:\n{stderr}"
+    );
+}
+
+#[test]
 fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> Result<(), String> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let subcrate = workspace_root().join("crates/ripr");
