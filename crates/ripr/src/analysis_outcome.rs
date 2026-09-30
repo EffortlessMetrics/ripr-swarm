@@ -748,6 +748,7 @@ mod tests {
             ),
             (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
             (AnalysisLimitationKind::ProducerFailure, "producer_failure"),
+            (AnalysisLimitationKind::EolOnlyChurn, "eol_only_churn"),
         ];
         for (kind, expected) in limitation_kinds {
             assert_eq!(kind.as_str(), expected);
