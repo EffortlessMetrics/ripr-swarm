@@ -4,19 +4,19 @@ root: fixtures/python_test_placement_verify/input
 
 Summary: 2 probe(s), 0 exposed, 2 weak, 0 unrevealed, 0 no path, 0 unknown
 
-Changed file(s) by language: python: 2, rust: 0.
+Changed file(s) by language: python: 2.
 
-Analysis outcome: complete_with_findings (analysis complete).
+Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 2 changed file(s), 2 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
 
 Start here:
-  State: preview_limited
+  State: preview language, advisory only (preview_limited)
   Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it.
   File: src/pricing.py:2
   Language: python
   Language status: preview
-  Static exposure: weakly_exposed (warning, confidence 0.40)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  Static exposure: weak (weakly_exposed, warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold
   Changed behavior: if amount >= threshold:
   Missing discriminator: Related Python test reaches `calculate_discount` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary.
@@ -24,7 +24,7 @@ Start here:
   Suggested test file: tests/test_pricing.py
   Suggested test: test_calculate_discount_smoke
   Test node: tests/test_pricing.py::test_calculate_discount_smoke
-  Verify command: pytest tests/test_pricing.py::test_calculate_discount_smoke (high)
+  Verify command: python -m pytest tests/test_pricing.py::test_calculate_discount_smoke (high)
   Next step: Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == threshold`.
   Evidence:
     - reach yes: 1 related Python test(s) found for owner `calculate_discount`
@@ -36,9 +36,9 @@ Next: drill into the top finding:
   ripr context --root fixtures/python_test_placement_verify/input --diff fixtures/python_test_placement_verify/diff.patch --mode fast --at probe:src_pricing.py:python_preview:b6c16437
 
 Hidden:
-  1 lower-priority finding(s) omitted from default human output.
+  1 lower-priority finding(s) omitted from default human output (Python preview: 1).
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.
+Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

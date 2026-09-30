@@ -18,7 +18,7 @@ use super::receipt_lifecycle::{
 
 pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.5";
 /// RIPR-SPEC-0135 verification-axis state for a receipt that ran no command.
-const VERIFICATION_NOT_RUN: &str = "verification_not_run";
+pub(crate) const VERIFICATION_NOT_RUN: &str = "verification_not_run";
 /// RIPR-SPEC-0135 non-claim every static-only receipt carries.
 const STATIC_ONLY_ASSURANCE: &str = "static_only_assurance";
 
@@ -42,6 +42,11 @@ pub(crate) struct AgentReceiptReading {
     pub(crate) receipt_state: String,
     pub(crate) recommended_action: Option<String>,
     pub(crate) analysis_outcome_error: Option<String>,
+    /// `verification.status`: whether any test ran for this receipt. The
+    /// ordinary repair path always records `verification_not_run`.
+    pub(crate) verification_status: Option<String>,
+    /// The test file the edit cage measured changing, when one was named.
+    pub(crate) test_changed: Option<String>,
 }
 
 impl AgentReceiptReading {
@@ -60,7 +65,15 @@ impl AgentReceiptReading {
             receipt_state: receipt_lifecycle_state_from_receipt_value(receipt),
             recommended_action: text("/summary/next_action/recommended_action"),
             analysis_outcome_error: text("/analysis_outcome_error"),
+            verification_status: text("/verification/status"),
+            test_changed: text("/test_changed"),
         }
+    }
+
+    /// No test ran for this receipt: its movement is static evidence only, and
+    /// a failing test can still show `improved`.
+    pub(crate) fn test_not_run(&self) -> bool {
+        self.verification_status.as_deref() == Some(VERIFICATION_NOT_RUN)
     }
 
     /// The receipt was issued over a complete, valid producer analysis outcome.
@@ -406,7 +419,7 @@ fn receipt_next_step(
         "Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON"
     };
     let step = format!(
-        "This receipt is not review evidence because its status is `{status}`{reason}; do not include it in review. {recovery}, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --phase before` and rerun `--phase after`."
+        "This receipt is not review evidence because its status is `{status}`{reason}; do not include it in review. {recovery}, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints."
     );
     (step.clone(), step)
 }
@@ -1095,7 +1108,7 @@ mod tests {
             status: AgentReceiptUnavailableStatus::Invalid,
             reason: "Analysis outcome artifact base does not match its typed identity.".to_string(),
         })?;
-        let invalid_step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --phase before` and rerun `--phase after`.";
+        let invalid_step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.";
         assert_eq!(invalid["status"], "invalid");
         assert_eq!(
             invalid["summary"]["next_action"]["recommended_action"],
@@ -1118,7 +1131,7 @@ mod tests {
         )))?;
         assert_eq!(
             partial["summary"]["next_action"]["recommended_action"],
-            "This receipt is not review evidence because its status is `incomplete` (the analysis outcome is not complete; see `analysis_outcome`); do not include it in review. Resolve what kept the analysis from completing, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --phase before` and rerun `--phase after`."
+            "This receipt is not review evidence because its status is `incomplete` (the analysis outcome is not complete; see `analysis_outcome`); do not include it in review. Resolve what kept the analysis from completing, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints."
         );
         for receipt in [&invalid, &missing, &partial] {
             assert_ne!(receipt["status"], "advisory", "{receipt}");

@@ -183,6 +183,7 @@ fn classified_with(
             discriminate: stage(StageState::Weak),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators,
+            new_test_target: None,
         },
         seam,
         class,
@@ -315,13 +316,16 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         language_routes: None,
     };
 
-    let json = render_pilot_summary_json(&[entry], context);
+    let json = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_summary_json(
+        &[entry],
+        context,
+    ));
     assert!(json.contains(r#""schema_version": "0.2""#));
     assert!(json.contains(r#""status": "complete""#));
     assert!(json.contains(r#""state": "loaded""#));
     assert!(json.contains(r#""top_actionable_seams""#));
     assert!(json.contains(r#""missing_discriminator""#));
-    assert!(json.contains("ripr outcome --before target/ripr/pilot/repo-exposure.json"));
+    assert!(json.contains("ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json"));
 }
 
 #[test]
@@ -334,12 +338,18 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         vec![related_test()],
     );
     let artifacts = pilot_artifacts();
-    let md = render_pilot_summary_md(&[entry], pilot_context(&artifacts));
+    let md = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_summary_md(
+        &[entry],
+        pilot_context(&artifacts),
+    ));
 
     for needle in [
         "## What Was Inspected",
         "## Top Recommendation",
         "- Inspected seam:",
+        "(weak, weakly_gripped)",
+        " weak (`weakly_gripped`) src/pricing.rs:88 ",
+        "- weak, weakly_gripped\n",
         "- Why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
         "- Focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
         "Target seam:",
@@ -347,7 +357,7 @@ fn pilot_summary_md_spells_out_first_screen_recommendation() {
         "## Ranked Seams\n\nNone of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand.",
         "## Next Commands",
         "No repair attempt is available for the top seam. Next, add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then rerun repo exposure and compare the snapshots:",
-        "ripr outcome --before target/ripr/pilot/repo-exposure.json",
+        "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
     ] {
         assert!(md.contains(needle), "missing markdown needle: {needle}");
     }
@@ -373,14 +383,18 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
     );
     let artifacts = pilot_artifacts();
     let md = render_pilot_summary_md(&[entry], pilot_context(&artifacts));
+    let cwd = crate::agent::loop_commands::bound_root(".");
 
     // Issue #3872: the after-snapshot redirect anchors at the resolved --root,
     // so both presented forms build from the same builder output the pilot
     // renderer uses (the anchor math itself is pinned in loop_commands tests).
-    let after_snapshot =
-        check_repo_exposure_command(".", "draft", "target/ripr/pilot/after.repo-exposure.json");
+    let after_snapshot = check_repo_exposure_command(
+        &crate::agent::loop_commands::bound_root("."),
+        "draft",
+        "target/ripr/pilot/after.repo-exposure.json",
+    );
     let bash_block = format!(
-        "```bash\n{after_snapshot}\nripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json\n```"
+        "```bash\n{after_snapshot}\nripr outcome --before {cwd}/target/ripr/pilot/repo-exposure.json --after {cwd}/target/ripr/pilot/after.repo-exposure.json\n```"
     );
     assert!(
         md.contains(bash_block.as_str()),
@@ -417,7 +431,7 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
         .ok_or_else(|| format!("pilot markdown must fence the powershell commands: {md}"))?;
     assert!(
         powershell_block.contains(
-            "ripr outcome --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json"
+            &format!("ripr outcome --before {cwd}/target/ripr/pilot/repo-exposure.json --after {cwd}/target/ripr/pilot/after.repo-exposure.json")
         ),
         "powershell outcome command missing:\n{powershell_block}"
     );
@@ -435,7 +449,10 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     );
     let seam_id = entry.seam.id().as_str().to_string();
     let artifacts = pilot_artifacts();
-    let terminal = render_pilot_terminal(&[entry], pilot_context(&artifacts));
+    let terminal = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_terminal(
+        &[entry],
+        pilot_context(&artifacts),
+    ));
 
     for needle in [
         "Inspected:",
@@ -452,7 +469,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "Structured packet:",
         "target/ripr/pilot/agent-seam-packets.json",
         "Next, by hand: add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then compare against this run:",
-        "ripr outcome --before target/ripr/pilot/repo-exposure.json",
+        "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
     ] {
         assert!(
             terminal.contains(needle),
@@ -460,10 +477,14 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         );
     }
     // Issue #3872: the after-snapshot redirect anchors at the resolved --root.
-    let after_snapshot =
-        check_repo_exposure_command(".", "draft", "target/ripr/pilot/after.repo-exposure.json");
+    let after_snapshot = check_repo_exposure_command(
+        &crate::agent::loop_commands::bound_root("."),
+        "draft",
+        "target/ripr/pilot/after.repo-exposure.json",
+    );
     assert!(
-        terminal.contains(after_snapshot.as_str()),
+        terminal
+            .contains(crate::testing::cwd_placeholder::project_cwd_text(&after_snapshot).as_str()),
         "missing anchored after-snapshot needle:\n{terminal}"
     );
     // A route-limited seam keeps the snapshot comparison: the repair
@@ -479,7 +500,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.
     assert!(
         terminal.contains(&format!(
-            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weakly_gripped)"
+            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weak, weakly_gripped)"
         )),
         "the terminal seam line must lead with the seam id:\n{terminal}"
     );
@@ -520,7 +541,10 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
     assert!(json.contains(r#""status": "partial""#));
     assert!(json.contains(r#""reason": "timeout""#));
     assert!(json.contains(r#""actionable_seams_total": null"#));
-    assert!(json.contains("ripr pilot --root . --out target/ripr/pilot --mode draft"));
+    assert!(json.contains(&format!(
+        "ripr pilot --root {0} --out {0}/target/ripr/pilot --mode draft",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    )));
     assert!(json.contains("--timeout-ms 120000"));
 }
 
@@ -550,7 +574,9 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
 #[test]
 fn timeout_summary_md_explains_partial_status_and_retry_command() {
     let artifacts = pilot_artifacts();
-    let md = render_pilot_timeout_summary_md(pilot_context(&artifacts));
+    let md = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_timeout_summary_md(
+        pilot_context(&artifacts),
+    ));
 
     for needle in [
         "# RIPR Pilot Summary",
@@ -562,7 +588,7 @@ fn timeout_summary_md_explains_partial_status_and_retry_command() {
         "Analysis did not finish within the pilot budget",
         "- Pilot summary JSON: `target/ripr/pilot/pilot-summary.json`",
         "## Next Command",
-        "ripr pilot --root . --out target/ripr/pilot --mode draft",
+        "ripr pilot --root <cwd> --out <cwd>/target/ripr/pilot --mode draft",
         "--timeout-ms 120000",
     ] {
         assert!(md.contains(needle), "missing timeout-md needle: {needle}");
@@ -577,7 +603,10 @@ fn timeout_summary_md_pairs_bash_retry_with_powershell_variant() -> Result<(), S
     let artifacts = pilot_artifacts();
     let md = render_pilot_timeout_summary_md(pilot_context(&artifacts));
 
-    let retry = "ripr pilot --root . --out target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000";
+    let retry = format!(
+        "ripr pilot --root {0} --out {0}/target/ripr/pilot --mode draft --max-seams 5 --timeout-ms 120000",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    );
     assert!(
         md.contains(&format!("```bash\n{retry}\n```")),
         "bash retry block drifted:\n{md}"
@@ -612,7 +641,9 @@ fn timeout_summary_md_reports_missing_config_branch_when_no_config_loaded() {
 #[test]
 fn timeout_terminal_lists_written_files_and_retry_command() {
     let artifacts = pilot_artifacts();
-    let terminal = render_pilot_timeout_terminal(pilot_context(&artifacts));
+    let terminal = crate::testing::cwd_placeholder::project_cwd_text(
+        &render_pilot_timeout_terminal(pilot_context(&artifacts)),
+    );
 
     for needle in [
         "RIPR pilot partial.",
@@ -624,7 +655,7 @@ fn timeout_terminal_lists_written_files_and_retry_command() {
         "target/ripr/pilot/pilot-summary.json",
         "target/ripr/pilot/pilot-summary.md",
         "Next:",
-        "ripr pilot --root . --out target/ripr/pilot --mode draft",
+        "ripr pilot --root <cwd> --out <cwd>/target/ripr/pilot --mode draft",
     ] {
         assert!(
             terminal.contains(needle),
@@ -845,6 +876,7 @@ fn why_line_uses_static_discriminator_summary_when_no_missing_discriminator() {
             ),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         seam,
         class: SeamGripClass::WeaklyGripped,
@@ -869,6 +901,7 @@ fn why_line_falls_back_to_class_label_when_no_summary_or_missing_discriminator()
             discriminate: StageEvidence::new(StageState::Weak, Confidence::Medium, "   "),
             observed_values: Vec::<ValueFact>::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         seam,
         class: SeamGripClass::Ungripped,
@@ -956,7 +989,8 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
             ));
         }
         let command = format!(
-            "ripr agent repair --root . --seam-id {} --phase before",
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(".")),
             entry.seam.id().as_str()
         );
         let entries = [entry];
@@ -1176,6 +1210,107 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
 }
 
 #[test]
+fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Result<(), String> {
+    use super::language_routes::PilotLanguageRoutesState;
+    use crate::domain::LanguageId;
+
+    // A Go repository: no Rust seams, no routed language. Pilot said
+    // "complete", "none ranked", and offered a test-then-compare loop.
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let go_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)], false);
+    assert_eq!(go_only.state, PilotLanguageRoutesState::UnanalyzedOnly);
+    let context = PilotSummaryContext {
+        language_routes: Some(&go_only),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("none ranked by the default pilot policy"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("languages ripr does not analyze"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("found: Go (2 files)"), "{terminal}");
+    assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+    assert!(
+        terminal.ends_with("No follow-up command applies: review changes in these languages with their own tests.\n"),
+        "{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(md.contains("Found: Go (2 files)."), "{md}");
+    assert!(!md.contains("ripr outcome --before"), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(parsed["language_routes"]["state"], "unanalyzed_only");
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["file_count"],
+        2
+    );
+    // No seam exists to snapshot or measure, so JSON offers no follow-up
+    // command either.
+    assert!(parsed["next"]["after_snapshot_command"].is_null(), "{json}");
+    assert!(parsed["next"]["outcome_command"].is_null(), "{json}");
+    assert!(parsed["next"]["repair_command"].is_null(), "{json}");
+
+    // Rust seams present: the ranking stands and the Go files stay a JSON
+    // note, so Rust users' output is unchanged.
+    let with_rust = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Go", 2)], true);
+    assert_eq!(with_rust.state, PilotLanguageRoutesState::NotDetected);
+    assert!(with_rust.unanalyzed_only().is_none());
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&with_rust),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"]["unanalyzed_languages"][0]["language"],
+        "Go"
+    );
+
+    // A Rust crate with no seams yet (a lone `pub const`) plus a CI script
+    // is a Rust repository, not an unanalyzed one.
+    let seamless_rust = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
+        .with_unanalyzed(vec![("Shell", 1)], true);
+    assert!(seamless_rust.unanalyzed_only().is_none());
+
+    // Nothing unanalyzed: the JSON shape is unchanged for Rust users.
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[]);
+    let json = render_pilot_summary_json(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&plain),
+            ..pilot_context(&artifacts)
+        },
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"],
+        serde_json::json!({"state": "not_detected", "routes": []})
+    );
+    assert!(
+        parsed["next"]["after_snapshot_command"].is_string(),
+        "{json}"
+    );
+    assert!(parsed["next"]["outcome_command"].is_string(), "{json}");
+    Ok(())
+}
+
+#[test]
 fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), String> {
     use crate::domain::LanguageId;
 
@@ -1298,5 +1433,74 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         assert!(md.ends_with("No follow-up command applies: this ripr binary cannot analyze the languages listed above.\n"), "{md}");
         assert!(!md.contains("```bash"), "{md}");
     }
+    Ok(())
+}
+
+/// rc rehearsal (py-pricing): with no Rust seam, a Python repair card was
+/// the top recommendation but the closing block said `ripr check`, which only
+/// leads back to pilot. The closing block now names the card's route:
+/// `ripr first-pr` before the edit (it names the receipt command, and stops
+/// selecting the gap once the edit closes it), the test edit, the card's
+/// verify command, and the receipt command. A card that carries its own
+/// receipt command skips first-pr.
+#[test]
+fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let python = python_first_use();
+    let files = discovered_files(&[(LanguageId::Python, "pricing/__init__.py")]);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let first_pr = format!(
+        "ripr first-pr --root {}",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
+    );
+    for language_routes in [None, Some(&routes)] {
+        let context = PilotSummaryContext {
+            language_routes,
+            ..pilot_context_with_python(&artifacts, &python)
+        };
+        let terminal = render_pilot_terminal(&[], context);
+        let expected = format!(
+            "Next, in order:\n  1. {first_pr} (names this gap's receipt command; run any regeneration command it prints first)\n  2. strengthen test_calculate_discount_above_threshold in tests/test_pricing.py (test files only): Assert the owner result or effect at the boundary `amount == threshold`.\n  3. pytest tests/test_pricing.py::test_calculate_discount_above_threshold\n  4. run the receipt command step 1 printed\n"
+        );
+        assert!(terminal.ends_with(&expected), "{terminal}");
+        assert!(
+            !terminal.contains("Next, analyze the changed code"),
+            "{terminal}"
+        );
+        assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
+        let md = render_pilot_summary_md(&[], context);
+        let next = md
+            .split("## Next Commands")
+            .nth(1)
+            .ok_or_else(|| format!("missing Next Commands: {md}"))?;
+        assert!(
+            next.contains(&format!(
+                "```bash\n{first_pr}\npytest tests/test_pricing.py::test_calculate_discount_above_threshold\n```"
+            )),
+            "{next}"
+        );
+        assert!(!next.contains("ripr check --root"), "{next}");
+    }
+
+    // A card that carries its own receipt command uses it directly.
+    let mut carded = python_first_use();
+    if let Some(card) = carded.top_repair_card.as_mut() {
+        card.receipt_command = Some("ripr receipt write --gap g --status not_run".to_string());
+    }
+    let context = pilot_context_with_python(&artifacts, &carded);
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.ends_with("  2. pytest tests/test_pricing.py::test_calculate_discount_above_threshold\n  3. ripr receipt write --gap g --status not_run\n"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("ripr first-pr --root"), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains("```bash\npytest tests/test_pricing.py::test_calculate_discount_above_threshold\nripr receipt write --gap g --status not_run\n```"),
+        "{md}"
+    );
     Ok(())
 }

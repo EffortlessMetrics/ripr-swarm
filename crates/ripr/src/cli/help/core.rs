@@ -110,7 +110,10 @@ Usage: ripr check [OPTIONS]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
-                           walks up to a Cargo.toml containing [workspace].
+                           walks up to a Cargo.toml containing [workspace];
+                           without one, to the nearest Cargo.toml or the git
+                           top level. The walk never leaves the git
+                           repository. A moved root is disclosed on stderr.
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
@@ -128,7 +131,12 @@ Options:
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
                            tracked edits. Cannot be combined with --diff.
-  --mode MODE              instant, draft, fast, deep, or ready. Defaults to draft.
+  --mode MODE              How much of the workspace is indexed: instant
+                           (changed files only, cheapest), draft (packages the
+                           diff touches; the default), fast (same as draft for
+                           now), deep and ready (whole workspace, slowest).
+                           Modes never change what an exposure class means.
+                           See docs/CONFIGURATION.md "Analysis modes".
   --format FORMAT          Output format. Defaults to human. Groups:
                              Analysis (diff-scoped):
                                human, human-full, json, github, sarif
@@ -156,6 +164,8 @@ Options:
                            instead of seam-native/test-efficiency counts.
   --json                   Shortcut for --format json.
   --no-unchanged-tests     Limit the index to changed Rust files.
+  --perl-facts PATH        Use the explicit Perl facts packet as the
+                           analysis input for Perl files.
   --suppression-policy PATH
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
@@ -189,6 +199,20 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --quiet                  Suppress analysis progress and heartbeats on
+                           stderr. Does not change machine stdout, exit
+                           codes, or error reporting.
+
+Progress:
+  Long-running check analysis writes producer stages to stderr as
+  `ripr progress: <stage> [<scope>]` and, while a stage stays active,
+  throttled `still active after <elapsed class>` heartbeats. Non-TTY
+  / CI output is newline-delimited with no control sequences. A TTY
+  may reuse one line and stays silent for sub-threshold flashes.
+  Machine formats (json, sarif, github) keep stdout byte-clean;
+  they do not disable stderr progress. Unknown totals never become a
+  percentage or ETA. Progress does not mean analysis is faster or
+  that the command will succeed. `--quiet` turns this stream off.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES  Maximum added plus removed Rust diff lines
@@ -221,7 +245,14 @@ Environment variables:
                                     invocation in the diff-load path. A git command
                                     that exceeds the deadline is terminated and the
                                     error names git_invocation_timeout. 0 disables
-                                    the deadline. Default: 300 (5 minutes).
+                                    the deadline. Invalid values fail closed.
+                                    Default: 300 (5 minutes).
+  RIPR_ALLOW_REPO_PERL_EXECUTABLE   Set to 1 to let [perl].executable from
+                                    ripr.toml run as the Perl facts exporter.
+                                    Unset, ripr ignores it and runs the
+                                    exporter from PATH, so a cloned
+                                    repository cannot choose a program for
+                                    ripr to run.
 
 Examples:
   ripr check
@@ -234,7 +265,7 @@ Examples:
 "#;
 pub(super) const DIFF_HELP: &str = r#"Analyze the changed surface first and report full-repo context as an explicit bounded state.
 
-Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format human|json] [--json]
+Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format FORMAT] [--json]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory.
@@ -286,17 +317,26 @@ Performance:
 "#;
 pub(super) const CONTEXT_HELP: &str = r#"Print the per-change context packet for one finding or location.
 
+The packet is always JSON, for an agent or tool to consume; `--json` is
+accepted and changes nothing. To read the same finding as prose, run
+`ripr explain` with the same selector.
+
 Usage: ripr context [--root PATH] [--base REV|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json]
 
 Options:
+  --finding ID
+               Select the finding by id or `file:line`, like `--at`.
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
                analysis (same fail-closed identity gate as explain --from).
                --max-related-tests is a render-time knob honored fresh,
                including beyond the check --json render cap.
-  --mode MODE  instant, draft, fast, deep, or ready. Defaults to draft.
-               With --from, this feeds the identity recomputation (see
-               `ripr explain --help`).
+  --mode MODE  How much of the workspace is indexed: instant (changed
+               files only, cheapest), draft (packages the diff touches; the
+               default), fast (same as draft for now), deep and ready (whole
+               workspace, slowest). See docs/CONFIGURATION.md "Analysis
+               modes". With --from, this feeds the identity recomputation
+               (see `ripr explain --help`).
   --no-unchanged-tests
                Limit the index to changed Rust files. With --from, feeds
                the identity recomputation (see `ripr explain --help`).
@@ -350,11 +390,13 @@ First-run diagnosis (printed automatically):
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
     nature of preview-language evidence.
   - Recommended first command: ripr check (no base: the loader resolves this
-    repository's own default branch)
+    repository's own default branch). When git is not on PATH, the `!` git line
+    names install git or `--diff PATH` / `--diff -`, and the recommended
+    command is `ripr check --diff PATH`.
 
 Start-here next step:
   - open `target/ripr/reports/start-here.md` first when it exists
-  - when it does not, run the recommended first command: `ripr first-pr` and
+  - when it does not, run `ripr check` first: `ripr first-pr` and
     `ripr start-here` compose that packet from analysis evidence and run no
     analysis of their own, so on a fresh workspace they report
     `missing_artifacts`
@@ -377,4 +419,24 @@ Usage: ripr lsp [--stdio] [--version]
 Options:
   --stdio       Run the language server over stdio LSP framing. This is the default.
   --version     Print the language server version.
+
+Server-executed commands (workspace/executeCommand), with their arguments:
+  ripr.refresh                  no arguments; re-runs analysis with the full seam inventory
+  ripr.collectContext           one object: {"finding_id": "probe:..."},
+                                {"seam_id": "...", "evidence_identity": {...}}, or
+                                {"gap_id": "...", "gap_ledger": "..."} (gap_ledger optional)
+  ripr.collectEvidenceContext   one object: {"seam_id": "...", "evidence_identity": {...}}
+  ripr.collectRepairPacket      no arguments for the top packet, or {"gap_id": "..."}
+  ripr.collectWorkspaceStatus   no arguments
+  ripr.collectTopLimitation     no arguments
+  ripr.collectReceiptStatus     no arguments
+
+  Copy ids and evidence_identity from a ripr diagnostic's data. A shape the
+  server cannot read, or an id missing from the current snapshot, is a
+  -32602 InvalidParams error that names the accepted shapes; it is never null.
+  `ripr/listActionableItems` (custom request) lists the delivered and
+  omitted diagnostics by canonical id, and under `hidden_gaps` the gaps the
+  default actionable profile never publishes because they have no repair
+  route, such as a new function no test calls. Set `[lsp] diagnostic_profile =
+  "full"` in ripr.toml to publish those as diagnostics too.
 "#;

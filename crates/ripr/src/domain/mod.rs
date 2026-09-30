@@ -6,9 +6,12 @@ mod command_spec;
 pub mod context_packet;
 mod diagnostic_witness;
 mod evidence;
+pub(crate) mod executed_control;
+mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
+mod identity;
 mod language;
 mod probe;
 mod summary;
@@ -43,15 +46,30 @@ pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,
 };
+pub(crate) use executed_control::{
+    EXECUTED_CONTROL_PACKET_KIND, EXECUTED_CONTROL_SCHEMA_VERSION, ExecutedControlPacketV1,
+    ObligationSatisfaction, ResultState,
+};
+pub(crate) use feedback::{
+    ActorKind, FEEDBACK_NOTE_MAX_BYTES, FEEDBACK_SCHEMA_VERSION, FeedbackJudgment, FeedbackPayload,
+    FeedbackReason, FeedbackReceipt, ReferenceState, ResultIdentity, ReviewStatus,
+    classify_reference,
+};
 pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
 };
+pub use identity::{
+    GOVERNED_IDENTITY_SURFACES, IDENTITY_REGISTRY_JSON_PATH, IDENTITY_REGISTRY_MARKDOWN_PATH,
+    REQUIRED_TAXONOMY_KINDS, identity_field_disposition, identity_registry_canonical_json,
+    identity_registry_markdown, identity_registry_violations,
+};
 pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]
 pub(crate) use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
+pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,

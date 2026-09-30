@@ -9,11 +9,37 @@ enum TestDeclarationRoot {
 }
 
 impl TestDeclarationRoot {
+    /// Jest/Vitest `test` / `it` / `describe`, plus mocha's BDD `specify` /
+    /// `context` and the TDD / Vitest / `node:test` `suite` (#4548). The
+    /// skipped spellings (`xit`, `xcontext`, `.skip`) are deliberately not
+    /// matched: they register no running test.
     fn matches_identifier(self, name: &str) -> bool {
         match self {
-            Self::Test => matches!(name, "test" | "it"),
-            Self::Describe => name == "describe",
+            Self::Test => matches!(name, "test" | "it" | "specify"),
+            Self::Describe => matches!(name, "describe" | "context" | "suite"),
         }
+    }
+}
+
+/// Index of the callback argument of a `test` / `describe` registration.
+/// `node:test` and Vitest accept an options object before the callback
+/// (`it(name, { timeout }, fn)`); otherwise the callback is argument 1, which
+/// keeps `test(name, fn, timeout)` working (#4548).
+fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    let is_function = |argument: Option<&oxc_ast::ast::Argument<'_>>| {
+        matches!(
+            argument,
+            Some(
+                oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                    | oxc_ast::ast::Argument::FunctionExpression(_)
+            )
+        )
+    };
+    match call.arguments.get(1) {
+        Some(oxc_ast::ast::Argument::ObjectExpression(_)) if is_function(call.arguments.get(2)) => {
+            2
+        }
+        _ => 1,
     }
 }
 
@@ -29,11 +55,19 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
         let imports = extract_imports_from_statements(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
-        let mut scope = TestScope::default();
+        let mut scope = TestScope {
+            assertion_bindings: TypeScriptAssertionBindings::from_program(
+                &ret.program.body,
+                &imports,
+            ),
+            ..TestScope::default()
+        };
+        // One line index per source; every test and assertion line is a
+        // binary search against it rather than a rescan from byte 0.
         collect_tests_from_statements(
             &ret.program.body,
             file,
-            source,
+            &SourceText::new(source),
             &mocks,
             &imports,
             &mut scope,
@@ -557,9 +591,9 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
 }
 
 pub(crate) fn collect_tests_from_statements(
-    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    statements: &[Statement<'_>],
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     mocks: &[String],
     imports: &[TypeScriptImport],
     scope: &mut TestScope,
@@ -571,8 +605,12 @@ pub(crate) fn collect_tests_from_statements(
     // counts, as it does at runtime.
     let mut level = Vec::new();
     let mut sites = Vec::new();
+    let mut iterables = Vec::new();
     let mut returned = false;
     for stmt in statements {
+        if !returned {
+            collect_const_iterables(stmt, &mut iterables);
+        }
         let start = level.len();
         collect_scope_bindings(stmt, source, &mut level, &mut sites);
         // After a possible early `return`, a binding may never run.
@@ -613,31 +651,68 @@ pub(crate) fn collect_tests_from_statements(
         }
     }
     scope.levels.push(level);
+    scope.iterables.push(iterables);
     for stmt in statements {
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
         }
-        if let Some((describe_name, body)) = describe_body_from_statement(stmt) {
+        if let Some((describe_name, body)) = describe_body_from_statement(stmt, source) {
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
             // for every test inside.
             scope.levels.push(
-                statement_callback_parameter_names(stmt, 1)
+                statement_callback_parameter_names(stmt)
                     .into_iter()
                     .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                     .collect(),
             );
+            scope.iterables.push(Vec::new());
             scope.describe_names.push(describe_name);
             collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
             scope.describe_names.pop();
+            scope.iterables.pop();
             scope.levels.pop();
             continue;
         }
-        if let Some(mut test) = test_from_statement(stmt, file, source, &scope.describe_names) {
+        if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
+            // A `for`/`for...of`/`for...in` or `.forEach` callback body
+            // registers its tests once per iteration; its loop variables or
+            // callback parameters shadow every enclosing binding.
+            scope.levels.push(
+                loop_bindings
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .collect(),
+            );
+            scope.iterables.push(Vec::new());
+            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            scope.iterables.pop();
+            scope.levels.pop();
+            continue;
+        }
+        // An enclosing describe body or describe callback parameter that
+        // re-declares an imported assertion binding shadows it for every test
+        // inside (#4638 review). `levels[0]` is the file's own top level,
+        // where the import itself lives.
+        let assertion_bindings = scope.assertion_bindings.without_shadowed(|name| {
+            scope
+                .levels
+                .iter()
+                .skip(1)
+                .flatten()
+                .any(|(bound, _, _)| bound == name)
+        });
+        if let Some(mut test) = test_from_statement(
+            stmt,
+            file,
+            source,
+            &scope.describe_names,
+            &assertion_bindings,
+        ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
-            let parameters = statement_callback_parameter_names(stmt, 1)
+            let parameters = statement_callback_parameter_names(stmt)
                 .into_iter()
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
@@ -645,6 +720,7 @@ pub(crate) fn collect_tests_from_statements(
             tests.push(test);
         }
     }
+    scope.iterables.pop();
     scope.levels.pop();
 }
 
@@ -658,11 +734,18 @@ pub(crate) struct TestScope {
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
     levels: Vec<Vec<ScopeEntry>>,
+    /// Per entry of `levels`: the `const` names that level binds to a
+    /// non-empty array or object literal, so a loop over one of them is
+    /// known to register its tests at least once.
+    iterables: Vec<Vec<(String, IterableLiteral)>>,
     /// Source offsets of every declaration and hook write the walk recorded.
     sites: Vec<usize>,
     /// Spans of string literals passed first to a call statement: describe
     /// and test names, `vi.mock('../src/cart')` paths.
     names: Vec<std::ops::Range<usize>>,
+    /// The file's imported assertion-library bindings (`node:assert`, chai;
+    /// #4547), credited in every test body.
+    assertion_bindings: TypeScriptAssertionBindings,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -749,6 +832,9 @@ impl TestScope {
                 resolved.push(TypeScriptScopeBinding {
                     name: name.to_string(),
                     constructed_by,
+                    // `levels` is the test's own parameters, then the
+                    // enclosing levels innermost first; the last is the file.
+                    file_level: depth > 0 && depth == levels.len() - 1,
                 });
             }
         }
@@ -1246,9 +1332,10 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
-/// Parameter names of the callback at `index` in a statement's call
-/// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`).
-fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec<String> {
+/// Parameter names of the registration callback in a statement's call
+/// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`,
+/// `it('x', { timeout }, (t) => ...)`).
+fn statement_callback_parameter_names(stmt: &Statement<'_>) -> Vec<String> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return Vec::new();
     };
@@ -1256,7 +1343,7 @@ fn statement_callback_parameter_names(stmt: &Statement<'_>, index: usize) -> Vec
         return Vec::new();
     };
     call.arguments
-        .get(index)
+        .get(declaration_callback_index(call))
         .map(argument_parameter_names)
         .unwrap_or_default()
 }
@@ -1290,6 +1377,96 @@ fn name_literal_span(stmt: &Statement<'_>) -> Option<std::ops::Range<usize>> {
 }
 
 /// Names a callback argument binds as parameters; empty for anything else.
+/// Every name a test body declares at any block depth: `var`/`let`/`const`
+/// bindings (destructuring included), function and class declarations, and
+/// `catch` parameters. Nested function bodies are not entered. The text
+/// guard only sees a declaration that starts its line, so a destructured or
+/// inline declaration would otherwise leave an assertion binding credited
+/// while shadowed (#4638 review). Over-collecting only withholds credit.
+fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+    for statement in statements {
+        collect_statement_declared_names(statement, out);
+    }
+}
+
+fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<String>) {
+    match statement {
+        Statement::VariableDeclaration(declaration) => {
+            out.extend(declaration_binding_names(declaration));
+        }
+        Statement::FunctionDeclaration(function) => {
+            if let Some(identifier) = &function.id {
+                out.push(identifier.name.to_string());
+            }
+        }
+        Statement::ClassDeclaration(class) => {
+            if let Some(identifier) = &class.id {
+                out.push(identifier.name.to_string());
+            }
+        }
+        Statement::BlockStatement(block) => collect_block_declared_names(&block.body, out),
+        Statement::IfStatement(if_stmt) => {
+            collect_statement_declared_names(&if_stmt.consequent, out);
+            if let Some(alternate) = &if_stmt.alternate {
+                collect_statement_declared_names(alternate, out);
+            }
+        }
+        Statement::ForStatement(for_stmt) => {
+            if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                &for_stmt.init
+            {
+                out.extend(declaration_binding_names(declaration));
+            }
+            collect_statement_declared_names(&for_stmt.body, out);
+        }
+        Statement::ForOfStatement(for_of) => {
+            if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_of.left {
+                out.extend(declaration_binding_names(declaration));
+            }
+            collect_statement_declared_names(&for_of.body, out);
+        }
+        Statement::ForInStatement(for_in) => {
+            if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_in.left {
+                out.extend(declaration_binding_names(declaration));
+            }
+            collect_statement_declared_names(&for_in.body, out);
+        }
+        Statement::WhileStatement(while_stmt) => {
+            collect_statement_declared_names(&while_stmt.body, out);
+        }
+        Statement::DoWhileStatement(do_while) => {
+            collect_statement_declared_names(&do_while.body, out);
+        }
+        Statement::LabeledStatement(labeled) => {
+            collect_statement_declared_names(&labeled.body, out);
+        }
+        Statement::TryStatement(try_stmt) => {
+            collect_block_declared_names(&try_stmt.block.body, out);
+            if let Some(handler) = &try_stmt.handler {
+                if let Some(param) = &handler.param {
+                    out.extend(
+                        param
+                            .pattern
+                            .get_binding_identifiers()
+                            .iter()
+                            .map(|identifier| identifier.name.to_string()),
+                    );
+                }
+                collect_block_declared_names(&handler.body.body, out);
+            }
+            if let Some(finalizer) = &try_stmt.finalizer {
+                collect_block_declared_names(&finalizer.body, out);
+            }
+        }
+        Statement::SwitchStatement(switch) => {
+            for case in &switch.cases {
+                collect_block_declared_names(&case.consequent, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String> {
     let params = match argument {
         oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
@@ -1304,8 +1481,13 @@ fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String
         .collect()
 }
 
+/// The name and body of an active `describe` / `context` / `suite` statement.
+/// A title that is not a string literal (`describe(Div.name, fn)`, a template
+/// literal) is named by its bounded, single-line source text so the body is
+/// still walked (#4548).
 pub(crate) fn describe_body_from_statement<'a>(
     stmt: &'a Statement<'a>,
+    source: &SourceText<'_>,
 ) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>)> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return None;
@@ -1318,16 +1500,19 @@ pub(crate) fn describe_body_from_statement<'a>(
     {
         return None;
     }
-    let name = string_argument(call.arguments.first()?)?;
-    let body = function_body_statements_from_argument(call.arguments.get(1)?)?;
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
+    let body = function_body_statements_from_argument(
+        call.arguments.get(declaration_callback_index(call))?,
+    )?;
     Some((name, body))
 }
 
 pub(crate) fn test_from_statement(
     stmt: &Statement<'_>,
     file: &Path,
-    source: &str,
+    source: &SourceText<'_>,
     describe_stack: &[String],
+    bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptTest> {
     let Statement::ExpressionStatement(expr_stmt) = stmt else {
         return None;
@@ -1335,13 +1520,13 @@ pub(crate) fn test_from_statement(
     let Expression::CallExpression(call) = &expr_stmt.expression else {
         return None;
     };
-    let (name, assertions) = test_name_and_assertions_from_call(call, source)?;
+    let (name, assertions) = test_name_and_assertions_from_call(call, source, bindings)?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
         local_name: name,
         describe_names: describe_stack.to_vec(),
         file: file.to_path_buf(),
-        line: line_for_offset(source, call.span.start as usize),
+        line: source.line_for_offset(call.span.start as usize),
         body_text: source[call.span.start as usize..call.span.end as usize].to_string(),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
@@ -1354,7 +1539,8 @@ pub(crate) fn test_from_statement(
 
 pub(crate) fn test_name_and_assertions_from_call(
     call: &oxc_ast::ast::CallExpression<'_>,
-    source: &str,
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
@@ -1362,12 +1548,42 @@ pub(crate) fn test_name_and_assertions_from_call(
         return None;
     }
 
-    let name = string_argument(call.arguments.first()?)?;
-    let callback = call.arguments.get(1)?;
-    let receiver = test_callback_receiver_name(callback);
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
+    let callback = call.arguments.get(declaration_callback_index(call))?;
+    // A first parameter named like an imported assertion binding
+    // (`const assert = require('node:assert')` + `it('x', function (assert)
+    // {...})`) is ambiguous: mocha passes `done` there, AVA / tape an
+    // execution context. Neither the import nor the receiver is credited
+    // (#4638 review, fail-closed).
+    let receiver =
+        test_callback_receiver_name(callback).filter(|receiver| !bindings.binds_local(receiver));
+    // A test callback parameter or a test-body declaration named like an
+    // imported assertion binding shadows it (#4638 review; the #4102 guard).
+    let parameters = argument_parameter_names(callback);
+    let call_text = source
+        .get(call.span.start as usize..call.span.end as usize)
+        .unwrap_or_default();
+    let body_declarations = function_body_statements_from_argument(callback)
+        .map(|statements| {
+            let mut names = Vec::new();
+            collect_block_declared_names(statements, &mut names);
+            names
+        })
+        .unwrap_or_default();
+    let bindings = bindings.without_shadowed(|name| {
+        parameters.iter().any(|parameter| parameter == name)
+            || body_declarations.iter().any(|declared| declared == name)
+            || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
+    });
+    let bindings = &bindings;
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
-            collect_expect_assertions_in_statements(statements, source, receiver.as_deref())
+            collect_assertions_in_statements_with_bindings(
+                statements,
+                source,
+                receiver.as_deref(),
+                bindings,
+            )
         })
         .unwrap_or_default();
     Some((name, assertions))
@@ -1395,7 +1611,59 @@ fn call_callee_is_active_declaration(
     call: &oxc_ast::ast::CallExpression<'_>,
     root: TestDeclarationRoot,
 ) -> bool {
-    expression_is_active_declaration(&call.callee, root)
+    expression_is_active_declaration(&call.callee, root) && declaration_options_are_active(call)
+}
+
+/// Whether a registration's options object leaves it running. `node:test`
+/// and Vitest accept `{ skip, todo }` (and Vitest `{ fails }`, which inverts
+/// the verdict) in the options object, which registers exactly what `.skip` /
+/// `.todo` / `.fails` register: no running discriminator. The options object
+/// sits before the callback (`it(name, opts, fn)`), in legacy Vitest after
+/// it (`it(name, fn, opts)`), and `node:test` also accepts it in place of
+/// the name (`test(opts, fn)`); all three positions are checked.
+///
+/// Fail-closed (#4638 review): a `skip` / `todo` / `fails` key whose value is
+/// anything but literal `false` / `undefined`, a spread, a computed key, or a
+/// method/accessor makes the registration inactive — it is then handled
+/// exactly like `.skip` (no test, no describe walk, not a dropped
+/// registration).
+fn declaration_options_are_active(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    call.arguments
+        .iter()
+        .take(3)
+        .all(|argument| match argument {
+            oxc_ast::ast::Argument::ObjectExpression(options) => options
+                .properties
+                .iter()
+                .all(declaration_option_property_is_active),
+            _ => true,
+        })
+}
+
+fn declaration_option_property_is_active(property: &ObjectPropertyKind<'_>) -> bool {
+    let ObjectPropertyKind::ObjectProperty(property) = property else {
+        // `{ ...opts }` may carry `skip: true`.
+        return false;
+    };
+    if property.computed {
+        return false;
+    }
+    let key = match &property.key {
+        PropertyKey::StaticIdentifier(ident) => ident.name.as_str(),
+        PropertyKey::StringLiteral(literal) => literal.value.as_str(),
+        _ => return false,
+    };
+    if !matches!(key, "skip" | "todo" | "fails") {
+        return true;
+    }
+    if property.method || property.kind != oxc_ast::ast::PropertyKind::Init {
+        return false;
+    }
+    match &property.value {
+        Expression::BooleanLiteral(literal) => !literal.value,
+        Expression::Identifier(ident) => !property.shorthand && ident.name == "undefined",
+        _ => false,
+    }
 }
 
 fn call_callee_is_active_each_declaration(
@@ -1410,6 +1678,7 @@ fn call_callee_is_active_each_declaration(
     };
     member.property.name.as_str() == "each"
         && expression_is_active_declaration(&member.object, root)
+        && declaration_options_are_active(call)
 }
 
 fn expression_is_active_declaration(
@@ -1430,10 +1699,290 @@ fn is_active_declaration_modifier(name: &str) -> bool {
     matches!(name, "only" | "concurrent" | "sequential")
 }
 
-pub(crate) fn string_argument(arg: &oxc_ast::ast::Argument<'_>) -> Option<String> {
+/// The title of a `describe`/`test`/`it` registration. A string literal or a
+/// template without substitutions keeps its text. Any other expression (a
+/// template with substitutions, a concatenation, an identifier) is a
+/// computed title: it is named by a stable placeholder and the line of the
+/// registration, so the name is deterministic and never guessed from the
+/// runtime value. A spread argument is not a title.
+fn title_argument(
+    arg: &oxc_ast::ast::Argument<'_>,
+    source: &SourceText<'_>,
+    registration_start: usize,
+) -> Option<String> {
     match arg {
         oxc_ast::ast::Argument::StringLiteral(literal) => Some(literal.value.to_string()),
+        oxc_ast::ast::Argument::SpreadElement(_) => None,
+        oxc_ast::ast::Argument::TemplateLiteral(template) if template.single_quasi().is_some() => {
+            template.single_quasi().map(|quasi| quasi.to_string())
+        }
+        _ => Some(computed_title(source.line_for_offset(registration_start))),
+    }
+}
+
+/// Placeholder name of a registration whose title is computed at runtime.
+fn computed_title(line: usize) -> String {
+    format!("<computed title, line {line}>")
+}
+
+/// The body of a loop that registers tests once per iteration, with the
+/// names its header binds: `for (const t of tests) { ... }`,
+/// `for (const key in table) { ... }`, `for (let i = 0; i < 3; i++) { ... }`
+/// and `tests.forEach((t) => { ... })`. A loop is walked only when it is
+/// known to run at least once: its iterable is a non-empty array or object
+/// literal, `Object.entries`/`keys`/`values` of one, or a `const` in scope
+/// bound to one; a counted `for` needs literal bounds. Tests registered by
+/// a loop that may run zero times would be credited without existing, so
+/// every other loop is left unwalked (and stays disclosed as partial), as is
+/// a `for...of`/`for...in` whose target is not a declaration.
+fn loop_body_from_statement<'a>(
+    stmt: &'a Statement<'a>,
+    scope: &TestScope,
+) -> Option<(Vec<String>, &'a [Statement<'a>])> {
+    let (bindings, body) = match stmt {
+        Statement::ForOfStatement(for_of) => {
+            if !iterates_nonempty(&for_of.right, scope) {
+                return None;
+            }
+            (for_left_bindings(&for_of.left)?, &for_of.body)
+        }
+        Statement::ForInStatement(for_in) => {
+            if !enumerates_nonempty(&for_in.right, scope) {
+                return None;
+            }
+            (for_left_bindings(&for_in.left)?, &for_in.body)
+        }
+        Statement::ForStatement(for_stmt) => {
+            let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                &for_stmt.init
+            else {
+                return None;
+            };
+            if !counted_loop_runs(declaration, for_stmt.test.as_ref()) {
+                return None;
+            }
+            (declaration_binding_names(declaration), &for_stmt.body)
+        }
+        Statement::ExpressionStatement(expr_stmt) => {
+            let Expression::CallExpression(call) = &expr_stmt.expression else {
+                return None;
+            };
+            let Expression::StaticMemberExpression(member) = &call.callee else {
+                return None;
+            };
+            if member.property.name.as_str() != "forEach"
+                || !iterates_nonempty(&member.object, scope)
+            {
+                return None;
+            }
+            let callback = call.arguments.first()?;
+            let body = function_body_statements_from_argument(callback)?;
+            let bindings = argument_parameter_names(callback);
+            if binds_registration_api(&bindings) {
+                return None;
+            }
+            return Some((bindings, body.as_slice()));
+        }
+        _ => return None,
+    };
+    if binds_registration_api(&bindings) {
+        return None;
+    }
+    let body = match body {
+        Statement::BlockStatement(block) => block.body.as_slice(),
+        single => std::slice::from_ref(single),
+    };
+    Some((bindings, body))
+}
+
+/// A loop variable or callback parameter named `test`, `it` or `describe`
+/// shadows the runner API inside the body, so a `test(...)` there is not a
+/// registration; such a loop is not walked.
+fn binds_registration_api(bindings: &[String]) -> bool {
+    bindings.iter().any(|name| {
+        TestDeclarationRoot::Test.matches_identifier(name)
+            || TestDeclarationRoot::Describe.matches_identifier(name)
+    })
+}
+
+fn for_left_bindings(left: &oxc_ast::ast::ForStatementLeft<'_>) -> Option<Vec<String>> {
+    match left {
+        oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
+            Some(declaration_binding_names(declaration))
+        }
         _ => None,
+    }
+}
+
+fn declaration_binding_names(declaration: &oxc_ast::ast::VariableDeclaration<'_>) -> Vec<String> {
+    declaration
+        .declarations
+        .iter()
+        .flat_map(|declarator| declarator.id.get_binding_identifiers())
+        .map(|identifier| identifier.name.to_string())
+        .collect()
+}
+
+/// A literal a `const` is bound to, when it has at least one element or
+/// property that is not a spread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IterableLiteral {
+    Array,
+    Object,
+}
+
+/// Record `const name = <non-empty array or object literal>` declarations.
+fn collect_const_iterables(stmt: &Statement<'_>, out: &mut Vec<(String, IterableLiteral)>) {
+    let Statement::VariableDeclaration(declaration) = stmt else {
+        return;
+    };
+    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+        return;
+    }
+    for declarator in &declaration.declarations {
+        if let (BindingPattern::BindingIdentifier(identifier), Some(init)) =
+            (&declarator.id, &declarator.init)
+            && let Some(kind) = nonempty_literal(init)
+        {
+            out.push((identifier.name.to_string(), kind));
+        }
+    }
+}
+
+/// Strip parentheses and TypeScript-only wrappers (`as`, `satisfies`, `!`,
+/// `<T>x`), which do not change the runtime value.
+fn runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
+    match expression {
+        Expression::ParenthesizedExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSAsExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSSatisfiesExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSNonNullExpression(inner) => runtime_expression(&inner.expression),
+        Expression::TSTypeAssertion(inner) => runtime_expression(&inner.expression),
+        other => other,
+    }
+}
+
+fn nonempty_literal(expression: &Expression<'_>) -> Option<IterableLiteral> {
+    match runtime_expression(expression) {
+        Expression::ArrayExpression(array)
+            if array.elements.iter().any(|element| {
+                !matches!(
+                    element,
+                    oxc_ast::ast::ArrayExpressionElement::SpreadElement(_)
+                )
+            }) =>
+        {
+            Some(IterableLiteral::Array)
+        }
+        Expression::ObjectExpression(object)
+            if object.properties.iter().any(|property| {
+                matches!(
+                    property,
+                    oxc_ast::ast::ObjectPropertyKind::ObjectProperty(_)
+                )
+            }) =>
+        {
+            Some(IterableLiteral::Object)
+        }
+        _ => None,
+    }
+}
+
+/// The literal `expression` is known to evaluate to: a literal itself, or an
+/// identifier whose innermost binding in scope is a single `const`
+/// declaration of one (a hook write, a parameter, a loop variable or any
+/// second binding of the name at that level makes it unknown).
+fn known_literal(expression: &Expression<'_>, scope: &TestScope) -> Option<IterableLiteral> {
+    let expression = runtime_expression(expression);
+    if let Some(kind) = nonempty_literal(expression) {
+        return Some(kind);
+    }
+    let Expression::Identifier(identifier) = expression else {
+        return None;
+    };
+    let name = identifier.name.as_str();
+    let depth = scope
+        .levels
+        .iter()
+        .rposition(|level| level.iter().any(|(bound, _, _)| bound == name))?;
+    let writes = scope
+        .levels
+        .get(depth)?
+        .iter()
+        .filter(|(bound, _, _)| bound == name);
+    if writes.count() != 1 {
+        return None;
+    }
+    scope
+        .iterables
+        .get(depth)?
+        .iter()
+        .find(|(bound, _)| bound == name)
+        .map(|(_, kind)| *kind)
+}
+
+/// `for...of` / `.forEach` over a value known to yield at least one item: a
+/// non-empty array, or `Object.entries`/`keys`/`values` of a non-empty
+/// object or array.
+fn iterates_nonempty(expression: &Expression<'_>, scope: &TestScope) -> bool {
+    if known_literal(expression, scope) == Some(IterableLiteral::Array) {
+        return true;
+    }
+    let Expression::CallExpression(call) = runtime_expression(expression) else {
+        return false;
+    };
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return false;
+    };
+    let is_object_enumeration = matches!(&member.object, Expression::Identifier(object) if object.name == "Object")
+        && matches!(member.property.name.as_str(), "entries" | "keys" | "values");
+    is_object_enumeration
+        && call.arguments.len() == 1
+        && call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .is_some_and(|argument| known_literal(argument, scope).is_some())
+}
+
+/// `for...in` over a value known to have at least one enumerable key.
+fn enumerates_nonempty(expression: &Expression<'_>, scope: &TestScope) -> bool {
+    known_literal(expression, scope).is_some()
+}
+
+/// `for (let i = <a>; i < <b> | i <= <b>; ...)` with numeric literal bounds
+/// that admit the first iteration.
+fn counted_loop_runs(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    test: Option<&Expression<'_>>,
+) -> bool {
+    let [declarator] = declaration.declarations.as_slice() else {
+        return false;
+    };
+    let (BindingPattern::BindingIdentifier(counter), Some(init)) =
+        (&declarator.id, &declarator.init)
+    else {
+        return false;
+    };
+    let Expression::NumericLiteral(start) = runtime_expression(init) else {
+        return false;
+    };
+    let Some(Expression::BinaryExpression(comparison)) = test.map(runtime_expression) else {
+        return false;
+    };
+    let (Expression::Identifier(left), Expression::NumericLiteral(bound)) = (
+        runtime_expression(&comparison.left),
+        runtime_expression(&comparison.right),
+    ) else {
+        return false;
+    };
+    if left.name != counter.name {
+        return false;
+    }
+    match comparison.operator {
+        oxc_ast::ast::BinaryOperator::LessThan => start.value < bound.value,
+        oxc_ast::ast::BinaryOperator::LessEqualThan => start.value <= bound.value,
+        _ => false,
     }
 }
 
@@ -1470,14 +2019,18 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// Detected shapes (bounded preview slice — extracting these shapes is a
 /// separate backlog item; this lane only discloses them):
 ///
-/// - `` it(`title ${x}`, fn) `` / `` test(`title`, fn) `` — template-literal
-///   titles (`string_argument` accepts `StringLiteral` only).
 /// - `` test.each`table`('name', fn) `` / `` it.each`table`('name', fn) `` —
 ///   tagged-template `.each` (the tagged template sits in callee position, so
 ///   the extractor's identifier/member callee check never recognizes it).
-/// - `it(...)` / `test(...)` calls nested inside loop, callback, or other
-///   non-`describe` bodies — `collect_tests_from_statements` recurses only into
-///   `describe(...)` bodies.
+/// - `it(...)` / `test(...)` calls nested inside a body the extractor does not
+///   walk: an `if`/`while`/`try` block, a helper function, or a callback other
+///   than `describe(...)` (or `context(...)` / `suite(...)`) and `.forEach(...)`,
+///   or a loop not known to run at least once. `for`, `for...of` and
+///   `for...in` bodies and `.forEach` callbacks over a known non-empty value
+///   are walked (with computed titles named by placeholder), so their
+///   registrations are extracted.
+///   Such a call reports `template-literal title` when its title is a
+///   template literal.
 ///
 /// Returns `None` for a fully extracted file (the negative control contract):
 /// every test-shaped call at a position the extractor visits carries a string
@@ -1496,8 +2049,9 @@ pub(crate) fn detect_partial_test_extraction(
             // Parse-error disclosure owns this case; do not double-report.
             return None;
         }
+        let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
-            source,
+            source: &source,
             extracted_starts: &extracted_starts,
             gap: None,
         };
@@ -1545,7 +2099,7 @@ fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usiz
 /// (statement containers, call arguments, function bodies). Array-element and
 /// object-property subtrees are out of scope for this disclosure slice.
 struct UnextractedTestFinder<'a> {
-    source: &'a str,
+    source: &'a SourceText<'a>,
     extracted_starts: &'a [usize],
     gap: Option<(usize, &'static str, String)>,
 }
@@ -1750,7 +2304,7 @@ impl UnextractedTestFinder<'_> {
                 && tagged_template_tag_is_test_each(&tagged.tag)
             {
                 self.gap = Some((
-                    line_for_offset(self.source, call.span.start as usize),
+                    self.source.line_for_offset(call.span.start as usize),
                     "tagged-template .each",
                     snippet_for_span(
                         self.source,
@@ -1769,7 +2323,7 @@ impl UnextractedTestFinder<'_> {
                     _ => "test/it call in loop/callback/nested body",
                 };
                 self.gap = Some((
-                    line_for_offset(self.source, call.span.start as usize),
+                    self.source.line_for_offset(call.span.start as usize),
                     shape,
                     snippet_for_span(
                         self.source,
@@ -1858,7 +2412,7 @@ impl UnextractedTestFinder<'_> {
         if statement_position && self.gap.is_none() && tagged_template_tag_is_test_each(&tagged.tag)
         {
             self.gap = Some((
-                line_for_offset(self.source, tagged.span.start as usize),
+                self.source.line_for_offset(tagged.span.start as usize),
                 "tagged-template .each",
                 snippet_for_span(
                     self.source,

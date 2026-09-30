@@ -3,6 +3,7 @@ use crate::config::RiprConfig;
 use crate::domain::{ExposureClass, Finding, LanguageId};
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
+use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
 use super::sections::{one_line, render_finding_digest_with_config};
@@ -10,7 +11,7 @@ use super::sections::{one_line, render_finding_digest_with_config};
 pub(crate) struct HumanTriage<'a> {
     pub(crate) state: HumanTriageState,
     pub(crate) selected: Option<&'a Finding>,
-    pub(crate) omitted_findings: usize,
+    pub(crate) omitted: Vec<&'a Finding>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,6 +33,17 @@ impl HumanTriageState {
             Self::MissingScope => "missing_scope",
         }
     }
+
+    /// The state in words; the stable id follows it in parentheses.
+    fn plain_label(self) -> &'static str {
+        match self {
+            Self::TopGap => "a test gap to inspect or repair",
+            Self::NoActionableGap => "no gap selected for repair",
+            Self::StaticLimited => "limited by static analysis",
+            Self::PreviewLimited => "preview language, advisory only",
+            Self::MissingScope => "nothing in scope",
+        }
+    }
 }
 
 pub(crate) fn select_human_triage<'a>(
@@ -50,12 +62,12 @@ pub(crate) fn select_human_triage<'a>(
         .collect();
     let mut selected = None;
     let mut visible_findings: usize = 0;
-    let mut considered_findings: usize = 0;
+    let mut considered: Vec<&'a Finding> = Vec::new();
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
-        considered_findings += 1;
+        considered.push(finding);
         // Candidate-actionable eligibility (#3281): "Start here" names a
         // current candidate-side obligation. Base-side evidence and
         // unresolved subjects remain counted findings (the hidden-count
@@ -93,7 +105,10 @@ pub(crate) fn select_human_triage<'a>(
     HumanTriage {
         state,
         selected,
-        omitted_findings: considered_findings.saturating_sub(usize::from(selected.is_some())),
+        omitted: considered
+            .into_iter()
+            .filter(|finding| selected.is_none_or(|chosen| chosen.id != finding.id))
+            .collect(),
     }
 }
 
@@ -105,7 +120,11 @@ pub(crate) fn render_human_triage(
     navigation: Option<&FindingNavigation>,
 ) {
     out.push_str("Start here:\n");
-    out.push_str(&format!("  State: {}\n", triage.state.as_str()));
+    out.push_str(&format!(
+        "  State: {} ({})\n",
+        triage.state.plain_label(),
+        triage.state.as_str()
+    ));
     match triage.state {
         HumanTriageState::TopGap => out.push_str(
             "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.\n",
@@ -134,9 +153,12 @@ pub(crate) fn render_human_triage(
             // genuinely missing fields. Languages without a structured preview
             // packet (for example Python) fall through to the generic line.
             match triage.selected.and_then(preview_actionability_for) {
-                Some(actionability) if actionability.repair_packet_ready => out.push_str(
-                    "  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting.\n",
-                ),
+                Some(actionability) if actionability.repair_packet_ready => {
+                    out.push_str(&complete_packet_preview_safe_action(
+                        triage.selected,
+                        &actionability.repair_route,
+                    ));
+                }
                 Some(actionability)
                     if actionability.missing_actionability_fields.is_empty()
                         && triage
@@ -172,7 +194,7 @@ pub(crate) fn render_human_triage(
         HumanTriageState::MissingScope => {
             if let Some(base) = output.base.as_deref() {
                 out.push_str(&format!(
-                    "  Safe next action: no changed files were compared against `{base}`; make a change and re-run.\n"
+                    "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted edits.\n"
                 ));
             } else {
                 out.push_str(
@@ -195,17 +217,102 @@ pub(crate) fn render_human_triage(
     // the dominant case in fixture output. When nothing is omitted, keep only the
     // format pointers under a `More:` heading; the count line stays for the real
     // truncation case, where it is the whole point of the section.
-    if triage.omitted_findings == 0 {
+    if triage.omitted.is_empty() {
         out.push_str("\nMore:\n");
     } else {
         out.push_str("\nHidden:\n");
         out.push_str(&format!(
-            "  {} lower-priority finding(s) omitted from default human output.\n",
-            triage.omitted_findings
+            "  {} lower-priority finding(s) omitted from default human output{}.\n",
+            triage.omitted.len(),
+            omitted_identity_suffix(&triage.omitted)
         ));
     }
     out.push_str("  Full evidence: rerun with --format human-full\n");
     out.push_str("  Machine data: rerun with --format json\n\n");
+}
+
+/// #4395(b): the Hidden count line names omitted preview / non-Rust identity
+/// from fields already on those findings. This is not the #2615 availability
+/// projection. Rust-only remainder stays the count line alone.
+fn omitted_identity_suffix(omitted: &[&Finding]) -> String {
+    match omitted_language_identity(omitted) {
+        Some(identity) => format!(" ({identity})"),
+        None => String::new(),
+    }
+}
+
+fn omitted_language_identity(omitted: &[&Finding]) -> Option<String> {
+    if !omitted.iter().any(|finding| {
+        is_preview_limited(finding) || finding.language.is_some_and(|id| id != LanguageId::Rust)
+    }) {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    for language in LanguageId::ALL {
+        let count = omitted
+            .iter()
+            .filter(|finding| finding.language == Some(language))
+            .count();
+        if count == 0 {
+            continue;
+        }
+        let preview = omitted
+            .iter()
+            .any(|finding| finding.language == Some(language) && is_preview_limited(finding));
+        if preview {
+            parts.push(format!("{} preview: {count}", language.display_name()));
+        } else {
+            parts.push(format!("{}: {count}", language.display_name()));
+        }
+    }
+    let unlabeled_preview = omitted
+        .iter()
+        .filter(|finding| finding.language.is_none() && is_preview_limited(finding))
+        .count();
+    if unlabeled_preview > 0 {
+        parts.push(format!("preview-language: {unlabeled_preview}"));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join(", "))
+}
+
+/// A complete (validator-approved) preview packet: name the packet's own
+/// repair action, test file, and verify command so the operator can act on
+/// it, rather than a bare "verify independently" with no route. Falls back to
+/// the generic advisory line when the projected record lacks a test file or
+/// verify command (for example a synthetic Perl packet). Readiness is only
+/// read here, never decided.
+fn complete_packet_preview_safe_action(finding: Option<&Finding>, repair_route: &str) -> String {
+    const GENERIC: &str = "  Safe next action: preview-language evidence is advisory; the repair packet is complete but remains advisory, so verify independently before acting.\n";
+    let Some(record) = finding.and_then(typescript_gap_record_for) else {
+        return GENERIC.to_string();
+    };
+    let target_file = record
+        .repair_route
+        .as_ref()
+        .and_then(|route| route.target_file.as_deref())
+        .filter(|file| !file.trim().is_empty());
+    let verify = record
+        .verification_commands
+        .first()
+        .map(String::as_str)
+        .filter(|command| !command.trim().is_empty());
+    let (Some(target_file), Some(verify)) = (target_file, verify) else {
+        return GENERIC.to_string();
+    };
+    // The action is the packet's own instruction and carries the concrete
+    // assertion shape, so it is collapsed to one line but not truncated.
+    let action = repair_route
+        .replacen(" in the related test", "", 1)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `{target_file}`, {action}; run `{verify}`, then rerun `ripr check`.\n"
+    )
 }
 
 /// An exposed preview finding has nothing to repair, in any preview language.
@@ -306,9 +413,7 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path,
         ExposureClass::Exposed => 9,
     };
     let preview_rank = u8::from(is_preview_limited(finding));
-    let repair_rank = if finding.class != ExposureClass::Exposed
-        && !is_preview_limited(finding)
-        && has_repair_route(finding)
+    let repair_rank = if finding.class != ExposureClass::Exposed && has_ranked_repair_route(finding)
     {
         0
     } else {
@@ -324,6 +429,19 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path,
         finding.probe.location.file.as_path(),
         finding.probe.location.line,
     )
+}
+
+/// A stable finding ranks by its repair route; a preview finding only by the
+/// repair authority for its language (#4216 rc rehearsal): a Python finding
+/// with a repair card outranks one without, so Start here does not pick a
+/// card-less finding that no ripr command routes over one pilot and first-pr
+/// do route. Other preview languages keep their class rank. Classification is
+/// unchanged; only the selection order moves.
+fn has_ranked_repair_route(finding: &Finding) -> bool {
+    if !is_preview_limited(finding) {
+        return has_repair_route(finding);
+    }
+    finding.language == Some(LanguageId::Python) && python_repair_card(finding).is_some()
 }
 
 fn has_repair_route(finding: &Finding) -> bool {

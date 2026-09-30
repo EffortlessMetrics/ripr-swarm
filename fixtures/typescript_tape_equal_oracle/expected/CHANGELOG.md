@@ -229,3 +229,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_tape_equal_oracle (5)
+
+Reason:
+RIPR-SPEC-0122: human-full carries per-finding drill-in commands (#4379); digest why-line names the incomplete stage; unreached static_unknown asks for a test first
+
+Command:
+`cargo xtask goldens bless typescript_tape_equal_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_tape_equal_oracle (6)
+
+Reason:
+RIPR-SPEC-0122: exposed findings default to info severity
+
+Command:
+`cargo xtask goldens bless typescript_tape_equal_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_tape_equal_oracle (7)
+
+Reason:
+RIPR-SPEC-0046 RIPR-SPEC-0047: check JSON now carries a top-level source_subject stamp with the analysis-time content digests of the files a derived gap ledger names (#4544); no finding, classification, or human output changed.
+
+Command:
+`cargo xtask goldens bless typescript_tape_equal_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

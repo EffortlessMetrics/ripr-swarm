@@ -77,8 +77,8 @@ use super::{
     REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
     ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
     RepoExposureLatencyTrace, ReportIndexEntry, ReportIndexRepoOpsArtifact,
-    RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult,
-    SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
+    RiprSwarmReadinessNextActionSources, RoutedRustEventRoute, SUPPORT_TIERS_PATH, SarifPolicyMode,
+    SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
     TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
@@ -191,6 +191,7 @@ use super::{
     ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
     ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
     ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions, ripr_swarm_readiness_summary,
+    routed_rust_event_route, routed_rust_label_event_contract_violations,
     routed_rust_workflow_contract_violations,
     routed_rust_workflow_contract_violations_with_reusable, run_ci_full_evidence_gates,
     run_repo_badge_artifact_command, sarif_policy_report_json, sarif_policy_report_markdown,
@@ -9566,6 +9567,9 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
                 "the exact five-target matrix inventory is missing or duplicated".to_owned(),
             );
         }
+        if candidate.contains("continue-on-error") {
+            return Err("qualification steps must not continue on error".to_owned());
+        }
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
@@ -9618,6 +9622,16 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "ruleset_id",
             "--arg repository \"${REPOSITORY}\"",
             "release_assets_created: false",
+            "cargo build --locked -p ripr --release",
+            "os: ubuntu-22.04\n",
+            "os: ubuntu-22.04-arm\n",
+            "GLIBC_FLOOR: \"2.34\"",
+            "sed -n '/^Version needs section/,/^Version .* section/p'",
+            "if [ \"${highest}\" != \"${GLIBC_FLOOR}\" ]; then",
+            "requires glibc ${required}, above the ${GLIBC_FLOOR} floor\"\n            exit 1\n          fi",
+            "needs a non-numeric glibc version that the ${GLIBC_FLOOR} floor cannot bound\"\n            exit 1\n          fi",
+            "if grep -v -x -E '[0-9][0-9.]*' glibc-need-names.txt; then",
+            "      - name: Verify Linux glibc floor\n        if: runner.os == 'Linux'\n",
         ] {
             if !candidate.contains(marker) {
                 return Err(format!(
@@ -9697,6 +9711,70 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "authenticated API",
             workflow.replacen("curl --silent --show-error", "gh api", 1),
+        ),
+        (
+            "unlocked server build",
+            workflow.replacen("cargo build --locked -p ripr", "cargo build -p ripr", 1),
+        ),
+        (
+            "newer glibc runner",
+            workflow.replacen("os: ubuntu-22.04\n", "os: ubuntu-latest\n", 1),
+        ),
+        (
+            "newer arm glibc runner",
+            workflow.replacen("os: ubuntu-22.04-arm\n", "os: ubuntu-24.04-arm\n", 1),
+        ),
+        (
+            "glibc floor that cannot fail",
+            workflow.replacen(
+                "requires glibc ${required}, above the ${GLIBC_FLOOR} floor\"\n            exit 1",
+                "requires glibc ${required}, above the ${GLIBC_FLOOR} floor\"\n            true",
+                1,
+            ),
+        ),
+        (
+            "glibc floor skipped on Linux",
+            workflow.replacen(
+                "      - name: Verify Linux glibc floor\n        if: runner.os == 'Linux'\n",
+                "      - name: Verify Linux glibc floor\n        if: runner.os == 'Solaris'\n",
+                1,
+            ),
+        ),
+        (
+            "named glibc need that cannot fail",
+            workflow.replacen(
+                "needs a non-numeric glibc version that the ${GLIBC_FLOOR} floor cannot bound\"\n            exit 1",
+                "needs a non-numeric glibc version that the ${GLIBC_FLOOR} floor cannot bound\"\n            true",
+                1,
+            ),
+        ),
+        (
+            "named glibc needs ignored",
+            workflow.replacen(
+                "if grep -v -x -E '[0-9][0-9.]*' glibc-need-names.txt; then",
+                "if false; then",
+                1,
+            ),
+        ),
+        (
+            "private glibc need allowed",
+            workflow.replacen(
+                "if grep -v -x -E '[0-9][0-9.]*' glibc-need-names.txt; then",
+                "if grep -v -x -E '[0-9][0-9.]*|PRIVATE' glibc-need-names.txt; then",
+                1,
+            ),
+        ),
+        (
+            "glibc floor continues on error",
+            workflow.replacen(
+                "      - name: Verify Linux glibc floor\n",
+                "      - name: Verify Linux glibc floor\n        continue-on-error: true\n",
+                1,
+            ),
+        ),
+        (
+            "raised glibc floor",
+            workflow.replacen("GLIBC_FLOOR: \"2.34\"", "GLIBC_FLOOR: \"2.39\"", 1),
         ),
         (
             "token credential",
@@ -10606,6 +10684,183 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
     assert!(violations.iter().any(|violation| {
         violation.contains("must set an explicit `timeout-minutes` job deadline")
     }));
+}
+
+#[test]
+fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
+    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+    let cases = [
+        (
+            "pull_request",
+            Some("opened"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("reopened"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("synchronize"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "workflow_dispatch",
+            None,
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("unlabeled"),
+            Some("windows-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("unlabeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("windows-ci"),
+            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("coverage"),
+            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("release-check"),
+            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        ),
+    ];
+    for (event_name, action, label, expected) in cases {
+        let actual = routed_rust_event_route(workflow, event_name, action, label);
+        assert_eq!(
+            actual, expected,
+            "event={event_name} action={action:?} label={label:?}"
+        );
+    }
+
+    let unlabeled_restored = workflow.replace(
+        "types: [opened, synchronize, reopened, labeled]",
+        "types: [opened, synchronize, reopened, labeled, unlabeled]",
+    );
+    assert_eq!(
+        routed_rust_event_route(
+            &unlabeled_restored,
+            "pull_request",
+            Some("unlabeled"),
+            Some("windows-ci"),
+        ),
+        RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        "re-subscribing to unlabeled while keeping the route filter must not be classified as untriggered"
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&unlabeled_restored)
+            .iter()
+            .any(|violation| violation.contains("must not subscribe to unlabeled")),
+        "restoring unlabeled must fail the workflow contract even if jobs would skip"
+    );
+
+    let unlabeled_unconditional = unlabeled_restored.replace(
+        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "",
+    );
+    assert_eq!(
+        routed_rust_event_route(
+            &unlabeled_unconditional,
+            "pull_request",
+            Some("unlabeled"),
+            Some("windows-ci"),
+        ),
+        RoutedRustEventRoute::LaunchFullGate,
+        "the old unlabeled subscription without a filter must still classify as a full-gate launch so the matrix cannot pass by ignoring YAML"
+    );
+
+    let missing_filter = workflow.replace(
+        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "",
+    );
+    assert_eq!(
+        routed_rust_event_route(
+            &missing_filter,
+            "pull_request",
+            Some("labeled"),
+            Some("windows-ci"),
+        ),
+        RoutedRustEventRoute::LaunchFullGate
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&missing_filter)
+            .iter()
+            .any(|violation| violation.contains("job `route` must launch only")),
+        "dropping the proof-event filter must fail the workflow contract: {:?}",
+        routed_rust_label_event_contract_violations(&missing_filter)
+    );
+
+    let always_required_name = workflow.replace(
+        "name: ${{ github.event_name == 'pull_request' && (github.event.action == 'unlabeled' || (github.event.action == 'labeled' && github.event.label.name != 'full-ci')) && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+        "name: Ripr Rust Small Result",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&always_required_name)
+            .iter()
+            .any(|violation| violation.contains("Ignored Label Event")),
+        "posting the required result name on unrelated labeled events must fail"
+    );
+
+    let decoy_if = workflow.replace(
+        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "if: always()\n    # contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) github.event.action == 'labeled' && github.event.label.name == 'full-ci'",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&decoy_if)
+            .iter()
+            .any(|violation| violation.contains("job `route` must launch only")),
+        "comment decoys must not satisfy the proof-event if contract: {:?}",
+        routed_rust_label_event_contract_violations(&decoy_if)
+    );
+
+    let missing_types =
+        workflow.replace("    types: [opened, synchronize, reopened, labeled]\n", "");
+    assert!(
+        routed_rust_label_event_contract_violations(&missing_types)
+            .iter()
+            .any(|violation| violation.contains("inline pull_request types array")),
+        "removing types must fail closed: {:?}",
+        routed_rust_label_event_contract_violations(&missing_types)
+    );
+
+    let shared_group = workflow.replace(
+        "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore' || '' }}",
+        "",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&shared_group)
+            .iter()
+            .any(|violation| violation.contains("-label-ignore")),
+        "sharing the proof concurrency group with ignored labels must fail: {:?}",
+        routed_rust_label_event_contract_violations(&shared_group)
+    );
 }
 
 #[test]
@@ -24589,6 +24844,58 @@ fn slice_test_repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+fn python_marker_auto_docs_passing_copy() -> (&'static str, &'static str, &'static str) {
+    (
+        "with no `ripr.toml` keep Python preview off",
+        r#"With no `ripr.toml` enables Python preview enabled = ["rust"] keeps Python off"#,
+        r#"with no `ripr.toml` Python project markers enabled = ["rust"]"#,
+    )
+}
+
+#[test]
+fn python_marker_auto_docs_accept_required_phrases() {
+    let (configuration, readme, support) = python_marker_auto_docs_passing_copy();
+    assert!(
+        super::python_marker_auto_docs_violations(configuration, readme, support).is_empty(),
+        "required marker-auto phrases should pass"
+    );
+}
+
+#[test]
+fn python_marker_auto_docs_reject_opt_in_python_lumping() {
+    let (_configuration, readme, support) = python_marker_auto_docs_passing_copy();
+    let violations = super::python_marker_auto_docs_violations(
+        "with no `ripr.toml` keep Python preview off; opt-in TypeScript, JavaScript, and Python evidence",
+        readme,
+        support,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("must not lump Python")),
+        "lumping Python with opt-in TypeScript/JavaScript must fail: {violations:?}"
+    );
+}
+
+/// #4395(a): live workspace pin. Lives in unpublished xtask so `cargo test -p ripr`
+/// from a crates.io package does not try to read workspace docs.
+#[test]
+fn public_docs_state_python_marker_auto_when_no_ripr_toml() -> Result<(), String> {
+    let root = slice_test_repo_root();
+    let configuration = std::fs::read_to_string(root.join("docs/CONFIGURATION.md"))
+        .map_err(|err| format!("read CONFIGURATION.md: {err}"))?;
+    let readme = std::fs::read_to_string(root.join("README.md"))
+        .map_err(|err| format!("read README.md: {err}"))?;
+    let support = std::fs::read_to_string(root.join("docs/status/SUPPORT_TIERS.md"))
+        .map_err(|err| format!("read SUPPORT_TIERS.md: {err}"))?;
+    let violations = super::python_marker_auto_docs_violations(&configuration, &readme, &support);
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(violations.join("\n"))
+    }
+}
+
 #[test]
 fn spec_system_profile_is_current_v2_without_goal_root() -> Result<(), String> {
     let profile =
@@ -29273,6 +29580,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"repo-seam-inventory"));
     assert!(commands.contains(&"repo-exposure-report"));
     assert!(commands.contains(&"repo-exposure-latency-report"));
+    assert!(commands.contains(&"lsp-performance-report"));
     assert!(commands.contains(&"lane1-evidence-audit"));
     assert!(commands.contains(&"evidence-quality-audit"));
     assert!(commands.contains(&"evidence-quality-scorecard"));

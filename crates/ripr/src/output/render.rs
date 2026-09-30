@@ -30,7 +30,10 @@ pub(crate) fn render_check_with_config(
     match format {
         OutputFormat::Human => Ok(human::render_bounded_with_config(output, config)),
         OutputFormat::HumanFull => Ok(human::render_full_with_config(output, config)),
-        OutputFormat::Json => Ok(json::render_with_config(output, config)),
+        OutputFormat::Json => Ok(stamp_check_json(
+            json::render_with_config(output, config),
+            &output.root,
+        )),
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
         OutputFormat::Sarif => {
             let suppressions = load_suppressions(output, config)?;
@@ -73,10 +76,13 @@ pub(crate) fn render_check_with_config(
             Ok(repo_seams::render_repo_seams_md(&seams))
         }
         OutputFormat::RepoExposureJson => {
-            let (classified, limit_info) =
-                analysis::inventory_classified_seams_at_with_config(&output.root, config)?;
-            let ts_guidance = detect_ts_full_repo_guidance(&output.root, &classified);
-            let python_guidance = detect_python_repo_exposure_guidance(&output.root, &classified);
+            let report =
+                analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
+            let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
+            let python_guidance =
+                detect_python_repo_exposure_guidance(&output.root, &report.classified);
+            let generated_skip =
+                repo_exposure::GeneratedRustSkip::from_paths(report.skipped_generated);
             let artifact_context =
                 crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
                     output.root.clone(),
@@ -85,10 +91,11 @@ pub(crate) fn render_check_with_config(
                     config,
                 )?;
             repo_exposure::render_repo_exposure_json_with_context(
-                &classified,
-                limit_info.as_ref(),
+                &report.classified,
+                report.limit_info.as_ref(),
                 ts_guidance.as_ref(),
                 python_guidance.as_ref(),
+                generated_skip.as_ref(),
                 &artifact_context,
             )
         }
@@ -103,15 +110,19 @@ pub(crate) fn render_check_with_config(
             ))
         }
         OutputFormat::RepoExposureMd => {
-            let (classified, limit_info) =
-                analysis::inventory_classified_seams_at_with_config(&output.root, config)?;
-            let ts_guidance = detect_ts_full_repo_guidance(&output.root, &classified);
-            let python_guidance = detect_python_repo_exposure_guidance(&output.root, &classified);
-            Ok(repo_exposure::render_repo_exposure_md(
-                &classified,
-                limit_info.as_ref(),
+            let report =
+                analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
+            let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
+            let python_guidance =
+                detect_python_repo_exposure_guidance(&output.root, &report.classified);
+            let generated_skip =
+                repo_exposure::GeneratedRustSkip::from_paths(report.skipped_generated);
+            Ok(repo_exposure::render_repo_exposure_md_with_generated_skip(
+                &report.classified,
+                report.limit_info.as_ref(),
                 ts_guidance.as_ref(),
                 python_guidance.as_ref(),
+                generated_skip.as_ref(),
             ))
         }
         OutputFormat::RepoSarif => {
@@ -144,6 +155,18 @@ pub(crate) fn render_check_with_config(
     }
 }
 
+/// #4544: stamp the check JSON with the content digests of every file a gap
+/// ledger derived from it would name, read in this analysis run, so the
+/// ledger writer can copy them instead of hashing the workspace later.
+fn stamp_check_json(rendered: String, root: &std::path::Path) -> String {
+    match super::gap_decision_ledger::check_output_subject_paths(&rendered, root) {
+        Ok(paths) => {
+            super::gap_source_subject::append_source_subject_member(rendered, root, &paths)
+        }
+        Err(_) => rendered,
+    }
+}
+
 pub(crate) fn render_check_with_config_and_navigation(
     output: &CheckOutput,
     format: &OutputFormat,
@@ -152,6 +175,9 @@ pub(crate) fn render_check_with_config_and_navigation(
 ) -> Result<String, String> {
     match format {
         OutputFormat::Human => Ok(human::render_bounded_with_config_and_navigation(
+            output, config, navigation,
+        )),
+        OutputFormat::HumanFull => Ok(human::render_full_with_config_and_navigation(
             output, config, navigation,
         )),
         _ => render_check_with_config(output, format, config),

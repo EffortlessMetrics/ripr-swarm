@@ -91,7 +91,10 @@ fn stale_report(
         ],
         None,
         ActionCommands {
-            status: Some(loop_commands::agent_status_command(&input.root, None)),
+            status: Some(loop_commands::agent_status_command(
+                &command_root(input),
+                None,
+            )),
             ..ActionCommands::default()
         },
         evidence(input, "unknown"),
@@ -736,8 +739,8 @@ fn repair_start_report(
         string_path(card, &["seam", "expression"]),
         selected.missing_discriminator.as_deref(),
     ) {
-        (Some(expression), Some(missing)) => format!(
-            "Changed behavior `{expression}` lacks a discriminator for `{missing}`; the review card names its repair start."
+        (Some(_), Some(missing)) => format!(
+            "The changed behavior lacks a discriminator for `{missing}`; the review card names its repair start."
         ),
         _ => {
             "The review card names a repair start for this seam; no repair has run yet.".to_string()
@@ -761,6 +764,7 @@ fn repair_start_report(
         target_from_guidance_item(card),
         ActionCommands {
             repair: Some(repair),
+            analysis_outcome: string_path(card, &["llm_guidance", "analysis_outcome_command"]),
             verify: string_path(card, &["llm_guidance", "verify_command"]),
             receipt: string_path(card, &["receipt_command"])
                 .or_else(|| string_path(card, &["llm_guidance", "receipt_command"])),
@@ -975,7 +979,10 @@ fn missing_required_report(
             // command for each missing workflow artifact, so route there
             // rather than offer a partial chain.
             ActionCommands {
-                status: Some(loop_commands::agent_status_command(&input.root, None)),
+                status: Some(loop_commands::agent_status_command(
+                    &command_root(input),
+                    None,
+                )),
                 ..ActionCommands::default()
             },
         ),
@@ -1158,6 +1165,13 @@ fn selected_from_gap_record(
             gap_id: string_path(record, &["gap_id"]),
             canonical_gap_id: string_path(record, &["canonical_gap_id"]),
             repair_route: string_path(repair_route?, &["route_kind"]),
+            changed_behavior: [
+                repair_route.and_then(|route| string_path(route, &["changed_behavior"])),
+                string_path(record, &["changed_behavior"]),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|expression| !expression.trim().is_empty()),
         }
         .with_inferred_current_evidence_strength(),
     )
@@ -1240,6 +1254,7 @@ fn selected_from_editor_context(
             gap_id: None,
             canonical_gap_id: None,
             repair_route: None,
+            changed_behavior: None,
         }
         .with_inferred_current_evidence_strength(),
     )
@@ -1265,6 +1280,7 @@ fn selected_from_assistant_proof(
             gap_id: None,
             canonical_gap_id: None,
             repair_route: None,
+            changed_behavior: None,
         }
         .with_inferred_current_evidence_strength(),
     )
@@ -1342,6 +1358,7 @@ fn selected_from_receipt_or_sources(
             gap_id: None,
             canonical_gap_id: None,
             repair_route: None,
+            changed_behavior: None,
         }
         .with_inferred_current_evidence_strength(),
     )
@@ -1393,6 +1410,15 @@ fn selected_from_guidance_item(
             gap_id: None,
             canonical_gap_id: None,
             repair_route: None,
+            // A blank seam expression names nothing; fall back to the card's
+            // own changed_behavior instead of stopping on the empty value.
+            changed_behavior: [
+                item.and_then(|item| string_path(item, &["seam", "expression"])),
+                item.and_then(|item| string_path(item, &["changed_behavior"])),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|expression| !expression.trim().is_empty()),
         }
         .with_inferred_current_evidence_strength(),
     )
@@ -1474,6 +1500,7 @@ fn selected_from_delta_item(source: &str, source_artifact: String, item: &Value)
         gap_id: None,
         canonical_gap_id: None,
         repair_route: None,
+        changed_behavior: None,
     }
     .with_inferred_current_evidence_strength()
 }
@@ -1499,6 +1526,7 @@ fn weakly_exposed_boundary_selected(
         gap_id: None,
         canonical_gap_id: None,
         repair_route: None,
+        changed_behavior: None,
     }
     .with_inferred_current_evidence_strength()
 }
@@ -1574,11 +1602,11 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
     ActionCommands {
         context_packet: Some(format!(
             "ripr agent packet --root {} --seam-id {} --json",
-            loop_commands::shell_arg(&input.root),
+            loop_commands::shell_arg(&command_root(input)),
             loop_commands::shell_arg(&seam_id)
         )),
         after_snapshot: Some(loop_commands::check_repo_exposure_command(
-            &input.root,
+            &command_root(input),
             "draft",
             loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
         )),
@@ -1587,31 +1615,31 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
         // names, and the analysis outcome lands beside it, where the receipt
         // looks for it.
         analysis_outcome: Some(loop_commands::check_analysis_outcome_command(
-            &input.root,
+            &command_root(input),
             "draft",
             loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
         )),
         verify: Some(loop_commands::agent_verify_command(
-            &input.root,
+            &command_root(input),
             loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
             loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
             Some(loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
         )),
         receipt: Some(loop_commands::agent_receipt_command(
-            &input.root,
+            &command_root(input),
             loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
             &seam_id,
             None,
         )),
         command_specs: Some(ActionCommandSpecs {
             verify: Some(command_specs::agent_verify_command_spec(
-                &input.root,
+                &command_root(input),
                 loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                 loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
                 Some(loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
             )),
             receipt: Some(command_specs::agent_receipt_command_spec(
-                &input.root,
+                &command_root(input),
                 loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
                 &seam_id,
                 None,
@@ -1623,10 +1651,17 @@ fn seam_commands(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Acti
     }
 }
 
+/// The selected root bound once for product-generated commands (#4000): a
+/// relative `--root` resolves against the invocation working directory, the
+/// same directory the report inputs were resolved against.
+fn command_root(input: &FirstUsefulActionInput) -> String {
+    loop_commands::bound_root(&input.root)
+}
+
 fn receipt_command(input: &FirstUsefulActionInput, parsed: &ParsedSources) -> Option<String> {
     let seam_id = selected_seam_id(parsed)?;
     Some(loop_commands::agent_receipt_command(
-        &input.root,
+        &command_root(input),
         loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
         &seam_id,
         None,

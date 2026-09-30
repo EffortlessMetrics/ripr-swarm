@@ -251,3 +251,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_static_limit (4)
+
+Reason:
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless ts_static_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_static_limit (5)
+
+Reason:
+RIPR-SPEC-0122: exposed findings default to info severity
+
+Command:
+`cargo xtask goldens bless ts_static_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_static_limit (6)
+
+Reason:
+RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+
+Command:
+`cargo xtask goldens bless ts_static_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

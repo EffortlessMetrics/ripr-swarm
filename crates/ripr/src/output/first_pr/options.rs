@@ -1,3 +1,4 @@
+use crate::agent::loop_commands::{anchored_redirect_target, bound_root, shell_arg};
 use crate::cli::unknown_argument;
 use std::path::PathBuf;
 
@@ -28,6 +29,27 @@ pub(super) struct FirstPrOptions {
     pub(super) preflight: bool,
     /// Test-only ceiling for `GIT_CEILING_DIRECTORIES`; `None` in production.
     pub(crate) git_ceiling: Option<PathBuf>,
+}
+
+impl FirstPrOptions {
+    /// The selected root bound once for product-generated commands (#3999):
+    /// a relative `--root` resolves against this process's working directory,
+    /// the same directory `repo_root` resolved it against, so a pasted command
+    /// analyzes and writes the selected repository from any directory.
+    pub(super) fn command_root(&self) -> String {
+        bound_root(&self.root)
+    }
+
+    /// A first-pr artifact path rendered as a generated command argument,
+    /// quoted for the shell. first-pr resolves its artifact paths against the
+    /// selected root, while `first-action`, `review-comments`, `agent packet`,
+    /// `gate evaluate`, `reports gap-ledger` and shell redirects resolve them
+    /// against the invocation working directory. Anchoring at the bound root
+    /// keeps `--root` and every path naming the same repository when a command
+    /// is pasted elsewhere (#3948, #4287); an absolute path passes through.
+    pub(super) fn anchored_arg(&self, path: &str) -> String {
+        shell_arg(&anchored_redirect_target(&self.root, path))
+    }
 }
 
 impl Default for FirstPrOptions {
@@ -135,7 +157,7 @@ pub(super) fn print_help() {
 pub(crate) const FIRST_PR_HELP: &str = "\
 Create the start-here packet for one PR from existing RIPR artifacts.
 
-usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]
+Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]
 
 Options:
   --root <path>              Workspace root. Defaults to .
@@ -143,7 +165,8 @@ Options:
                              `ripr check`: origin/HEAD, then origin/main,
                              origin/master, main, and master.
   --head <rev>               PR head revision. Defaults to HEAD.
-  --check-output <path>      Optional check JSON to consume instead of running analysis.
+  --check-output <path>      Existing `ripr check --json` output to derive the gap ledger from.
+                             first-pr never runs analysis itself.
   --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
   --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
