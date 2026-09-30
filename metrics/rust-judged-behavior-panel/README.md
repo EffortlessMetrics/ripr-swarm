@@ -166,6 +166,66 @@ validates it against the selection bytes it names.
   historical probe ids in the selection reasons are evidence of what was
   selected, not identities the current analyzer reproduces.
 
+## Rolling production-quiet and actionability observation
+
+`rolling-observation.json` is the #4578 extension of this same panel. It does
+not replace the seed, the portable packets, or the frozen #3806 judgments.
+
+`cargo xtask rust-judged-panel check` (and the precommit alias) now also
+validates that rolling packet against the retained subjects:
+
+- Production quiet, gap, and limitation coverage is filled from the authorized
+  seed production subjects. The three #3806 test-only quiet controls remain
+  `test_only_quiet` and cannot occupy the production-quiet row.
+- Classification is observed from the check-JSON findings already projected
+  into the portable packets.
+- Canonical repair actionability is observed only from a non-blocked
+  `gap_decision_ledger`. A missing adapter, missing ledger, blocked ledger, or
+  governed-manifest expected label is `not_observed` with a precise cause. It
+  is not `no_action` and not `false_actionable=false`.
+- Unauthorized real-repository production-quiet replay stays named as an unmet
+  row rather than invented.
+
+The CLI accepts `check`, `replay`, `packet`, and `calibrate`. Bounded real
+ledger replay and live mutation campaigns remain outside the routine PR path.
+`calibrate --check` (and `rust-judged-panel check`) re-derives the retained
+scorecard from the #3806 judgments plus any exact receipts. Runtime results
+cannot rewrite structural judgment bytes.
+
+## Runtime calibration scorecard
+
+`calibration-scorecard.json` and `calibration-scorecard.md` are the #4795
+join of independently judged rows to exact runtime receipts.
+
+`cargo xtask rust-judged-panel calibrate` writes a fresh JSON/Markdown pair
+under `target/ripr/rust-judged-panel/calibration`. `--check` compares the
+retained files to that derivation.
+
+Every judged row has an explicit calibration eligibility and a terminal
+runtime disposition from:
+
+```text
+caught
+survived
+inconclusive
+equivalent_or_unusable
+not_run
+instrument_failure
+stale_or_wrong_subject
+```
+
+Current release-challenge repositories remain `proposed_unauthorized`, so the
+retained scorecard records `ineligible_unauthorized` / `not_run` rather than
+inventing caught or survived labels from the qualitative #3806 mutation
+reviews. Those reviews are not exact receipts (no runner hash, selector
+identity, or executed-subject counts). A later authorized receipt can join
+without rewriting the judgment packet.
+
+Rates always show numerator and denominator. No denominator is
+`not_measurable`, not a fake zero percent. Survived mutants stay visible
+without an automatic false-exposed conclusion. #3076 route-yield and #4578
+rolling-observation denominators are bound by identity and never merged.
+
 ## Item contract
 
 Each `items[]` row carries:
@@ -222,8 +282,8 @@ materialize exact replay repositories and analysis identities
 → record independent structural judgments
 → resolve disagreements visibly
 → add exact targeted mutation receipts where safe
-→ emit stratified confusion/agreement reports
-→ turn confirmed failure families into permanent analyzer fixtures
+→ emit stratified confusion/agreement reports   (#4795, this slice)
+→ turn confirmed failure families into permanent analyzer fixtures (#4796)
 ```
 
 ## Boundaries

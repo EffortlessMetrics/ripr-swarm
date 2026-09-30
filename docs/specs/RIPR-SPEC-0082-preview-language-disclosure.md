@@ -86,8 +86,16 @@ changes. The remaining non-analyzable files (`.md`, `.yaml`, etc.) never
 trigger an advisory. Each advisory carries:
 
 - `language`: stable wire string (e.g. `"typescript"`, `"python"`)
-- `file_count`: number of files in scope that routed to this adapter
-- `sample_paths`: up to three normalized file paths (forward-slash)
+- `file_count`: when `enabled` is `true`, the number of routed files the
+  adapter accepts for analysis — a changed file its own generated/excluded-path
+  authority refuses before counting (TypeScript/JavaScript #3743, Python #3672)
+  is not counted (#4372); when `enabled` is `false`, the raw number of files in
+  scope that routed to this adapter
+- `sample_paths`: up to three normalized file paths (forward-slash), drawn from
+  the same set `file_count` counts
+- `javascript_file_count`: how many of the `file_count` files are
+  JavaScript-family sources (`0` for every language but `typescript`); used by
+  human prose only (#4555)
 - `enabled`: whether this preview adapter was configured and available for
   this analysis
 
@@ -95,6 +103,29 @@ Advisories are propagated through `AnalysisResult` → `CheckOutput`. Adapter
 completion is producer-owned by `language_runs`: successful runs are omitted,
 while a matching non-success record means the routed files were not analyzed
 to completion.
+
+### Skipped generated/excluded files (enabled adapters)
+
+An enabled preview adapter skips changed files under its excluded directories
+(for TypeScript/JavaScript: `vendor/`, `node_modules/`, `dist/`, `build/`,
+`coverage/`, `out/`, `.next/`, `.cache/`, `.direnv/`, `__generated__/`; for
+Python: the `PYTHON_EXCLUDED_DIRS` set plus `vendor/`) and generated names
+(`*.generated.*`, generated Python such as `*_pb2.py`). Those files are not
+counted in `file_count` and are never presented as analyzed. They are still
+changed files in scope, so the diff pipeline records one typed limitation per
+language on the shared analysis outcome (#4372):
+
+- `kind`: `language_scope_unsupported`, `producer_stage`: `language_adapter`
+- `affected_items`: number of skipped changed files for that language
+- `recovery`: `retry`, naming up to three skipped paths ("Not analyzed by the
+  <Language> preview adapter: <paths>. ...")
+
+This is the same shape the Rust adapter uses for skipped generated Rust files.
+The outcome therefore becomes `partial_with_limitations` (analysis incomplete),
+so an excluded-only diff is never a silently complete result. When the
+adapter is not enabled, no skip limitation is emitted: the not-enabled
+advisory already discloses every routed file with its raw count. No new JSON
+field is introduced.
 
 ### Three honesty cases
 
@@ -139,6 +170,17 @@ Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview an
 The note names the language by its display name (`TypeScript`,
 `JavaScript`, `Python`, `Perl`, owned by `LanguageId::display_name`) and
 counts files as `1 <Language> file` or `N <Language> files`.
+
+The TypeScript adapter analyzes the whole TS/JS family under the `typescript`
+wire name, so its advisory also carries `javascript_file_count`: how many of
+`file_count` are `.js`/`.jsx`/`.mjs`/`.cjs` sources, by the router's exact
+extension lists (#4555). Human prose uses it: a JavaScript-only advisory
+counts `JavaScript file(s)`, a mixed one `TypeScript/JavaScript files`, and
+the not-enabled, not-compiled and none-routed notes name the
+`TypeScript/JavaScript adapter`. The not-enabled note keeps
+the `"typescript"` config value and adds `("typescript" enables the adapter
+for JavaScript files too.)`. A TypeScript-only advisory is unchanged. The JSON
+advisory does not carry the new count; its `language` stays the wire name.
 
 The note is omitted entirely for pure-Rust diffs. The note does not change
 exit code or pass/fail status.
@@ -270,7 +312,9 @@ enabled adapter with a matching non-success `language_runs` entry carries
   `detect_preview_advisories()` (diff), `detect_repo_preview_advisories()`
   (repo); detection runs after the language loop, independent of enablement.
   Also `non_source_disclosure_message()` (#2304): the pure docs-only stderr
-  disclosure decision (count + extension summary), emitted only when the
+  disclosure decision (count + extension summary; extensionless and
+  `.`-ending paths are named, and a `.`-ending path drops the "correct"
+  non-claim as a likely truncated header, #4376), emitted only when the
   pipeline produced zero findings and no changed file routes to a source
   adapter.
 - `crates/ripr/src/analysis/workspace/discover.rs` —

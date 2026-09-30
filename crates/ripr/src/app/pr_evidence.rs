@@ -12,11 +12,12 @@
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
 use crate::cli::unknown_argument;
+use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 const DEFAULT_ROOT: &str = ".";
 const DEFAULT_BASE: &str = "origin/main";
@@ -69,8 +70,9 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
         // through the diff loader's authority instead of assuming
         // `origin/main`, which need not exist; nothing resolving is a named
         // failure, never a guessed base recorded in the packet.
-        options.base = crate::analysis::resolve_effective_base(&repo, None, None)
-            .map_err(|err| format!("pr-evidence: {err}"))?;
+        options.base =
+            crate::analysis::resolve_effective_base(&repo, None, Some(PR_EVIDENCE_GIT_DEADLINE))
+                .map_err(|err| format!("pr-evidence: {err}"))?;
     }
     if options.check {
         check_pr_evidence(&repo, &options)
@@ -122,7 +124,9 @@ fn print_help() {
 /// Help body for `ripr pr-evidence`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
 pub(crate) const PR_EVIDENCE_HELP: &str = "\
-usage: ripr pr-evidence [--base <rev>] [--head <rev>] [--root <path>] [--check]
+Write the diff-scoped PR evidence packet for one base and head.
+
+Usage: ripr pr-evidence [--base <rev>] [--head <rev>] [--root <path>] [--check]
 
 Options:
   --base <rev>   PR base revision. When omitted, resolved like `ripr check`:
@@ -407,15 +411,29 @@ fn run_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|err| format!("git {args:?} produced non-UTF-8 output: {err}"))
 }
 
-/// Capture raw git stdout bytes through this file's single spawn site
+/// Cooperative deadline for every git probe in this file (#2303, #4363).
+/// PR evidence answers bounded revision and path-inventory questions; a hung
+/// git must not pin the command. One minute matches the other bounded git
+/// consumers.
+const PR_EVIDENCE_GIT_DEADLINE: Duration = Duration::from_mins(1);
+
+/// Capture raw git stdout bytes through this file's single git call site
 /// (#4006). Path inventories decode through the shared NUL authority at
-/// the call site; other callers keep the strict UTF-8 wrapper above.
+/// the call site; other callers keep the strict UTF-8 wrapper above. The
+/// spawn goes through the shared `crate::git` deadline and process-owner
+/// authority (#4363).
 fn run_git_output_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
+    run_git_output_bytes_within(repo, args, PR_EVIDENCE_GIT_DEADLINE)
+}
+
+/// [`run_git_output_bytes`] with the deadline as a parameter, so a test can
+/// prove the deadline reaches the git runner.
+fn run_git_output_bytes_within(
+    repo: &Path,
+    args: &[&str],
+    deadline: Duration,
+) -> Result<Vec<u8>, String> {
+    let output = crate::git::run_git_output_with_deadline(repo, args, Some(deadline))
         .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
     if output.status.success() {
         Ok(output.stdout)
@@ -892,16 +910,16 @@ fn render_pr_evidence_markdown(packet: &Value) -> String {
         string_field(packet, "status", "unknown")
     ));
     out.push_str(&format!(
-        "- root: `{}`\n",
-        md_escape(string_field(packet, "root", "."))
+        "- root: {}\n",
+        code_span(string_field(packet, "root", "."))
     ));
     out.push_str(&format!(
-        "- base: `{}`\n",
-        md_escape(string_field(packet, "base", DEFAULT_BASE))
+        "- base: {}\n",
+        code_span(string_field(packet, "base", DEFAULT_BASE))
     ));
     out.push_str(&format!(
-        "- head: `{}`\n",
-        md_escape(string_field(packet, "head", DEFAULT_HEAD))
+        "- head: {}\n",
+        code_span(string_field(packet, "head", DEFAULT_HEAD))
     ));
     out.push_str(&format!("- changed files: {changed_files}\n\n"));
 
@@ -919,8 +937,8 @@ fn render_pr_evidence_markdown(packet: &Value) -> String {
         "- requires_targeted_mutation: {requires_targeted_mutation}\n"
     ));
     out.push_str(&format!(
-        "- routing_reason: `{}`\n\n",
-        md_escape(routing_reason)
+        "- routing_reason: {}\n\n",
+        code_span(routing_reason)
     ));
     render_targeted_mutation_route(
         &mut out,
@@ -933,10 +951,10 @@ fn render_pr_evidence_markdown(packet: &Value) -> String {
     if let Some(artifacts) = packet.get("artifacts").and_then(Value::as_array) {
         for artifact in artifacts {
             out.push_str(&format!(
-                "| {} | `{}` | {} | {} |\n",
-                md_escape(string_field(artifact, "label", "artifact")),
-                md_escape(string_field(artifact, "path", "unknown")),
-                md_escape(string_field(artifact, "scope", "unknown")),
+                "| {} | {} | {} | {} |\n",
+                table_cell_text(string_field(artifact, "label", "artifact")),
+                table_code_span(string_field(artifact, "path", "unknown")),
+                table_cell_text(string_field(artifact, "scope", "unknown")),
                 artifact
                     .get("available")
                     .and_then(Value::as_bool)
@@ -952,8 +970,8 @@ fn render_pr_evidence_markdown(packet: &Value) -> String {
         for warning in warnings {
             out.push_str(&format!(
                 "- {}: {}\n",
-                md_escape(string_field(warning, "kind", "warning")),
-                md_escape(string_field(
+                inline_prose(string_field(warning, "kind", "warning")),
+                inline_prose(string_field(
                     warning,
                     "message",
                     "PR evidence generation warning"
@@ -976,30 +994,30 @@ fn render_targeted_mutation_route(out: &mut String, route: Option<&Value>) {
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    out.push_str(&format!("- route: `{status}`\n"));
+    out.push_str(&format!("- route: {}\n", code_span(status)));
     if let Some(candidates) = route.get("candidates").and_then(Value::as_array) {
         for candidate in candidates {
             let Some(candidate) = candidate.as_object() else {
                 continue;
             };
             out.push_str(&format!(
-                "- candidate: `{}`:{} {} -> {}\n- command: `{}`\n- expected: {}\n",
-                md_escape(
+                "- candidate: {}:{} {} -> {}\n- command: {}\n- expected: {}\n",
+                code_span(
                     candidate
                         .get("file")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown")
                 ),
                 candidate.get("line").and_then(Value::as_u64).unwrap_or(0),
-                candidate.get("from").and_then(Value::as_str).unwrap_or("?"),
-                candidate.get("to").and_then(Value::as_str).unwrap_or("?"),
-                md_escape(
+                inline_prose(candidate.get("from").and_then(Value::as_str).unwrap_or("?")),
+                inline_prose(candidate.get("to").and_then(Value::as_str).unwrap_or("?")),
+                code_span(
                     candidate
                         .get("command")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown")
                 ),
-                md_escape(
+                inline_prose(
                     candidate
                         .get("expected_observation")
                         .and_then(Value::as_str)
@@ -1011,8 +1029,8 @@ fn render_targeted_mutation_route(out: &mut String, route: Option<&Value>) {
     if let Some(limitations) = route.get("limitations").and_then(Value::as_array) {
         for limitation in limitations {
             out.push_str(&format!(
-                "- limitation: `{}`\n",
-                md_escape(
+                "- limitation: {}\n",
+                code_span(
                     limitation
                         .get("message")
                         .and_then(Value::as_str)
@@ -1033,10 +1051,6 @@ fn bool_field(summary: Option<&Map<String, Value>>, key: &str) -> bool {
 
 fn string_field<'a>(packet: &'a Value, key: &str, fallback: &'a str) -> &'a str {
     packet.get(key).and_then(Value::as_str).unwrap_or(fallback)
-}
-
-fn md_escape(value: &str) -> String {
-    value.replace('|', "\\|").replace('\n', " ")
 }
 
 /// Resolve the repo root. In the ripr binary, this is the current working
@@ -1066,6 +1080,27 @@ mod tests {
             base_explicit: true,
             head: "HEAD".to_string(),
             check: false,
+        }
+    }
+
+    #[test]
+    fn run_git_output_bytes_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn with the named
+        // timeout error. Dropping the deadline would instead report the
+        // missing root as a spawn failure, which this rejects.
+        let missing = std::env::temp_dir().join(format!(
+            "ripr-pr-evidence-deadline-missing-{}",
+            std::process::id()
+        ));
+        let bounded =
+            run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::from_mins(1));
+        match bounded {
+            Err(err) if !err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) => {}
+            other => return Err(format!("control: expected a spawn failure, got {other:?}")),
+        }
+        match run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::ZERO) {
+            Err(err) if err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) => Ok(()),
+            other => Err(format!("zero deadline must be refused, got {other:?}")),
         }
     }
 

@@ -6,7 +6,7 @@
   "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3ab09502c5e10d5b7b470257f95b9baaa556f6f36dce0a8708beba0265f70397","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:b477d9ddafdc136b6c9b0f5f8a7cae91deb3ad47e4e237775ddf541124e94544","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return cls(config[\"discount\"] + 1)","line":4}
       ],
-      "evidence": ["owner: PriceRule.from_config", "owner_kind: class_method", "owner_decorators: classmethod", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_factory.py", "suggested_test_name: test_price_rule_from_config", "suggested_test_node_id: tests/test_factory.py::test_price_rule_from_config", "suggested_verify_command: pytest tests/test_factory.py::test_price_rule_from_config", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_price_rule_from_config)", "test_verify_command: pytest tests/test_factory.py::test_price_rule_from_config (test_price_rule_from_config)", "related_test_relation: syntactic_call (test_price_rule_from_config)", "test_oracle: relational_check weak (test_price_rule_from_config)", "test_oracle_shape: boundary_assertion (test_price_rule_from_config)"],
+      "evidence": ["owner: PriceRule.from_config", "owner_kind: class_method", "owner_decorators: classmethod", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_factory.py", "suggested_test_name: test_price_rule_from_config", "suggested_test_node_id: tests/test_factory.py::test_price_rule_from_config", "suggested_verify_command: python -m pytest tests/test_factory.py::test_price_rule_from_config", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_price_rule_from_config)", "test_verify_command: python -m pytest tests/test_factory.py::test_price_rule_from_config (test_price_rule_from_config)", "related_test_relation: syntactic_call (test_price_rule_from_config)", "test_oracle: relational_check weak (test_price_rule_from_config)", "test_oracle_shape: boundary_assertion (test_price_rule_from_config)"],
       "missing": ["Related Python test reaches `from_config` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the returned value."],
       "assertion_texts": {
       },
@@ -85,7 +85,7 @@
         "suggested_test_file": "tests/test_factory.py",
         "suggested_test_name": "test_price_rule_from_config",
         "suggested_test_node_id": "tests/test_factory.py::test_price_rule_from_config",
-        "verify_command": "pytest tests/test_factory.py::test_price_rule_from_config",
+        "verify_command": "python -m pytest tests/test_factory.py::test_price_rule_from_config",
         "verify_command_confidence": "high"
        },
       "python_repair_card": {
@@ -108,7 +108,7 @@
           "pytest_node_id": "tests/test_factory.py::test_price_rule_from_config"
          },
         "verify": {
-          "command": "pytest tests/test_factory.py::test_price_rule_from_config",
+          "command": "python -m pytest tests/test_factory.py::test_price_rule_from_config",
           "confidence": "high"
          },
         "receipt": {
@@ -143,5 +143,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/factory.py","digest":"sha256:7ae8ea922fad857746343726df0d44789695844c4b5c393573de8797377a6763"},{"path":"tests/test_factory.py","digest":"sha256:69f4af3850b36f0f5a2a62858e0209ed5ceeb6fb6f72d0a9585f31a5f20cce23"}]}
 }

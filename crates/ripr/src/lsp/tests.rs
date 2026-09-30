@@ -10,16 +10,20 @@ use super::capabilities::{
 use super::client_features::ClientFeatureProfile;
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
-    DiagnosticBatch, WorkspaceDiagnostics, add_canonical_group_data, canonical_finding_groups,
-    canonical_group_has_mixed_classes, diagnostic_for_classified_seam, diagnostic_for_finding,
-    diagnostic_refresh_plan, diagnostic_severity_for_class, finding_diagnostics_by_uri,
-    take_all_uris, workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
+    DiagnosticBatch, FindingDiagnosticProjection, WorkspaceDiagnostics, add_canonical_group_data,
+    canonical_finding_groups, canonical_group_has_mixed_classes, diagnostic_for_classified_seam,
+    diagnostic_for_finding, diagnostic_refresh_plan, diagnostic_severity_for_class,
+    finding_diagnostics_by_uri, finding_diagnostics_by_uri_with_profile, take_all_uris,
+    workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
     workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
 };
-use super::hover::{classified_seam_hover_response, hover_response, hover_with_snapshot_status};
+use super::hover::{
+    classified_seam_hover_response, diagnostic_covers_position, hover_response,
+    hover_with_snapshot_status,
+};
 use super::input_identity::LspAnalysisInputIdentity;
 use super::lens::{code_lens_response, lens_title_is_static_language_clean, lens_view_identity};
 use super::progress::ProgressEvent;
@@ -27,8 +31,8 @@ use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScope,
 };
 use super::state::{
-    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStore,
-    HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
+    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason,
+    DocumentStore, HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
 };
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -92,7 +96,16 @@ fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
 
     assert_eq!(
         result.capabilities.text_document_sync,
-        Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL))
+        Some(TextDocumentSyncCapability::Options(
+            tower_lsp_server::ls_types::TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(
+                    tower_lsp_server::ls_types::TextDocumentSyncSaveOptions::Supported(true)
+                ),
+                ..tower_lsp_server::ls_types::TextDocumentSyncOptions::default()
+            }
+        ))
     );
     assert_eq!(
         result.capabilities.hover_provider,
@@ -895,8 +908,8 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
         "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
     );
     assert!(
-        serve_streams.contains(".serve(service)"),
-        "serve_streams should hand the bounded transport, the socket, and the service to the tower LSP server"
+        serve_streams.contains(".serve(dollar_requests::AnswerDollarRequests(service))"),
+        "serve_streams should hand the bounded transport, the socket, and the service (behind the `$/` request layer, #4456) to the tower LSP server"
     );
 
     Ok(())
@@ -1039,7 +1052,13 @@ fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
             read_lsp_response_with_notifications(&mut client_read, 3).await?;
         assert!(refresh.get("error").is_none());
         assert_eq!(refresh["result"], serde_json::Value::Null);
-        assert!(log_notification_messages(&notifications).is_empty());
+        // The only log line is the startup root warning from `initialized`;
+        // the refresh itself logs nothing while the root blocks analysis.
+        assert!(
+            log_notification_messages(&notifications)
+                .iter()
+                .all(|message| message.starts_with("ripr analysis is stopped (root_unavailable)"))
+        );
 
         write_lsp_message(
             &mut client_write,
@@ -1058,7 +1077,9 @@ fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
         let hover_value = hover["result"]["contents"]["value"]
             .as_str()
             .ok_or_else(|| "expected hover markdown value".to_string())?;
-        assert!(hover_value.contains("ripr estimates static RIPR exposure"));
+        // With no workspace root the hover names the blocked root instead of
+        // the generic CLI pointer, so a generic editor learns why it is quiet.
+        assert!(hover_value.contains("analysis is stopped (root_unavailable)"));
 
         write_lsp_message(
             &mut client_write,
@@ -1692,6 +1713,19 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
                 "fixture must produce at least one code lens, or the refresh counts pass vacuously: {lenses}"
             ));
         }
+        let emitted_lens_command = lenses
+            .pointer("/result/0/command/command")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("nonempty lens response omitted its command")?;
+        let advertised_commands = initialize
+            .pointer("/result/capabilities/executeCommandProvider/commands")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("initialization omitted command advertisement")?;
+        if emitted_lens_command != "ripr.refresh"
+            || !advertised_commands.iter().any(|command| command.as_str() == Some(emitted_lens_command))
+        {
+            return Err(format!("actual lens command is not the advertised refresh: {emitted_lens_command:?}"));
+        }
 
         // Refresh 2: byte-identical inputs. A new snapshot commits with a
         // fresh wall-clock age (the rendered title suffix changes), but the
@@ -1703,7 +1737,7 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
                 "id": 3,
                 "method": "workspace/executeCommand",
                 "params": {
-                    "command": REFRESH_COMMAND,
+                    "command": emitted_lens_command,
                     "arguments": []
                 }
             }),
@@ -1749,7 +1783,7 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
                 "id": 4,
                 "method": "workspace/executeCommand",
                 "params": {
-                    "command": REFRESH_COMMAND,
+                    "command": emitted_lens_command,
                     "arguments": []
                 }
             }),
@@ -3110,7 +3144,7 @@ fn code_action_response_keeps_current_commands() -> Result<(), String> {
         vec![
             (
                 "Inspect finding: copy context packet",
-                "source.ripr.inspect",
+                "quickfix.ripr.inspect",
                 "Inspect finding: copy context",
                 COPY_CONTEXT_COMMAND,
             ),
@@ -4054,6 +4088,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     );
     snapshot.classified_seams = vec![seam.clone()];
     let workspace = snapshot.root.to_string_lossy().into_owned();
+    let command_root = crate::agent::loop_commands::bound_root(&workspace);
     let actions = code_action_response(
         &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
         Some(&snapshot),
@@ -4107,7 +4142,8 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[2].2[0]["command"],
         format!(
-            "ripr agent repair --root /workspace --seam-id {} --phase before",
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            crate::agent::loop_commands::shell_arg(&command_root),
             seam.seam.id().as_str()
         )
     );
@@ -4132,7 +4168,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[3].2[0]["command"],
         crate::agent::loop_commands::agent_packet_command(
-            &workspace,
+            &command_root,
             seam.seam.id().as_str(),
             "target/ripr/agent/agent-packet.json",
         )
@@ -4142,7 +4178,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[4].2[0]["command"],
         crate::agent::loop_commands::agent_brief_command(
-            &workspace,
+            &command_root,
             seam.seam.id().as_str(),
             "target/ripr/agent/agent-brief.json",
         )
@@ -4155,7 +4191,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[5].2[0]["command"],
         crate::agent::loop_commands::check_repo_exposure_command_with_base(
-            &workspace,
+            &command_root,
             Some("origin/main"),
             "draft",
             "target/ripr/pilot/after.repo-exposure.json",
@@ -4166,7 +4202,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     assert_eq!(
         commands[6].2[0]["command"],
         crate::agent::loop_commands::agent_verify_command(
-            &workspace,
+            &command_root,
             "target/ripr/pilot/repo-exposure.json",
             "target/ripr/pilot/after.repo-exposure.json",
             Some("target/ripr/agent/agent-verify.json"),
@@ -4241,8 +4277,12 @@ fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Resu
         &recommended_test_for(&inline_target).file
     ));
 
+    let command_root = crate::agent::loop_commands::shell_arg(
+        &crate::agent::loop_commands::bound_root("/workspace"),
+    );
     let expected = format!(
-        "ripr agent repair --root /workspace --seam-id {} --phase before",
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        command_root,
         eligible.seam.id().as_str()
     );
 
@@ -4573,30 +4613,46 @@ fn code_action_response_emitted_commands_stay_within_server_or_advertised_sets()
 }
 
 #[test]
-fn code_action_response_honors_only_quickfix_when_no_repair_actions_exist() -> Result<(), String> {
-    // `only: [quickfix]` (#1750, RIPR-SPEC-0129): `quickfix.ripr` is
-    // advertised-but-unemitted (no repair actions exist yet), so no emitted
-    // kind equals or sits under `quickfix` and the response is empty.
+fn code_action_response_only_quickfix_keeps_finding_actions_and_drops_refresh() -> Result<(), String>
+{
+    // `only: [quickfix]` (#1750, RIPR-SPEC-0129): the per-diagnostic
+    // inspect/navigate actions carry `quickfix.ripr.*` kinds so VS Code's
+    // lightbulb / Quick Fix menu (which never lists `source.*` actions)
+    // shows them. Every emitted action except the workspace-level
+    // `source.ripr.refresh` survives the filter.
     let vscode = vscode_client_features()?;
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
     seam_params.context.only = Some(vec![CodeActionKind::QUICKFIX]);
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+    let quickfix_only = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
+
+    let mut unfiltered_params = seam_params.clone();
+    unfiltered_params.context.only = None;
+    let unfiltered = code_action_response(&unfiltered_params, Some(&seam_snapshot), &vscode);
+    let expected = code_action_kinds(&unfiltered)?
+        .into_iter()
+        .filter(|kind| kind != "source.ripr.refresh")
+        .collect::<Vec<_>>();
+    if expected.len() < 2 {
+        return Err(format!(
+            "seam scenario should emit several finding actions, got {expected:?}"
+        ));
+    }
     assert_eq!(
-        actions.len(),
-        0,
-        "only: [quickfix] must filter out every source.ripr.* action"
+        code_action_kinds(&quickfix_only)?,
+        expected,
+        "only: [quickfix] must keep every per-diagnostic action and drop refresh"
     );
     Ok(())
 }
 
 #[test]
-fn code_action_response_only_source_ripr_navigate_keeps_only_navigation() -> Result<(), String> {
-    // `only: [source.ripr.navigate]` (#1750, RIPR-SPEC-0129) keeps exactly
+fn code_action_response_only_quickfix_ripr_navigate_keeps_only_navigation() -> Result<(), String> {
+    // `only: [quickfix.ripr.navigate]` (#1750, RIPR-SPEC-0129) keeps exactly
     // the related-test navigation action; every inspect/refresh action is
     // outside the requested subtree.
     let vscode = vscode_client_features()?;
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.navigate")]);
+    seam_params.context.only = Some(vec![CodeActionKind::new("quickfix.ripr.navigate")]);
     let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
     let commands = code_action_commands(&actions)?;
     assert_eq!(
@@ -4605,35 +4661,83 @@ fn code_action_response_only_source_ripr_navigate_keeps_only_navigation() -> Res
             .map(|(_, command, _)| command.as_str())
             .collect::<Vec<_>>(),
         vec![OPEN_RELATED_TEST_COMMAND],
-        "only: [source.ripr.navigate] must keep only the navigation action"
+        "only: [quickfix.ripr.navigate] must keep only the navigation action"
     );
     Ok(())
 }
 
 #[test]
-fn code_action_response_only_source_or_absent_only_keeps_every_action() -> Result<(), String> {
-    // `only: [source]` (#1750, RIPR-SPEC-0129) dot-segment-prefixes every
-    // kind emitted today, so the response matches the unfiltered one; an
-    // absent `only` leaves the response unfiltered by kind.
+fn code_action_response_only_source_keeps_only_refresh_and_absent_only_keeps_every_action()
+-> Result<(), String> {
+    // `only: [source]` (#1750, RIPR-SPEC-0129) matches only the
+    // workspace-level `source.ripr.refresh` action; the per-diagnostic
+    // actions live under `quickfix`. An absent `only` leaves the response
+    // unfiltered by kind.
     let vscode = vscode_client_features()?;
     let (mut source_params, seam_snapshot) = seam_code_action_request()?;
     source_params.context.only = Some(vec![CodeActionKind::SOURCE]);
     let source_only = code_action_response(&source_params, Some(&seam_snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&source_only)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [source] must keep only the refresh action"
+    );
 
     let mut unfiltered_params = source_params.clone();
     unfiltered_params.context.only = None;
     let unfiltered = code_action_response(&unfiltered_params, Some(&seam_snapshot), &vscode);
-
     if unfiltered.len() < 2 {
         return Err(format!(
             "seam scenario should emit several actions, got {}",
             unfiltered.len()
         ));
     }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn code_action_response_gap_inspect_action_is_a_quickfix_not_a_source_action() -> Result<(), String>
+{
+    // VS Code's lightbulb / Ctrl+. Quick Fix menu never lists `source.*`
+    // actions (RIPR-SPEC-0129). A gap diagnostic's "Inspect gap: copy repair
+    // packet" action must survive `only: [quickfix]` and must not survive
+    // `only: [source]`, which keeps only the workspace refresh action.
+    let vscode = vscode_client_features()?;
+    let (_gap_root, mut gap_params, gap_snapshot) = gap_kind_parity_request()?;
+
+    gap_params.context.only = Some(vec![CodeActionKind::QUICKFIX]);
+    let quickfix_only = code_action_response(&gap_params, Some(&gap_snapshot), &vscode);
+    let quickfix_literals = code_action_literals(&quickfix_only)?;
+    let inspect = quickfix_literals
+        .iter()
+        .find(|action| action.title == "Inspect gap: copy repair packet")
+        .ok_or_else(|| {
+            format!(
+                "only: [quickfix] must return the gap inspect action, got {:?}",
+                quickfix_literals
+                    .iter()
+                    .map(|action| action.title.as_str())
+                    .collect::<Vec<_>>()
+            )
+        })?;
     assert_eq!(
-        source_only.len(),
-        unfiltered.len(),
-        "only: [source] must keep every action emitted without an only filter"
+        inspect.kind.as_ref().map(CodeActionKind::as_str),
+        Some("quickfix.ripr.inspect")
+    );
+    if code_action_kinds(&quickfix_only)?
+        .iter()
+        .any(|kind| !kind.starts_with("quickfix."))
+    {
+        return Err("only: [quickfix] must not return source actions".to_string());
+    }
+
+    gap_params.context.only = Some(vec![CodeActionKind::SOURCE]);
+    let source_only = code_action_response(&gap_params, Some(&gap_snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&source_only)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [source] must return only the workspace refresh action"
     );
     Ok(())
 }
@@ -4641,13 +4745,13 @@ fn code_action_response_only_source_or_absent_only_keeps_every_action() -> Resul
 #[test]
 fn code_action_response_only_filter_compounds_with_client_command_filter() -> Result<(), String> {
     // Both filters apply (#1750 + #1776, RIPR-SPEC-0129): with
-    // `only: [source.ripr.inspect]` and an unenhanced client profile, the
+    // `only: [quickfix.ripr.inspect]` and an unenhanced client profile, the
     // kind filter drops the navigate and refresh actions while the
     // client-command filter strips every surviving inspect action (all are
     // client-executed) — nothing remains.
     let unenhanced = ClientFeatureProfile::unsupported();
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.inspect")]);
+    seam_params.context.only = Some(vec![CodeActionKind::new("quickfix.ripr.inspect")]);
     let actions = code_action_response(&seam_params, Some(&seam_snapshot), &unenhanced);
     assert_eq!(
         actions.len(),
@@ -5509,10 +5613,10 @@ fn code_action_response_disabled_actions_never_execute_across_scenarios() -> Res
 fn code_action_response_disabled_policy_keeps_only_filter_parity() -> Result<(), String> {
     // Disabled actions retain their kind (#1892): the `CodeActionContext.only`
     // filter (#1750) fail-closes on kind-less actions, so a disabled navigate
-    // action must still survive `only: [source.ripr.navigate]`.
+    // action must still survive `only: [quickfix.ripr.navigate]`.
     let disabled_capable = client_features_with_disabled_support(&[])?;
     let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.navigate")]);
+    seam_params.context.only = Some(vec![CodeActionKind::new("quickfix.ripr.navigate")]);
     let actions = code_action_response(&seam_params, Some(&seam_snapshot), &disabled_capable);
     let literals = code_action_literals(&actions)?;
     assert_eq!(
@@ -5521,7 +5625,7 @@ fn code_action_response_disabled_policy_keeps_only_filter_parity() -> Result<(),
             .map(|action| action.title.as_str())
             .collect::<Vec<_>>(),
         vec!["Write targeted test: open best related test"],
-        "only: [source.ripr.navigate] must keep the (disabled) navigation action"
+        "only: [quickfix.ripr.navigate] must keep the (disabled) navigation action"
     );
     let action = literals
         .first()
@@ -6873,6 +6977,211 @@ fn diagnostic_for_finding_uses_one_character_range_for_empty_expression() {
     assert_eq!(diagnostic.range.end.character, 3);
 }
 
+/// Issue #4602 fixture: analyzer column 1 plus a tab and a CJK/astral prefix
+/// before the changed expression. UTF-16 start 36..42 covers `x >= 5`.
+const INDENTED_UNICODE_PROBE_LINE: &str = "\tlet s = \"日本語🎉\"; let _ = s; return x >= 5;";
+
+fn finding_on_saved_pricing_line(
+    root: &Path,
+    line_text: &str,
+    expression: &str,
+) -> Result<Finding, String> {
+    let src = root.join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    let body = format!("fn probe_line() {{\n{line_text}\n}}\n");
+    fs::write(src.join("pricing.rs"), body).map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = expression.to_string();
+    Ok(finding)
+}
+
+fn assert_finding_range(
+    diagnostic: &Diagnostic,
+    start_character: u32,
+    end_character: u32,
+) -> Result<(), String> {
+    if diagnostic.range.start.line != 1 {
+        return Err(format!(
+            "expected LSP line 1, got {}",
+            diagnostic.range.start.line
+        ));
+    }
+    if diagnostic.range.start.character != start_character
+        || diagnostic.range.end.character != end_character
+    {
+        return Err(format!(
+            "expected characters {start_character}..{end_character}, got {}..{}",
+            diagnostic.range.start.character, diagnostic.range.end.character
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_underlines_indented_expression_not_leading_whitespace()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-verbatim")?;
+    let finding =
+        finding_on_saved_pricing_line(root.path(), INDENTED_UNICODE_PROBE_LINE, "x >= 5")?;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_finding_range(&diagnostic, 36, 42)?;
+    if diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("source_range"))
+        .and_then(|range| range.get("column"))
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err("analyzer source_range.column must stay 1".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_hover_covers_expression_not_indentation() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-hover")?;
+    let finding =
+        finding_on_saved_pricing_line(root.path(), INDENTED_UNICODE_PROBE_LINE, "x >= 5")?;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    if diagnostic_covers_position(
+        &diagnostic,
+        &Position {
+            line: 1,
+            character: 0,
+        },
+    ) {
+        return Err("hover must not match on the leading tab".to_string());
+    }
+    if !diagnostic_covers_position(
+        &diagnostic,
+        &Position {
+            line: 1,
+            character: 36,
+        },
+    ) {
+        return Err("hover must match on the changed expression".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_falls_back_to_first_non_whitespace_when_expression_is_absent()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-missing-expr")?;
+    let finding = finding_on_saved_pricing_line(root.path(), "\t    return true;", "x >= 5")?;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    // Tab (1) + four spaces, then `return true;` — width of `x >= 5` is 6.
+    assert_finding_range(&diagnostic, 5, 11)
+}
+
+#[test]
+fn diagnostic_for_finding_keeps_column_span_when_saved_file_cannot_be_read() {
+    let mut finding = sample_finding();
+    finding.probe.location.file = PathBuf::from("src/does-not-exist.rs");
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+
+    assert_eq!(diagnostic.range.start.character, 0);
+    assert_eq!(diagnostic.range.end.character, 6);
+}
+
+#[test]
+fn diagnostic_for_finding_keeps_column_span_when_line_is_past_eof() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-past-eof")?;
+    let mut finding = finding_on_saved_pricing_line(root.path(), "    x >= 5;", "x >= 5")?;
+    finding.probe.location.line = 99;
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_eq!(diagnostic.range.start.character, 0);
+    assert_eq!(diagnostic.range.end.character, 6);
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_keeps_column_span_when_saved_file_is_not_utf8() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-latin1")?;
+    let src = root.path().join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    fs::write(src.join("pricing.rs"), [0xffu8, b'\n', b'x'])
+        .map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_eq!(diagnostic.range.start.character, 0);
+    assert_eq!(diagnostic.range.end.character, 6);
+    Ok(())
+}
+
+#[test]
+fn diagnostic_for_finding_locates_expression_on_crlf_saved_line() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-crlf")?;
+    let src = root.path().join("src");
+    fs::create_dir_all(&src).map_err(|err| format!("create src: {err}"))?;
+    let body = format!("fn probe_line() {{\r\n{INDENTED_UNICODE_PROBE_LINE}\r\n}}\r\n");
+    fs::write(src.join("pricing.rs"), body).map_err(|err| format!("write pricing.rs: {err}"))?;
+    let mut finding = sample_finding();
+    finding.probe.location.line = 2;
+    finding.probe.location.column = 1;
+    finding.probe.expression = "x >= 5".to_string();
+    let diagnostic = diagnostic_for_finding(root.path(), &finding);
+    assert_finding_range(&diagnostic, 36, 42)
+}
+
+#[test]
+fn diagnostic_for_finding_measures_saved_prefix_in_negotiated_encoding() -> Result<(), String> {
+    let root = unique_lsp_test_root("finding-range-encoding")?;
+    let finding =
+        finding_on_saved_pricing_line(root.path(), INDENTED_UNICODE_PROBE_LINE, "x >= 5")?;
+    let width_start = |encoding: &PositionEncodingKind| -> Result<(u32, u32), String> {
+        let grouped = finding_diagnostics_by_uri_with_profile(
+            root.path(),
+            std::slice::from_ref(&finding),
+            &crate::config::SeverityConfig::default(),
+            true,
+            FindingDiagnosticProjection::new(
+                crate::config::LspDiagnosticProfile::Full,
+                encoding,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
+        )?;
+        let diagnostic = grouped
+            .values()
+            .flatten()
+            .next()
+            .ok_or_else(|| "expected a finding diagnostic".to_string())?;
+        Ok((
+            diagnostic.range.start.character,
+            diagnostic.range.end.character,
+        ))
+    };
+
+    if width_start(&PositionEncodingKind::UTF16)? != (36, 42) {
+        return Err(format!(
+            "UTF-16 start/end {:?}",
+            width_start(&PositionEncodingKind::UTF16)?
+        ));
+    }
+    if width_start(&PositionEncodingKind::UTF8)? != (44, 50) {
+        return Err(format!(
+            "UTF-8 start/end {:?}",
+            width_start(&PositionEncodingKind::UTF8)?
+        ));
+    }
+    if width_start(&PositionEncodingKind::UTF32)? != (35, 41) {
+        return Err(format!(
+            "UTF-32 start/end {:?}",
+            width_start(&PositionEncodingKind::UTF32)?
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), String> {
     let mut finding = sample_finding();
@@ -6908,7 +7217,7 @@ fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), Stri
 #[test]
 fn diagnostic_severity_tracks_static_exposure_class() {
     let cases = [
-        (ExposureClass::Exposed, DiagnosticSeverity::WARNING),
+        (ExposureClass::Exposed, DiagnosticSeverity::INFORMATION),
         (ExposureClass::WeaklyExposed, DiagnosticSeverity::WARNING),
         (
             ExposureClass::ReachableUnrevealed,
@@ -7737,7 +8046,7 @@ fn code_action_resolve_rejects_missing_data_with_stable_invalid_params() -> Resu
 
         let payloadless = CodeAction {
             title: "Inspect gap: copy repair packet".to_string(),
-            kind: Some(CodeActionKind::new("source.ripr.inspect")),
+            kind: Some(CodeActionKind::new("quickfix.ripr.inspect")),
             ..CodeAction::default()
         };
         match backend.code_action_resolve(payloadless).await {
@@ -7751,12 +8060,12 @@ fn code_action_resolve_rejects_missing_data_with_stable_invalid_params() -> Resu
 
         let foreign = CodeAction {
             title: "Inspect gap: copy repair packet".to_string(),
-            kind: Some(CodeActionKind::new("source.ripr.inspect")),
+            kind: Some(CodeActionKind::new("quickfix.ripr.inspect")),
             data: Some(serde_json::json!({
                 "schema_version": "foreign-schema-v0",
                 "action_id": "fnv1a64:0000000000000000",
                 "action_class": "inspect",
-                "action_kind": "source.ripr.inspect",
+                "action_kind": "quickfix.ripr.inspect",
                 "action_name": "copy_gap_repair_packet",
                 "required_client_capability": "ripr.copyContext"
             })),
@@ -9172,9 +9481,34 @@ impl WorkspaceFolderTransitionsClient {
         id
     }
 
+    /// Initialize as the VS Code integration (`riprEditor` advertised), the
+    /// client whose folder transitions RIPR-SPEC-0139 pins: it owns root
+    /// selection, so a second folder is ambiguous. Generic clients keep a
+    /// selected root instead (#4459); see
+    /// `initialize_generic_with_workspace_folders`.
     async fn initialize_with_workspace_folders(
         &mut self,
         folders: serde_json::Value,
+    ) -> Result<(), String> {
+        self.initialize_with_capabilities(
+            folders,
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+        )
+        .await
+    }
+
+    async fn initialize_generic_with_workspace_folders(
+        &mut self,
+        folders: serde_json::Value,
+    ) -> Result<(), String> {
+        self.initialize_with_capabilities(folders, serde_json::json!({}))
+            .await
+    }
+
+    async fn initialize_with_capabilities(
+        &mut self,
+        folders: serde_json::Value,
+        capabilities: serde_json::Value,
     ) -> Result<(), String> {
         let id = self.request_id();
         write_lsp_message(
@@ -9187,7 +9521,7 @@ impl WorkspaceFolderTransitionsClient {
                     "processId": null,
                     "workspaceFolders": folders,
                     "initializationOptions": { "checkMode": "instant" },
-                    "capabilities": {}
+                    "capabilities": capabilities
                 }
             }),
         )
@@ -9515,6 +9849,123 @@ fn workspace_folder_transitions_second_folder_becomes_ambiguous_without_fallback
 }
 
 #[test]
+fn workspace_folder_transitions_generic_client_keeps_selected_root_when_a_folder_is_added()
+-> Result<(), String> {
+    // #4459: Helix adds each newly opened repository to a server that
+    // supports workspace folders. A generic client keeps its selected root,
+    // is told which folder goes unanalyzed, and a file from that folder
+    // hovers as outside the root. Removing the kept root selects the other.
+    run_workspace_folder_transitions_exchange(
+        "generic kept-root transition did not complete",
+        async {
+            let root_a = unique_lsp_test_root("wft-kept-a")?;
+            let root_b = unique_lsp_test_root("wft-kept-b")?;
+            let root_a_uri = file_uri_for_path(root_a.path())?;
+            let root_b_uri = file_uri_for_path(root_b.path())?;
+            let root_a_path = server_path_text(root_a.path());
+            let root_b_path = server_path_text(root_b.path());
+            let mut client = WorkspaceFolderTransitionsClient::spawn();
+            client
+                .initialize_generic_with_workspace_folders(serde_json::json!([
+                    workspace_folder_json(&root_a_uri)
+                ]))
+                .await?;
+
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                    serde_json::json!([]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([
+                        workspace_folder_json(&root_a_uri),
+                        workspace_folder_json(&root_b_uri)
+                    ]),
+                )
+                .await?;
+            let shown = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+            let text = shown["params"]["message"].as_str().unwrap_or_default();
+            if !text.contains("keeps analyzing") || !text.contains(&root_b_path) {
+                return Err(format!("the unanalyzed folder must be named: {shown}"));
+            }
+            let status = client.workspace_status().await?;
+            if status_root_state(&status) != Some("selected_single_root")
+                || status["effective_root"].as_str() != Some(root_a_path.as_str())
+            {
+                return Err(format!("the selected root must be kept: {status}"));
+            }
+
+            let other_file = file_uri_for_path(&root_b.path().join("src").join("lib.rs"))?;
+            let id = client.request_id();
+            write_lsp_message(
+                &mut client.writer,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "textDocument/hover",
+                    "params": {
+                        "textDocument": {"uri": other_file.as_str()},
+                        "position": {"line": 0, "character": 0}
+                    }
+                }),
+            )
+            .await?;
+            let hover = read_lsp_response(&mut client.reader, id).await?;
+            let value = hover["result"]["contents"]["value"]
+                .as_str()
+                .unwrap_or_default();
+            if !value.contains("outside the analyzed workspace root") {
+                return Err(format!(
+                    "a file from the other folder must say why it is quiet: {hover}"
+                ));
+            }
+
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([]),
+                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                )
+                .await?;
+            // Losing the kept root blocks analysis after startup; a generic
+            // client hears it on the standard channel.
+            let shown = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+            let text = shown["params"]["message"].as_str().unwrap_or_default();
+            if !text.contains("analysis is stopped (root_changed)")
+                || !text.contains(&format!("Previous root: {root_a_path}."))
+            {
+                return Err(format!(
+                    "a root block after startup must reach a generic client: {shown}"
+                ));
+            }
+            let status = client
+                .poll_workspace_status_until("the remaining folder", |status| {
+                    status["effective_root"].as_str() == Some(root_b_path.as_str())
+                })
+                .await?;
+            // Same transition as a direct root switch: the new root is
+            // current and the previous one is named as what changed.
+            if status_root_state(&status) != Some("root_changed")
+                || status_candidate_roots(&status) != vec![root_a_path]
+            {
+                return Err(format!(
+                    "removing the kept root must switch to the other: {status}"
+                ));
+            }
+            client.finish().await
+        },
+    )
+}
+
+#[test]
 fn workspace_folder_transitions_ambiguous_resolves_to_remaining_folder_on_removal()
 -> Result<(), String> {
     // Issue fixture 3: ambiguous -> the client narrows the set to one root
@@ -9719,6 +10170,42 @@ fn workspace_folder_transitions_non_active_folder_removal_keeps_ambiguous_select
             ));
         }
         client.finish().await
+    })
+}
+
+#[test]
+fn workspace_folder_transitions_rejected_event_warns_a_generic_client() -> Result<(), String> {
+    // A rejected delta (here a duplicate addition) stops analysis with
+    // root_unavailable; a generic client hears it on the standard channel
+    // instead of going silent.
+    run_workspace_folder_transitions_exchange("generic rejection warning did not complete", async {
+        let root_a = unique_lsp_test_root("wft-reject-warn-a")?;
+        let root_a_uri = file_uri_for_path(root_a.path())?;
+        let mut client = WorkspaceFolderTransitionsClient::spawn();
+        client
+            .initialize_generic_with_workspace_folders(serde_json::json!([workspace_folder_json(
+                &root_a_uri
+            )]))
+            .await?;
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {"event": {"added": [workspace_folder_json(&root_a_uri)], "removed": []}}
+            }),
+        )
+        .await?;
+        let shown = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+        let text = shown["params"]["message"].as_str().unwrap_or_default();
+        if !text.contains("analysis is stopped (root_unavailable)")
+            || !text.contains("duplicate_addition")
+        {
+            return Err(format!(
+                "a rejected folder event must reach a generic client: {shown}"
+            ));
+        }
+        Ok(())
     })
 }
 
@@ -11898,7 +12385,7 @@ fn finding_projection_emits_one_limited_diagnostic_for_mixed_canonical_group() -
     Ok(())
 }
 
-fn sample_finding() -> Finding {
+pub(super) fn sample_finding() -> Finding {
     Finding {
         id: "probe:pricing:88:predicate".to_string(),
         canonical_gap: None,
@@ -11981,7 +12468,7 @@ fn sample_typescript_preview_actionability_finding() -> Finding {
     finding
 }
 
-fn sample_canonical_gap() -> FindingCanonicalGap {
+pub(super) fn sample_canonical_gap() -> FindingCanonicalGap {
     FindingCanonicalGap {
         id: "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"
             .to_string(),
@@ -12059,6 +12546,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 reason: "observed values skip equality boundary".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         },
         class: SeamGripClass::WeaklyGripped,
     }
@@ -12095,6 +12583,7 @@ fn sample_side_effect_seam_without_related_tests() -> crate::analysis::Classifie
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            new_test_target: None,
         },
         class: SeamGripClass::Ungripped,
     }
@@ -12670,9 +13159,8 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
             Vec::new(),
         );
         diagnostics.snapshot.classified_seams = vec![seam];
-        let workspace_root = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::bound_root("/workspace"),
-        );
+        let command_root = crate::agent::loop_commands::bound_root("/workspace");
+        let workspace_root = crate::agent::loop_commands::shell_arg(&command_root);
         let Some(_) = backend.refresh_plan(diagnostics) else {
             return Err("expected refresh plan".to_string());
         };
@@ -12734,7 +13222,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert_eq!(
             packet["after_snapshot_command"],
             crate::agent::loop_commands::check_repo_exposure_command_with_base(
-                "/workspace",
+                &command_root,
                 Some("origin/main"),
                 "draft",
                 "target/ripr/pilot/after.repo-exposure.json",
@@ -12744,7 +13232,7 @@ fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam
         assert_eq!(
             packet["verify_command"],
             crate::agent::loop_commands::agent_verify_command(
-                "/workspace",
+                &command_root,
                 "target/ripr/pilot/repo-exposure.json",
                 "target/ripr/pilot/after.repo-exposure.json",
                 Some("target/ripr/agent/agent-verify.json"),
@@ -13223,7 +13711,8 @@ fn execute_command_collect_evidence_context_returns_typed_stale_for_unknown_seam
 }
 
 #[test]
-fn execute_command_collect_context_returns_none_for_unknown_finding() -> Result<(), String> {
+fn execute_command_collect_context_rejects_unknown_finding_with_invalid_params()
+-> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -13251,9 +13740,232 @@ fn execute_command_collect_context_returns_none_for_unknown_finding() -> Result<
             })],
             work_done_progress_params: Default::default(),
         };
-        let result = backend.execute_command(params).await;
-        let packet = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        assert!(packet.is_none(), "expected None for unknown finding");
+        let error = match backend.execute_command(params).await {
+            Ok(value) => return Err(format!("expected an error, got {value:?}")),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.code,
+            tower_lsp_server::jsonrpc::ErrorCode::InvalidParams
+        );
+        assert!(
+            error
+                .message
+                .contains("`finding_id` `probe:unknown:1:predicate`")
+                && error.message.contains("ripr.refresh"),
+            "error must name the missing id and the refresh route: {}",
+            error.message
+        );
+        Ok(())
+    })
+}
+
+/// A context command called with a shape it cannot read answers with a
+/// typed InvalidParams error that quotes the accepted shapes, never a null.
+#[test]
+fn execute_command_context_commands_reject_unreadable_arguments_with_shapes() -> Result<(), String>
+{
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let cases: [(&str, Vec<serde_json::Value>, &str); 8] = [
+            (COLLECT_CONTEXT_COMMAND, vec![], "expects one object"),
+            (
+                COLLECT_CONTEXT_COMMAND,
+                vec![serde_json::json!("probe:src/lib.rs:1:predicate")],
+                "expects one object",
+            ),
+            (
+                COLLECT_CONTEXT_COMMAND,
+                vec![serde_json::Value::Null],
+                "expects one object",
+            ),
+            (
+                COLLECT_CONTEXT_COMMAND,
+                vec![serde_json::json!({"id": "probe:src/lib.rs:1:predicate"})],
+                "one of `gap_id`, `seam_id`, `finding_id`",
+            ),
+            (
+                COLLECT_CONTEXT_COMMAND,
+                vec![serde_json::json!({"finding_id": "   "})],
+                "one of `gap_id`, `seam_id`, `finding_id`",
+            ),
+            (
+                COLLECT_EVIDENCE_CONTEXT_COMMAND,
+                vec![],
+                "expects one object",
+            ),
+            (
+                COLLECT_EVIDENCE_CONTEXT_COMMAND,
+                vec![serde_json::json!("not-an-object")],
+                "expects one object",
+            ),
+            (
+                COLLECT_EVIDENCE_CONTEXT_COMMAND,
+                vec![serde_json::json!({"finding_id": "probe:src/lib.rs:1:predicate"})],
+                "non-empty string `seam_id`",
+            ),
+        ];
+        for (command, arguments, expected) in cases {
+            let described = format!("{command} {arguments:?}");
+            let result = backend
+                .execute_command(ExecuteCommandParams {
+                    command: command.to_string(),
+                    arguments,
+                    work_done_progress_params: Default::default(),
+                })
+                .await;
+            let error = match result {
+                Ok(value) => return Err(format!("{described}: expected an error, got {value:?}")),
+                Err(error) => error,
+            };
+            assert_eq!(
+                error.code,
+                tower_lsp_server::jsonrpc::ErrorCode::InvalidParams,
+                "{described}"
+            );
+            assert!(
+                error.message.contains(expected) && error.message.contains("seam_id"),
+                "{described}: error must name the accepted shape: {}",
+                error.message
+            );
+        }
+        Ok(())
+    })
+}
+
+/// Runs one server-executed command on `backend` and returns its
+/// InvalidParams error, or explains what came back instead.
+async fn expect_invalid_params(
+    backend: &Backend,
+    command: &str,
+    argument: serde_json::Value,
+) -> Result<tower_lsp_server::jsonrpc::Error, String> {
+    let described = format!("{command} {argument}");
+    let result = backend
+        .execute_command(ExecuteCommandParams {
+            command: command.to_string(),
+            arguments: vec![argument],
+            work_done_progress_params: Default::default(),
+        })
+        .await;
+    match result {
+        Ok(value) => Err(format!("{described}: expected an error, got {value:?}")),
+        Err(error) if error.code == tower_lsp_server::jsonrpc::ErrorCode::InvalidParams => {
+            Ok(error)
+        }
+        Err(error) => Err(format!(
+            "{described}: expected InvalidParams, got {error:?}"
+        )),
+    }
+}
+
+/// A present `gap_id` that is not a string is the caller's fault and is
+/// reported under `gap_id`, even when a `seam_id` is also present: the
+/// handler looks `gap_id` up first, so blaming `seam_id` named the wrong
+/// field.
+#[test]
+fn execute_command_collect_context_rejects_malformed_gap_id_naming_gap_id() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let cases = [
+            (
+                serde_json::json!({"gap_id": 42, "seam_id": "seam:src/lib.rs:1"}),
+                "a number",
+            ),
+            (
+                serde_json::json!({"gap_id": false, "finding_id": "probe:src/lib.rs:1:predicate"}),
+                "a boolean",
+            ),
+            (
+                serde_json::json!({"gap_id": {"id": "gap:rust:x"}}),
+                "an object",
+            ),
+        ];
+        for (argument, got) in cases {
+            let error =
+                expect_invalid_params(backend, COLLECT_CONTEXT_COMMAND, argument.clone()).await?;
+            assert!(
+                error.message.contains(&format!(
+                    "`gap_id` must be a string when present, got {got}"
+                )),
+                "{argument}: error must name `gap_id` and what was expected: {}",
+                error.message
+            );
+            assert!(
+                !error.message.contains("`seam_id` `") && !error.message.contains("`finding_id` `"),
+                "{argument}: error must not blame another field: {}",
+                error.message
+            );
+        }
+        Ok(())
+    })
+}
+
+/// Positive controls for the context target: a valid `gap_id` is still the
+/// looked-up target, and a JSON `null` or blank `gap_id` counts as absent so
+/// the next key in precedence order is used, as before.
+#[test]
+fn execute_command_collect_context_valid_or_null_gap_id_keeps_target() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("context-gap-id-target")?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let error = expect_invalid_params(
+            backend,
+            COLLECT_CONTEXT_COMMAND,
+            serde_json::json!({"gap_id": "gap:rust:absent"}),
+        )
+        .await?;
+        assert!(
+            error
+                .message
+                .contains("`gap_id` `gap:rust:absent` is not in the gap ledger"),
+            "a valid gap_id must stay the looked-up target: {}",
+            error.message
+        );
+        let error = expect_invalid_params(
+            backend,
+            COLLECT_CONTEXT_COMMAND,
+            serde_json::json!({"gap_id": null, "finding_id": "probe:unknown:1:predicate"}),
+        )
+        .await?;
+        assert!(
+            error.message.contains(
+                "`finding_id` `probe:unknown:1:predicate` is not in the current analysis snapshot"
+            ),
+            "a null gap_id must be treated as absent: {}",
+            error.message
+        );
+        let error = expect_invalid_params(
+            backend,
+            COLLECT_CONTEXT_COMMAND,
+            serde_json::json!({"gap_id": "  ", "finding_id": "probe:unknown:1:predicate"}),
+        )
+        .await?;
+        assert!(
+            error.message.contains(
+                "`finding_id` `probe:unknown:1:predicate` is not in the current analysis snapshot"
+            ),
+            "a blank gap_id must be treated as absent: {}",
+            error.message
+        );
         Ok(())
     })
 }
@@ -14046,7 +14758,10 @@ fn write_actionable_gaps_report(
     std::fs::create_dir_all(&reports_dir)
         .map_err(|err| format!("create reports dir failed: {err}"))?;
     let path = reports_dir.join("actionable-gaps.json");
-    std::fs::write(&path, report.to_string())
+    // #4544: stamp the fixture as the producer does so the packet is current.
+    let stamped =
+        crate::output::gap_source_subject::with_source_subject_for_test(root, report.clone());
+    std::fs::write(&path, stamped.to_string())
         .map_err(|err| format!("write actionable-gaps.json failed: {err}"))?;
     Ok(())
 }
@@ -14058,7 +14773,11 @@ fn write_gap_decision_ledger(root: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(&reports_dir)
         .map_err(|err| format!("create reports dir failed: {err}"))?;
     let path = reports_dir.join("gap-decision-ledger.json");
-    std::fs::write(&path, complete_gap_decision_ledger_json())
+    // #4544: stamp the fixture as the producer does so the ledger is current.
+    let ledger = serde_json::from_str::<serde_json::Value>(complete_gap_decision_ledger_json())
+        .map_err(|err| format!("parse fixture ledger failed: {err}"))?;
+    let stamped = crate::output::gap_source_subject::with_source_subject_for_test(root, ledger);
+    std::fs::write(&path, stamped.to_string())
         .map_err(|err| format!("write gap-decision-ledger.json failed: {err}"))?;
     Ok(())
 }
@@ -14242,6 +14961,154 @@ fn execute_command_collect_repair_packet_incomplete_gap_returns_sentinel() -> Re
     })
 }
 
+/// A present `gap_id` that is not a string must be rejected, not silently
+/// dropped: dropping it answered a request for one gap with the top
+/// gap's packet, a wrong actionable signal. The fixture holds a complete top
+/// packet so a fall-through would visibly succeed.
+#[test]
+fn execute_command_collect_repair_packet_rejects_malformed_gap_id() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-malformed-gap-id")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let cases = [
+            (serde_json::json!({"gap_id": 42}), "a number"),
+            (serde_json::json!({"gap_id": true}), "a boolean"),
+            (
+                serde_json::json!({"gap_id": ["gap:rust:pricing-boundary"]}),
+                "an array",
+            ),
+        ];
+        for (argument, got) in cases {
+            let error =
+                expect_invalid_params(backend, COLLECT_REPAIR_PACKET_COMMAND, argument.clone())
+                    .await?;
+            assert!(
+                error.message.contains(&format!(
+                    "`gap_id` must be a string when present, got {got}"
+                )) && error.message.contains("no arguments for the top packet"),
+                "{argument}: error must name `gap_id`, the expectation, and the shapes: {}",
+                error.message
+            );
+        }
+        Ok(())
+    })
+}
+
+/// Positive control: without a `gap_id` (no arguments, an empty object, a
+/// null `gap_id`, or an empty or blank one, per RIPR-SPEC-0077) the top
+/// packet is still returned, and a valid, padded `gap_id` still selects its
+/// packet.
+#[test]
+fn execute_command_collect_repair_packet_absent_or_valid_gap_id_returns_packet()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-absent-gap-id")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let cases = [
+            vec![],
+            vec![serde_json::Value::Null],
+            vec![serde_json::json!({})],
+            vec![serde_json::json!({"gap_id": null})],
+            vec![serde_json::json!({"gap_id": ""})],
+            vec![serde_json::json!({"gap_id": "  "})],
+            vec![serde_json::json!({"gap_id": " gap:rust:pricing-boundary "})],
+        ];
+        for arguments in cases {
+            let described = format!("{arguments:?}");
+            let packet = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                    arguments,
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("{described}: execute_command failed: {err}"))?
+                .ok_or_else(|| format!("{described}: expected a repair packet"))?;
+            assert_eq!(packet["kind"], "repair_packet", "{described}");
+            assert_eq!(
+                packet["canonical_gap_id"], "gap:rust:pricing-boundary",
+                "{described}: expected the packet, got {packet}"
+            );
+        }
+        Ok(())
+    })
+}
+
+/// A requested `gap_id` that `actionable-gaps.json` does not hold must not be
+/// answered with that report's first packet (another gap's repair
+/// instructions). An id held only by the gap ledger reaches the ledger, and
+/// an id held by neither gets the sentinel naming it.
+#[test]
+fn execute_command_collect_repair_packet_unknown_gap_id_never_returns_another_gap()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-unknown-gap-id")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        write_gap_decision_ledger(root.path())?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let run = |gap_id: &'static str| {
+            backend.execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![serde_json::json!({ "gap_id": gap_id })],
+                work_done_progress_params: Default::default(),
+            })
+        };
+
+        let ledger_only = run("gap:rust:pricing:threshold-boundary")
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the ledger packet".to_string())?;
+        assert_eq!(
+            ledger_only["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "an id only the ledger holds must reach the ledger: {ledger_only}"
+        );
+
+        let unknown = run("gap:rust:absent")
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the no-packet sentinel".to_string())?;
+        assert_eq!(
+            unknown["status"], "not_actionable_or_incomplete",
+            "{unknown}"
+        );
+        assert!(
+            unknown["canonical_gap_id"].is_null(),
+            "an unknown id must not carry another gap's packet: {unknown}"
+        );
+        let reason = unknown["reason"]
+            .as_str()
+            .ok_or_else(|| format!("sentinel must carry a string reason: {unknown}"))?;
+        assert!(
+            reason.contains("no repair packet for gap `gap:rust:absent`"),
+            "the sentinel must name the requested gap: {reason}"
+        );
+        Ok(())
+    })
+}
+
 #[test]
 fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> Result<(), String> {
     // A well-formed actionable-gaps.json with a complete packet must emit the
@@ -14355,6 +15222,145 @@ fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> R
 }
 
 #[test]
+fn execute_command_collect_repair_packet_never_substitutes_another_gaps_packet()
+-> Result<(), String> {
+    // A diagnostic published before actionable-gaps.json was rewritten can
+    // name a gap the new artifact no longer lists. The answer must not be the
+    // artifact's first packet: that is another gap's edit surface, verify
+    // command and receipt command.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-unknown-gap")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let collect = |gap_id: &str| ExecuteCommandParams {
+            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+            arguments: vec![serde_json::json!({ "gap_id": gap_id })],
+            work_done_progress_params: Default::default(),
+        };
+
+        // Seed sanity: the listed gap still returns its own packet.
+        let listed = backend
+            .execute_command(collect("gap:rust:pricing-boundary"))
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the listed gap's packet".to_string())?;
+        assert_eq!(listed["canonical_gap_id"], "gap:rust:pricing-boundary");
+
+        let result = backend
+            .execute_command(collect("gap:rust:no-longer-listed"))
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected a sentinel, not null".to_string())?;
+        assert_ne!(
+            result["canonical_gap_id"], "gap:rust:pricing-boundary",
+            "another gap's packet was returned for an unlisted gap: {result}"
+        );
+        assert!(
+            result.get("verify_command").is_none() && result.get("receipt_command").is_none(),
+            "an unlisted gap must carry no commands, got {result}"
+        );
+        assert_eq!(result["kind"], "repair_packet");
+        assert_eq!(result["status"], "not_actionable_or_incomplete");
+        let reason = result["reason"]
+            .as_str()
+            .ok_or_else(|| format!("sentinel must carry a string reason, got {result}"))?;
+        assert!(
+            reason.contains("gap:rust:no-longer-listed"),
+            "the sentinel must name the requested gap, got {reason}"
+        );
+
+        // actionable-gaps.json is bounded (`packet_limit`), so a gap it does
+        // not list may still be an actionable ledger record. That record's
+        // own packet is the answer, never the artifact's first packet.
+        write_gap_decision_ledger(root.path())?;
+        let from_ledger = backend
+            .execute_command(collect("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected the ledger record's packet".to_string())?;
+        assert_eq!(
+            from_ledger["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "a gap past the projection bound must resolve to its own ledger packet: {from_ledger}"
+        );
+        assert_eq!(
+            from_ledger["verify_command"],
+            "cargo xtask fixtures boundary_gap"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_discloses_stale_actionable_gaps_subject()
+-> Result<(), String> {
+    // #4544: after the packet's anchor file changes (an edit or a branch
+    // switch), the repair packet command returns a typed stale sentinel
+    // naming the regeneration command, not the old packet.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-stale-subject")?;
+        let report = complete_actionable_gaps_report();
+        let related_test = report["packets"][0]["primary_anchor"]["file"]
+            .as_str()
+            .ok_or_else(|| "fixture packet must name an anchor file".to_string())?
+            .to_string();
+        write_actionable_gaps_report(root.path(), &report)?;
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let collect = || {
+            backend.execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![serde_json::json!({ "gap_id": "gap:rust:pricing-boundary" })],
+                work_done_progress_params: Default::default(),
+            })
+        };
+        let current = collect()
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected full repair packet".to_string())?;
+        assert_ne!(
+            current["status"], "not_actionable_or_incomplete",
+            "a current actionable-gaps.json must render its packet: {current}"
+        );
+
+        let related_path = root.path().join(&related_test);
+        if let Some(parent) = related_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| format!("create dir failed: {err}"))?;
+        }
+        std::fs::write(&related_path, "pub fn price() {}\n")
+            .map_err(|err| format!("write anchor file failed: {err}"))?;
+        let stale = collect()
+            .await
+            .map_err(|err| format!("execute_command failed: {err}"))?
+            .ok_or_else(|| "expected stale sentinel".to_string())?;
+        assert_eq!(stale["status"], "not_actionable_or_incomplete");
+        let reason = stale["reason"]
+            .as_str()
+            .ok_or_else(|| "sentinel must carry a string reason".to_string())?;
+        assert!(
+            reason.starts_with(&format!("stale_subject: {related_test} changed"))
+                && reason.contains("cargo xtask lane1-evidence-audit"),
+            "stale actionable-gaps.json must be disclosed, got {stale}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn execute_command_collect_repair_packet_malformed_actionable_gaps_returns_sentinel()
 -> Result<(), String> {
     // A present-but-unparseable actionable-gaps.json must surface a typed
@@ -14442,6 +15448,73 @@ fn execute_command_collect_repair_packet_missing_actionable_gaps_falls_back_to_l
             packet["source_location"]["line"].as_u64(),
             Some(42),
             "ledger fallback must resolve a real anchor line"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_without_a_packet_source_names_the_route()
+-> Result<(), String> {
+    // A current snapshot with neither packet artifact on disk answers with a
+    // sentinel whose reason names the missing sources and the CLI route; a
+    // bare null left the editor with only "server did not respond".
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-no-source")?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        for (arguments, subject) in [
+            (vec![], "no repair packet:"),
+            (
+                vec![serde_json::json!({"gap_id": "gap:rust:missing"})],
+                "no repair packet for gap `gap:rust:missing`",
+            ),
+        ] {
+            let packet = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                    arguments,
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("execute_command failed: {err}"))?
+                .ok_or_else(|| "expected a no-source sentinel, not null".to_string())?;
+            assert_eq!(packet["kind"], "repair_packet");
+            assert_eq!(packet["status"], "not_actionable_or_incomplete");
+            let reason = packet["reason"].as_str().ok_or("reason must be a string")?;
+            assert!(
+                reason.starts_with(subject)
+                    && reason.contains("target/ripr/reports/actionable-gaps.json")
+                    && reason.contains("ripr pilot --root ."),
+                "reason must name the sources and the route: {reason}"
+            );
+        }
+        // A first argument that is not an object is a caller error.
+        let result = backend
+            .execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments: vec![serde_json::json!("gap:rust:missing")],
+                work_done_progress_params: Default::default(),
+            })
+            .await;
+        let error = match result {
+            Ok(value) => return Err(format!("expected an error, got {value:?}")),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.code,
+            tower_lsp_server::jsonrpc::ErrorCode::InvalidParams
+        );
+        assert!(
+            error.message.contains("{\"gap_id\": \"...\"}"),
+            "error must name the accepted shape: {}",
+            error.message
         );
         Ok(())
     })
@@ -16253,6 +17326,124 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
                 "workspace report wrong for {uri} (expect_empty={expect_empty}): {entry}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> {
+    let fixture = quarantine_fixture("dirty-hover")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture)?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+
+    let hover_text = |hover: Option<tower_lsp_server::ls_types::Hover>| match hover
+        .map(|hover| hover.contents)
+    {
+        Some(HoverContents::Markup(markup)) => Ok(markup.value),
+        other => Err(format!("expected a markdown hover, got {other:?}")),
+    };
+    let dirty = hover_text(
+        backend
+            .hover(hover_params(fixture.uri_a.clone(), 0, 4))
+            .await
+            .map_err(|err| format!("hover failed: {err}"))?,
+    )?;
+    if !dirty.contains("evidence for this file is paused")
+        || !dirty.contains("save the file to refresh")
+    {
+        return Err(format!(
+            "dirty buffer hover must say why and how to recover: {dirty}"
+        ));
+    }
+    // A clean document keeps its evidence hover; the paused text is specific
+    // to the dirty buffer.
+    let clean = hover_text(
+        backend
+            .hover(hover_params(fixture.uri_b.clone(), 0, 4))
+            .await
+            .map_err(|err| format!("hover failed: {err}"))?,
+    )?;
+    if clean.contains("paused") {
+        return Err(format!(
+            "clean document hover must not report a pause: {clean}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result<(), String> {
+    // A document with no analyzed saved content (here a new file that is
+    // not on disk yet, so no refresh can record a baseline for it) is
+    // quarantined as `no_analyzed_saved_content`. Its hover must not reuse
+    // the divergent-buffer text: saving an unchanged file changes nothing.
+    let fixture = quarantine_fixture("unanalyzed-hover")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    let new_file = file_uri_for_path(&fixture.root.join("src").join("new_file.rs"))
+        .map_err(|err| format!("new file URI failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&new_file, QUARANTINE_TEXT_A))
+        .await;
+    match backend.document_quarantine(&new_file) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => {
+            return Err(format!(
+                "fixture must quarantine without an analyzed baseline, got {other:?}"
+            ));
+        }
+    }
+    let hover = backend
+        .hover(hover_params(new_file.clone(), 0, 4))
+        .await
+        .map_err(|err| format!("hover failed: {err}"))?;
+    let text = match hover.map(|hover| hover.contents) {
+        Some(HoverContents::Markup(markup)) => markup.value,
+        other => return Err(format!("expected a markdown hover, got {other:?}")),
+    };
+    if !text.contains("has not analyzed this file's saved content")
+        || !text.contains("ripr.refresh")
+        || text.contains("save the file to refresh")
+    {
+        return Err(format!(
+            "unanalyzed file hover must route to refresh, not the divergent-buffer text: {text}"
+        ));
     }
     Ok(())
 }
@@ -18297,5 +19488,324 @@ fn registered_harness_projection_reaches_the_lsp_snapshot() -> Result<(), Box<dy
             .collect::<Vec<_>>(),
         vec!["mimic_case", "mimic_case_two"]
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Cold-agent LSP walk (2026-09-28): surface agreement for one finding.
+// ---------------------------------------------------------------------------
+
+/// A Rust finding the actionable profile publishes: a producer-owned missing
+/// discriminator plus a related test (the fix site). Rust producers do not set
+/// `canonical_gap`, so the diagnostic carries no `canonical_gap_id`.
+fn fix_route_rust_finding() -> Finding {
+    let mut finding = sample_finding();
+    finding.ripr.infect = StageEvidence::new(
+        StageState::Weak,
+        Confidence::Medium,
+        "Related tests contain input values, but the equality-boundary discriminator is missing",
+    );
+    finding.ripr.reveal.discriminate = StageEvidence::new(
+        StageState::Yes,
+        Confidence::Medium,
+        "Strong oracle found: exact value or pattern assertion",
+    );
+    finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+        value: "amount == threshold".to_string(),
+        reason: "No related test call uses amount equal to threshold".to_string(),
+        flow_sink: None,
+    }];
+    finding.related_tests.push(RelatedTest {
+        name: "small_order_pays_full".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 4,
+        oracle: Some("assert_eq!(price(50, 100), 50);".to_string()),
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        relation_reason: None,
+        relation_confidence: None,
+    });
+    finding
+}
+
+/// Commit an actionable-profile snapshot whose published diagnostics come
+/// from the production profile projection, then read top limitation and
+/// workspace status through `workspace/executeCommand`.
+fn actionable_profile_status(
+    findings: Vec<Finding>,
+) -> Result<(serde_json::Value, serde_json::Value, usize), String> {
+    profile_status(findings, crate::config::LspDiagnosticProfile::Actionable)
+}
+
+/// Same as [`actionable_profile_status`] for an explicit diagnostic profile.
+fn profile_status(
+    findings: Vec<Finding>,
+    profile: crate::config::LspDiagnosticProfile,
+) -> Result<(serde_json::Value, serde_json::Value, usize), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = PathBuf::from("/workspace");
+        let (service, _socket) = LspService::new(|client| Backend::new(client, root.clone()));
+        let backend = service.inner();
+        backend.initialize_test_workspace_root();
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let grouped = super::diagnostics::finding_diagnostics_by_uri_with_profile(
+            &root,
+            &findings,
+            &crate::config::SeverityConfig::default(),
+            true,
+            FindingDiagnosticProjection::new(
+                profile,
+                &PositionEncodingKind::UTF16,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
+        )?;
+        let published = grouped.get(&uri).cloned().unwrap_or_default();
+        let published_count = published.len();
+        let mut diagnostics = sample_workspace_diagnostics(root, uri, published, findings);
+        diagnostics.snapshot.diagnostic_profile = profile;
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+        let command = |name: &str| ExecuteCommandParams {
+            command: name.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        };
+        let limitation = backend
+            .execute_command(command(COLLECT_TOP_LIMITATION_COMMAND))
+            .await
+            .map_err(|err| format!("collectTopLimitation failed: {err}"))?
+            .ok_or_else(|| "expected top limitation".to_string())?;
+        let status = backend
+            .execute_command(command(COLLECT_WORKSPACE_STATUS_COMMAND))
+            .await
+            .map_err(|err| format!("collectWorkspaceStatus failed: {err}"))?
+            .ok_or_else(|| "expected workspace status".to_string())?;
+        Ok((limitation, status, published_count))
+    })
+}
+
+#[test]
+fn top_limitation_does_not_deny_a_published_fix_route_diagnostic() -> Result<(), String> {
+    let (limitation, status, published) =
+        actionable_profile_status(vec![fix_route_rust_finding()])?;
+    if published != 1 {
+        return Err(format!(
+            "fixture must publish one diagnostic, got {published}"
+        ));
+    }
+    if limitation["status"] == "no_actionable_item" {
+        return Err(format!(
+            "top limitation denied the live fix-site-ready diagnostic: {limitation}"
+        ));
+    }
+    assert_eq!(
+        limitation["status"], "no_active_limitation_in_current_scope",
+        "{limitation}"
+    );
+    assert_eq!(
+        status["diagnostics"]["actionable_diagnostics"].as_u64(),
+        Some(1),
+        "workspace status must count the published fix route: {status}"
+    );
+    Ok(())
+}
+
+#[test]
+fn top_limitation_still_reports_route_less_findings_as_not_actionable() -> Result<(), String> {
+    // Negative control: a weakly_exposed finding without a producer-owned
+    // missing discriminator or fix site is filtered by the actionable
+    // profile, so "no actionable item" remains the honest answer.
+    let (limitation, status, published) = actionable_profile_status(vec![sample_finding()])?;
+    assert_eq!(published, 0, "route-less finding must not be published");
+    assert_eq!(limitation["status"], "no_actionable_item", "{limitation}");
+    assert_eq!(
+        status["diagnostics"]["actionable_diagnostics"].as_u64(),
+        Some(0),
+        "{status}"
+    );
+    Ok(())
+}
+
+#[test]
+fn full_profile_published_route_less_finding_is_not_counted_actionable() -> Result<(), String> {
+    // Negative control for the widened count: the full profile publishes a
+    // route-less finding, but a published diagnostic alone is not a bounded
+    // next action.
+    let (limitation, status, published) = profile_status(
+        vec![sample_finding()],
+        crate::config::LspDiagnosticProfile::Full,
+    )?;
+    if published == 0 {
+        return Err(
+            "fixture must publish the route-less finding under the full profile".to_string(),
+        );
+    }
+    assert_eq!(
+        status["diagnostics"]["actionable_diagnostics"].as_u64(),
+        Some(0),
+        "{status}"
+    );
+    // "no_actionable_item" is an actionable-profile explanation only; the
+    // full profile reports no active limitation for a published finding.
+    assert_eq!(
+        limitation["status"], "no_active_limitation_in_current_scope",
+        "{limitation}"
+    );
+    Ok(())
+}
+
+fn finding_hover_markdown_for(finding: &Finding) -> Result<String, String> {
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), finding);
+    match super::hover::finding_hover_response(finding, &diagnostic).contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    }
+}
+
+#[test]
+fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), String> {
+    let finding = fix_route_rust_finding();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let lens = super::lens::related_test_lens_title(&finding, None);
+    assert!(
+        lens.contains("no static discriminator (weakly_exposed)"),
+        "{lens}"
+    );
+    if markdown.contains("* discriminator yes") {
+        return Err(format!(
+            "hover claims a discriminator while the lens says none:\n{markdown}"
+        ));
+    }
+    assert!(
+        markdown.contains(
+            "* discriminator missing: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
+        ),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn hover_discriminator_row_keeps_yes_for_exposed_findings() -> Result<(), String> {
+    // Negative control: an exposed finding keeps the producer's stage line.
+    let mut finding = fix_route_rust_finding();
+    finding.class = ExposureClass::Exposed;
+    finding.activation.missing_discriminators.clear();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(
+        markdown
+            .contains("* discriminator yes: Strong oracle found: exact value or pattern assertion"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn hover_describes_unpublished_snapshot_findings_on_the_line() -> Result<(), String> {
+    // A new function no test calls: no related test, no missing discriminator, so
+    // the actionable profile publishes no diagnostic, yet the code lens shows
+    // the finding. The hover must describe it instead of pointing at the CLI.
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let mut finding = sample_finding();
+    finding.id = "probe:pricing:14:predicate".to_string();
+    finding.probe.location.line = 14;
+    finding.probe.expression = "weight_grams > 2_000".to_string();
+    finding.class = ExposureClass::NoStaticPath;
+    finding.ripr.reach = StageEvidence::new(
+        StageState::No,
+        Confidence::Medium,
+        "No static test path found for the changed owner",
+    );
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut diagnostics = sample_workspace_diagnostics(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![],
+        vec![finding],
+    );
+    diagnostics.snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+    let Some(_) = backend.refresh_plan(diagnostics) else {
+        return Err("expected refresh plan".to_string());
+    };
+
+    let Some(hover) = backend.hover_for_position(&hover_params(uri.clone(), 13, 8)) else {
+        return Err("expected a hover for the finding's line".to_string());
+    };
+    let HoverContents::Markup(markup) = hover.contents else {
+        return Err("expected markup hover".to_string());
+    };
+    if markup.value.contains("ripr check --format json") {
+        return Err(format!(
+            "hover sent the editor user to the CLI:\n{}",
+            markup.value
+        ));
+    }
+    for expected in [
+        "`no_static_path` predicate `weight_grams > 2_000`",
+        "* reach no: No static test path found for the changed owner",
+        "`probe:pricing:14:predicate`",
+        "Set `ripr.diagnosticProfile` to `full`",
+    ] {
+        assert!(
+            markup.value.contains(expected),
+            "missing {expected:?}:\n{}",
+            markup.value
+        );
+    }
+    // Editor users cannot run a server executeCommand with JSON arguments.
+    for unexpected in ["ripr.collectContext", "finding_id"] {
+        assert!(
+            !markup.value.contains(unexpected),
+            "hover names an unrunnable command {unexpected:?}:\n{}",
+            markup.value
+        );
+    }
+    assert!(
+        lens_title_is_static_language_clean(&markup.value),
+        "{}",
+        markup.value
+    );
+
+    // Negative control: a line without any snapshot finding keeps the
+    // generic hover (no fabricated finding text).
+    let generic = backend.hover_for_position(&hover_params(uri, 30, 0));
+    assert!(generic.is_none(), "unexpected hover: {generic:?}");
+    Ok(())
+}
+
+#[test]
+fn line_hover_does_not_relist_a_finding_with_a_published_diagnostic() -> Result<(), String> {
+    // Negative control: the only finding on the line is published; a cursor
+    // outside its diagnostic range must not render it as "not published".
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let finding = sample_finding();
+    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let diagnostics = sample_workspace_diagnostics(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![diagnostic],
+        vec![finding],
+    );
+    let Some(_) = backend.refresh_plan(diagnostics) else {
+        return Err("expected refresh plan".to_string());
+    };
+    let hover = backend.hover_for_position(&hover_params(uri, 87, 500));
+    if let Some(hover) = hover
+        && let HoverContents::Markup(markup) = &hover.contents
+        && markup.value.contains("no published diagnostic")
+    {
+        return Err(format!(
+            "published finding relisted as unpublished:\n{}",
+            markup.value
+        ));
+    }
     Ok(())
 }

@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return client.post(\"/alerts\", {\"level\": level, \"priority\": \"critical\"})","line":2}
       ],
-      "evidence": ["owner: send_alert", "owner_kind: function", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_notifier.py", "suggested_test_name: test_send_alert_calls_post", "suggested_test_node_id: tests/test_notifier.py::test_send_alert_calls_post", "suggested_verify_command: pytest tests/test_notifier.py::test_send_alert_calls_post", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_send_alert_calls_post)", "test_verify_command: pytest tests/test_notifier.py::test_send_alert_calls_post (test_send_alert_calls_post)", "related_test_relation: syntactic_call (test_send_alert_calls_post)", "test_oracle: mock_expectation medium (test_send_alert_calls_post)", "test_oracle_shape: mock_expectation (test_send_alert_calls_post)"],
+      "evidence": ["owner: send_alert", "owner_kind: function", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_notifier.py", "suggested_test_name: test_send_alert_calls_post", "suggested_test_node_id: tests/test_notifier.py::test_send_alert_calls_post", "suggested_verify_command: python -m pytest tests/test_notifier.py::test_send_alert_calls_post", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_send_alert_calls_post)", "test_verify_command: python -m pytest tests/test_notifier.py::test_send_alert_calls_post (test_send_alert_calls_post)", "related_test_relation: syntactic_call (test_send_alert_calls_post)", "test_oracle: mock_expectation medium (test_send_alert_calls_post)", "test_oracle_shape: mock_expectation (test_send_alert_calls_post)"],
       "missing": ["Related Python test reaches `send_alert` but the strongest extracted oracle is `mock_expectation`; add or strengthen a focused assertion for the returned value."],
       "assertion_texts": {
       },
@@ -85,7 +85,7 @@
         "suggested_test_file": "tests/test_notifier.py",
         "suggested_test_name": "test_send_alert_calls_post",
         "suggested_test_node_id": "tests/test_notifier.py::test_send_alert_calls_post",
-        "verify_command": "pytest tests/test_notifier.py::test_send_alert_calls_post",
+        "verify_command": "python -m pytest tests/test_notifier.py::test_send_alert_calls_post",
         "verify_command_confidence": "high"
        },
       "python_repair_card": {
@@ -108,7 +108,7 @@
           "pytest_node_id": "tests/test_notifier.py::test_send_alert_calls_post"
          },
         "verify": {
-          "command": "pytest tests/test_notifier.py::test_send_alert_calls_post",
+          "command": "python -m pytest tests/test_notifier.py::test_send_alert_calls_post",
           "confidence": "high"
          },
         "receipt": {
@@ -143,5 +143,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/notifier.py","digest":"sha256:d019547ba6e6b22c57f37af01b9eece72239a96595bebc74af7a232aee9bd7d3"},{"path":"tests/test_notifier.py","digest":"sha256:06cb47581c31f0291e469f9c9bddd6f34077fb94029250fe48b06b62981a2310"}]}
 }

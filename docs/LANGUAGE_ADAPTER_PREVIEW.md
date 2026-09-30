@@ -114,8 +114,9 @@ Diff analysis refuses vendored, built, and generated TypeScript/JavaScript
 trees before they enter the changed-file count: `node_modules`, `dist`,
 `build`, `coverage`, `vendor`, `__generated__`, and the repository tooling
 directories already pruned from the workspace walk (`.git`, `target`, `.ripr`,
-`.direnv`). `*.generated.*` files are refused the same way. Near-misses such
-as `src/build.ts` and `generated.ts` stay ordinary source. Unlike Python, this
+`.direnv`). `*.generated.*` files and minified bundles (`*.min.js`,
+`*.min.mjs`, `*.min.cjs`) are refused the same way. Near-misses such as
+`src/build.ts`, `generated.ts` and `admin.js` stay ordinary source. Unlike Python, this
 adapter has no excluded-role ledger, so those trees are omitted entirely
 rather than counted as an excluded role. A repair packet may still name a
 Jest/Vitest, Node, Cypress, Jasmine, or `__tests__` test path as its edit
@@ -259,9 +260,18 @@ analysis result (`run_repo_analysis` / `check_workspace_repo`): its
 findings, per-language file counts, and `language_runs` partial-run
 disclosure — no seam renderer reconstructs Python semantics.
 
+Diff mode bounds the Python workspace walk the same way the TypeScript
+adapter does: at most 800 discovered `.py` files
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`, aligned with the repo-mode
+`RIPR_MAX_REPO_INDEX_FILES` default), a 16 MiB per-file read cap
+(`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read
+budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
+and unreadable changed files are named typed limitations on the diff
+result, never silent skips.
+
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub); `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
 | `repo-seams-json` / `repo-seams-md` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
 | `repo-badge-json` / `repo-badge-shields` | full | full | empty (stub) | seams: none rendered; capped/partial runs never badge-eligible |
 | `agent-seam-packets-json` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |

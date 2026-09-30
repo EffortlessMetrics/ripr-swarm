@@ -1,37 +1,65 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
-use super::tsconfig::TsAliasMap;
+use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
 use super::*;
 use std::collections::{HashMap, HashSet};
 
 // ── Re-export index ───────────────────────────────────────────────────────────
 
-/// Single-hop re-export index built during Phase 1 of the adapter.
+/// Maximum number of re-export hops followed from the test's import source
+/// toward the owner module (RIPR-SPEC-0095). A chain longer than this is left
+/// unresolved (fail-closed): the test is not credited through it.
+pub(crate) const MAX_REEXPORT_HOPS: usize = 4;
+
+/// Bounded in-repo re-export index built during Phase 1 of the adapter.
 ///
-/// Maps `(intermediate_normalized_module, exported_name)` to
-/// `(original_name, owner_normalized_module)`.
+/// Records, per normalized non-test module:
+/// - explicit named re-exports `export { N [as M] } from './A'`
+///   as `(module, M) -> (N, A_module)`, plus the module's own rename exports
+///   `export { local as M }` as a self-hop `(module, M) -> (local, module)`;
+/// - star re-exports `export * from './A'` as `(module, A_module)` edges;
+/// - the names the module exports from its OWN declarations
+///   (`export function N`, `export const N`, `export { N }`,
+///   `export default ...` as `default`);
+/// - the set of known workspace modules, so a directory specifier
+///   (`import { N } from '../src'`) resolves to `src/index` only when no
+///   `src.ts`-style file module exists (the TypeScript/Node lookup order).
 ///
-/// A test that imports `N` from intermediate file B is credited when:
-/// 1. `(b_module, N)` resolves in the index to `(orig, owner_module)`, AND
-/// 2. `owner_module` matches the normalized owner file, AND
-/// 3. `orig` matches the owner function name.
-///
-/// Only ONE hop is followed; deeper transitive chains stay uncredited
-/// (fail-closed). The index is empty when no re-exports are present, which
-/// makes all callers that pass `ReExportIndex::empty()` behave identically
-/// to the pre-fix behaviour.
+/// A test that imports `N` from module B is credited when resolving `N`
+/// through B's re-export chain, at most [`MAX_REEXPORT_HOPS`] hops, lands on
+/// the changed owner's own export in the owner module. A star hop forwards a
+/// name only when the target module actually exports it, a name exported by
+/// more than one star source is ambiguous, and cycles or over-deep chains
+/// stay unresolved — every uncertain case fails closed (no credit). The index
+/// is empty when no re-exports are present, which makes all callers that pass
+/// `ReExportIndex::empty()` behave identically to the pre-fix behaviour.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ReExportIndex {
     /// key: (intermediate_module_norm, exported_name)
     /// value: (original_name, source_module_norm)
     entries: HashMap<(String, String), (String, String)>,
     /// `export * from './source'` hops: (intermediate_module, star_source_module).
-    /// A star re-export forwards every named export of the source module under
-    /// its original name, so a test importing `owner.name` from `intermediate`
-    /// reaches the owner when a star hop leads to the owner's module
-    /// (#4103 under-credit: the star barrel was invisible and the emitted
-    /// guidance claimed no test referenced the owner at all).
+    /// A star re-export forwards every named export (never `default`) of the
+    /// source module under its original name (#4103 under-credit: the star
+    /// barrel was invisible and the emitted guidance claimed no test
+    /// referenced the owner at all).
     star_edges: HashSet<(String, String)>,
+    /// Names each module exports from its own declarations.
+    local_exports: HashMap<String, HashSet<String>>,
+    /// Normalized module paths of every workspace file seen by the index.
+    modules: HashSet<String>,
+}
+
+/// Outcome of resolving one exported name through the re-export graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExportResolution {
+    /// The module (and its bounded star closure) does not export the name.
+    NotFound,
+    /// The name resolves to `(module, local_name)` — the module whose own
+    /// declaration (or own rename export) binds it.
+    Found(String, String),
+    /// The chain is too deep, ambiguous, or otherwise not decidable.
+    Unknown,
 }
 
 impl ReExportIndex {
@@ -46,31 +74,45 @@ impl ReExportIndex {
         Self::default()
     }
 
-    /// Test-only constructor from raw entries and star edges, so re-export
-    /// resolution can be exercised without a real filesystem.
+    /// Test-only constructor from raw entries, star edges, and the modules'
+    /// own exported names `(module, name)`, so re-export resolution can be
+    /// exercised without a real filesystem. Every module named anywhere in
+    /// the parts is recorded as a known workspace module.
     #[cfg(test)]
     pub(crate) fn from_parts(
         entries: Vec<((String, String), (String, String))>,
         star_edges: Vec<(String, String)>,
+        local_exports: Vec<(String, String)>,
     ) -> Self {
-        Self {
-            entries: entries.into_iter().collect(),
-            star_edges: star_edges.into_iter().collect(),
+        let mut index = Self::default();
+        for ((module, exported), (original, source)) in entries {
+            index.modules.insert(module.clone());
+            index.modules.insert(source.clone());
+            index.entries.insert((module, exported), (original, source));
         }
+        for (module, source) in star_edges {
+            index.modules.insert(module.clone());
+            index.modules.insert(source.clone());
+            index.star_edges.insert((module, source));
+        }
+        for (module, name) in local_exports {
+            index.modules.insert(module.clone());
+            index.local_exports.entry(module).or_default().insert(name);
+        }
+        index
     }
 
     /// Build a re-export index from all non-test source files in the workspace.
     ///
-    /// For each file that contains `export { N [as M] } from './A'` statements,
-    /// records the single hop from `(intermediate_file, M)` → `(N, A_module)`.
-    /// Only explicit named re-exports from relative paths are indexed;
-    /// star-re-exports (`export * from`) and non-relative sources are ignored
-    /// (fail-closed).
+    /// Indexes explicit named re-exports and star re-exports from relative
+    /// (or tsconfig-aliased) in-repo specifiers, plus each module's own
+    /// exported names. `export * as ns from`, type-only re-exports and
+    /// non-relative package specifiers are ignored (fail-closed).
     ///
     /// `sources` is the Phase-1 workspace source cache: every file is read at
     /// most once per analysis run. Files absent from the cache (unreadable or
-    /// over the read caps) are skipped here; their limitation disclosure is
-    /// owned by the read pipeline.
+    /// over the read caps) contribute no export facts; their limitation
+    /// disclosure is owned by the read pipeline.
     ///
     /// `alias_map` is forwarded to `normalized_relative_import_module` so that
     /// tsconfig.json-aliased sources (e.g. `@/owner`) can be followed through
@@ -86,6 +128,11 @@ impl ReExportIndex {
 
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
+        let mut local_exports: HashMap<String, HashSet<String>> = HashMap::new();
+        let modules: HashSet<String> = workspace_files
+            .iter()
+            .map(|file| normalized_module_path(file))
+            .collect();
         for relative in workspace_files {
             if is_test(relative) {
                 continue;
@@ -104,115 +151,169 @@ impl ReExportIndex {
                 move |relative, source, allocator| {
                     let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
                     if !ret.errors.is_empty() {
-                        return (Vec::new(), Vec::new());
+                        return ModuleExportFacts::default();
                     }
-                    // intermediate module path (normalized, no extension)
-                    let intermediate_module = normalized_module_path(relative);
-                    let mut file_entries = Vec::new();
-                    let mut file_star_edges = Vec::new();
-                    for stmt in &ret.program.body {
-                        if let Statement::ExportAllDeclaration(export_all) = stmt {
-                            // `export * from './owner'` — record the star hop.
-                            // `export * as ns from './owner'` namespaces the
-                            // module value, so the named-forwarding contract a
-                            // star hop carries does not apply; it stays
-                            // unindexed (fail-closed).
-                            if export_all.exported.is_some() {
-                                continue;
-                            }
-                            let star_source = export_all.source.value.to_string();
-                            if let Some(resolved) = normalized_relative_import_module(
-                                relative,
-                                &star_source,
-                                worker_alias.as_ref(),
-                                Some(worker_root.as_path()),
-                            ) {
-                                file_star_edges.push((intermediate_module.clone(), resolved));
-                            }
-                            continue;
-                        }
-                        let Statement::ExportNamedDeclaration(export) = stmt else {
-                            continue;
-                        };
-                        if export.declaration.is_some() {
-                            continue;
-                        }
-                        let Some(re_source) = &export.source else {
-                            // Owner-file RENAME export (#4104-B):
-                            // `export { computeTotals as totals }` with no
-                            // `from` re-binds the file's OWN local binding
-                            // under `exported_name`. Record the self-hop so
-                            // `import { totals } from './owner-file'`
-                            // resolves back to the original owner name.
-                            for specifier in &export.specifiers {
-                                if specifier.export_kind == ImportOrExportKind::Type {
-                                    continue;
-                                }
-                                let Some(local_name) = module_export_name_text(&specifier.local)
-                                else {
-                                    continue;
-                                };
-                                let exported_name = module_export_name_text(&specifier.exported)
-                                    .unwrap_or_else(|| local_name.clone());
-                                if exported_name == local_name {
-                                    // Plain re-export of the same name needs no index.
-                                    continue;
-                                }
-                                let key = (intermediate_module.clone(), exported_name);
-                                file_entries.push((key, (local_name, intermediate_module.clone())));
-                            }
-                            continue;
-                        };
-                        let source_str = re_source.value.to_string();
-                        // Resolve the source module relative to the intermediate file's dir.
-                        // Pass alias_map so tsconfig-aliased paths can be followed.
-                        let Some(resolved) = normalized_relative_import_module(
-                            relative,
-                            &source_str,
-                            worker_alias.as_ref(),
-                            Some(worker_root.as_path()),
-                        ) else {
-                            continue;
-                        };
-                        for specifier in &export.specifiers {
-                            if specifier.export_kind == ImportOrExportKind::Type {
-                                continue;
-                            }
-                            let Some(original_name) = module_export_name_text(&specifier.local)
-                            else {
-                                continue;
-                            };
-                            let exported_name = module_export_name_text(&specifier.exported)
-                                .unwrap_or_else(|| original_name.clone());
-                            // key: what the test would import from the intermediate file
-                            let key = (intermediate_module.clone(), exported_name);
-                            // value: what the owner file exports under its original name
-                            file_entries.push((key, (original_name, resolved.clone())));
-                        }
-                    }
-                    (file_entries, file_star_edges)
+                    module_export_facts(
+                        relative,
+                        &ret.program.body,
+                        worker_alias.as_ref(),
+                        worker_root.as_path(),
+                    )
                 },
             ) else {
                 continue;
             };
-            let (file_entries, file_star_edges) = file_facts;
-            for (key, value) in file_entries {
+            for (key, value) in file_facts.entries {
                 entries.entry(key).or_insert_with(|| value);
             }
-            star_edges.extend(file_star_edges);
+            star_edges.extend(file_facts.star_edges);
+            if !file_facts.local_exports.is_empty() {
+                local_exports
+                    .entry(normalized_module_path(relative))
+                    .or_default()
+                    .extend(file_facts.local_exports);
+            }
         }
         Self {
             entries,
             star_edges,
+            local_exports,
+            modules,
         }
     }
 
-    /// If `test_file` imports `imported_name` from `intermediate_module` and
-    /// the index resolves that to the owner, return the original name in the
-    /// owner file.  Returns `None` when no single-hop chain leads to the owner.
+    /// Resolve a normalized module specifier path to the workspace module it
+    /// names. A file module (`src.ts` → `src`) wins; otherwise a directory
+    /// with an index file (`src/index.ts` → `src/index`) is used. When
+    /// neither is known the path is returned unchanged (it then matches no
+    /// indexed module and nothing is credited through it).
+    fn canonical_module(&self, module: &str) -> String {
+        if self.modules.contains(module) {
+            return module.to_string();
+        }
+        let index_module = if module.is_empty() {
+            "index".to_string()
+        } else {
+            format!("{module}/index")
+        };
+        if self.modules.contains(&index_module) {
+            return index_module;
+        }
+        module.to_string()
+    }
+
+    /// Resolve `name` as exported by `module` through the bounded re-export
+    /// graph. `stack` holds the `(module, name)` pairs being resolved on the
+    /// current path (cycle guard).
+    fn resolve_export(
+        &self,
+        module: &str,
+        name: &str,
+        hops: usize,
+        stack: &mut Vec<(String, String)>,
+        mocked: &dyn Fn(&str) -> bool,
+    ) -> ExportResolution {
+        let module = self.canonical_module(module);
+        if mocked(&module) {
+            // A mocked barrel or intermediate module replaces every binding
+            // it forwards, so the chain no longer reaches the owner.
+            return ExportResolution::Unknown;
+        }
+        let frame = (module.clone(), name.to_string());
+        if stack.contains(&frame) {
+            // A re-export cycle contributes no binding (ECMAScript
+            // ResolveExport returns null for a revisited pair).
+            return ExportResolution::NotFound;
+        }
+        stack.push(frame);
+        let resolution = self.resolve_export_frame(&module, name, hops, stack, mocked);
+        stack.pop();
+        resolution
+    }
+
+    fn resolve_export_frame(
+        &self,
+        module: &str,
+        name: &str,
+        hops: usize,
+        stack: &mut Vec<(String, String)>,
+        mocked: &dyn Fn(&str) -> bool,
+    ) -> ExportResolution {
+        if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
+        {
+            if source == module {
+                // Own rename export `export { local as name }` (#4104-B).
+                return ExportResolution::Found(module.to_string(), original.clone());
+            }
+            if hops >= MAX_REEXPORT_HOPS {
+                return ExportResolution::Unknown;
+            }
+            return match self.resolve_export(source, original, hops + 1, stack, mocked) {
+                // An explicit `export { N } from './A'` asserts that A
+                // exports N; when A records no deeper fact for it, A's own
+                // binding is the named target.
+                ExportResolution::NotFound => {
+                    ExportResolution::Found(self.canonical_module(source), original.clone())
+                }
+                resolved => resolved,
+            };
+        }
+        if self
+            .local_exports
+            .get(module)
+            .is_some_and(|names| names.contains(name))
+        {
+            return ExportResolution::Found(module.to_string(), name.to_string());
+        }
+        // `export *` never forwards the default export.
+        if name == "default" {
+            return ExportResolution::NotFound;
+        }
+        let mut star_sources: Vec<&String> = self
+            .star_edges
+            .iter()
+            .filter(|(from, _)| from == module)
+            .map(|(_, to)| to)
+            .collect();
+        if star_sources.is_empty() {
+            return ExportResolution::NotFound;
+        }
+        if hops >= MAX_REEXPORT_HOPS {
+            return ExportResolution::Unknown;
+        }
+        star_sources.sort();
+        let mut found: Option<(String, String)> = None;
+        for star_source in star_sources {
+            match self.resolve_export(star_source, name, hops + 1, stack, mocked) {
+                ExportResolution::NotFound => {}
+                ExportResolution::Unknown => return ExportResolution::Unknown,
+                ExportResolution::Found(target_module, target_name) => {
+                    let target = (target_module, target_name);
+                    match &found {
+                        None => found = Some(target),
+                        Some(existing) if existing == &target => {}
+                        // Two star sources export the same name with
+                        // different bindings: ambiguous, not forwarded.
+                        Some(_) => return ExportResolution::Unknown,
+                    }
+                }
+            }
+        }
+        match found {
+            Some((target_module, target_name)) => {
+                ExportResolution::Found(target_module, target_name)
+            }
+            None => ExportResolution::NotFound,
+        }
+    }
+
+    /// Return whether `test` importing `imported_name` from `import_source`
+    /// reaches `owner` through the bounded re-export chain (or through a
+    /// directory specifier that resolves to the owner's `index` module). A
+    /// mock of any module on the chain breaks it.
     fn resolve_to_owner(
         &self,
-        test_file: &Path,
+        test: &TypeScriptTest,
         import_source: &str,
         imported_name: &str,
         owner: &TypeScriptOwner,
@@ -220,44 +321,188 @@ impl ReExportIndex {
         workspace_root: Option<&Path>,
     ) -> bool {
         // Resolve the import source to a normalized module path.
-        let Some(intermediate_module) =
-            normalized_relative_import_module(test_file, import_source, alias_map, workspace_root)
+        let Some(import_module) =
+            normalized_relative_import_module(&test.file, import_source, alias_map, workspace_root)
         else {
             return false;
         };
         let owner_module = normalized_module_path(&owner.file);
-        // The import targets the owner module directly. A plain same-name
-        // import is handled by the other relations; only an owner-file
-        // RENAME export (`export { ownerName as alias }`) needs the index
-        // here, because the test imports `alias`, not the owner name
-        // (#4104-B).
-        if intermediate_module == owner_module {
-            let key = (intermediate_module, imported_name.to_string());
+        // The import names the owner module directly. A plain same-name
+        // import is owned by the direct/imported-call relations (with their
+        // own identity guards); only an owner-file RENAME export
+        // (`export { ownerName as alias }`) needs the index here, because the
+        // test imports `alias`, not the owner name (#4104-B).
+        if import_module == owner_module {
+            let key = (import_module, imported_name.to_string());
             let Some((original_name, source_module)) = self.entries.get(&key) else {
                 return false;
             };
             return source_module == &owner_module && original_name == &owner.name;
         }
-        let key = (intermediate_module.clone(), imported_name.to_string());
-        let Some((original_name, source_module)) = self.entries.get(&key) else {
-            // Star-hop fallback (#4103): `export * from './owner'` forwards
-            // every named export under its original name, so importing
-            // `owner.name` from a barrel that star-exports the owner's module
-            // reaches the owner. The imported name must equal the owner's own
-            // name — a star hop invents no aliases.
-            return imported_name == owner.name
-                && self
-                    .star_edges
-                    .contains(&(intermediate_module, owner_module.clone()));
+        if test
+            .mocks_in_file
+            .iter()
+            .any(|source| source == UNRESOLVED_MOCK_SPECIFIER)
+        {
+            return false;
+        }
+        let mocked_modules: Vec<String> = test
+            .mocks_in_file
+            .iter()
+            .filter_map(|source| {
+                normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
+            })
+            .map(|module| self.canonical_module(&module))
+            .collect();
+        let mocked = |module: &str| {
+            mocked_modules.iter().any(|mocked| mocked == module)
+                || test
+                    .mocks_in_file
+                    .iter()
+                    .any(|source| root_relative_mock_names_module(source, module))
         };
-        // The chain must resolve to the owner's file and the owner's name.
-        // `export { default as X } from './owner'` records the original name
-        // `default`; it resolves to THIS owner exactly when the owner is the
-        // owner module's default export (#4103 under-credit: that chain was
-        // silently indexed but could never match a named owner).
-        source_module == &owner_module
-            && (original_name == &owner.name
-                || (original_name == "default" && owner.exported_as_default))
+        let mut stack = Vec::new();
+        let ExportResolution::Found(target_module, target_name) =
+            self.resolve_export(&import_module, imported_name, 0, &mut stack, &mocked)
+        else {
+            return false;
+        };
+        // The chain must land on the owner's file and the owner's name.
+        // `export { default as X } from './owner'` lands on `default`; it
+        // resolves to THIS owner exactly when the owner is the owner module's
+        // default export (#4103 under-credit).
+        target_module == owner_module
+            && (target_name == owner.name
+                || (target_name == "default" && owner.exported_as_default))
+    }
+}
+
+/// Export facts of one parsed module, collected on the parse worker.
+#[derive(Debug, Default)]
+struct ModuleExportFacts {
+    entries: Vec<((String, String), (String, String))>,
+    star_edges: Vec<(String, String)>,
+    local_exports: Vec<String>,
+}
+
+fn module_export_facts(
+    relative: &Path,
+    body: &oxc_allocator::Vec<'_, Statement<'_>>,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: &Path,
+) -> ModuleExportFacts {
+    // intermediate module path (normalized, no extension)
+    let module = normalized_module_path(relative);
+    let mut facts = ModuleExportFacts::default();
+    for stmt in body {
+        match stmt {
+            Statement::ExportAllDeclaration(export_all) => {
+                // `export * from './owner'` — record the star hop.
+                // `export * as ns from './owner'` namespaces the module value,
+                // so the named-forwarding contract a star hop carries does not
+                // apply; it stays unindexed (fail-closed), as does a
+                // type-only `export type * from`.
+                if export_all.exported.is_some()
+                    || export_all.export_kind == ImportOrExportKind::Type
+                {
+                    continue;
+                }
+                let star_source = export_all.source.value.to_string();
+                if let Some(resolved) = normalized_relative_import_module(
+                    relative,
+                    &star_source,
+                    alias_map,
+                    Some(workspace_root),
+                ) {
+                    facts.star_edges.push((module.clone(), resolved));
+                }
+            }
+            Statement::ExportDefaultDeclaration(_) => {
+                facts.local_exports.push("default".to_string());
+            }
+            Statement::ExportNamedDeclaration(export) => {
+                if export.export_kind == ImportOrExportKind::Type {
+                    continue;
+                }
+                if let Some(declaration) = &export.declaration {
+                    push_declaration_export_names(declaration, &mut facts.local_exports);
+                    continue;
+                }
+                let Some(re_source) = &export.source else {
+                    // Own export list `export { a, b as c }` (no `from`).
+                    // A same-name entry exports the module's own binding; a
+                    // RENAME (#4104-B) re-binds the file's OWN local binding
+                    // under `exported_name` — recorded as a self-hop so
+                    // `import { c } from './owner-file'` resolves back to the
+                    // original owner name.
+                    for specifier in &export.specifiers {
+                        if specifier.export_kind == ImportOrExportKind::Type {
+                            continue;
+                        }
+                        let Some(local_name) = module_export_name_text(&specifier.local) else {
+                            continue;
+                        };
+                        let exported_name = module_export_name_text(&specifier.exported)
+                            .unwrap_or_else(|| local_name.clone());
+                        if exported_name == local_name {
+                            facts.local_exports.push(local_name);
+                            continue;
+                        }
+                        let key = (module.clone(), exported_name);
+                        facts.entries.push((key, (local_name, module.clone())));
+                    }
+                    continue;
+                };
+                let source_str = re_source.value.to_string();
+                // Resolve the source module relative to the intermediate
+                // file's dir. Pass alias_map so tsconfig-aliased paths can be
+                // followed.
+                let Some(resolved) = normalized_relative_import_module(
+                    relative,
+                    &source_str,
+                    alias_map,
+                    Some(workspace_root),
+                ) else {
+                    continue;
+                };
+                for specifier in &export.specifiers {
+                    if specifier.export_kind == ImportOrExportKind::Type {
+                        continue;
+                    }
+                    let Some(original_name) = module_export_name_text(&specifier.local) else {
+                        continue;
+                    };
+                    let exported_name = module_export_name_text(&specifier.exported)
+                        .unwrap_or_else(|| original_name.clone());
+                    // key: what the test would import from the intermediate file
+                    let key = (module.clone(), exported_name);
+                    // value: what the source file exports under its original name
+                    facts.entries.push((key, (original_name, resolved.clone())));
+                }
+            }
+            _ => {}
+        }
+    }
+    facts
+}
+
+/// Value names bound by an exported declaration. Type-only declarations
+/// (`interface`, `type`) bind no runtime value and are skipped.
+fn push_declaration_export_names(declaration: &Declaration<'_>, names: &mut Vec<String>) {
+    match declaration {
+        Declaration::VariableDeclaration(variables) => {
+            for declarator in &variables.declarations {
+                for identifier in declarator.id.get_binding_identifiers() {
+                    names.push(identifier.name.as_str().to_string());
+                }
+            }
+        }
+        Declaration::TSTypeAliasDeclaration(_) | Declaration::TSInterfaceDeclaration(_) => {}
+        other => {
+            if let Some(identifier) = other.id() {
+                names.push(identifier.name.as_str().to_string());
+            }
+        }
     }
 }
 
@@ -269,12 +514,22 @@ impl ReExportIndex {
 /// does NOT perform full `PackageDiscovery`. It is used only for the
 /// package-local ownership filter.
 pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
+    package_root_for_dir(&file_parent_dir(file, workspace_root)?, workspace_root)
+}
+
+/// The directory `package_root_for_file_path` starts its walk from; `None`
+/// when the file has no parent.
+fn file_parent_dir(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let absolute_file = if file.is_absolute() {
         file.to_path_buf()
     } else {
         workspace_root.join(file)
     };
-    let start = absolute_file.parent()?;
+    absolute_file.parent().map(Path::to_path_buf)
+}
+
+/// The walk behind `package_root_for_file_path`, from the file's directory.
+fn package_root_for_dir(start: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let mut current = start.to_path_buf();
     loop {
         if current.join("package.json").is_file() {
@@ -302,6 +557,49 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
     None
 }
 
+/// `same_package_root` for one owner file against many test files. The
+/// owner's root is resolved once and each test directory's root at most
+/// once, instead of two filesystem walks per test: an owner is checked
+/// against every test in the workspace, and those walks were ~64% of a
+/// `ripr check` on a vite commit. Answers match `same_package_root` as long
+/// as no `package.json` appears or disappears while the scope lives.
+pub(crate) struct OwnerPackageScope<'r> {
+    workspace_root: &'r Path,
+    owner_package: Option<PathBuf>,
+    package_by_dir: std::cell::RefCell<std::collections::BTreeMap<PathBuf, Option<PathBuf>>>,
+}
+
+impl<'r> OwnerPackageScope<'r> {
+    pub(crate) fn new(owner_file: &Path, workspace_root: &'r Path) -> Self {
+        Self {
+            workspace_root,
+            owner_package: package_root_for_file_path(owner_file, workspace_root),
+            package_by_dir: std::cell::RefCell::default(),
+        }
+    }
+
+    /// `same_package_root(owner_file, test_file, workspace_root)`.
+    pub(crate) fn contains(&self, test_file: &Path) -> bool {
+        let Some(owner_package) = &self.owner_package else {
+            return true;
+        };
+        let Some(dir) = file_parent_dir(test_file, self.workspace_root) else {
+            return true;
+        };
+        if let Some(test_package) = self.package_by_dir.borrow().get(&dir) {
+            return test_package
+                .as_ref()
+                .is_none_or(|test| test == owner_package);
+        }
+        let test_package = package_root_for_dir(&dir, self.workspace_root);
+        let same = test_package
+            .as_ref()
+            .is_none_or(|test| test == owner_package);
+        self.package_by_dir.borrow_mut().insert(dir, test_package);
+        same
+    }
+}
+
 /// Return `true` when `owner_file` and `test_file` both resolve to the same
 /// package root under `workspace_root`, or when either file's package root
 /// cannot be determined (fail-open: preserve existing behaviour when no
@@ -310,6 +608,7 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
 /// A cross-package candidate is one where the owner lives in
 /// `packages/a/` and the test lives in `packages/b/`.  Such a candidate
 /// MUST NOT be selected as an owned relation.
+#[cfg(test)]
 pub(crate) fn same_package_root(
     owner_file: &Path,
     test_file: &Path,
@@ -328,14 +627,18 @@ pub(crate) fn same_package_root(
 /// Collect related test candidates for `owner` from `all_tests`.
 ///
 /// `workspace_root` enables package-local ownership filtering when `Some`:
-/// tests in different packages are excluded from the candidate set so that a
-/// test in `packages/b/` cannot be selected as an owner relation for a source
-/// file in `packages/a/`.  Pass `None` to preserve the previous behaviour
-/// (used in unit tests that do not have a real filesystem).
+/// a test in `packages/b/` that only shares the owner's name or path tokens
+/// cannot be selected as a relation for a source file in `packages/a/`.
+/// Owner-call relations are exempt (#4552): every `owner_call_relation` arm
+/// is anchored to the owner's own file (same file, an import whose specifier
+/// resolves to it, or a resolved re-export chain), so a sibling-package test
+/// that imports the changed file is file identity, not a name guess.  Pass
+/// `None` to preserve the previous behaviour (used in unit tests that do not
+/// have a real filesystem).
 ///
-/// `reexport_index` enables single-hop re-export tracing: tests that import
-/// the owner through an intermediate barrel file are credited when the chain
-/// can be resolved in-source in a single hop.  Pass `&ReExportIndex::empty()`
+/// `reexport_index` enables bounded re-export tracing: tests that import
+/// the owner through a barrel file are credited when the chain resolves
+/// in-source within `MAX_REEXPORT_HOPS` hops.  Pass `&ReExportIndex::empty()`
 /// to disable re-export tracing (backward-compatible default for unit tests).
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
@@ -347,26 +650,38 @@ pub(crate) fn related_test_candidates<'a>(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
+    let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
+    let in_owner_package = |test: &&TypeScriptTest| {
+        package_scope
+            .as_ref()
+            .is_none_or(|scope| scope.contains(&test.file))
+    };
     let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = all_tests
         .iter()
-        .filter(|test| {
-            workspace_root
-                .map(|root| same_package_root(&owner.file, &test.file, root))
-                .unwrap_or(true)
-        })
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| TypeScriptRelatedCandidate { test, relation })
         })
         .collect();
+    // Same-module entry reach is admitted only when no test calls the owner
+    // itself, so a direct relation's oracle alone decides exposure.
+    if candidates.is_empty() && !owner.module_entries.is_empty() {
+        candidates = all_tests
+            .iter()
+            .filter(in_owner_package)
+            .filter(|test| {
+                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
+            })
+            .map(|test| TypeScriptRelatedCandidate {
+                test,
+                relation: TypeScriptRelationKind::ModuleEntryCall,
+            })
+            .collect();
+    }
     if candidates.is_empty() {
         candidates = all_tests
             .iter()
-            .filter(|test| {
-                workspace_root
-                    .map(|root| same_package_root(&owner.file, &test.file, root))
-                    .unwrap_or(true)
-            })
+            .filter(in_owner_package)
             .filter_map(|test| {
                 heuristic_relation(test, owner, alias_map, workspace_root)
                     .map(|relation| TypeScriptRelatedCandidate { test, relation })
@@ -442,6 +757,7 @@ pub(crate) fn owner_call_relation(
         // property binding of the name) calls the local declaration, not the
         // imported owner — do not credit DirectOwnerCall.
         && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        && !enclosing_scope_shadows(test, &owner.name)
         && !owner_name_destructured_from_unrelated_source(test, owner, alias_map, workspace_root)
         // #4103 shape 1: a bare `ownerName(...)` only counts when a
         // declaration anchors the name to the owner (same file, or an import
@@ -461,6 +777,7 @@ pub(crate) fn owner_call_relation(
             && import.local != owner.name
             && contains_call_name(&test.body_text, &import.local)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !enclosing_scope_shadows(test, &import.local)
     }) {
         return Some(TypeScriptRelationKind::ImportAliasOwnerCall);
     }
@@ -475,7 +792,9 @@ pub(crate) fn owner_call_relation(
         if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
             return false;
         }
-        if local_identifier_declared_in_test_body(&test.body_text, &import.local) {
+        if local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            || enclosing_scope_shadows(test, &import.local)
+        {
             return false;
         }
         if !import.namespace
@@ -500,11 +819,13 @@ pub(crate) fn owner_call_relation(
     if dynamic_import_member_call(test, owner, alias_map, workspace_root) {
         return Some(TypeScriptRelationKind::ImportedOwnerCall);
     }
-    // Single-hop re-export tracing (RIPR-SPEC-0095):
-    // If the test imports a name from an intermediate file that re-exports it
-    // from the owner file, credit the test via re_export_chain_followed.
-    // Only one hop is followed; deeper chains stay uncredited (fail-closed).
-    // The index also carries the owner file's OWN rename exports
+    // Bounded re-export tracing (RIPR-SPEC-0095):
+    // If the test imports a name from a barrel (named `export { N } from` or
+    // `export * from` hops, including a directory specifier that resolves to
+    // its `index` module) whose chain lands on the owner's own export, credit
+    // the test via re_export_chain_followed. At most `MAX_REEXPORT_HOPS` hops
+    // are followed; deeper, cyclic or ambiguous chains stay uncredited
+    // (fail-closed). The index also carries the owner file's OWN rename exports
     // (`export { ownerName as alias }`), so `import { alias } from
     // './owner-file'` resolves back to the owner name (#4104-B).
     if test.imports_in_file.iter().any(|import| {
@@ -515,15 +836,25 @@ pub(crate) fn owner_call_relation(
             return false;
         };
         if imported_name == "default" {
-            return false; // default imports are out of scope for single-hop re-export
+            return false; // default imports are out of scope for re-export tracing
         }
         // The local alias in the test is what gets called; check the call site.
         let local = &import.local;
         if !contains_call_name(&test.body_text, local) {
             return false;
         }
+        // Shadow guard (#4102): a test-body declaration of the local name
+        // reaches the shadow, not the re-exported owner.
+        if local_identifier_declared_in_test_body(&test.body_text, local) {
+            return false;
+        }
+        // An enclosing `describe`/`beforeEach` binding of the local name
+        // shadows the import for every test in that scope.
+        if enclosing_scope_shadows(test, local) {
+            return false;
+        }
         reexport_index.resolve_to_owner(
-            &test.file,
+            test,
             &import.source,
             imported_name,
             owner,
@@ -534,6 +865,53 @@ pub(crate) fn owner_call_relation(
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
     None
+}
+
+/// Whether the test calls an exported name of the owner's module that reaches
+/// the owner (`TypeScriptOwner::module_entries`). Each entry is checked as if
+/// it were the changed owner, so the test must satisfy every identity gate a
+/// direct or imported owner call does (declaration anchor, shadowing, mocks,
+/// spy fabrication, import source). The stand-in owner carries no entries of
+/// its own, so reach through entries is never chained across modules.
+fn module_entry_relation(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    owner.module_entries.iter().any(|entry| {
+        let entry_owner = module_entry_owner(owner, entry);
+        owner_call_relation(
+            test,
+            &entry_owner,
+            reexport_index,
+            alias_map,
+            workspace_root,
+        )
+        .is_some_and(TypeScriptRelationKind::uses_oracle)
+    })
+}
+
+/// The owner as a test of `entry` sees it: same module, the entry's exported
+/// name, a plain callable, and no entries of its own.
+pub(crate) fn module_entry_owner(
+    owner: &TypeScriptOwner,
+    entry: &TypeScriptModuleEntry,
+) -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: entry.name.clone(),
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        exported_as_default: entry.exported_as_default,
+        class_default_export: false,
+        method_kind: TypeScriptMethodKind::Ordinary,
+        module_entries: Vec::new(),
+        params: Vec::new(),
+        arity: None,
+        source_text: None,
+        ..owner.clone()
+    }
 }
 
 pub(crate) fn module_initializer_observer_relation(
@@ -581,6 +959,18 @@ pub(crate) fn receiver_owner_call_relation(
     // construction, so a test that executes `new ClassName(...)` exercises it
     // directly — there is no member-call needle for a `constructor` name.
     if owner.method_kind == TypeScriptMethodKind::Constructor {
+        // The bare class name below is a name match, not file identity. It
+        // is kept inside the owner's package; a test in another workspace
+        // package must construct the class through a same-file or resolved
+        // import binding, or a same-named class there would lend it its
+        // oracle (#4552 review).
+        if workspace_root
+            .is_some_and(|root| !OwnerPackageScope::new(&owner.file, root).contains(&test.file))
+        {
+            return constructor_names_for_method_owner(test, owner, alias_map, workspace_root)
+                .iter()
+                .any(|candidate| contains_new_expression_call(&test.body_text, candidate));
+        }
         let mut constructor_names = Vec::new();
         if let Some(class_name) = owner.class_name.as_deref() {
             constructor_names.push(class_name.to_string());
@@ -670,6 +1060,16 @@ pub(crate) fn class_method_owner_call_relation(
         .any(|class_name| contains_member_call_name(&test.body_text, class_name, &owner.name))
 }
 
+/// `true` when a binding outside the test body but inside the file-level
+/// scope (a `describe` body or parameter, a loop header, a hook write, a
+/// test callback parameter) rebinds `name` for this test, so a call through
+/// `name` reaches that binding rather than an import or owner of the name.
+fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+    test.scope_bindings
+        .iter()
+        .any(|binding| binding.name == name && !binding.file_level)
+}
+
 pub(crate) fn class_names_for_class_method_owner(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -682,6 +1082,7 @@ pub(crate) fn class_names_for_class_method_owner(
     let mut names = Vec::new();
     if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
         && !local_identifier_declared_in_test_body(&test.body_text, class_name)
+        && !enclosing_scope_shadows(test, class_name)
     {
         push_unique_string(&mut names, class_name.to_string());
     }
@@ -693,6 +1094,7 @@ pub(crate) fn class_names_for_class_method_owner(
         }
         if import.imported.as_deref() == Some(class_name)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !enclosing_scope_shadows(test, &import.local)
         {
             push_unique_string(&mut names, import.local.clone());
         }
@@ -1491,7 +1893,7 @@ fn heuristic_owner_supported(owner: &TypeScriptOwner) -> bool {
 /// tests in different packages are excluded from the candidate set.
 /// Pass `None` to preserve the previous behaviour (used in unit tests).
 ///
-/// `reexport_index` enables single-hop re-export tracing.
+/// `reexport_index` enables bounded re-export tracing.
 /// Pass `&ReExportIndex::empty()` to disable (backward-compatible default).
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
@@ -1595,6 +1997,9 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ReExportChainFollowed => RelationReason::ReExportChainFollowed,
+        // The test calls a same-module export that calls the owner: the
+        // TypeScript form of a production helper that delegates to the owner.
+        TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
         TypeScriptRelationKind::SameFileProximity
@@ -1608,7 +2013,8 @@ fn ts_relation_to_domain(
         | TypeScriptRelationKind::ReceiverOwnerCall
         | TypeScriptRelationKind::ClassMethodCall => RelationConfidence::High,
         TypeScriptRelationKind::ImportedOwnerCall
-        | TypeScriptRelationKind::ReExportChainFollowed => RelationConfidence::Medium,
+        | TypeScriptRelationKind::ReExportChainFollowed
+        | TypeScriptRelationKind::ModuleEntryCall => RelationConfidence::Medium,
         TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
         | TypeScriptRelationKind::TestName => RelationConfidence::Low,
@@ -1727,7 +2133,11 @@ pub(crate) fn import_source_matches_owner(
 /// Resolve an import specifier relative to `test_file` to a normalized module
 /// path string (no extension, forward-slash separated).
 ///
-/// For relative specifiers (`./` or `../`), performs the usual path-join.
+/// For relative specifiers (`./`, `../`, or exactly `.` / `..`), performs the
+/// usual path-join. When `workspace_root` is known and the joined path names
+/// an in-root directory with no sibling file module, the directory resolves
+/// through [`resolve_directory_module`] (package.json `main`, else `index`),
+/// mirroring the Node/TypeScript lookup order (#4546).
 ///
 /// For non-relative specifiers, consults `alias_map` when provided:
 /// - If the alias map successfully resolves the specifier to a unique workspace
@@ -1739,7 +2149,9 @@ pub(crate) fn normalized_relative_import_module(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<String> {
-    if source.starts_with("./") || source.starts_with("../") {
+    // `.` and `..` name the current / parent directory module
+    // (`require('..')`, #4546) exactly like `./` and `../` prefixes do.
+    if is_relative_specifier(source) {
         // Standard relative resolution.
         let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
             .split('/')
@@ -1747,16 +2159,44 @@ pub(crate) fn normalized_relative_import_module(
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         let normalized_source = source.replace('\\', "/");
+        let mut escaped_root = false;
         for part in normalized_source.split('/') {
             match part {
                 "" | "." => {}
                 ".." => {
-                    parts.pop();
+                    escaped_root |= parts.pop().is_none();
                 }
                 _ => parts.push(part.to_string()),
             }
         }
-        return Some(strip_typescript_module_extension(&parts.join("/")));
+        let joined = parts.join("/");
+        let module = strip_typescript_module_extension(&joined);
+        // Directory resolution only for an extensionless specifier whose
+        // join stayed inside the workspace root; otherwise the historical
+        // lexical module is kept.
+        if let Some(root) = workspace_root
+            && !escaped_root
+            && module == joined
+            && let Some(resolved) = resolve_directory_module(root, &module)
+        {
+            return Some(resolved);
+        }
+        // A relative import of `tsc` build output whose target does not
+        // exist maps back to its TypeScript source through the root
+        // tsconfig.json `outDir`/`rootDir` (#4551). Any entry at the join
+        // wins and keeps the lexical module: a real emitted file, a
+        // directory, or a symlink to something else (#4800 review).
+        if let Some(root) = workspace_root
+            && !escaped_root
+            && let Some(out_dir_map) = out_dir_map_for(root)
+            && out_dir_map.contains(&joined)
+            && std::fs::symlink_metadata(root.join(&joined)).is_err()
+            && !file_module_exists(root, &module)
+            && let Some(source_module) = out_dir_map.source_module_for(root, &joined)
+        {
+            return Some(source_module);
+        }
+        return Some(module);
     }
 
     // Non-relative specifier — consult alias map if available.
@@ -1769,7 +2209,221 @@ pub(crate) fn normalized_relative_import_module(
     Some(strip_typescript_module_extension(&normalized))
 }
 
-pub(super) fn normalized_module_path(path: &Path) -> String {
+/// Extensions probed for a file module, in the TypeScript/Node lookup order.
+const DIRECTORY_MODULE_EXTENSIONS: [&str; 8] =
+    ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+
+/// Resolve a workspace-relative module path that names a DIRECTORY to the
+/// module the directory loads (#4546): the directory's `package.json` `main`
+/// when present, else its `index` file.
+///
+/// Returns `None` (the caller keeps the lexical module) when the path is not
+/// a real in-root directory (symlinks are not followed), when a sibling file
+/// module (`<module>.<ext>`) exists and wins the lookup, or when nothing in
+/// the directory resolves. A `package.json` that is unreadable (over the
+/// config cap, not a regular file), is not valid JSON, or names a `main`
+/// that is absolute, escapes the workspace root, or does not resolve to a
+/// supported source file also yields `None`: the specifier stays unresolved
+/// rather than being credited to a guessed module (fail-closed).
+///
+/// Memoized per analysis run by [`DirectoryModuleCacheScope`] (#4638
+/// review): the owners x tests x imports loop asks the same question for
+/// the same `(root, module)` many times, and each uncached answer costs
+/// several filesystem probes.
+fn resolve_directory_module(root: &Path, module: &str) -> Option<String> {
+    let key = (root.to_path_buf(), module.to_string());
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.directory_modules.get(&key).cloned())
+        })
+    });
+    if let Some(resolved) = cached {
+        return resolved;
+    }
+    let resolved = resolve_directory_module_uncached(root, module);
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            cache.directory_modules.insert(key, resolved.clone());
+        }
+    });
+    resolved
+}
+
+/// The root tsconfig.json `outDir` mapping (#4551), read once per analysis
+/// run while a [`DirectoryModuleCacheScope`] is open and on every call
+/// outside one, so a config edit is seen by the next run (#4800 review).
+fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.out_dir_maps.get(root).cloned())
+        })
+    });
+    if let Some(map) = cached {
+        return map;
+    }
+    let map = load_out_dir_map(root);
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            cache.out_dir_maps.insert(root.to_path_buf(), map.clone());
+        }
+    });
+    map
+}
+
+/// Per-run resolver answers, alive only while a [`DirectoryModuleCacheScope`]
+/// is open on this thread: directory-module answers keyed by
+/// `(workspace root, module)` and the outDir mapping keyed by root. Outside
+/// a scope nothing is cached, so no answer outlives the run that computed it
+/// (an LSP session sees filesystem changes on its next run).
+#[derive(Default)]
+struct RunResolverCache {
+    directory_modules: HashMap<(PathBuf, String), Option<String>>,
+    out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+}
+
+thread_local! {
+    static RUN_RESOLVER_CACHE: std::cell::RefCell<Option<RunResolverCache>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// One analysis run's resolver memo: opening it installs a fresh, empty
+/// cache on this thread; dropping it restores whatever was there before
+/// (normally nothing). The cache is an explicit per-run scope rather than a
+/// parameter because `workspace_root` reaches the resolver through ~30
+/// signatures in the related-test and classifier walks.
+pub(crate) struct DirectoryModuleCacheScope {
+    previous: Option<RunResolverCache>,
+}
+
+impl DirectoryModuleCacheScope {
+    pub(crate) fn open() -> Self {
+        let previous = RUN_RESOLVER_CACHE.with(|cache| {
+            cache
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut cache| cache.replace(RunResolverCache::default()))
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for DirectoryModuleCacheScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        RUN_RESOLVER_CACHE.with(|cache| {
+            if let Ok(mut cache) = cache.try_borrow_mut() {
+                *cache = previous;
+            }
+        });
+    }
+}
+
+fn resolve_directory_module_uncached(root: &Path, module: &str) -> Option<String> {
+    let directory = if module.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(module)
+    };
+    if !is_real_directory(&directory) || file_module_exists(root, module) {
+        return None;
+    }
+    let manifest = directory.join("package.json");
+    match std::fs::symlink_metadata(&manifest) {
+        // No package.json at all: plain directory index lookup.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return index_module(root, module);
+        }
+        Err(_) => return None,
+        Ok(_) => {}
+    }
+    let text = read_config_capped(&manifest).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    match value.get("main") {
+        Some(serde_json::Value::String(main)) => package_main_module(root, module, main),
+        // No `main`: the directory falls back to its index file.
+        None => index_module(root, module),
+        // A non-string `main` is not a path Node would honour.
+        Some(_) => None,
+    }
+}
+
+/// The module a directory `package.json` `main` names, resolved inside the
+/// workspace root: a file module (with or without a supported extension), or
+/// the `index` of a directory it names.
+fn package_main_module(root: &Path, module: &str, main: &str) -> Option<String> {
+    let main = main.replace('\\', "/");
+    if main.is_empty() || main.starts_with('/') || main.contains(':') {
+        return None;
+    }
+    let mut parts = module
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    for part in main.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                // Escaping the workspace root fails closed.
+                parts.pop()?;
+            }
+            _ => parts.push(part.to_string()),
+        }
+    }
+    let target = parts.join("/");
+    if target.is_empty() {
+        return None;
+    }
+    let stripped = strip_typescript_module_extension(&target);
+    if stripped != target {
+        // `main` carries a supported extension: it must name that file.
+        return is_real_file(&root.join(&target)).then_some(stripped);
+    }
+    if file_module_exists(root, &target) {
+        return Some(target);
+    }
+    if is_real_directory(&root.join(&target)) {
+        return index_module(root, &target);
+    }
+    None
+}
+
+/// `<module>/index` when the directory holds an index file module.
+fn index_module(root: &Path, module: &str) -> Option<String> {
+    let index = if module.is_empty() {
+        "index".to_string()
+    } else {
+        format!("{module}/index")
+    };
+    file_module_exists(root, &index).then_some(index)
+}
+
+/// Whether `<module>.<ext>` exists as a regular file for a supported
+/// extension.
+fn file_module_exists(root: &Path, module: &str) -> bool {
+    !module.is_empty()
+        && DIRECTORY_MODULE_EXTENSIONS
+            .iter()
+            .any(|extension| is_real_file(&root.join(format!("{module}.{extension}"))))
+}
+
+fn is_real_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
+fn is_real_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
+}
+
+fn normalized_module_path(path: &Path) -> String {
     strip_typescript_module_extension(&normalized_path(path))
 }
 
