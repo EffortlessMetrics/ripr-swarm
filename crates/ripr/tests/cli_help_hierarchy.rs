@@ -150,7 +150,8 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
 /// `command_metadata::tests::human_surfaces_agree_with_the_typed_tables`.
 #[test]
 fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
-    let stdout = normalized(&rendered_help(&["help", "--all"])?);
+    let rendered = rendered_help(&["help", "--all"])?;
+    let stdout = normalized(&rendered);
     for needle in [
         "ripr agent start --root . --seam-id ID [--out target/ripr/workflow] [advanced]",
         "ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [advanced]",
@@ -163,20 +164,32 @@ fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
     ] {
         assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
     }
-    // The primary public rows stay unmarked.
+    // The primary public rows stay unmarked. Inspect each original rendered
+    // row: a class marker anywhere on the row (not just adjacent to the
+    // route) is a leak, and the canonical route must still be present.
+    let rendered_rows: Vec<String> = rendered.lines().map(normalized).collect();
     for needle in [
         "ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]",
         "ripr agent status --root . [--json]",
     ] {
-        for marker in ["[advanced]", "[compatibility]"] {
-            let marked = format!("{needle} {marker}");
-            if stdout.contains(&marked) {
-                return Err(format!(
-                    "public row unexpectedly carries a class marker: {needle} {marker}"
-                ));
+        let mut found = false;
+        for row in &rendered_rows {
+            if row.contains(needle) {
+                found = true;
+                for marker in ["[advanced]", "[compatibility]"] {
+                    if row.contains(marker) {
+                        return Err(format!(
+                            "public row unexpectedly carries a class marker: {needle} {marker}"
+                        ));
+                    }
+                }
             }
         }
-        assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
+        if !found {
+            return Err(format!(
+                "exhaustive help (`ripr help --all`) lost the canonical route `{needle}`"
+            ));
+        }
     }
     Ok(())
 }
