@@ -137,7 +137,9 @@ The artifact embeds an input identity computed at check time:
   are excluded; fields already recorded elsewhere in the identity
   (`analysis.mode`, `analysis.include_unchanged_tests`,
   `languages.enabled`) are marked as captured, not hashed twice;
-- `analyzer_version` (the writing binary's version) and the envelope
+- `analyzer_version` (the writing binary's build identity: its version plus
+  its commit, or a digest of its sources for a dirty or commit-less build,
+  so another build of the same version is refused) and the envelope
   `schema_version`.
 
 The CLI has no diagnostic-profile surface today (that concept is LSP-only,
@@ -177,7 +179,11 @@ analysis-relevant config), not to fingerprint the repository.
 (`select_finding`) and rendering (`render_finding_with_config`,
 `render_context_packet`) operate on the loaded findings exactly as on
 freshly computed ones, so a reused explanation is byte-identical to a
-recomputed one given the same render options. Render-time knobs
+recomputed one given the same render options. The one exception is
+navigation: the sibling commands `explain` prints and the context packet's
+`witness.explain_command` replay the source that produced the finding,
+`--diff`/`--base` on a fresh run and `--from <artifact>` on a reused one
+(#3952). Render-time knobs
 (`--max-related-tests`, severity display, output format) are not part of
 the identity and are honored fresh at render time — including
 `--max-related-tests` beyond the `check --json` render cap, because the

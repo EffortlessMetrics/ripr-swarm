@@ -12,7 +12,7 @@ typechecker or test runner, and they do not make generated CI blocking.
 | Language | Status | Default | Evidence scope |
 | --- | --- | --- | --- |
 | Rust | reference path | enabled | Rust static exposure evidence and the existing CLI, CI, editor, report, and gate surfaces. |
-| TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.js`, and `.jsx`. |
+| TypeScript and JavaScript | preview | disabled | Syntax-first owners, tests, assertions, probes, related tests, and visible static limits for `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`. |
 | Python | preview static facts; scoped repair routing is `usable alpha` | detected Python projects without `ripr.toml`; otherwise disabled unless configured | Syntax-first owners, tests, assertions, probes, related tests, RIPR-stage evidence, selected repair-class missing discriminators, fail-closed static limits, and bounded repair cards/packets for selected pytest/unittest routes. |
 
 The preview adapters feed the same output schema and review surfaces as Rust.
@@ -93,7 +93,8 @@ test_roots = [
 bridge_hints = "ripr.bun.bridge.toml"
 ```
 
-The `typescript` adapter covers `.ts`, `.tsx`, `.js`, and `.jsx` files, so the
+The `typescript` adapter covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`,
+`.jsx`, `.mjs`, and `.cjs` files, so the
 profile does not add a separate `javascript` language key. `profiles.bun_ub`
 is advisory configuration only: it records test roots and the bridge-hint file
 for Bun Blob / ArrayBuffer cross-language evidence, and `ripr doctor --root .`
@@ -106,6 +107,20 @@ for the operator loop that reads `rust_ungripped_ts_discriminated`,
 `rust_ungripped_ts_missing_discriminator`, `ts_mention_not_observer`, and
 `bridge_unknown` results, plus
 `public_reachable_panic_boundary_unrevealed` FFI limitation receipts.
+
+## What Diff Analysis Refuses
+
+Diff analysis refuses vendored, built, and generated TypeScript/JavaScript
+trees before they enter the changed-file count: `node_modules`, `dist`,
+`build`, `coverage`, `vendor`, `__generated__`, and the repository tooling
+directories already pruned from the workspace walk (`.git`, `target`, `.ripr`,
+`.direnv`). `*.generated.*` files and minified bundles (`*.min.js`,
+`*.min.mjs`, `*.min.cjs`) are refused the same way. Near-misses such as
+`src/build.ts`, `generated.ts` and `admin.js` stay ordinary source. Unlike Python, this
+adapter has no excluded-role ledger, so those trees are omitted entirely
+rather than counted as an excluded role. A repair packet may still name a
+Jest/Vitest, Node, Cypress, Jasmine, or `__tests__` test path as its edit
+target; a production file cannot.
 
 ## Run The Local Preview Loop
 
@@ -237,16 +252,26 @@ Consumption boundary: the repo-scoped CLI formats (`repo-exposure-*`,
 Rust/Perl seam inventory and do not render preview-language findings, so a
 Python-only or TypeScript-only workspace still shows zero seams in those
 formats — a known limitation, not a clean result. Repo-exposure emits a
-`typescript_diff_first` limitation entry for TS/JS-only workspaces pointing
-the user at diff-scoped analysis; Python-only runs do not currently carry an
-equivalent entry. Python's repo-mode evidence is consumed through the shared
-repo analysis result (`run_repo_analysis` / `check_workspace_repo`): its
+`typescript_diff_first` limitation entry for TS/JS-only workspaces and a
+`python_diff_first` limitation entry for Python-only workspaces, both
+pointing at diff-scoped `ripr check`. Neither entry fabricates seams.
+Python's repo-mode evidence is still consumed through the shared repo
+analysis result (`run_repo_analysis` / `check_workspace_repo`): its
 findings, per-language file counts, and `language_runs` partial-run
-disclosure — no renderer reconstructs Python semantics.
+disclosure — no seam renderer reconstructs Python semantics.
+
+Diff mode bounds the Python workspace walk the same way the TypeScript
+adapter does: at most 800 discovered `.py` files
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`, aligned with the repo-mode
+`RIPR_MAX_REPO_INDEX_FILES` default), a 16 MiB per-file read cap
+(`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read
+budget (`RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES`). Files refused by any bound
+and unreadable changed files are named typed limitations on the diff
+result, never silent skips.
 
 | Format | Rust repo | Perl repo | TypeScript repo | Python repo |
 | --- | --- | --- | --- | --- |
-| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
+| `repo-exposure-json` / `repo-exposure-md` / `repo-sarif` | full | full | empty (stub); `typescript_diff_first` limitation | seams: none rendered; `python_diff_first` limitation |
 | `repo-seams-json` / `repo-seams-md` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |
 | `repo-badge-json` / `repo-badge-shields` | full | full | empty (stub) | seams: none rendered; capped/partial runs never badge-eligible |
 | `agent-seam-packets-json` | full | full | empty (stub) | seams: none rendered; evidence via repo analysis result |

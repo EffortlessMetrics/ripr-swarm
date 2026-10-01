@@ -87,7 +87,9 @@ fn print_help() {
 /// Help body for `ripr annotations`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
 pub(crate) const ANNOTATIONS_HELP: &str = "\
-usage: ripr annotations [--comments <path>] [--out <path>] [--check]
+Render review comments as GitHub Actions warning annotations.
+
+Usage: ripr annotations [--comments <path>] [--out <path>] [--check]
 
 Options:
   --comments <path>  Path to comments.json (default: target/ripr/review/comments.json)
@@ -231,7 +233,7 @@ fn write_annotations(
     };
     fs::create_dir_all(parent)
         .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
-    fs::write(path, &generated.text)
+    crate::output::file_write::write(path, generated.text.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", options.out))?;
     if generated.comments_missing {
         println!("RIPR annotations skipped: {} is missing", options.comments);
@@ -338,12 +340,19 @@ mod tests {
         let dir = unique_temp_dir("valid")?;
         std::fs::write(
             dir.join("comments.json"),
-            r#"{"comments":[{"placement":{"path":"src/lib.rs","line":3,"mode":"exact_seam_line"},"severity":"advisory","kind":"focused_test","reason":"pin the boundary"}]}"#,
+            r#"{"comments":[{"placement":{"path":"src/lib.rs","line":3,"mode":"exact_seam_line"},"severity":"advisory","kind":"focused_test","reason":"Pin: Result::Err, not Ok(100%).","suggested_test":{"intent":"assert_eq!(actual, expected)"}}]}"#,
         )
         .map_err(|err| format!("write comments.json: {err}"))?;
         let rendered = render_annotations(&dir, &options())?;
         assert!(!rendered.comments_missing);
-        assert!(rendered.text.contains("::warning file=src/lib.rs,line=3"));
+        assert_eq!(
+            rendered.text,
+            concat!(
+                "::warning file=src/lib.rs,line=3,title=ripr advisory focused_test::",
+                "Pin: Result::Err, not Ok(100%25).",
+                " Suggested test: assert_eq!(actual, expected)\n"
+            )
+        );
         Ok(())
     }
 
@@ -393,6 +402,59 @@ mod tests {
                 ));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn annotation_uses_distinct_property_and_message_encoding() -> Result<(), String> {
+        let item = serde_json::json!({
+            "placement": {
+                "path": "src/pricing,edge:100%.rs",
+                "line": 42,
+                "mode": "exact_seam_line"
+            },
+            "severity": "medium",
+            "kind": "focused:test,case",
+            "reason": "Pin: Result::Err, not Ok(100%).",
+            "suggested_test": { "intent": "assert_eq!(actual, expected)" }
+        });
+        let annotation = annotation_from_comment(&item)?;
+        assert_eq!(
+            annotation,
+            concat!(
+                "::warning file=src/pricing%2Cedge%3A100%25.rs,line=42,",
+                "title=ripr medium focused%3Atest%2Ccase::",
+                "Pin: Result::Err, not Ok(100%25).",
+                " Suggested test: assert_eq!(actual, expected)"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn annotation_preserves_literal_escapes_and_encodes_line_breaks() -> Result<(), String> {
+        let item = serde_json::json!({
+            "placement": {
+                "path": "src/é,%0A\r\n.rs",
+                "line": 7,
+                "mode": "same_file_changed_line"
+            },
+            "kind": "focused\r\ntest",
+            "reason": "literal %0A %0D %2C %3A %25\r\nnext: é, ok",
+            "suggested_test": { "intent": "assert_eq!(a,\nb)" }
+        });
+        let annotation = annotation_from_comment(&item)?;
+        assert_eq!(
+            annotation,
+            concat!(
+                "::warning file=src/é%2C%250A%0D%0A.rs,line=7,",
+                "title=ripr advisory focused%0D%0Atest::",
+                "literal %250A %250D %252C %253A %2525%0D%0Anext: é, ok",
+                " Suggested test: assert_eq!(a,%0Ab)"
+            )
+        );
+        assert_eq!(annotation.lines().count(), 1);
+        assert!(!annotation.contains('\r'));
         Ok(())
     }
 }

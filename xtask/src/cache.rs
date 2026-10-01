@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use ripr::analysis::cache_layer_names;
 use serde_json::{Value, json};
 
 const DEFAULT_MAX_SIZE_GB: u64 = 20;
@@ -17,18 +18,6 @@ const SHARD_MANIFEST_FILE: &str = "manifest.json";
 const SHARD_FILE_PREFIX: &str = "shard-";
 const MAX_REPORT_ROWS: usize = 20;
 
-/// Directory names `ripr` itself creates under the cache base directory.
-/// Mirrors `crates/ripr/src/cli/commands/cache.rs` `CACHE_ROOT_MARKERS` so
-/// xtask GC/report stay conservative for a relocated `RIPR_CACHE_DIR`.
-const CACHE_ROOT_MARKERS: &[&str] = &[
-    "repo-seam-facts",
-    "repo-seam-facts-sharded",
-    "repo-compact-classified-seams",
-    "repo-compact-classified-seams-sharded",
-    "repo-corpus-fingerprint",
-    "repo-file-facts",
-    "repo-seam-counts",
-];
 const DEFAULT_CACHE_ROOT_SUFFIX: &[&str] = &["target", "ripr", "cache"];
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
@@ -778,7 +767,7 @@ fn is_default_cache_layout(cache_dir: &Path) -> bool {
 
 fn is_recognized_cache_root(cache_dir: &Path) -> bool {
     is_default_cache_layout(cache_dir)
-        || CACHE_ROOT_MARKERS
+        || cache_layer_names()
             .iter()
             .any(|marker| cache_dir.join(marker).is_dir())
 }
@@ -1101,8 +1090,9 @@ mod tests {
     use super::{
         GcOptions, ShardSetStatus, build_cache_report, build_cache_report_from_env, build_gc_plan,
         build_gc_plan_from_env, cache_gc_markdown, cache_report_json, cache_report_markdown,
-        cache_root_from_env, deletion_path, parse_gc_options,
+        cache_root_from_env, deletion_path, is_recognized_cache_root, parse_gc_options,
     };
+    use ripr::analysis::cache_layer_names;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1444,6 +1434,31 @@ mod tests {
             traversal.is_err(),
             "parent-directory RIPR_CACHE_DIR must be refused before any delete: {traversal:?}"
         );
+    }
+
+    /// A relocated root holding any single producer layer is recognized, and
+    /// the same directory without layers is not. Driven by the product
+    /// registry, so a layer the reporter stops deriving goes red here.
+    #[test]
+    fn relocated_root_recognizes_each_producer_layer() -> Result<(), String> {
+        let root = temp_root("registry-layers")?;
+        let mut unrecognized = Vec::new();
+        for &layer in cache_layer_names() {
+            let path = root.join(layer);
+            fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            if !is_recognized_cache_root(&root) {
+                unrecognized.push(layer);
+            }
+            fs::remove_dir(&path).map_err(|error| error.to_string())?;
+        }
+        let empty_recognized = is_recognized_cache_root(&root);
+        cleanup(root)?;
+        assert!(
+            unrecognized.is_empty(),
+            "relocated root not recognized for {unrecognized:?}"
+        );
+        assert!(!empty_recognized, "empty relocated root was recognized");
+        Ok(())
     }
 
     #[test]

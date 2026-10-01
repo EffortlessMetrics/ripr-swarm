@@ -167,6 +167,7 @@ fn gate_fails_closed_on_limited_partial_scope_pr_guidance() -> Result<(), String
         "comments.json",
         r#"{
           "schema_version": "0.1",
+          "tool": "ripr",
           "status": "advisory",
           "comments": [],
           "analysis_scope": {
@@ -206,6 +207,7 @@ fn gate_fails_closed_on_typed_incomplete_analysis_outcome() -> Result<(), String
         "comments.json",
         r#"{
           "schema_version": "0.1",
+          "tool": "ripr",
           "status": "advisory",
           "comments": [],
           "analysis_outcome": {
@@ -471,6 +473,88 @@ fn gate_calibrated_mode_blocks_new_supported_candidate() -> Result<(), String> {
     Ok(())
 }
 
+// -- #4724 regression: a baseline must be a recognized baseline shape --
+
+#[test]
+fn given_baseline_of_unrecognized_kind_when_gate_evaluated_then_config_error() -> Result<(), String>
+{
+    let cases = [
+        ("empty-object.json", "{}", "no identity array found"),
+        ("array.json", "[]", "expected a JSON object"),
+        (
+            "other-kind.json",
+            r#"{"schema_version":"0.1","kind":"gap_ledger","entries":[]}"#,
+            "field `kind` is \"gap_ledger\"",
+        ),
+        (
+            "kind-without-entries.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline"}"#,
+            "requires an `entries` array",
+        ),
+        (
+            "no-identity-array.json",
+            r#"{"schema_version":"0.1","records":[{"seam_id":"8f7fa8644fd12280"}]}"#,
+            "no identity array found",
+        ),
+    ];
+    for mode in [GateMode::BaselineCheck, GateMode::CalibratedGate] {
+        for (name, contents, expected_defect) in cases {
+            let dir = temp_dir("gate-baseline-kind")?;
+            let baseline = write_temp_json(&dir, name, contents)?;
+            let mut input = fixture_input(mode)?;
+            input.baseline = Some(baseline);
+            let report = build_gate_decision_report(&input)?;
+            assert_eq!(
+                report.status,
+                "config_error",
+                "{} {name}: an unrecognized baseline must be config_error, got {:?}",
+                mode.as_str(),
+                report.status,
+            );
+            assert!(
+                report.config_errors.iter().any(|error| error.contains(name)
+                    && error.contains("is not a recognized gate baseline")
+                    && error.contains(expected_defect)),
+                "{} {name}: config_errors must name `{expected_defect}`, got {:?}",
+                mode.as_str(),
+                report.config_errors,
+            );
+            ignore_remove_dir_all(dir);
+        }
+    }
+
+    // Documented compatibility shapes stay accepted (docs/CI.md): a
+    // `gate_baseline` ledger, a hand-built `decisions` baseline, and a
+    // review-comments document whose ids are indexed.
+    for (name, contents) in [
+        (
+            "ledger.json",
+            r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[]}"#,
+        ),
+        (
+            "decisions.json",
+            r#"{"schema_version":"0.1","decisions":[]}"#,
+        ),
+        (
+            "comments.json",
+            r#"{"schema_version":"0.1","tool":"ripr","status":"advisory","comments":[]}"#,
+        ),
+    ] {
+        let dir = temp_dir("gate-baseline-kind-ok")?;
+        let baseline = write_temp_json(&dir, name, contents)?;
+        let mut input = fixture_input(GateMode::BaselineCheck)?;
+        input.baseline = Some(baseline);
+        let report = build_gate_decision_report(&input)?;
+        assert!(
+            report.config_errors.is_empty(),
+            "{name}: a recognized baseline shape must not be a config error, got {:?}",
+            report.config_errors,
+        );
+        ignore_remove_dir_all(dir);
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_calibrated_mode_uses_imported_mutation_support() -> Result<(), String> {
     let dir = temp_dir("gate-mutation-calibrated")?;
@@ -628,6 +712,8 @@ fn gate_baseline_check_matches_canonical_gap_id_from_evidence_record() -> Result
         "comments.json",
         r#"{
               "schema_version": "0.1",
+              "tool": "ripr",
+              "status": "advisory",
               "summary": {"unchanged_tests": true},
               "comments": [
                 {
@@ -958,7 +1044,7 @@ fn gate_optional_inputs_emit_warnings_and_markdown_sections() -> Result<(), Stri
     let mut warning_report = report.clone();
     warning_report
         .warnings
-        .push("manual | warning\nwith newline".to_string());
+        .push("manual | warning\nwith newline @octocat <img>".to_string());
     let markdown = render_gate_decision_markdown(&warning_report);
 
     assert_eq!(report.status, "advisory");
@@ -975,7 +1061,9 @@ fn gate_optional_inputs_emit_warnings_and_markdown_sections() -> Result<(), Stri
             .any(|warning| warning.contains("optional labels_json"))
     );
     assert!(markdown.contains("## Warnings"));
-    assert!(markdown.contains("manual \\| warning with newline"));
+    // A list item is not a table cell: `|` stays literal, the line ending
+    // becomes a space, and prose cannot mention or render raw HTML (#4468).
+    assert!(markdown.contains("- manual | warning with newline @\u{2060}octocat &lt;img>\n"));
     ignore_remove_dir_all(dir);
     Ok(())
 }
@@ -1278,6 +1366,95 @@ fn gate_changed_test_and_missing_guidance_candidates_stay_advisory() -> Result<(
     Ok(())
 }
 
+/// #4216 row 2: a review card the producer declared a static limitation
+/// because no test reaches the changed owner must not be headlined with the
+/// PR-wide "nearby focused test changed" reason. The headline follows the
+/// card's own `why_not_actionable`; the nearby-test flag and the advisory
+/// decision are unchanged. A card without a static limitation keeps the
+/// nearby-test reason (control).
+#[test]
+fn gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag() -> Result<(), String> {
+    let dir = temp_dir("gate-no-test-reaches-owner")?;
+    let guidance = write_temp_json(&dir, "comments.json", NO_TEST_REACHES_OWNER_GUIDANCE_JSON)?;
+    for mode in [GateMode::VisibleOnly, GateMode::Acknowledgeable] {
+        let mut input = fixture_input(mode)?;
+        input.root = dir.clone();
+        input.pr_guidance = Some(
+            guidance
+                .strip_prefix(&dir)
+                .map_err(|err| err.to_string())?
+                .to_path_buf(),
+        );
+
+        let report = build_gate_decision_report(&input)?;
+
+        assert_eq!(report.summary.blocking, 0);
+        let limited = report
+            .decisions
+            .iter()
+            .find(|decision| decision.source_id == "loyalty")
+            .ok_or("missing static-limitation decision")?;
+        assert!(
+            limited
+                .gate_reason
+                .contains("no existing test reaches `src/lib.rs::loyalty_price`"),
+            "{}",
+            limited.gate_reason
+        );
+        assert!(
+            !limited.gate_reason.contains("nearby focused test changed"),
+            "{}",
+            limited.gate_reason
+        );
+        assert!(limited.evidence.nearby_test_changed);
+        assert_ne!(limited.decision, "blocking");
+        let control = report
+            .decisions
+            .iter()
+            .find(|decision| decision.source_id == "changed-test")
+            .ok_or("missing control decision")?;
+        assert!(
+            control.gate_reason.contains("nearby focused test changed"),
+            "{}",
+            control.gate_reason
+        );
+    }
+    // N3 pin: with no test changed in the PR the same card is otherwise
+    // policy-eligible without a route, so it is headlined by the gate's own
+    // incomplete-route limitation. This pins current behavior; the order is
+    // not changed here.
+    let unchanged = write_temp_json(
+        &dir,
+        "unchanged.json",
+        &NO_TEST_REACHES_OWNER_GUIDANCE_JSON
+            .replace(r#""unchanged_tests": false"#, r#""unchanged_tests": true"#),
+    )?;
+    let mut input = fixture_input(GateMode::VisibleOnly)?;
+    input.root = dir.clone();
+    input.pr_guidance = Some(
+        unchanged
+            .strip_prefix(&dir)
+            .map_err(|err| err.to_string())?
+            .to_path_buf(),
+    );
+    let report = build_gate_decision_report(&input)?;
+    let limited = report
+        .decisions
+        .iter()
+        .find(|decision| decision.source_id == "loyalty")
+        .ok_or("missing unchanged-tests decision")?;
+    assert!(!limited.evidence.nearby_test_changed);
+    assert!(
+        limited
+            .gate_reason
+            .starts_with("incomplete_repair_route: missing "),
+        "{}",
+        limited.gate_reason
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn gate_baseline_check_blocks_new_candidate() -> Result<(), String> {
     let dir = temp_dir("gate-baseline-new")?;
@@ -1372,6 +1549,101 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
         Value::Array(Vec::new()),
         "gap ledger records do not carry test input variants"
     );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_closed_gap_is_not_misreported_as_configured_off() -> Result<(), String> {
+    let dir = temp_dir("gate-closed-gap")?;
+    let mut ledger: Value = serde_json::from_str(GAP_LEDGER_BLOCKING_JSON)
+        .map_err(|err| format!("parse gap ledger fixture: {err}"))?;
+    let record = &mut ledger["gap_records"][0];
+    record["kind"] = Value::from("NoActionAlreadyObserved");
+    record["gap_state"] = Value::from("already_observed");
+    record["policy_state"] = Value::from("not_policy_targeted");
+    record["repairability"] = Value::from("no_action");
+    record["projection_eligibility"]["gate_candidate"]["eligible"] = Value::Bool(false);
+    record["projection_eligibility"]["gate_candidate"]["reason"] = Value::from("already_observed");
+    record["safe_gate_predicate"]["policy_target_enabled"] = Value::Bool(false);
+    let gap_ledger = write_temp_json(&dir, "gap-ledger.json", &ledger.to_string())?;
+    let input = GateEvaluateInput {
+        root: dir.clone(),
+        repo_exposure: None,
+        pr_guidance: None,
+        gap_ledger: Some(
+            gap_ledger
+                .strip_prefix(&dir)
+                .map_err(|err| err.to_string())?
+                .to_path_buf(),
+        ),
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: Vec::new(),
+        exception_policy: None,
+    };
+
+    let report = build_gate_decision_report(&input)?;
+    assert!(
+        report.config_errors.is_empty(),
+        "{:?}",
+        report.config_errors
+    );
+    assert_eq!(report.status, "pass");
+    assert_eq!(report.summary.not_applicable, 1);
+    assert_eq!(report.summary.suppressed, 0);
+    let rendered = render_gate_decision_json(&report)?;
+    let value: Value =
+        serde_json::from_str(&rendered).map_err(|err| format!("parse gate decision: {err}"))?;
+    let decision = &value["decisions"][0];
+    assert_eq!(decision["decision"], "not_applicable");
+    assert_eq!(decision["evidence"]["configured_off"], false);
+    assert_eq!(decision["evidence"]["suppressed"], false);
+    assert!(
+        decision["gate_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("already observed; no action required"))
+    );
+    let markdown = render_gate_decision_markdown(&report);
+    assert!(
+        markdown.contains("already observed; no action required"),
+        "{markdown}"
+    );
+
+    // Fail closed: dropping the inferred configured-off flag must not let a
+    // non-targeted record block even when its projection claims eligibility.
+    // The shared safe-gate predicate still requires a `new`/`blocked` policy.
+    ledger["gap_records"][0]["projection_eligibility"]["gate_candidate"]["eligible"] =
+        Value::Bool(true);
+    ledger["gap_records"][0]["safe_gate_predicate"]["policy_target_enabled"] = Value::Bool(true);
+    fs::write(&gap_ledger, ledger.to_string()).map_err(|err| err.to_string())?;
+    let claimed = build_gate_decision_report(&input)?;
+    assert_eq!(claimed.status, "pass");
+    assert_eq!(claimed.summary.not_applicable, 1);
+    assert_eq!(claimed.decisions[0].decision, "not_applicable");
+    assert!(
+        claimed.decisions[0]
+            .gate_reason
+            .contains("already observed; no action required"),
+        "claimed eligibility must still name the closed gap: {}",
+        claimed.decisions[0].gate_reason
+    );
+
+    // An explicit suppression still has its own gate decision and evidence.
+    ledger["gap_records"][0]["policy_state"] = Value::from("suppressed");
+    fs::write(&gap_ledger, ledger.to_string()).map_err(|err| err.to_string())?;
+    let suppressed = build_gate_decision_report(&input)?;
+    assert_eq!(suppressed.summary.suppressed, 1);
+    assert_eq!(suppressed.decisions[0].decision, "suppressed");
+    assert!(suppressed.decisions[0].evidence.suppressed);
+    assert!(!suppressed.decisions[0].evidence.configured_off);
     ignore_remove_dir_all(dir);
     Ok(())
 }
@@ -2327,6 +2599,8 @@ fn given_guidance_with_recommended_file_only_then_recommended_test_is_file_path(
         "comments.json",
         r#"{
               "schema_version": "0.1",
+              "tool": "ripr",
+              "status": "advisory",
               "summary": {"unchanged_tests": true},
               "comments": [
                 {
@@ -2393,6 +2667,7 @@ fn given_candidate_without_any_identity_then_baseline_identity_uses_path_line_cl
         configured_off: false,
         suppression_reason: None,
         summary_reason: None,
+        why_not_actionable: None,
         gap_ledger_gate_candidate: false,
         gap_ledger_gate_reason: None,
         gap_ledger_safe_gate_predicate: false,
@@ -2710,6 +2985,8 @@ fn given_class_not_policy_eligible_with_concrete_guidance_then_reason_cites_clas
         "comments.json",
         r#"{
               "schema_version": "0.1",
+              "tool": "ripr",
+              "status": "advisory",
               "summary": {"unchanged_tests": true},
               "comments": [
                 {
@@ -2829,6 +3106,79 @@ fn given_non_guidance_json_object_when_gate_evaluated_then_config_error_not_advi
     Ok(())
 }
 
+// -- #4723 regression: guidance must come from `ripr review-comments` --
+
+#[test]
+fn given_guidance_without_ripr_producer_marker_or_known_status_when_gate_evaluated_then_config_error()
+-> Result<(), String> {
+    let cases = [
+        (
+            "stub.json",
+            r#"{"schema_version":"x","comments":[]}"#,
+            "missing required field `tool`",
+        ),
+        (
+            "other-tool.json",
+            r#"{"schema_version":"0.1","tool":"not-ripr","status":"advisory","comments":[]}"#,
+            "field `tool` is \"not-ripr\"",
+        ),
+        (
+            "unknown-status.json",
+            r#"{"schema_version":"0.1","tool":"ripr","status":"passed","comments":[]}"#,
+            "field `status` is \"passed\"",
+        ),
+        (
+            "no-status.json",
+            r#"{"schema_version":"0.1","tool":"ripr","comments":[]}"#,
+            "missing required field `status`",
+        ),
+    ];
+    for (name, contents, expected_defect) in cases {
+        let dir = temp_dir("gate-non-ripr-guidance")?;
+        let guidance = write_temp_json(&dir, name, contents)?;
+        let input = GateEvaluateInput {
+            root: dir.clone(),
+            repo_exposure: None,
+            pr_guidance: Some(
+                guidance
+                    .strip_prefix(&dir)
+                    .map_err(|err| err.to_string())?
+                    .to_path_buf(),
+            ),
+            gap_ledger: None,
+            sarif_policy: None,
+            labels_json: None,
+            labels: Vec::new(),
+            agent_verify: None,
+            agent_receipt: None,
+            recommendation_calibration: None,
+            mutation_calibration: None,
+            baseline: None,
+            mode: GateMode::Acknowledgeable,
+            acknowledgement_labels: Vec::new(),
+            exception_policy: None,
+        };
+
+        let report = build_gate_decision_report(&input)?;
+
+        assert_eq!(
+            report.status, "config_error",
+            "{name}: a document that is not ripr review-comments output must be config_error, got {:?}",
+            report.status,
+        );
+        assert!(gate_decision_should_fail(&report), "{name}: must fail");
+        assert!(
+            report.config_errors.iter().any(|error| error.contains(name)
+                && error.contains("not a recognized review-comments guidance document")
+                && error.contains(expected_defect)),
+            "{name}: config_errors must name the file and `{expected_defect}`, got {:?}",
+            report.config_errors,
+        );
+        ignore_remove_dir_all(dir);
+    }
+    Ok(())
+}
+
 #[test]
 fn given_valid_guidance_doc_with_zero_findings_when_gate_evaluated_then_advisory_not_config_error()
 -> Result<(), String> {
@@ -2838,6 +3188,8 @@ fn given_valid_guidance_doc_with_zero_findings_when_gate_evaluated_then_advisory
         "comments.json",
         r#"{
               "schema_version": "0.1",
+              "tool": "ripr",
+              "status": "advisory",
               "summary": {"unchanged_tests": true},
               "comments": [],
               "summary_only": [],
@@ -2983,6 +3335,8 @@ fn given_cap_demoted_summary_only_gap_when_gate_evaluated_then_blocking_not_advi
         "cap-demoted.json",
         r#"{
               "schema_version": "0.1",
+              "tool": "ripr",
+              "status": "advisory",
               "summary": {"unchanged_tests": true},
               "comments": [
                 {
@@ -3454,6 +3808,8 @@ fn assert_repo_fixture(path: &Path, rendered: &str, label: &str) -> Result<(), S
 
 const PR_GUIDANCE_JSON: &str = r#"{
       "schema_version": "0.1",
+      "tool": "ripr",
+      "status": "advisory",
       "summary": {"unchanged_tests": true},
       "comments": [
         {
@@ -3475,6 +3831,8 @@ const PR_GUIDANCE_JSON: &str = r#"{
 
 const SUMMARY_AND_SUPPRESSED_JSON: &str = r#"{
       "schema_version": "0.1",
+      "tool": "ripr",
+      "status": "advisory",
       "summary": {"unchanged_tests": true},
       "comments": [],
       "summary_only": [
@@ -3500,8 +3858,41 @@ const SUMMARY_AND_SUPPRESSED_JSON: &str = r#"{
       ]
     }"#;
 
+const NO_TEST_REACHES_OWNER_GUIDANCE_JSON: &str = r#"{
+      "schema_version": "0.1",
+      "tool": "ripr",
+      "status": "advisory",
+      "summary": {"unchanged_tests": false},
+      "comments": [
+        {
+          "id": "loyalty",
+          "seam_id": "7d5754b6ffcd5c82",
+          "gap_state": "static_limitation",
+          "grip_class": "ungripped",
+          "severity": "warning",
+          "owner": "src/lib.rs::loyalty_price",
+          "missing_discriminator": "5 (boundary value)",
+          "seam": {"expression": "member_years >= 5", "file": "src/lib.rs", "line": 29},
+          "placement": {"path": "src/lib.rs", "line": 29},
+          "why_not_actionable": "no existing test reaches `src/lib.rs::loyalty_price` (no static test path to the changed owner); the route authority does not propose a first-test target, so no repair route is available"
+        },
+        {
+          "id": "changed-test",
+          "seam_id": "changed-test-seam",
+          "gap_state": "actionable",
+          "grip_class": "weakly_gripped",
+          "severity": "warning",
+          "missing_discriminator": "amount == discount_threshold",
+          "placement": {"path": "src/pricing.rs", "line": 88},
+          "why_not_actionable": "ignored: only static_limitation cards carry a producer reason"
+        }
+      ]
+    }"#;
+
 const INELIGIBLE_GUIDANCE_JSON: &str = r#"{
       "schema_version": "0.1",
+      "tool": "ripr",
+      "status": "advisory",
       "summary": {"unchanged_tests": false},
       "comments": [
         {
@@ -3526,6 +3917,8 @@ const INELIGIBLE_GUIDANCE_JSON: &str = r#"{
 
 const MISSING_GUIDANCE_JSON: &str = r#"{
       "schema_version": "0.1",
+      "tool": "ripr",
+      "status": "advisory",
       "summary": {"unchanged_tests": true},
       "comments": [
         {

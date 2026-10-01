@@ -55,6 +55,13 @@
 // deliberately carry the contract.
 mod analysis_outcome;
 mod atomic_file;
+// Bounded reads for user-named CLI file and stdin inputs (#4480).
+mod bounded_input;
+// Commit record parser shared with build.rs; the crate only unit-tests it.
+#[cfg(test)]
+mod build_commit_record;
+// Build commit identity for `ripr --version` and `ripr doctor`.
+mod build_identity;
 // Staged RepairAttempt edit-cage contract. #3163 connects the repository
 // baseline/delta producer before any public receipt projection consumes it.
 #[cfg_attr(
@@ -91,6 +98,11 @@ pub(crate) mod agent;
 #[doc(hidden)]
 pub mod analysis;
 pub(crate) mod git;
+// Shared owned-subprocess authority (#3803): one Job-Object-backed owner for
+// every shipped bounded Windows subprocess path. `xtask` consumes the same
+// adapter so there is no second process-owner implementation; keep the
+// surface to the single owner type.
+pub mod process_owner;
 // Kept public for compatibility; prefer the crate-root re-exports for new
 // integrations.
 #[doc(hidden)]

@@ -12,14 +12,21 @@ pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
 pub(crate) mod coverage_grip_frontier;
 pub(crate) mod diff_report;
+pub(crate) mod discriminator_line;
 pub(crate) mod doctor;
+pub(crate) mod doctor_binary;
 pub(crate) mod evidence_health;
 pub(crate) mod evidence_record;
+pub(crate) mod executed_control;
+pub(crate) mod feedback;
+pub(crate) mod file_write;
 pub(crate) mod first_pr;
 pub(crate) mod first_useful_action;
 pub(crate) mod format;
 pub(crate) mod gap_decision_ledger;
 pub(crate) mod gap_decision_ledger_live;
+pub(crate) mod gap_source_subject;
+pub(crate) mod gap_vocabulary;
 pub(crate) mod gate;
 pub mod github;
 pub mod human;
@@ -28,6 +35,7 @@ pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;
 pub(crate) mod next_step;
+pub(crate) mod observed_values;
 pub(crate) mod outcome;
 pub(crate) mod path;
 pub(crate) mod perl_gap_record_projection;
@@ -72,6 +80,10 @@ pub(crate) mod workflow_escape;
 // keeps the catalog compile-checked outside #[cfg(test)] while live producers
 // continue to own serialization. Optimized binary retention is not claimed.
 const _: usize = schemas::AGENT_ARTIFACT_SCHEMAS.len();
+const _: fn(&crate::domain::ExecutedControlPacketV1) -> Result<String, String> =
+    executed_control::render_packet_json;
+const _: fn(&crate::domain::ExecutedControlPacketV1) -> Result<String, String> =
+    executed_control::render_packet_markdown;
 
 #[cfg(test)]
 pub(crate) mod test_support {

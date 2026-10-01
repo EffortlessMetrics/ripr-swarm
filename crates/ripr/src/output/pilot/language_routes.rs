@@ -13,7 +13,7 @@
 
 use crate::agent::loop_commands::shell_path;
 use crate::domain::LanguageId;
-use crate::output::repo_exposure::TsFullRepoGuidance;
+use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
 use std::path::{Path, PathBuf};
 
 /// Languages pilot routes elsewhere, in stable display order.
@@ -35,6 +35,10 @@ pub(crate) enum PilotLanguageRoutesState {
     /// Pilot's Rust seam scan produced no seams. An empty ranking says
     /// nothing about these languages, so the human output names each route.
     Required,
+    /// No Rust seams and no routed language, but source in languages no ripr
+    /// adapter reads (Go, Java, C, ...). The human output names them so the
+    /// empty ranking reads as a non-claim, not a clean result.
+    UnanalyzedOnly,
 }
 
 impl PilotLanguageRoutesState {
@@ -43,6 +47,7 @@ impl PilotLanguageRoutesState {
             PilotLanguageRoutesState::NotDetected => "not_detected",
             PilotLanguageRoutesState::Supplementary => "supplementary",
             PilotLanguageRoutesState::Required => "required",
+            PilotLanguageRoutesState::UnanalyzedOnly => "unanalyzed_only",
         }
     }
 }
@@ -63,7 +68,8 @@ pub(crate) struct PilotLanguageRoute {
     /// Stable category of the reused guidance, when one applies.
     pub(crate) guidance_category: Option<&'static str>,
     /// Reused guidance text: the `typescript_diff_first` repair route for
-    /// TypeScript/JavaScript, or the unavailable-adapter notice.
+    /// TypeScript/JavaScript, the `python_diff_first` repair route for Python,
+    /// or the unavailable-adapter notice.
     pub(crate) guidance: Option<String>,
 }
 
@@ -89,6 +95,9 @@ impl PilotLanguageRoute {
 pub(crate) struct PilotLanguageRoutes {
     pub(crate) state: PilotLanguageRoutesState,
     pub(crate) routes: Vec<PilotLanguageRoute>,
+    /// Source files per language name that no ripr adapter reads.
+    pub(crate) unanalyzed: Vec<(&'static str, usize)>,
+    rust_seams_present: bool,
 }
 
 impl PilotLanguageRoutes {
@@ -119,7 +128,40 @@ impl PilotLanguageRoutes {
         } else {
             PilotLanguageRoutesState::Required
         };
-        Self { state, routes }
+        Self {
+            state,
+            routes,
+            unanalyzed: Vec::new(),
+            rust_seams_present,
+        }
+    }
+
+    /// Record source in languages no adapter reads
+    /// (`analysis::workspace_unanalyzed_source_languages`). With no Rust seam
+    /// and no routed language, they decide what the empty ranking means.
+    /// A Rust crate with no seams yet is still a Rust repository, so
+    /// `rust_source_present` keeps it out of the unanalyzed-only state.
+    pub(crate) fn with_unanalyzed(
+        mut self,
+        unanalyzed: Vec<(&'static str, usize)>,
+        rust_source_present: bool,
+    ) -> Self {
+        if self.state == PilotLanguageRoutesState::NotDetected
+            && !self.rust_seams_present
+            && !rust_source_present
+            && !unanalyzed.is_empty()
+        {
+            self.state = PilotLanguageRoutesState::UnanalyzedOnly;
+        }
+        self.unanalyzed = unanalyzed;
+        self
+    }
+
+    /// The unanalyzed languages the human output must show: only when they
+    /// are all pilot found.
+    pub(crate) fn unanalyzed_only(&self) -> Option<&[(&'static str, usize)]> {
+        (self.state == PilotLanguageRoutesState::UnanalyzedOnly)
+            .then_some(self.unanalyzed.as_slice())
     }
 
     /// The routes the human output must show: only when pilot found no Rust
@@ -166,13 +208,26 @@ fn route_for(
     } else {
         language
     };
+    let (guidance_category, guidance) = if typescript_family {
+        (
+            Some(TsFullRepoGuidance::CATEGORY),
+            Some(TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
+        )
+    } else if language == LanguageId::Python {
+        (
+            Some(PythonRepoExposureGuidance::CATEGORY),
+            Some(PythonRepoExposureGuidance::REPAIR_ROUTE.to_string()),
+        )
+    } else {
+        (None, None)
+    };
     PilotLanguageRoute {
         language,
         file_count,
         available,
         enabled: enabled_languages.contains(&config_language),
         command: Some(format!("ripr check --root {}", shell_path(root))),
-        guidance_category: typescript_family.then_some(TsFullRepoGuidance::CATEGORY),
-        guidance: typescript_family.then(|| TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
+        guidance_category,
+        guidance,
     }
 }

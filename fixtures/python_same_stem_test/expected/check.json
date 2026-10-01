@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return amount - 2","line":2}
       ],
-      "evidence": ["owner: reconcile_total", "owner_kind: function", "test_framework: pytest (test_reconcile_fixture_contract)", "test_verify_command: pytest tests/test_reconcile.py::test_reconcile_fixture_contract (test_reconcile_fixture_contract)", "related_test_relation: same_stem (test_reconcile_fixture_contract)", "related_test_uncertain: same_stem (test_reconcile_fixture_contract)"],
+      "evidence": ["owner: reconcile_total", "owner_kind: function", "test_framework: pytest (test_reconcile_fixture_contract)", "test_verify_command: python -m pytest tests/test_reconcile.py::test_reconcile_fixture_contract (test_reconcile_fixture_contract)", "related_test_relation: same_stem (test_reconcile_fixture_contract)", "related_test_uncertain: same_stem (test_reconcile_fixture_contract)"],
       "missing": ["Only heuristic Python test links were found for `reconcile_total`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion."],
       "assertion_texts": {
       },
@@ -95,5 +95,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/reconcile.py","digest":"sha256:21fa16e6840a4df64f04053ce75d991e7827e318b7efdad9b5e77d877f72f7eb"}]}
 }

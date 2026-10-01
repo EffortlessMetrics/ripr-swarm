@@ -14,7 +14,6 @@ mod path;
 mod render_json;
 mod review;
 
-use markdown::md_escape;
 pub(crate) use markdown::render_targeted_test_outcome_md;
 pub(crate) use path::display_path;
 use path::normalize_report_path;
@@ -72,6 +71,10 @@ pub(crate) struct StaticSeamRecord {
     oracle_kind: String,
     oracle_strength: String,
     observed_values: Vec<String>,
+    /// False when the source rendered a bounded projection of the values
+    /// (check JSON `observed_values_total`), so a value missing from the list
+    /// may still be present and value-level deltas are not established.
+    observed_values_complete: bool,
     missing_discriminators: Vec<String>,
     evidence_source: String,
     evidence_path: BTreeMap<String, StaticEvidenceStage>,
@@ -218,6 +221,7 @@ pub(crate) fn targeted_rerun_movement_from_json(
             oracle_kind: "unknown".to_string(),
             oracle_strength: "unknown".to_string(),
             observed_values: Vec::new(),
+            observed_values_complete: true,
             missing_discriminators: Vec::new(),
             evidence_source: "targeted_rerun_current".to_string(),
             evidence_path: BTreeMap::new(),
@@ -321,6 +325,7 @@ fn parse_rerun_before_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>, 
                     oracle_kind: "unknown".to_string(),
                     oracle_strength: "unknown".to_string(),
                     observed_values: Vec::new(),
+                    observed_values_complete: true,
                     missing_discriminators: Vec::new(),
                     evidence_source: "targeted_rerun_before".to_string(),
                     evidence_path: BTreeMap::new(),
@@ -389,6 +394,7 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
                 "observed_values",
                 observed_value_strings,
             ),
+            observed_values_complete: true,
             missing_discriminators: evidence_record_values_or_legacy(
                 evidence_record,
                 seam,
@@ -408,12 +414,19 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
 }
 
 fn parse_check_output_findings(findings: &[Value]) -> Result<Vec<StaticSeamRecord>, String> {
-    let mut records = Vec::new();
-    for finding in findings {
-        let Some(record) = static_seam_record_from_check_finding(finding) else {
-            continue;
-        };
-        records.push(record);
+    let records: Vec<StaticSeamRecord> = findings
+        .iter()
+        .filter_map(static_seam_record_from_check_finding)
+        .collect();
+    // Check-output findings are matched by canonical gap id. When a snapshot
+    // has findings but none carries one (Rust `ripr check --json` today), an
+    // empty comparison would read as "nothing moved"; refuse instead so the
+    // receipt cannot hide real movement.
+    if records.is_empty() && !findings.is_empty() {
+        return Err(format!(
+            "check-output snapshot has {} finding(s) but none carries a canonical gap id, so `ripr outcome` cannot match them; for Rust, capture both snapshots with `ripr check --format repo-exposure-json` instead; preview-language findings (Python, TypeScript) without a canonical gap id have no comparable outcome receipt",
+            findings.len()
+        ));
     }
     Ok(records)
 }
@@ -427,7 +440,9 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
             &["python_repair_card", "canonical_gap_id"],
             &["typescript_repair_packet", "canonical_gap_id"],
         ],
-    )?;
+    )
+    .map(str::to_string)
+    .or_else(|| typescript_finding_gap_id(finding))?;
     let canonical_gap = finding
         .get("canonical_gap")
         .filter(|value| value.is_object());
@@ -462,7 +477,7 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
     let missing_discriminators = missing_discriminator_strings(finding);
 
     Some(StaticSeamRecord {
-        seam_id: canonical_gap_id.to_string(),
+        seam_id: canonical_gap_id,
         seam_kind: canonical_gap
             .and_then(|gap| optional_json_string(Some(gap), "behavior_kind"))
             .unwrap_or_else(|| seam_kind.to_string()),
@@ -472,11 +487,35 @@ fn static_seam_record_from_check_finding(finding: &Value) -> Option<StaticSeamRe
         oracle_kind,
         oracle_strength,
         observed_values,
+        observed_values_complete: finding.get("observed_values_total").is_none(),
         missing_discriminators,
         evidence_source: "check_output_finding".to_string(),
         evidence_path,
         related_tests_total,
     })
+}
+
+/// A TypeScript finding carries its canonical gap id only inside
+/// `typescript_repair_packet`, which is emitted only while the finding is
+/// repair-ready. A gap that a new test closed reads `exposed` and has no
+/// packet, so without this fallback it would drop out of the after snapshot
+/// and read as removed instead of closed (#4690). The packet derives the id
+/// from the finding id alone (`typescript_canonical_gap_id`), so deriving it
+/// here yields the same id on both sides of a comparison. An
+/// unsupported-syntax diagnostic names no analyzed behavior, so it is never
+/// promoted to a comparable gap.
+fn typescript_finding_gap_id(finding: &Value) -> Option<String> {
+    if finding.get("language").and_then(Value::as_str) != Some("typescript") {
+        return None;
+    }
+    if finding.get("static_limit_kind").and_then(Value::as_str) == Some("unsupported_syntax") {
+        return None;
+    }
+    let id = finding
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| id.starts_with("probe:") && !id.contains("_unsupported_syntax:"))?;
+    Some(crate::output::typescript_packet_projection::typescript_canonical_gap_id(id))
 }
 
 fn build_targeted_test_outcome_report(
@@ -584,10 +623,19 @@ fn targeted_test_outcome_movement(
     let propagate_delta = stage_delta(before, after, "propagate");
     let observe_delta = stage_delta(before, after, "observe");
     let discriminate_delta = stage_delta(before, after, "discriminate");
-    let observed_values_added =
-        string_values_added(&before.observed_values, &after.observed_values);
-    let observed_values_removed =
-        string_values_removed(&before.observed_values, &after.observed_values);
+    // A bounded projection on either side cannot say which values appeared
+    // or disappeared: a changed value may sit outside the rendered subset,
+    // and a new value can displace one that is still present. Report no
+    // value-level delta rather than a wrong one.
+    let values_comparable = before.observed_values_complete && after.observed_values_complete;
+    let (observed_values_added, observed_values_removed) = if values_comparable {
+        (
+            string_values_added(&before.observed_values, &after.observed_values),
+            string_values_removed(&before.observed_values, &after.observed_values),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let missing_discriminators_resolved = string_values_removed(
         &before.missing_discriminators,
         &after.missing_discriminators,
@@ -614,7 +662,12 @@ fn targeted_test_outcome_movement(
         related_test_delta,
     };
     let evidence_delta = targeted_outcome_evidence_delta(before, after, &delta_inputs);
-    let no_movement_reason = no_movement_reason(direction, &evidence_delta, &evidence_source);
+    let no_movement_reason = no_movement_reason(
+        direction,
+        &evidence_delta,
+        &evidence_source,
+        values_comparable,
+    );
     TargetedTestOutcomeMovement {
         seam_id: before.seam_id.clone(),
         seam_kind: before.seam_kind.clone(),
@@ -694,36 +747,25 @@ fn targeted_outcome_evidence_delta(
 
     for (stage, stage_delta) in EVIDENCE_STAGES.iter().zip(delta.stage_deltas.iter()) {
         if let Some(stage_delta) = stage_delta {
-            deltas.push(format!(
-                "{} evidence moved from {} to {}",
-                stage,
-                optional_delta_value(stage_delta.before_state.as_deref()),
-                optional_delta_value(stage_delta.after_state.as_deref())
-            ));
+            deltas.push(stage_delta_line(stage, stage_delta));
         }
     }
 
     for value in delta.missing_discriminators_resolved {
         deltas.push(format!(
             "missing discriminator no longer reported: {}",
-            md_escape(value)
+            value
         ));
     }
     for value in delta.missing_discriminators_reopened {
-        deltas.push(format!(
-            "new missing discriminator reported: {}",
-            md_escape(value)
-        ));
+        deltas.push(format!("new missing discriminator reported: {}", value));
     }
 
     for value in delta.observed_values_added {
-        deltas.push(format!("new observed value: {}", md_escape(value)));
+        deltas.push(format!("new observed value: {}", value));
     }
     for value in delta.observed_values_removed {
-        deltas.push(format!(
-            "previous observed value absent: {}",
-            md_escape(value)
-        ));
+        deltas.push(format!("previous observed value absent: {}", value));
     }
 
     if let Some(oracle_delta) = delta.oracle_strength_delta {
@@ -1085,9 +1127,39 @@ fn no_movement_reason(
     direction: &str,
     evidence_delta: &[String],
     evidence_source: &str,
+    values_comparable: bool,
 ) -> Option<String> {
-    (direction == "unchanged" && evidence_delta.is_empty())
-        .then(|| format!("grip class and {evidence_source} evidence were unchanged"))
+    if direction != "unchanged" || !evidence_delta.is_empty() {
+        return None;
+    }
+    // A capped value list hides value-level movement, so it cannot vouch
+    // that the evidence was unchanged.
+    Some(if values_comparable {
+        format!("grip class and {evidence_source} evidence were unchanged")
+    } else {
+        format!(
+            "grip class and {evidence_source} evidence were unchanged; observed-value movement is unknown because a value list was capped"
+        )
+    })
+}
+
+/// One human line for a stage whose evidence changed. A stage can change
+/// without its state moving (its confidence or summary did), and "moved from
+/// yes to yes" would claim movement that did not happen.
+fn stage_delta_line(stage: &str, delta: &TargetedTestOutcomeStageDelta) -> String {
+    let before = optional_delta_value(delta.before_state.as_deref());
+    let after = optional_delta_value(delta.after_state.as_deref());
+    if before != after {
+        return format!("{stage} evidence moved from {before} to {after}");
+    }
+    let before_confidence = optional_delta_value(delta.before_confidence.as_deref());
+    let after_confidence = optional_delta_value(delta.after_confidence.as_deref());
+    if before_confidence != after_confidence {
+        return format!(
+            "{stage} evidence stayed {after}; its confidence moved from {before_confidence} to {after_confidence}"
+        );
+    }
+    format!("{stage} evidence stayed {after}; only its summary changed")
 }
 
 fn optional_delta_value(value: Option<&str>) -> &str {
@@ -1668,6 +1740,150 @@ mod tests {
         Ok(())
     }
 
+    fn check_json_with_values(
+        classification: &str,
+        values: &[&str],
+        total: Option<usize>,
+    ) -> String {
+        let total = total
+            .map(|total| format!(r#""observed_values_total": {total},"#))
+            .unwrap_or_default();
+        let values = values
+            .iter()
+            .map(|value| format!(r#"{{"value": "{value}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            r#"{{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "findings": [
+    {{
+      "id": "probe:src_discount.py:2:python_preview",
+      "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary",
+      "canonical_gap": {{"id": "gap:python:src/discount.py:apply_discount:predicate_boundary", "language": "python", "file": "src/discount.py", "owner": "apply_discount", "behavior_kind": "predicate_boundary"}},
+      "classification": "{classification}",
+      "probe": {{"family": "predicate", "file": "src/discount.py", "line": 2}},
+      "observed_values": [{values}],
+      {total}
+      "missing_discriminators": [],
+      "related_tests": []
+    }}
+  ]
+}}"#
+        )
+    }
+
+    #[test]
+    fn targeted_test_outcome_reports_no_value_delta_across_a_capped_value_list()
+    -> Result<(), String> {
+        // Both sides render a bounded subset of more than the cap. The subsets
+        // differ only because a value moved outside the rendered window, so a
+        // subset diff would invent an added and a removed value.
+        let before = check_json_with_values("weakly_exposed", &["a", "b"], Some(40));
+        let after = check_json_with_values("exposed", &["a", "c"], Some(40));
+        let report = targeted_test_outcome_report_from_json(
+            &before,
+            &after,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert_eq!(report.moved.len(), 1);
+        assert!(report.moved[0].observed_values_added.is_empty());
+        assert!(report.moved[0].observed_values_removed.is_empty());
+
+        // One capped side is enough to make the comparison unsound.
+        let uncapped_before = check_json_with_values("weakly_exposed", &["a", "b"], None);
+        let report = targeted_test_outcome_report_from_json(
+            &uncapped_before,
+            &after,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert!(report.moved[0].observed_values_added.is_empty());
+        assert!(report.moved[0].observed_values_removed.is_empty());
+
+        // Control: complete lists on both sides still report the delta.
+        let uncapped_after = check_json_with_values("exposed", &["a", "c"], None);
+        let report = targeted_test_outcome_report_from_json(
+            &uncapped_before,
+            &uncapped_after,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert_eq!(report.moved[0].observed_values_added, vec!["c".to_string()]);
+        assert_eq!(
+            report.moved[0].observed_values_removed,
+            vec!["b".to_string()]
+        );
+
+        // Unchanged class with a capped list must not claim unchanged evidence.
+        let capped = check_json_with_values("weakly_exposed", &["a", "b"], Some(40));
+        let report = targeted_test_outcome_report_from_json(
+            &capped,
+            &capped,
+            "before-check.json".to_string(),
+            "after-check.json".to_string(),
+        )?;
+        assert_eq!(report.unchanged.len(), 1);
+        assert!(
+            report.unchanged[0]
+                .no_movement_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("observed-value movement is unknown")),
+            "{:?}",
+            report.unchanged[0].no_movement_reason
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn targeted_test_outcome_refuses_check_json_without_canonical_gap_ids() {
+        // Shape of Rust `ripr check --json`: findings carry a probe id but no
+        // canonical gap id, so nothing is comparable across snapshots.
+        let before = r#"{"schema_version":"0.2","findings":[{"id":"probe:src_lib.rs:predicate:37a3a415","classification":"weakly_exposed","probe":{"id":"probe:src_lib.rs:predicate:37a3a415","file":"src/lib.rs","line":8,"family":"predicate"}}]}"#;
+        let after = before.replace("weakly_exposed", "exposed");
+        let result = targeted_test_outcome_report_from_json(
+            before,
+            &after,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        );
+        assert!(
+            matches!(&result, Err(message) if message.contains("none carries a canonical gap id")
+                && message.contains("--format repo-exposure-json")),
+            "expected a refusal, got {result:?}"
+        );
+
+        // Preview-language findings without canonical ids are refused too,
+        // and the message must not send them to repo exposure, which carries
+        // no Python or TypeScript seams.
+        let python = r#"{"schema_version":"0.2","findings":[{"id":"probe:src_discount.py:2:python_preview","classification":"weakly_exposed"}]}"#;
+        let result = targeted_test_outcome_report_from_json(
+            python,
+            python,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        );
+        assert!(
+            matches!(&result, Err(message) if message.contains("preview-language findings (Python, TypeScript)")
+                && message.contains("no comparable outcome receipt")),
+            "expected a preview-language refusal, got {result:?}"
+        );
+
+        let empty = r#"{"schema_version":"0.2","findings":[]}"#;
+        assert!(
+            targeted_test_outcome_report_from_json(
+                empty,
+                empty,
+                "before.json".to_string(),
+                "after.json".to_string(),
+            )
+            .is_ok(),
+            "a snapshot with no findings is still a valid empty comparison"
+        );
+    }
+
     #[test]
     fn targeted_test_outcome_from_typescript_packet_json_matches_canonical_gap_ids()
     -> Result<(), String> {
@@ -1767,6 +1983,77 @@ mod tests {
         assert_eq!(movement.gap_movement, "closed");
         assert_eq!(movement.evidence_source, "check_output_finding");
         Ok(())
+    }
+
+    fn typescript_check_json(classification: &str, packet: bool) -> String {
+        let id = "probe:src_pricing.ts:typescript_preview:17445ecf";
+        let mut finding = serde_json::json!({
+            "id": id,
+            "classification": classification,
+            "probe": {"family": "predicate", "file": "src/pricing.ts", "line": 4},
+            "related_tests": [],
+            "language": "typescript",
+            "language_status": "preview"
+        });
+        if packet {
+            finding["typescript_repair_packet"] = serde_json::json!({
+                "canonical_gap_id": "gap:typescript:typescript_preview:17445ecf",
+                "repair_kind": "AddBoundaryAssertion"
+            });
+        }
+        serde_json::json!({"schema_version": "0.2", "tool": "ripr", "findings": [finding]})
+            .to_string()
+    }
+
+    #[test]
+    fn typescript_gap_closed_without_a_packet_reads_as_moved_not_removed() -> Result<(), String> {
+        // #4690: `ripr check` emits `typescript_repair_packet` only while the
+        // finding is repair-ready, so the exposed finding after the new test
+        // carries no packet. It must still match the packet's id.
+        for before_has_packet in [true, false] {
+            let report = targeted_test_outcome_report_from_json(
+                &typescript_check_json("weakly_exposed", before_has_packet),
+                &typescript_check_json("exposed", false),
+                "before-check.json".to_string(),
+                "after-check.json".to_string(),
+            )?;
+            assert!(
+                report.removed.is_empty() && report.new.is_empty(),
+                "packet before: {before_has_packet}; removed {:?}, new {:?}",
+                report.removed,
+                report.new
+            );
+            assert_eq!(report.moved.len(), 1);
+            let movement = &report.moved[0];
+            assert_eq!(
+                movement.seam_id,
+                "gap:typescript:typescript_preview:17445ecf"
+            );
+            assert_eq!(movement.gap_movement, "closed");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_unsupported_syntax_diagnostic_is_not_a_comparable_gap() {
+        let diagnostic = serde_json::json!({
+            "id": "probe:src_price.ts:typescript_preview_unsupported_syntax:abcd1234",
+            "classification": "static_unknown",
+            "static_limit_kind": "unsupported_syntax",
+            "language": "typescript"
+        });
+        assert_eq!(typescript_finding_gap_id(&diagnostic), None);
+        let mut unlabeled = diagnostic.clone();
+        unlabeled["static_limit_kind"] = Value::Null;
+        assert_eq!(typescript_finding_gap_id(&unlabeled), None);
+        let predicate = serde_json::json!({
+            "id": "probe:src_price.ts:typescript_preview:abcd1234",
+            "language": "typescript"
+        });
+        assert_eq!(
+            typescript_finding_gap_id(&predicate).as_deref(),
+            Some("gap:typescript:typescript_preview:abcd1234")
+        );
     }
 
     #[test]
@@ -2355,6 +2642,32 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn stage_delta_line_never_reports_movement_between_equal_states() {
+        let delta = |before: &str, after: &str, before_conf: &str, after_conf: &str| {
+            TargetedTestOutcomeStageDelta {
+                before_state: Some(before.to_string()),
+                after_state: Some(after.to_string()),
+                before_confidence: Some(before_conf.to_string()),
+                after_confidence: Some(after_conf.to_string()),
+                before_summary: Some("before".to_string()),
+                after_summary: Some("after".to_string()),
+            }
+        };
+        assert_eq!(
+            stage_delta_line("reach", &delta("weak", "yes", "low", "low")),
+            "reach evidence moved from weak to yes"
+        );
+        assert_eq!(
+            stage_delta_line("reach", &delta("yes", "yes", "low", "high")),
+            "reach evidence stayed yes; its confidence moved from low to high"
+        );
+        assert_eq!(
+            stage_delta_line("reach", &delta("yes", "yes", "high", "high")),
+            "reach evidence stayed yes; only its summary changed"
+        );
+    }
+
     fn targeted_static_seam(id: &str, grip_class: &str) -> StaticSeamRecord {
         StaticSeamRecord {
             seam_id: id.to_string(),
@@ -2365,6 +2678,7 @@ mod tests {
             oracle_kind: "exact_value".to_string(),
             oracle_strength: "unknown".to_string(),
             observed_values: Vec::new(),
+            observed_values_complete: true,
             missing_discriminators: Vec::new(),
             evidence_source: "legacy_fields".to_string(),
             evidence_path: BTreeMap::new(),

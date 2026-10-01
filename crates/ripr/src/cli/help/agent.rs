@@ -22,6 +22,10 @@ Ordinary repair path:
   # edit one focused test outside RIPR
   ripr agent repair --attempt ID --phase after
 
+Seam IDs come from `ripr pilot --root .` (or `ripr agent status`), which
+prints the exact `--phase before` command. The `probe:...` finding IDs that
+`ripr check` prints are not seam IDs.
+
 Run `ripr agent repair --help` for the primary repair workflow. Run
 `ripr agent status --help` to inspect an interrupted or incomplete local loop.
 The lower-level `start`, `brief`, `packet`, `verify`, `verify-execute`,
@@ -141,18 +145,22 @@ owned child is terminated.
 
 Every parsed attempt, including refusals, emits typed JSON on stdout; usage
 errors stay on stderr. Exit status is 0 when a bounded observation was committed
--- including an observed command failure -- and nonzero when none was. It
+-- including an observed command failure -- 3 for a typed refusal, and 2 when
+the result could not be written. It
 records process evidence only; it does not issue receipts, run mutation testing,
 prove adequacy, or grant gate or merge authority.
 "#;
 pub(super) const AGENT_RECEIPT_HELP: &str = r#"Write a provenance receipt with bounded next-action guidance for one change.
 
-Usage: ripr agent receipt [--root PATH] --verify-json PATH --seam-id ID --json [--test NAME] [--command CMD] [--out PATH]
+Usage: ripr agent receipt [--root PATH] --verify-json PATH --seam-id ID [--attempt ID] --json [--test NAME] [--command CMD] [--out PATH]
 
 Options:
   --root PATH         Workspace root. Defaults to current directory.
   --verify-json PATH  JSON emitted by `ripr agent verify`.
   --seam-id ID        Select one seam from the verify JSON.
+  --attempt ID        Bind the receipt to one repair attempt by id. Without
+                      it the seam must have exactly one repair attempt; the
+                      refusal names the ids found.
   --json              Required until a human receipt surface exists.
   --test NAME         Optional focused test added or changed by the agent.
   --command CMD       Optional verification command that was run. Repeatable.
@@ -161,17 +169,22 @@ Options:
 The receipt command narrows a saved agent verify artifact to one seam and adds
 handoff metadata for review. The verify JSON path and the before/after snapshot
 paths named inside it must resolve under `--root`; receipt provenance hashes
-those three artifacts without rerunning analysis. It remains advisory and
+those three artifacts without rerunning analysis. With `--attempt`, the receipt
+binds against that attempt's retained packet instead of the repository-global
+compatibility packet a later attempt replaces. It remains advisory and
 static; it does not run analysis, mutation testing, generate tests, edit files,
 change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact state and the next command to run.
 
-Usage: ripr agent status [--root PATH] [--json]
+Usage: ripr agent status [--root PATH] [--json] [--out PATH]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
   --json           Emit the machine-readable status report. Human Markdown is the default.
+  --out PATH       Must resolve to the default workflow directory
+                   (target/ripr/workflow); any other path fails closed
+                   because agent status reads only that directory.
 
 The status command reads existing agent-loop artifacts under target/ripr only
 and reports which before snapshot, after snapshot, brief, packet, verify, and
@@ -196,15 +209,21 @@ tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair transaction and its verification phase for one named gap.
 
-Usage: ripr agent repair [--root PATH] --seam-id ID --phase before
-       ripr agent repair [--root PATH] (--attempt ID|--seam-id ID) --phase after
-       ripr agent repair [--root PATH] --attempt ID --phase verify
+Usage: ripr agent repair [--root PATH] --seam-id ID --phase before [--json]
+       ripr agent repair [--root PATH] (--attempt ID|--seam-id ID) --phase after [--json]
+       ripr agent repair [--root PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
 Options:
   --root PATH          Workspace root. Defaults to current directory.
+  --json               Print the phase's JSON document on stdout (the repair
+                       packet, the after-phase result, or the verification
+                       receipt). Without it stdout is a short summary and the
+                       documents stay in their files under target/ripr/.
   --seam-id ID         Select one visible seam by ID; required for `before` and
-                       the compatibility selector for `after`.
+                       the compatibility selector for `after`. `ripr pilot
+                       --root .` lists seam IDs; `ripr check` finding IDs
+                       (`probe:...`) are not seam IDs.
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
@@ -240,9 +259,13 @@ compatibility route and fails closed when multiple awaiting attempts share a
 seam.
 
 The before phase writes the pre-edit repo-exposure snapshot and repair packet.
-The after phase writes the post-edit snapshot, persists static verification
-JSON, and emits a receipt. RIPR owns the evidence plumbing; the human or
-external agent owns the test edit.
+Without `--json`, stdout is a short summary ending with the exact next
+command. With `--json`, it prints one JSON document: the packet envelope with
+an additive `repair_attempt` block (attempt id, manifest path, packet path,
+and the exact `--phase after` command), so a driver that captures only stdout
+can complete the loop. The after phase writes the post-edit snapshot, persists
+static verification JSON, and emits a receipt. RIPR owns the evidence
+plumbing; the human or external agent owns the test edit.
 
 With the Python repair-trust flags, the before phase verifies the selection
 row by digest (manifest digest, row selection digest, current HEAD, exact

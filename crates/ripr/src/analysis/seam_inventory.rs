@@ -17,6 +17,7 @@
 //! Both contracts are pinned by tests in this file.
 
 use super::classify::exact_error_variant;
+use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
 use super::rust_index::{
     self, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,
     PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE, PROBE_SHAPE_RETURN_VALUE,
@@ -27,9 +28,9 @@ use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 #[cfg(test)]
 use super::seam_cache::RepoSeamCountCache;
 use super::seam_cache::{
-    CacheLoad, CachedSeamLimitInfo, FileFactCacheStats, RepoCorpusFingerprintCache,
-    RepoSeamCacheKey, RepoSeamFactCache, WorkspaceKeyContext, WorkspaceState,
-    classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
+    CacheLoad, CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats,
+    RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache, WorkspaceKeyContext,
+    WorkspaceState, classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
     corpus_fingerprint,
 };
 #[cfg(test)]
@@ -71,7 +72,7 @@ pub(crate) fn inventory_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<Vec<RepoSeam>, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     // Producer-owned source role (#3283).
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
@@ -157,19 +158,36 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
 /// failures never fail the analysis.
 #[cfg(test)]
 pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<ClassifiedSeam>, String> {
-    inventory_classified_seams_at_with_config(root, &RiprConfig::default())
-        .map(|(classified, _)| classified)
+    inventory_classified_seams_report_at_with_config(root, &RiprConfig::default())
+        .map(|report| report.classified)
+}
+
+/// Classified inventory plus the generated-Rust files this run skipped so
+/// repo-exposure can disclose them without a second corpus walk.
+#[derive(Clone, Debug)]
+pub(crate) struct ClassifiedSeamsReport {
+    pub(crate) classified: Vec<ClassifiedSeam>,
+    pub(crate) limit_info: Option<SeamLimitInfo>,
+    pub(crate) skipped_generated: Vec<PathBuf>,
 }
 
 pub(crate) fn inventory_classified_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Option<SeamLimitInfo>), String> {
+    let report = inventory_classified_seams_report_at_with_config(root, config)?;
+    Ok((report.classified, report.limit_info))
+}
+
+pub(crate) fn inventory_classified_seams_report_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<ClassifiedSeamsReport, String> {
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
     let store_limit = classified_seam_cache_store_limit()?;
     let collect_started = Instant::now();
-    let (rust_files, fingerprint) = match scan_corpus_fingerprint(root) {
+    let corpus = match scan_corpus_fingerprint(root, config) {
         Ok(scan) => scan,
         Err(err) => {
             trace_latency_phase(
@@ -181,6 +199,9 @@ pub(crate) fn inventory_classified_seams_at_with_config(
             return Err(err);
         }
     };
+    let rust_files = corpus.analyzable;
+    let fingerprint = corpus.fingerprint;
+    let skipped_generated = corpus.skipped_generated;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
@@ -201,14 +222,19 @@ pub(crate) fn inventory_classified_seams_at_with_config(
                 trace_latency_phase("cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "cache_hit", total_started.elapsed());
                 if let Some(disclosure) =
-                    rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
+                    rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
                 {
                     eprintln!("{disclosure}");
                 }
                 // Preserve the run_status from the original run: a capped run
                 // stored its SeamLimitInfo in the envelope; a complete run
-                // stored None.
-                return Ok((cached, cached_limit_info.map(SeamLimitInfo::from)));
+                // stored None. Skipped generated paths come from this walk so
+                // a warm hit still discloses files added after the cache write.
+                return Ok(ClassifiedSeamsReport {
+                    classified: cached,
+                    limit_info: cached_limit_info.map(SeamLimitInfo::from),
+                    skipped_generated,
+                });
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
@@ -253,13 +279,17 @@ pub(crate) fn inventory_classified_seams_at_with_config(
             trace_latency_phase("cache_load", "hit", cache_started.elapsed());
             trace_latency_phase("total", "cache_hit", total_started.elapsed());
             if let Some(disclosure) =
-                rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
+                rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
             {
                 eprintln!("{disclosure}");
             }
             // Preserve the run_status from the original run: a capped run stored
             // its SeamLimitInfo in the envelope; a complete run stored None.
-            return Ok((cached, cached_limit_info.map(SeamLimitInfo::from)));
+            return Ok(ClassifiedSeamsReport {
+                classified: cached,
+                limit_info: cached_limit_info.map(SeamLimitInfo::from),
+                skipped_generated,
+            });
         }
         CacheLoad::Miss => {
             trace_latency_phase("cache_load", "miss", cache_started.elapsed());
@@ -314,7 +344,11 @@ pub(crate) fn inventory_classified_seams_at_with_config(
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
     trace_latency_phase("total", "computed", total_started.elapsed());
-    Ok((classified, limit_info))
+    Ok(ClassifiedSeamsReport {
+        classified,
+        limit_info,
+        skipped_generated,
+    })
 }
 
 /// Return the workspace cache identity used by the full classified inventory.
@@ -326,16 +360,18 @@ pub(crate) fn workspace_cache_key_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<super::seam_cache::RepoSeamCacheKey, String> {
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
+    let corpus = scan_corpus_fingerprint(root, config)?;
     let inputs = workspace_key_inputs(root, config);
     // Fingerprint fast path (issue #2108): a stored mapping yields the
     // byte-identical key without reading any file contents.
-    if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
+    if let Some(key) =
+        fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
+    {
         return Ok(key);
     }
-    let state = collect_workspace_state_from_files(root, config, rust_files)?;
+    let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
-    store_corpus_fingerprint_mapping(&state, fingerprint, &key);
+    store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }
 
@@ -343,6 +379,59 @@ fn trace_latency_phase(phase: &str, status: &str, duration: Duration) {
     if std::env::var_os(LATENCY_TRACE_ENV).is_some() {
         eprintln!("{}", latency_trace_line(phase, status, duration));
     }
+}
+
+/// A bounded, typed diagnostic channel for the latency runner. The ordinary
+/// human phase label cannot represent failure identities or overflow.
+fn trace_file_fact_cache(stats: &FileFactCacheStats) {
+    if std::env::var_os(LATENCY_TRACE_ENV).is_none() {
+        return;
+    }
+    eprintln!(
+        "ripr_file_fact_cache_receipt {}",
+        file_fact_cache_receipt(stats)
+    );
+}
+
+fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+    let rows: Vec<_> = stats
+        .store_failures
+        .iter()
+        .map(|failure| {
+            serde_json::json!({
+                "path": portable_store_failure_path(&failure.path),
+                "stage": failure.stage,
+                "error": failure.error,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "schema_version": "0.1",
+        "hits": stats.hits,
+        "misses": stats.misses,
+        "invalidated": stats.invalidated_files.len(),
+        "corrupt_ignored": stats.corrupt_ignored,
+        "stores": stats.stores,
+        "store_errors": stats.store_errors,
+        "store_failures": rows,
+        "store_failures_dropped": stats.store_failures_dropped,
+    })
+}
+
+/// Join path components with `/`. Components come from the native parser, so
+/// a Windows `\\` separator splits while a literal `\\` in a Unix file name
+/// does not. A name that is not UTF-8 or that holds a `\\` has no portable
+/// spelling: it is `null` rather than a lossy rewrite that names another file.
+fn portable_store_failure_path(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        let part = component.as_os_str().to_str()?;
+        if part.contains('\\') {
+            return None;
+        }
+        parts.push(part);
+    }
+    Some(parts.join("/"))
 }
 
 fn cache_store_status_label(reason: &str) -> String {
@@ -377,10 +466,10 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     config: &RiprConfig,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let discover_started = Instant::now();
-    let rust_files = match workspace::discover_rust_files(root) {
-        Ok(files) => {
+    let rust_files = match discover_analyzable_rust_corpus(root, config) {
+        Ok(corpus) => {
             trace_latency_phase("discover_rust_files", "ok", discover_started.elapsed());
-            files
+            corpus.analyzable
         }
         Err(err) => {
             trace_latency_phase("discover_rust_files", "error", discover_started.elapsed());
@@ -466,7 +555,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
     let total_started = Instant::now();
     let store_limit = compact_classified_seam_cache_store_limit()?;
     let cache = RepoSeamFactCache::at_compact_classified(root);
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
+    let corpus = scan_corpus_fingerprint(root, config)?;
+    let rust_files = corpus.analyzable;
+    let fingerprint = corpus.fingerprint;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): rebuild the byte-identical cache
@@ -478,7 +569,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
                 trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
                 if let Some(disclosure) =
-                    rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
+                    rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
                 {
                     eprintln!("{disclosure}");
                 }
@@ -507,7 +598,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
             trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
             trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
             if let Some(disclosure) =
-                rust_index::lexical_fallback_disclosure_for_files(&lexical_fallback_files)
+                rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
             {
                 eprintln!("{disclosure}");
             }
@@ -564,7 +655,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     // Producer-owned source role (#3283).
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
@@ -664,6 +755,7 @@ fn inventory_classified_seams_from_state_with_config(
         &cached.file_fact_cache.status_label(),
         build_started.elapsed(),
     );
+    trace_file_fact_cache(&cached.file_fact_cache);
     let policy_started = Instant::now();
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
@@ -699,6 +791,24 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     pub(crate) scoped_production_files: Vec<PathBuf>,
     pub(crate) changed_production_files: Vec<PathBuf>,
     pub(crate) immediate_caller_files: Vec<PathBuf>,
+    /// Scoped seams left without evidence because the first
+    /// [`DiffScopeEvidenceStages`] stage was sufficient; zero when
+    /// every scoped seam was classified.
+    pub(crate) unevaluated_seams: usize,
+}
+
+/// Two-stage evidence for the diff-scoped inventory.
+///
+/// Test-grip evidence costs tens of milliseconds per seam, and a diff
+/// touching a large file plus its callers can scope thousands of seams
+/// (#4292). A consumer whose result depends only on a known subset
+/// names that subset as `first`; when `sufficient` accepts the
+/// classified subset, the remaining seams are never evaluated. When it
+/// declines, every scoped seam is classified exactly as without stages.
+/// The analysis layer stays ignorant of why a subset is enough.
+pub(crate) struct DiffScopeEvidenceStages<'a> {
+    pub(crate) first: &'a dyn Fn(&RepoSeam) -> bool,
+    pub(crate) sufficient: &'a dyn Fn(&[ClassifiedSeam]) -> bool,
 }
 
 /// Cache-backed inventory for one edited test file.
@@ -717,12 +827,55 @@ pub(crate) struct TargetedTestClassifiedSeamInventory {
     pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
 }
 
+/// Why a `--changed-test` selector could not name the seams to recompute.
+/// The selector failures are named limitations for the rerun report
+/// (RIPR-SPEC-0123); `Analysis` is a workspace failure the caller reports as
+/// an error.
+#[derive(Debug)]
+pub(crate) enum TargetedTestInventoryError {
+    Selector {
+        kind: &'static str,
+        message: String,
+        selected_test_count: usize,
+        /// The index was already built when the selector failed, so the
+        /// report still discloses the cache work that ran.
+        cache: Box<TargetedSelectorCacheEvidence>,
+    },
+    Analysis(String),
+}
+
+/// File-fact cache work completed before a changed-test selector failed.
+#[derive(Clone, Debug)]
+pub(crate) struct TargetedSelectorCacheEvidence {
+    pub(crate) file_fact_cache: FileFactCacheStats,
+    pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
+}
+
+impl From<String> for TargetedTestInventoryError {
+    fn from(message: String) -> Self {
+        Self::Analysis(message)
+    }
+}
+
+impl From<TargetedTestInventoryError> for String {
+    fn from(error: TargetedTestInventoryError) -> Self {
+        match error {
+            TargetedTestInventoryError::Selector { message, .. }
+            | TargetedTestInventoryError::Analysis(message) => message,
+        }
+    }
+}
+
+pub(crate) const CHANGED_TEST_UNRESOLVED: &str = "changed_test_unresolved";
+pub(crate) const CHANGED_TEST_OWNER_UNRESOLVED: &str = "changed_test_owner_unresolved";
+pub(crate) const CHANGED_TEST_OWNER_AMBIGUOUS: &str = "changed_test_owner_ambiguous";
+
 pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     root: &Path,
     config: &RiprConfig,
     changed_test: &Path,
     test_node: Option<&str>,
-) -> Result<TargetedTestClassifiedSeamInventory, String> {
+) -> Result<TargetedTestClassifiedSeamInventory, TargetedTestInventoryError> {
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
     let changed_test = normalized_inventory_path(changed_test);
@@ -732,6 +885,16 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         harness_registrations(config),
     )?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
+    let selector_limitation =
+        |kind, message, selected_test_count| TargetedTestInventoryError::Selector {
+            kind,
+            message,
+            selected_test_count,
+            cache: Box::new(TargetedSelectorCacheEvidence {
+                file_fact_cache: cached.file_fact_cache.clone(),
+                workspace_cache_key: workspace_cache_key.clone(),
+            }),
+        };
 
     let selected_tests = cached
         .index
@@ -741,10 +904,14 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .filter(|test| test_node.is_none_or(|node| test.name == node))
         .collect::<Vec<_>>();
     if selected_tests.is_empty() {
-        return Err(format!(
-            "targeted rerun changed test `{}`{} did not resolve to a parsed test",
-            changed_test,
-            test_node.map_or(String::new(), |node| format!("::{node}"))
+        return Err(selector_limitation(
+            CHANGED_TEST_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{}{}` did not resolve to a parsed test",
+                changed_test,
+                test_node.map_or(String::new(), |node| format!("::{node}"))
+            ),
+            0,
         ));
     }
 
@@ -760,8 +927,12 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
     if direct_call_names.is_empty() {
-        return Err(format!(
-            "targeted rerun changed test `{changed_test}` has no direct owner-call selector"
+        return Err(selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{changed_test}` has no direct owner-call selector"
+            ),
+            selected_tests.len(),
         ));
     }
 
@@ -778,8 +949,12 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .map(|function| function.name.clone())
         .collect::<BTreeSet<_>>();
     if matched_call_names.is_empty() {
-        return Err(format!(
-            "targeted rerun changed test `{changed_test}` did not resolve a direct production owner"
+        return Err(selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{changed_test}` did not resolve a direct production owner"
+            ),
+            selected_tests.len(),
         ));
     }
     for call_name in &matched_call_names {
@@ -788,8 +963,12 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
             .filter(|function| function.name == *call_name)
             .count();
         if matching_owners > 1 {
-            return Err(format!(
-                "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{call_name}`"
+            return Err(selector_limitation(
+                CHANGED_TEST_OWNER_AMBIGUOUS,
+                format!(
+                    "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{call_name}`"
+                ),
+                selected_tests.len(),
             ));
         }
     }
@@ -818,13 +997,352 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     })
 }
 
+/// Kill-switch for the warm no-impact fast path (issue #3859, removal
+/// control 12): `RIPR_NO_IMPACT_FAST_PATH=0` restores the
+/// read-everything scoped path unconditionally. Any other value (or
+/// unset) leaves the fast path eligible.
+const NO_IMPACT_FAST_PATH_ENV: &str = "RIPR_NO_IMPACT_FAST_PATH";
+
+/// Typed reason the warm no-impact fast path declined a diff (issue
+/// #3859). Every reason runs the full conservative scoped path; the
+/// reason is traced, never silent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NoImpactFallbackReason {
+    ChangedRustSource,
+    ChangedTestOrHarness,
+    ChangedManifestOrConfig,
+    ChangedSourceRoleAuthority,
+    UnsupportedOrUnprovenChangeIdentity,
+    MissingFingerprintMapping,
+    IncompatibleWorkspaceIdentity,
+    CorruptMetadata,
+    CorpusChangedDuringResolution,
+}
+
+impl NoImpactFallbackReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ChangedRustSource => "changed_rust_source",
+            Self::ChangedTestOrHarness => "changed_test_or_harness",
+            Self::ChangedManifestOrConfig => "changed_manifest_or_config",
+            Self::ChangedSourceRoleAuthority => "changed_source_role_authority",
+            Self::UnsupportedOrUnprovenChangeIdentity => "unsupported_or_unproven_change_identity",
+            Self::MissingFingerprintMapping => "missing_fingerprint_mapping",
+            Self::IncompatibleWorkspaceIdentity => "incompatible_workspace_identity",
+            Self::CorruptMetadata => "corrupt_metadata",
+            Self::CorpusChangedDuringResolution => "corpus_changed_during_resolution",
+        }
+    }
+}
+
+/// Outcome of the warm no-impact probe (issue #3859). The
+/// inventory is boxed: it outweighs the reason by two orders of
+/// magnitude and the enum crosses the call boundary by value.
+enum NoImpactOutcome {
+    Fast(Box<ScopedClassifiedSeamInventory>),
+    Declined(NoImpactFallbackReason),
+}
+
+fn no_impact_fast_path_disabled() -> bool {
+    std::env::var(NO_IMPACT_FAST_PATH_ENV)
+        .ok()
+        .is_some_and(|value| value == "0")
+}
+
+/// Warm no-impact fast path (issue #3859). For a diff established not to
+/// affect Rust seam/evidence semantics, rebuild the exact workspace
+/// cache key from the admitted corpus fingerprint mapping and return
+/// an empty scoped inventory without reading Rust source contents or
+/// building the Rust index. Manifest reads still occur (source-role
+/// context needs declared targets); Rust content reads, file-fact
+/// recomputes, index construction, and semantic work are all zero.
+///
+/// Returns `Declined` with a typed reason for every ineligible input;
+/// the caller traces the reason and runs the full conservative path.
+/// Returns `Err` only when corpus discovery itself fails, matching the
+/// full path's failure exactly.
+fn try_no_impact_fast_path(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+) -> Result<NoImpactOutcome, String> {
+    let fast_started = Instant::now();
+    if changed_owner_names
+        .iter()
+        .any(|name| !name.trim().is_empty())
+    {
+        return Ok(NoImpactOutcome::Declined(
+            NoImpactFallbackReason::ChangedRustSource,
+        ));
+    }
+    // Discovery walks directories and stats files; it reads no file
+    // contents. A discovery failure matches the full path's failure,
+    // so propagate it rather than declining into an identical error.
+    let corpus = scan_corpus_fingerprint(root, config)?;
+    let rust_files = corpus.analyzable;
+    let Some(fingerprint) = corpus.fingerprint else {
+        // No stat field on this platform witnesses every content write
+        // (issue #3848), so no signature is reusable evidence here.
+        return Ok(NoImpactOutcome::Declined(
+            NoImpactFallbackReason::UnsupportedOrUnprovenChangeIdentity,
+        ));
+    };
+    let context = production_role_context(root, config, rust_files.iter().map(PathBuf::as_path));
+    if let Some(reason) =
+        no_impact_changed_path_fallback(changed_files, &rust_files, config, &context)
+    {
+        return Ok(NoImpactOutcome::Declined(reason));
+    }
+    let files_content_hash =
+        match RepoCorpusFingerprintCache::at(root).lookup_detailed(root, &fingerprint) {
+            CorpusFingerprintLookup::Hit(files_content_hash) => files_content_hash,
+            CorpusFingerprintLookup::Missing => {
+                return Ok(NoImpactOutcome::Declined(
+                    NoImpactFallbackReason::MissingFingerprintMapping,
+                ));
+            }
+            CorpusFingerprintLookup::Corrupt(_) => {
+                return Ok(NoImpactOutcome::Declined(
+                    NoImpactFallbackReason::CorruptMetadata,
+                ));
+            }
+            CorpusFingerprintLookup::Incompatible(_) => {
+                return Ok(NoImpactOutcome::Declined(
+                    NoImpactFallbackReason::IncompatibleWorkspaceIdentity,
+                ));
+            }
+        };
+    let workspace_cache_key =
+        workspace_key_inputs(root, config).cache_key(root, files_content_hash);
+    let total_rust_files = rust_files.len();
+    let total_production_files = rust_files
+        .iter()
+        .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
+        .count();
+    // The corpus may have moved between the scan and this point. A
+    // re-stat is cheap (no content reads); any drift declines into the
+    // full path rather than pairing the key with a changed corpus.
+    if corpus_fingerprint(root, &rust_files).as_deref() != Some(fingerprint.as_str()) {
+        return Ok(NoImpactOutcome::Declined(
+            NoImpactFallbackReason::CorpusChangedDuringResolution,
+        ));
+    }
+    trace_latency_phase(
+        "diff_scoped_inventory",
+        "no_impact_fast_path",
+        fast_started.elapsed(),
+    );
+    Ok(NoImpactOutcome::Fast(Box::new(
+        ScopedClassifiedSeamInventory {
+            classified: Vec::new(),
+            file_fact_cache: FileFactCacheStats::zero_work(),
+            workspace_cache_key,
+            total_rust_files,
+            total_production_files,
+            scoped_production_files: Vec::new(),
+            changed_production_files: Vec::new(),
+            immediate_caller_files: Vec::new(),
+            unevaluated_seams: 0,
+        },
+    )))
+}
+
+/// Path-only eligibility for the warm no-impact fast path (issue
+/// #3859). Returns the typed fallback reason for the first changed
+/// path that is a represented analysis input; `None` means no changed
+/// path can affect Rust seam/evidence semantics.
+///
+/// This is deliberately not a `.rs`-only extension shortcut: changed
+/// tests invalidate evidence, and manifest/config/source-role movement
+/// widens conservatively, each with its own reason.
+fn no_impact_changed_path_fallback(
+    changed_files: &[PathBuf],
+    rust_files: &[PathBuf],
+    config: &RiprConfig,
+    context: &workspace::SourceRoleContext,
+) -> Option<NoImpactFallbackReason> {
+    let corpus: BTreeSet<String> = rust_files
+        .iter()
+        .map(|path| normalized_inventory_path(path))
+        .collect();
+    let as_set = |paths: &BTreeSet<PathBuf>| {
+        paths
+            .iter()
+            .map(|path| normalized_inventory_path(path))
+            .collect::<BTreeSet<_>>()
+    };
+    let production_like = as_set(config.analysis().production_like_targets());
+    let declared_tests = as_set(&context.declared_test_targets);
+    let declared_benches = as_set(&context.declared_bench_targets);
+    let harness_targets: BTreeSet<String> = config
+        .analysis()
+        .test_harnesses()
+        .iter()
+        .map(|registration| normalized_inventory_path(registration.target.as_path()))
+        .collect();
+    let suppressions = normalized_inventory_path(config.suppressions().path());
+    for changed in changed_files {
+        let normalized = normalized_inventory_path(changed);
+        if corpus.contains(&normalized) {
+            // Indexed corpus member: any change reaches the index or
+            // its test-grip evidence, whatever the role.
+            return Some(rust_change_reason(workspace::classify_with(
+                Path::new(&normalized),
+                context,
+            )));
+        }
+        if production_like.contains(&normalized) {
+            return Some(NoImpactFallbackReason::ChangedRustSource);
+        }
+        if harness_targets.contains(&normalized) {
+            return Some(NoImpactFallbackReason::ChangedTestOrHarness);
+        }
+        // Declared target membership precedes the extension check: a
+        // deleted declared test target is no longer in the corpus, yet
+        // its role authority moved, which the extension branch alone
+        // would report as an ordinary test change.
+        if declared_tests.contains(&normalized) || declared_benches.contains(&normalized) {
+            return Some(NoImpactFallbackReason::ChangedSourceRoleAuthority);
+        }
+        if is_rust_source_file_name(&normalized) {
+            // Rust source outside the discovered corpus (deleted file,
+            // ignored directory): the full path would still resolve
+            // owners or roles against it, so never shortcut.
+            return Some(rust_change_reason(workspace::classify_with(
+                Path::new(&normalized),
+                context,
+            )));
+        }
+        if is_manifest_or_config_path(&normalized, &suppressions) {
+            return Some(NoImpactFallbackReason::ChangedManifestOrConfig);
+        }
+    }
+    None
+}
+
+/// Fallback reason for a changed Rust source path from its
+/// source role. Only an explicit evidence role earns the test
+/// reason; a fixture role the model will not vouch for fails closed
+/// as source.
+fn rust_change_reason(role: workspace::SourceRole) -> NoImpactFallbackReason {
+    if role.seeds_production_findings() {
+        NoImpactFallbackReason::ChangedRustSource
+    } else {
+        match role {
+            workspace::SourceRole::TestEvidence
+            | workspace::SourceRole::BenchEvidence
+            | workspace::SourceRole::ExampleEvidence => {
+                NoImpactFallbackReason::ChangedTestOrHarness
+            }
+            _ => NoImpactFallbackReason::ChangedRustSource,
+        }
+    }
+}
+
+/// Rust source by file name, case-insensitive: an uppercase `.RS`
+/// must never slip past as a documentation edit.
+fn is_rust_source_file_name(normalized: &str) -> bool {
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .rsplit('.')
+        .next()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+}
+
+/// Cargo manifest/lock/toolchain inputs plus the repository inputs the
+/// workspace cache key derives from: `ripr.toml`, the test-intent
+/// file, and the configured suppressions file.
+fn is_manifest_or_config_path(normalized: &str, suppressions: &str) -> bool {
+    if normalized == suppressions
+        || normalized == crate::config::CONFIG_FILE_NAME
+        || normalized == ".ripr/test_intent.toml"
+    {
+        return true;
+    }
+    if normalized.starts_with(".cargo/") {
+        return true;
+    }
+    matches!(
+        normalized.rsplit('/').next().unwrap_or_default(),
+        "Cargo.toml" | "Cargo.lock" | "rust-toolchain" | "rust-toolchain.toml"
+    )
+}
+
 pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
     changed_owner_names: &[String],
 ) -> Result<ScopedClassifiedSeamInventory, String> {
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        changed_files,
+        changed_owner_names,
+        !no_impact_fast_path_disabled(),
+        None,
+    )
+}
+
+/// [`inventory_diff_scoped_classified_seams_at_with_config`] with staged
+/// evidence; see [`DiffScopeEvidenceStages`].
+pub(crate) fn inventory_diff_scoped_classified_seams_staged_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+    stages: &DiffScopeEvidenceStages<'_>,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        changed_files,
+        changed_owner_names,
+        !no_impact_fast_path_disabled(),
+        Some(stages),
+    )
+}
+
+/// Shared body behind [`inventory_diff_scoped_classified_seams_at_with_config`].
+/// The explicit `fast_path_enabled` flag is the removal control (issue
+/// #3859, control 12): tests drive the disabled route directly instead
+/// of mutating the process environment.
+fn inventory_diff_scoped_classified_seams_inner(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+    fast_path_enabled: bool,
+    stages: Option<&DiffScopeEvidenceStages<'_>>,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    cancellation::checkpoint()?;
+    if fast_path_enabled {
+        match try_no_impact_fast_path(root, config, changed_files, changed_owner_names) {
+            Ok(NoImpactOutcome::Fast(inventory)) => {
+                cancellation::checkpoint()?;
+                return Ok(*inventory);
+            }
+            Ok(NoImpactOutcome::Declined(reason)) => {
+                trace_latency_phase(
+                    "diff_scoped_inventory",
+                    &format!("no_impact_fallback_{}", reason.as_str()),
+                    Duration::ZERO,
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    } else {
+        trace_latency_phase(
+            "diff_scoped_inventory",
+            "no_impact_fast_path_disabled",
+            Duration::ZERO,
+        );
+    }
     let state = collect_workspace_state(root, config)?;
+    cancellation::checkpoint()?;
     let workspace_cache_key = state.cache_key();
     let total_rust_files = state.files.len();
     let production_files = production_files_from_state_with_role(&state, config);
@@ -859,8 +1377,10 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         &cached.file_fact_cache.status_label(),
         build_started.elapsed(),
     );
+    cancellation::checkpoint()?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
 
+    cancellation::checkpoint()?;
     let caller_file_set = immediate_caller_file_set(
         &cached.index,
         &production_file_set,
@@ -886,6 +1406,7 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         .cloned()
         .collect::<Vec<_>>();
 
+    cancellation::checkpoint()?;
     let seams_started = Instant::now();
     let seams = inventory_seams_from_index(&scoped_production_files, &cached.index);
     trace_latency_phase(
@@ -893,20 +1414,10 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         "review_scope_ok",
         seams_started.elapsed(),
     );
-    let evidence_started = Instant::now();
-    trace_latency_phase(
-        "evidence_for_seams",
-        &format!("review_scope_start_seams_{}", seams.len()),
-        Duration::ZERO,
-    );
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
-    trace_latency_phase(
-        "evidence_for_seams",
-        "review_scope_ok",
-        evidence_started.elapsed(),
-    );
-    let classified = seam_classification::classify_seams_owned(seams, evidence);
+    cancellation::checkpoint()?;
+    let (classified, unevaluated_seams) = classify_scoped_seams(seams, &cached.index, stages)?;
 
+    cancellation::checkpoint()?;
     Ok(ScopedClassifiedSeamInventory {
         classified,
         file_fact_cache: cached.file_fact_cache,
@@ -916,7 +1427,85 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         scoped_production_files,
         changed_production_files,
         immediate_caller_files,
+        unevaluated_seams,
     })
+}
+
+/// Classify the scoped seams, first stage only when `stages` accepts it.
+/// Returns the classified seams and how many scoped seams were skipped.
+/// Each stage rejects cancellation before classifying the evidence it
+/// built, as [`classify_complete_scoped_evidence`] does for the full scope.
+fn classify_scoped_seams(
+    seams: Vec<RepoSeam>,
+    index: &RustIndex,
+    stages: Option<&DiffScopeEvidenceStages<'_>>,
+) -> Result<(Vec<ClassifiedSeam>, usize), String> {
+    let evidence_started = Instant::now();
+    let pass = test_grip_evidence::EvidencePass::new(index);
+    let mut evidence = Vec::new();
+    let mut evaluated = vec![false; seams.len()];
+    if let Some(stages) = stages {
+        let first = seams
+            .iter()
+            .enumerate()
+            .filter(|(_, seam)| (stages.first)(seam))
+            .map(|(position, seam)| {
+                evaluated[position] = true;
+                seam.clone()
+            })
+            .collect::<Vec<_>>();
+        trace_latency_phase(
+            "evidence_for_seams",
+            &format!(
+                "review_scope_first_stage_seams_{}_of_{}",
+                first.len(),
+                seams.len()
+            ),
+            Duration::ZERO,
+        );
+        evidence = pass.evidence_for(&first);
+        cancellation::checkpoint()?;
+        let classified_first = seam_classification::classify_seams(&first, &evidence);
+        if (stages.sufficient)(&classified_first) {
+            trace_latency_phase(
+                "evidence_for_seams",
+                "review_scope_first_stage_sufficient",
+                evidence_started.elapsed(),
+            );
+            return Ok((classified_first, seams.len() - first.len()));
+        }
+    }
+    let rest = seams
+        .iter()
+        .zip(&evaluated)
+        .filter(|(_, evaluated)| !**evaluated)
+        .map(|(seam, _)| seam.clone())
+        .collect::<Vec<_>>();
+    trace_latency_phase(
+        "evidence_for_seams",
+        &format!("review_scope_start_seams_{}", rest.len()),
+        Duration::ZERO,
+    );
+    // Evidence is per seam and pairs by id, so first-stage evidence
+    // joins the rest without changing any seam's classification or the
+    // original seam order.
+    evidence.extend(pass.evidence_for(&rest));
+    trace_latency_phase(
+        "evidence_for_seams",
+        "review_scope_ok",
+        evidence_started.elapsed(),
+    );
+    Ok((classify_complete_scoped_evidence(seams, evidence)?, 0))
+}
+
+/// Non-fallible evidence construction can stop with a partial vector. This
+/// admission boundary rejects cancellation before classifying that vector.
+fn classify_complete_scoped_evidence(
+    seams: Vec<RepoSeam>,
+    evidence: Vec<test_grip_evidence::TestGripEvidence>,
+) -> Result<Vec<ClassifiedSeam>, String> {
+    cancellation::checkpoint()?;
+    Ok(seam_classification::classify_seams_owned(seams, evidence))
 }
 
 fn immediate_caller_file_set(
@@ -1129,14 +1718,11 @@ fn production_files_from_state_with_role(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Vec<PathBuf> {
-    // Producer-owned source role (#3283): layout plus declared Cargo
-    // targets plus the repository production-like opt-in.
-    let mut context = workspace::context_for_files(
+    let context = production_role_context(
         &state.workspace_root,
+        config,
         state.files.iter().map(|(path, _)| path.as_path()),
     );
-    context.production_like_targets = config.analysis().production_like_targets().clone();
-    context.harness_targets = harness_targets_from_config(&state.workspace_root, config);
     state
         .files
         .iter()
@@ -1146,21 +1732,43 @@ fn production_files_from_state_with_role(
         .collect()
 }
 
+/// Producer-owned source role (#3283): layout plus declared Cargo
+/// targets plus the repository production-like opt-in. Shared by the
+/// full inventory path and the warm no-impact fast path (issue #3859)
+/// so both derive the identical production set; the fast path feeds it
+/// discovered paths instead of read file contents, which is exact
+/// because role classification never consults file bytes.
+fn production_role_context<'a, I>(
+    workspace_root: &Path,
+    config: &RiprConfig,
+    files: I,
+) -> workspace::SourceRoleContext
+where
+    I: IntoIterator<Item = &'a Path>,
+{
+    let mut context = workspace::context_for_files(workspace_root, files);
+    context.production_like_targets = config.analysis().production_like_targets().clone();
+    context.harness_targets = harness_targets_from_config(workspace_root, config);
+    context
+}
+
 /// Collect the per-file content + intent + suppressions inputs the
 /// cache key derives from. The repo exposure cold path reuses these
 /// bytes when building cached file facts so file discovery and file
 /// reads are not repeated after a classified-seam cache miss.
 ///
-/// Hashes the **same Rust file set fed to `build_index`** — production
-/// seam sources *and* test evidence sources. `ClassifiedSeam` carries
-/// `TestGripEvidence` derived from test files, so a test-only edit must
-/// invalidate the cache; filtering to production-only here would let
-/// stale grip evidence survive a test rewrite.
+/// Hashes the **same analyzable Rust file set fed to `build_index`** —
+/// production seam sources *and* test evidence sources, after the generated
+/// skip `ripr check` uses. `ClassifiedSeam` carries `TestGripEvidence`
+/// derived from test files, so a test-only edit must invalidate the cache;
+/// filtering to production-only here would let stale grip evidence survive a
+/// test rewrite. Generated files are excluded from this hash so an edit there
+/// does not bust the inventory cache.
 fn collect_workspace_state(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<OwnedWorkspaceState, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     collect_workspace_state_from_files(root, config, rust_files)
 }
 
@@ -1188,16 +1796,19 @@ fn collect_workspace_state_from_files(
     })
 }
 
-/// Discover the corpus and compute its stat-only fingerprint in one pass
-/// (issue #2108). The fingerprint is `None` when any file cannot be
-/// stat'd, and on any platform where [`corpus_fingerprint`] refuses to
-/// sign because no field of the stat tuple is a content-change witness
-/// (issue #3848); callers then fall back to the always-correct content
-/// read.
-fn scan_corpus_fingerprint(root: &Path) -> Result<(Vec<PathBuf>, Option<String>), String> {
-    let rust_files = workspace::discover_rust_files(root)?;
-    let fingerprint = corpus_fingerprint(root, &rust_files);
-    Ok((rust_files, fingerprint))
+/// Discover the analyzable corpus and compute its stat-only fingerprint
+/// in one pass (issue #2108, #4788). Generated Rust that `ripr check`
+/// skips is excluded from both the file set and the fingerprint so the
+/// exclusion policy is part of cache identity. The fingerprint is `None`
+/// when any file cannot be stat'd, and on any platform where
+/// [`corpus_fingerprint`] refuses to sign because no field of the stat
+/// tuple is a content-change witness (issue #3848); callers then fall
+/// back to the always-correct content read.
+fn scan_corpus_fingerprint(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<AnalyzableRustCorpus, String> {
+    discover_analyzable_rust_corpus(root, config)
 }
 
 /// Cache-key inputs other than the corpus content hash, in owned form so
@@ -1460,6 +2071,57 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
 
     #[test]
+    fn cache_receipt_retains_producer_order_and_portable_failure_rows() {
+        let mut stats = FileFactCacheStats::zero_work();
+        stats.record_store_failure(
+            PathBuf::from("src/foo..rs"),
+            super::super::seam_cache::FileFactStoreError {
+                stage: super::super::seam_cache::FileFactStoreStage::Write,
+                message: "portable failure".to_string(),
+            },
+        );
+        stats.record_store_failure(
+            PathBuf::from("src\\bar.rs"),
+            super::super::seam_cache::FileFactStoreError {
+                stage: super::super::seam_cache::FileFactStoreStage::Encode,
+                message: "second failure".to_string(),
+            },
+        );
+        let value = file_fact_cache_receipt(&stats);
+        assert_eq!(value["store_errors"], 2);
+        assert_eq!(value["store_failures"][0]["path"], "src/foo..rs");
+        assert_eq!(value["store_failures"][0]["stage"], "write");
+        // A backslash is a separator only on Windows; on Unix it is part of
+        // the file name, and rewriting it would name a different file.
+        let expected_bar = if cfg!(windows) {
+            serde_json::json!("src/bar.rs")
+        } else {
+            serde_json::Value::Null
+        };
+        assert_eq!(value["store_failures"][1]["path"], expected_bar);
+        assert_eq!(value["store_failures"][1]["stage"], "encode");
+        assert_eq!(value["store_failures_dropped"], 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_receipt_names_non_utf8_failure_paths_as_unrepresentable() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let mut stats = FileFactCacheStats::zero_work();
+        stats.record_store_failure(
+            Path::new("src").join(OsStr::from_bytes(b"bad\xff.rs")),
+            super::super::seam_cache::FileFactStoreError {
+                stage: super::super::seam_cache::FileFactStoreStage::Write,
+                message: "lossy failure".to_string(),
+            },
+        );
+        let value = file_fact_cache_receipt(&stats);
+        assert_eq!(value["store_errors"], 1);
+        assert_eq!(value["store_failures"][0]["path"], serde_json::Value::Null);
+    }
+
+    #[test]
     fn only_custom_harness_targets_receive_file_wide_evidence_role() -> Result<(), String> {
         // #3532 review: a registered attribute applies to individual
         // functions, so its target must not enter the file-wide harness
@@ -1537,6 +2199,188 @@ marker = "libtest_mimic::Trial"
                 .extend(index.files[path].functions.iter().cloned());
         }
         Ok(index)
+    }
+
+    /// Seam id, class and the full evidence payload, so a stage that
+    /// changed any rendered evidence (related tests, stages, values)
+    /// shows up, not only a changed class.
+    fn class_by_id(classified: &[ClassifiedSeam]) -> Vec<(String, &'static str, String)> {
+        classified
+            .iter()
+            .map(|entry| {
+                (
+                    entry.seam.id().as_str().to_string(),
+                    entry.class.as_str(),
+                    serde_json::to_string(&entry.evidence).unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn staged_scope_evidence_skips_the_rest_only_when_the_first_stage_is_sufficient()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pricing.rs");
+        let prod_source = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+pub fn taxed_total(amount: i32) -> i32 {
+    if amount > 100 { amount + 5 } else { amount }
+}
+"#;
+        let test_path = PathBuf::from("tests/pricing.rs");
+        let test_source = r#"
+#[test]
+fn discounted_total_applies_at_threshold() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+
+#[test]
+fn taxed_total_runs() {
+    let _ = taxed_total(200);
+}
+"#;
+        let index = index_from_files(&[(prod.clone(), prod_source), (test_path, test_source)])?;
+        let seams = inventory_seams_from_index(&[prod], &index);
+        let (unstaged, unstaged_skipped) = classify_scoped_seams(seams.clone(), &index, None)?;
+        let first = |seam: &RepoSeam| seam.owner().ends_with("discounted_total");
+        let first_ids = unstaged
+            .iter()
+            .filter(|entry| first(&entry.seam))
+            .cloned()
+            .collect::<Vec<_>>();
+        let first_ids = class_by_id(&first_ids);
+        if first_ids.iter().any(|(_, _, evidence)| evidence.is_empty()) {
+            return Err("evidence must serialize".to_string());
+        }
+        if unstaged_skipped != 0 || first_ids.is_empty() || first_ids.len() == unstaged.len() {
+            return Err(format!(
+                "fixture must split into both stages: {} of {} seams first, {unstaged_skipped} skipped",
+                first_ids.len(),
+                unstaged.len()
+            ));
+        }
+
+        let offered = std::cell::Cell::new(0);
+        let accept = |classified: &[ClassifiedSeam]| {
+            offered.set(classified.len());
+            true
+        };
+        let (staged, skipped) = classify_scoped_seams(
+            seams.clone(),
+            &index,
+            Some(&DiffScopeEvidenceStages {
+                first: &first,
+                sufficient: &accept,
+            }),
+        )?;
+        assert_eq!(offered.get(), first_ids.len());
+        assert_eq!(class_by_id(&staged), first_ids);
+        assert_eq!(skipped, unstaged.len() - first_ids.len());
+
+        let decline = |_: &[ClassifiedSeam]| false;
+        let (declined, declined_skipped) = classify_scoped_seams(
+            seams,
+            &index,
+            Some(&DiffScopeEvidenceStages {
+                first: &first,
+                sufficient: &decline,
+            }),
+        )?;
+        assert_eq!(declined_skipped, 0);
+        assert_eq!(class_by_id(&declined), class_by_id(&unstaged));
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_evidence_rejects_deadline_after_the_final_seam() -> Result<(), String> {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, AnalysisClock, with_token};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = index_from_files(&[(
+            path.clone(),
+            r#"
+pub fn eligible(value: i32) -> bool { if value >= 10 { true } else { false } }
+#[cfg(test)] mod tests {
+    #[test] fn equality() { assert_eq!(super::eligible(10), true); }
+}
+"#,
+        )])?;
+        index.tests = index
+            .files
+            .values()
+            .flat_map(|facts| facts.tests.iter().cloned())
+            .collect();
+        let seams = inventory_seams_from_index(&[path], &index);
+        if seams.is_empty() || index.tests.is_empty() {
+            return Err(
+                "late deadline fixture must contain production seams and a test".to_string(),
+            );
+        }
+        let started = Instant::now();
+        let observations = Arc::new(AtomicUsize::new(0));
+        let clock_observations = Arc::clone(&observations);
+        let clock: AnalysisClock = Arc::new(move || {
+            clock_observations.fetch_add(1, Ordering::SeqCst);
+            started
+        });
+        let token = AnalysisCancellationToken::with_budget(started, Duration::from_secs(1), clock);
+        let complete = with_token(&token, || {
+            test_grip_evidence::evidence_for_seams(&seams, &index)
+        });
+        if complete.len() != seams.len() {
+            return Err("unexpired evidence must cover every selected seam".to_string());
+        }
+        let last_evidence_observation = observations.load(Ordering::SeqCst);
+        if last_evidence_observation <= seams.len() {
+            return Err("fixture did not enter evidence context construction".to_string());
+        }
+        let expected = serde_json::to_value(classify_complete_scoped_evidence(
+            seams.clone(),
+            complete.clone(),
+        )?)
+        .map_err(|error| format!("serialize complete baseline: {error}"))?;
+        let clock_calls = Arc::new(AtomicUsize::new(0));
+        let owned_calls = Arc::clone(&clock_calls);
+        let deadline = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                let call = owned_calls.fetch_add(1, Ordering::SeqCst);
+                if call >= last_evidence_observation {
+                    started + Duration::from_secs(1)
+                } else {
+                    started
+                }
+            }),
+        );
+        let result = with_token(&deadline, || {
+            let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
+            if clock_calls.load(Ordering::SeqCst) != last_evidence_observation
+                || serde_json::to_value(&evidence).map_err(|error| error.to_string())?
+                    != serde_json::to_value(&complete).map_err(|error| error.to_string())?
+            {
+                return Err("deadline fixture expired before the final evidence result".to_string());
+            }
+            classify_complete_scoped_evidence(seams.clone(), evidence)
+        });
+        if !result.is_err_and(|error| error.contains("DeadlineExceeded"))
+            || deadline.abort_kind() != Some(cancellation::AnalysisAbortKind::DeadlineExceeded)
+        {
+            return Err("final evidence deadline was classified as complete".to_string());
+        }
+        // Deadline-free consumers retain identical seam identities/evidence.
+        let actual = serde_json::to_value(classify_complete_scoped_evidence(seams, complete)?)
+            .map_err(|error| format!("serialize deadline-free evidence: {error}"))?;
+        if actual != expected {
+            return Err("deadline-free classification changed canonical evidence".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -2074,8 +2918,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
         index.functions.push(owner.clone());
@@ -2123,8 +2969,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             literals: Vec::new(),
             source_role: FunctionSourceRole::TestAttribute,
             attrs: vec!["#[test]".to_string()],
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
         index.functions.push(test_owner.clone());
@@ -2316,16 +3164,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse compact cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode compact cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at_compact_classified(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         let warm =
             inventory_compact_classified_seams_at_with_config(&root, &RiprConfig::default())?;
@@ -2393,6 +3237,68 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     #[test]
+    fn integrity_invalid_classified_payload_recomputes_full_and_compact_consumers()
+    -> Result<(), String> {
+        for compact in [false, true] {
+            let root = make_tempdir("integrity-consumer")?;
+            write_file(
+                &root.join("src/foo.rs"),
+                "pub fn discount(amount: i32) -> bool { amount >= 5 }\n",
+            )?;
+            let read = || {
+                if compact {
+                    inventory_compact_classified_seams_at_with_config(&root, &RiprConfig::default())
+                } else {
+                    inventory_classified_seams_at(&root)
+                }
+            };
+            let cold = read()?;
+            if cold.is_empty() {
+                return Err("consumer fixture must contain classified seams".to_owned());
+            }
+            let entries = if compact {
+                list_compact_cache_entries(&root)?
+            } else {
+                list_cache_entries(&root)?
+            };
+            if entries.len() != 1 {
+                return Err("expected one actual writer entry".to_owned());
+            }
+            let path = entries.first().ok_or("missing seeded entry")?;
+            let original = std::fs::read(path).map_err(|err| err.to_string())?;
+            let mut edited: serde_json::Value =
+                serde_json::from_slice(&original).map_err(|err| err.to_string())?;
+            let seams = edited
+                .get_mut("classified_seams")
+                .and_then(|value| value.as_array_mut())
+                .ok_or("missing seams")?;
+            let summary = seams
+                .first_mut()
+                .and_then(|seam| seam.get_mut("evidence"))
+                .and_then(|evidence| evidence.get_mut("reach"))
+                .and_then(|reach| reach.get_mut("summary"))
+                .ok_or("missing observed summary")?;
+            *summary = serde_json::Value::String("fabricated evidence".to_owned());
+            std::fs::write(
+                path,
+                serde_json::to_vec(&edited).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            let recovered = read()?;
+            let expected = serde_json::to_vec(&cold).map_err(|err| err.to_string())?;
+            if serde_json::to_vec(&recovered).map_err(|err| err.to_string())? != expected {
+                return Err("integrity recovery must preserve every cold evidence field".to_owned());
+            }
+            let warm = read()?;
+            if serde_json::to_vec(&warm).map_err(|err| err.to_string())? != expected {
+                return Err("corrected entry must warm-hit original evidence".to_owned());
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn given_cached_classified_seams_when_inventory_runs_then_cached_seams_are_returned()
     -> Result<(), String> {
         let root = make_tempdir("warm-hit")?;
@@ -2418,16 +3324,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         let warm = inventory_classified_seams_at(&root)?;
         if !warm.is_empty() {
@@ -2485,16 +3387,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Swap the bytes for same-length different content and restore the
         // original mtime, keeping the (path, mtime, size) signature intact.
@@ -2566,16 +3464,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Same-size rewrite with the mtime explicitly restored — what
         // `rsync -a` / `cp --preserve=timestamps` do. On unix the ctime
@@ -2810,6 +3704,697 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     #[test]
+    fn no_impact_fallback_reason_vocabulary_is_stable() {
+        // The traced `no_impact_fallback_<reason>` statuses are
+        // observability contract: pin the exact vocabulary.
+        let reasons = [
+            (
+                NoImpactFallbackReason::ChangedRustSource,
+                "changed_rust_source",
+            ),
+            (
+                NoImpactFallbackReason::ChangedTestOrHarness,
+                "changed_test_or_harness",
+            ),
+            (
+                NoImpactFallbackReason::ChangedManifestOrConfig,
+                "changed_manifest_or_config",
+            ),
+            (
+                NoImpactFallbackReason::ChangedSourceRoleAuthority,
+                "changed_source_role_authority",
+            ),
+            (
+                NoImpactFallbackReason::UnsupportedOrUnprovenChangeIdentity,
+                "unsupported_or_unproven_change_identity",
+            ),
+            (
+                NoImpactFallbackReason::MissingFingerprintMapping,
+                "missing_fingerprint_mapping",
+            ),
+            (
+                NoImpactFallbackReason::IncompatibleWorkspaceIdentity,
+                "incompatible_workspace_identity",
+            ),
+            (NoImpactFallbackReason::CorruptMetadata, "corrupt_metadata"),
+            (
+                NoImpactFallbackReason::CorpusChangedDuringResolution,
+                "corpus_changed_during_resolution",
+            ),
+        ];
+        for (reason, expected) in reasons {
+            assert_eq!(reason.as_str(), expected, "fallback reason {reason:?}");
+        }
+    }
+
+    fn no_impact_layout(root: &Path) -> Result<(), String> {
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'no-impact-fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )?;
+        write_file(&root.join("docs/notes.md"), "# notes\n")?;
+        Ok(())
+    }
+
+    fn no_impact_eligibility(
+        root: &Path,
+        config: &RiprConfig,
+        changed: &[&str],
+    ) -> Result<Option<NoImpactFallbackReason>, String> {
+        let rust_files = scan_corpus_fingerprint(root, config)?.analyzable;
+        let context =
+            production_role_context(root, config, rust_files.iter().map(PathBuf::as_path));
+        let changed_files: Vec<PathBuf> = changed.iter().map(PathBuf::from).collect();
+        Ok(no_impact_changed_path_fallback(
+            &changed_files,
+            &rust_files,
+            config,
+            &context,
+        ))
+    }
+
+    #[test]
+    fn no_impact_docs_only_change_is_eligible() -> Result<(), String> {
+        let root = make_tempdir("no-impact-docs")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let eligible = no_impact_eligibility(
+            &root,
+            &config,
+            &[
+                "docs/notes.md",
+                "README.md",
+                ".github/workflows/ci.yml",
+                "editors/vscode/package.json",
+                "scripts/check.py",
+            ],
+        )?;
+        if eligible.is_some() {
+            return Err(format!(
+                "documentation and non-Rust changes must be no-impact eligible, got {eligible:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_production_source_change_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-prod")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["src/lib.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedRustSource) {
+            return Err(format!(
+                "production source change must fall back as changed_rust_source, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_test_source_change_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-test")?;
+        no_impact_layout(&root)?;
+        write_file(
+            &root.join("tests/contract.rs"),
+            "#[test]\nfn reserves() {}\n",
+        )?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["tests/contract.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedTestOrHarness) {
+            return Err(format!(
+                "test source change must fall back as changed_test_or_harness, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_manifest_and_config_changes_fall_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-manifest")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        for changed in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "ripr.toml",
+            ".ripr/test_intent.toml",
+            ".ripr/suppressions.toml",
+            ".cargo/config.toml",
+        ] {
+            let reason = no_impact_eligibility(&root, &config, &[changed])?;
+            if reason != Some(NoImpactFallbackReason::ChangedManifestOrConfig) {
+                return Err(format!(
+                    "{changed} must fall back as changed_manifest_or_config, got {reason:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_uppercase_rs_never_slips_past_as_docs() -> Result<(), String> {
+        let root = make_tempdir("no-impact-rs-case")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["docs/NOTES.RS"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedRustSource) {
+            return Err(format!(
+                "uppercase .RS must fall back as changed_rust_source, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_deleted_declared_test_target_falls_back_with_authority_reason()
+    -> Result<(), String> {
+        let root = make_tempdir("no-impact-declared")?;
+        // The manifest declares the target but the file is absent
+        // (deleted): no longer in the corpus, yet its role authority
+        // moved.
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'no-impact-fixture'\nversion = '0.1.0'\n\n[workspace]\n\n[[test]]\nname = 'mimic'\npath = 'tests/mimic.rs'\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let reason = no_impact_eligibility(&root, &config, &["tests/mimic.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedSourceRoleAuthority) {
+            return Err(format!(
+                "deleted declared test target must fall back as changed_source_role_authority, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_registered_harness_change_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-harness")?;
+        no_impact_layout(&root)?;
+        // The registered harness target is deleted: absent from the
+        // corpus, but the raw registration still names it a harness.
+        let config = crate::config::tests_only_parse(
+            r#"[analysis]
+[[analysis.test_harnesses]]
+registration_id = "mimic"
+target = "tests/mimic.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic::Trial"
+"#,
+        )
+        .map_err(|error| format!("fixture config parses: {error}"))?;
+        let reason = no_impact_eligibility(&root, &config, &["tests/mimic.rs"])?;
+        if reason != Some(NoImpactFallbackReason::ChangedTestOrHarness) {
+            return Err(format!(
+                "registered harness change must fall back as changed_test_or_harness, got {reason:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_named_owner_falls_back_before_any_filesystem_probe() -> Result<(), String> {
+        // Owners are checked before corpus discovery: even an
+        // absent root must report the owner reason, never a scan
+        // error.
+        let root = PathBuf::from("ripr-no-impact-absent-root");
+        let config = RiprConfig::default();
+        let outcome = try_no_impact_fast_path(&root, &config, &[], &["crate::discount".to_owned()]);
+        match outcome {
+            Ok(NoImpactOutcome::Declined(NoImpactFallbackReason::ChangedRustSource)) => Ok(()),
+            other => Err(format!(
+                "named owner must decline as changed_rust_source, got {}",
+                match other {
+                    Ok(NoImpactOutcome::Fast(_)) => "fast path".to_owned(),
+                    Ok(NoImpactOutcome::Declined(reason)) => reason.as_str().to_owned(),
+                    Err(error) => format!("error {error}"),
+                }
+            )),
+        }
+    }
+
+    #[test]
+    fn no_impact_missing_tree_reports_discovery_error() -> Result<(), String> {
+        let root = PathBuf::from("ripr-no-impact-absent-root");
+        let config = RiprConfig::default();
+        match try_no_impact_fast_path(&root, &config, &[], &[]) {
+            Err(_) => Ok(()),
+            Ok(_) => Err("absent root must propagate the discovery error".to_owned()),
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn no_impact_fast_path_without_change_witness_falls_back() -> Result<(), String> {
+        // Issue #3848: no stat field on this platform witnesses every
+        // content write, so the fast path can never engage here.
+        let root = make_tempdir("no-impact-no-witness")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let outcome =
+            try_no_impact_fast_path(&root, &config, &[PathBuf::from("docs/notes.md")], &[]);
+        match outcome {
+            Ok(NoImpactOutcome::Declined(
+                NoImpactFallbackReason::UnsupportedOrUnprovenChangeIdentity,
+            )) => Ok(()),
+            other => Err(format!(
+                "platform without a change witness must decline as unsupported_or_unproven_change_identity, got {}",
+                match other {
+                    Ok(NoImpactOutcome::Fast(_)) => "fast path".to_owned(),
+                    Ok(NoImpactOutcome::Declined(reason)) => reason.as_str().to_owned(),
+                    Err(error) => format!("error {error}"),
+                }
+            )),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_warm_docs_diff_returns_empty_inventory_with_exact_identity() -> Result<(), String>
+    {
+        let root = make_tempdir("no-impact-warm")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        // A full-inventory key run populates the fingerprint mapping
+        // for the next call (the scoped route itself never stores;
+        // the fast path stays purely opportunistic).
+        workspace_cache_key_at_with_config(&root, &config)?;
+        let full = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+        )?;
+        if !full.classified.is_empty() {
+            return Err("docs-only diff must classify no seams on the full path".to_owned());
+        }
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[])?;
+        let fast = match outcome {
+            NoImpactOutcome::Fast(inventory) => inventory,
+            NoImpactOutcome::Declined(reason) => {
+                return Err(format!(
+                    "warm docs-only diff must take the fast path, got fallback {}",
+                    reason.as_str()
+                ));
+            }
+        };
+        if !fast.classified.is_empty()
+            || !fast.scoped_production_files.is_empty()
+            || !fast.changed_production_files.is_empty()
+            || !fast.immediate_caller_files.is_empty()
+        {
+            return Err("fast path must return empty seam and file sets".to_owned());
+        }
+        if fast.workspace_cache_key != full.workspace_cache_key {
+            return Err(
+                "fast path workspace key must be byte-identical to the full path".to_owned(),
+            );
+        }
+        if fast.total_rust_files != full.total_rust_files
+            || fast.total_production_files != full.total_production_files
+        {
+            return Err(format!(
+                "fast path totals ({}/{}) must match the full path ({}/{})",
+                fast.total_rust_files,
+                fast.total_production_files,
+                full.total_rust_files,
+                full.total_production_files
+            ));
+        }
+        if fast.file_fact_cache.hits != 0
+            || fast.file_fact_cache.misses != 0
+            || fast.file_fact_cache.corrupt_ignored != 0
+            || fast.file_fact_cache.stores != 0
+            || fast.file_fact_cache.store_errors != 0
+            || !fast.file_fact_cache.invalidated_files.is_empty()
+            || !fast.file_fact_cache.store_failures.is_empty()
+            || fast.file_fact_cache.store_failures_dropped != 0
+        {
+            return Err("fast path must report explicit zero work counters".to_owned());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_permission_only_change_declines_missing_mapping() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = make_tempdir("no-impact-unreadable")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        // Populate the mapping while the corpus is readable (via the
+        // full-inventory key route, the mapping's writer).
+        workspace_cache_key_at_with_config(&root, &config)?;
+        // Revoke all content access to the Rust sources. Manifest and
+        // directory reads stay permitted; only file bytes are denied.
+        // chmod bumps ctime, so the stat witness no longer matches the
+        // stored mapping even though the bytes are identical: the fast
+        // path must decline rather than pair the key with a corpus no
+        // stored fingerprint witnesses (issue #3848).
+        let source = root.join("src/lib.rs");
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000))
+            .map_err(|err| format!("revoke source permissions: {err}"))?;
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[]);
+        // Restore before asserting so the temp dir cleans up.
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644))
+            .map_err(|err| format!("restore source permissions: {err}"))?;
+        match outcome {
+            Ok(NoImpactOutcome::Declined(NoImpactFallbackReason::MissingFingerprintMapping)) => {
+                Ok(())
+            }
+            Ok(NoImpactOutcome::Declined(reason)) => Err(format!(
+                "permission-only change must decline as missing_fingerprint_mapping, got {}",
+                reason.as_str()
+            )),
+            Ok(NoImpactOutcome::Fast(_)) => {
+                Err("permission-only change must not take the fast path: ctime moved".to_owned())
+            }
+            Err(error) => Err(format!(
+                "permission-only change must decline, not error: {error}"
+            )),
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_cold_cache_falls_back_with_mapping_reason() -> Result<(), String> {
+        let root = make_tempdir("no-impact-cold")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let outcome =
+            try_no_impact_fast_path(&root, &config, &[PathBuf::from("docs/notes.md")], &[])?;
+        match outcome {
+            NoImpactOutcome::Declined(NoImpactFallbackReason::MissingFingerprintMapping) => Ok(()),
+            NoImpactOutcome::Declined(reason) => Err(format!(
+                "cold cache must decline as missing_fingerprint_mapping, got {}",
+                reason.as_str()
+            )),
+            NoImpactOutcome::Fast(_) => Err("cold cache must not take the fast path".to_owned()),
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn no_impact_fingerprint_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
+        let dir = root
+            .join("target")
+            .join("ripr")
+            .join("cache")
+            .join("repo-corpus-fingerprint")
+            .join(crate::analysis::seam_cache::CORPUS_FINGERPRINT_CACHE_SCHEMA_VERSION);
+        list_entries(&dir)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_corrupt_mapping_falls_back() -> Result<(), String> {
+        let root = make_tempdir("no-impact-corrupt")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        // Warm the mapping through its writer (the full-inventory key
+        // route); the scoped route never stores.
+        workspace_cache_key_at_with_config(&root, &config)?;
+        let entries = no_impact_fingerprint_entries(&root)?;
+        if entries.len() != 1 {
+            return Err(format!(
+                "expected exactly 1 fingerprint mapping, got {}",
+                entries.len()
+            ));
+        }
+        std::fs::write(&entries[0], b"{not valid json")
+            .map_err(|err| format!("corrupt mapping: {err}"))?;
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[])?;
+        match outcome {
+            NoImpactOutcome::Declined(NoImpactFallbackReason::CorruptMetadata) => Ok(()),
+            NoImpactOutcome::Declined(reason) => Err(format!(
+                "corrupt mapping must decline as corrupt_metadata, got {}",
+                reason.as_str()
+            )),
+            NoImpactOutcome::Fast(_) => {
+                Err("corrupt mapping must not take the fast path".to_owned())
+            }
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth() -> Result<(), String>
+    {
+        let root = std::env::temp_dir().join(format!("ripr-inv-integrity-{}", unique_suffix()));
+        std::fs::create_dir(&root).map_err(|err| err.to_string())?;
+        struct OwnedRoot(PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _owned = OwnedRoot(root.clone());
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        let cold = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+        )?;
+        if cold.total_rust_files == 0 || cold.total_production_files == 0 {
+            return Err(
+                "fingerprint consumer fixture must contain production Rust source".to_owned(),
+            );
+        }
+        // Scoped cold inventory does not write fingerprint mappings; seed its actual producer.
+        let produced_key = workspace_cache_key_at_with_config(&root, &config)?;
+        if produced_key != cold.workspace_cache_key {
+            return Err("actual fingerprint producer must match cold source identity".to_owned());
+        }
+        if !matches!(
+            try_no_impact_fast_path(&root, &config, &changed, &[])?,
+            NoImpactOutcome::Fast(_)
+        ) {
+            return Err(
+                "actual-writer mapping must yield a warm canonical hit before tamper".to_owned(),
+            );
+        }
+        let entries = no_impact_fingerprint_entries(&root)?;
+        if entries.len() != 1 {
+            return Err("expected one actual-writer fingerprint entry".to_owned());
+        }
+        let entry = entries.first().ok_or("missing mapping")?;
+        let mut edited: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(entry).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        let original = edited.clone();
+        *edited
+            .get_mut("files_content_hash")
+            .ok_or("missing aggregate hash")? =
+            serde_json::Value::String("fabricated-content-hash".to_owned());
+        for (key, value) in original.as_object().ok_or("mapping must be object")? {
+            if key != "files_content_hash" && edited.get(key) != Some(value) {
+                return Err("must preserve mapping identity/digest".to_owned());
+            }
+        }
+        std::fs::write(
+            entry,
+            serde_json::to_vec(&edited).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        if !matches!(
+            try_no_impact_fast_path(&root, &config, &changed, &[])?,
+            NoImpactOutcome::Declined(NoImpactFallbackReason::CorruptMetadata)
+        ) {
+            return Err(
+                "valid-JSON mapping corruption must decline canonical fast path".to_owned(),
+            );
+        }
+        let recovered = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            true,
+            None,
+        )?;
+        if recovered.workspace_cache_key != cold.workspace_cache_key
+            || recovered.total_rust_files != cold.total_rust_files
+            || recovered.total_production_files != cold.total_production_files
+            || serde_json::to_vec(&recovered.classified).map_err(|err| err.to_string())?
+                != serde_json::to_vec(&cold.classified).map_err(|err| err.to_string())?
+        {
+            return Err(
+                "fallback must rehash actual source and preserve complete cold evidence".to_owned(),
+            );
+        }
+        let repaired_key = workspace_cache_key_at_with_config(&root, &config)?;
+        if repaired_key != cold.workspace_cache_key
+            || !matches!(
+                try_no_impact_fast_path(&root, &config, &changed, &[])?,
+                NoImpactOutcome::Fast(_)
+            )
+        {
+            return Err(
+                "actual producer must repair the mapping for a subsequent warm hit".to_owned(),
+            );
+        }
+        eprintln!(
+            "fingerprint consumer stimulus: rust_files={} production_files={} mappings={}",
+            cold.total_rust_files,
+            cold.total_production_files,
+            entries.len()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_foreign_root_mapping_falls_back_incompatible() -> Result<(), String> {
+        let root = make_tempdir("no-impact-foreign")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        // Warm the mapping through its writer (the full-inventory key
+        // route); the scoped route never stores.
+        workspace_cache_key_at_with_config(&root, &config)?;
+        let entries = no_impact_fingerprint_entries(&root)?;
+        if entries.len() != 1 {
+            return Err(format!(
+                "expected exactly 1 fingerprint mapping, got {}",
+                entries.len()
+            ));
+        }
+        // Retarget the entry at another workspace root: the entry
+        // decodes but its root identity no longer matches.
+        let bytes = std::fs::read(&entries[0]).map_err(|err| format!("read mapping: {err}"))?;
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|err| format!("parse mapping: {err}"))?;
+        envelope["workspace_root_hash"] = serde_json::Value::String("foreign-root".to_owned());
+        let rewritten =
+            serde_json::to_vec(&envelope).map_err(|err| format!("encode mapping: {err}"))?;
+        std::fs::write(&entries[0], rewritten).map_err(|err| format!("rewrite mapping: {err}"))?;
+        let outcome = try_no_impact_fast_path(&root, &config, &changed, &[])?;
+        match outcome {
+            NoImpactOutcome::Declined(NoImpactFallbackReason::IncompatibleWorkspaceIdentity) => {
+                Ok(())
+            }
+            NoImpactOutcome::Declined(reason) => Err(format!(
+                "foreign mapping must decline as incompatible_workspace_identity, got {}",
+                reason.as_str()
+            )),
+            NoImpactOutcome::Fast(_) => {
+                Err("foreign mapping must not take the fast path".to_owned())
+            }
+        }?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_impact_disabled_route_matches_fast_route_modulo_work_counters() -> Result<(), String> {
+        // Removal control (issue #3859, control 12): disabling the
+        // shortcut preserves output identity; only the measured work
+        // counters may grow.
+        let root = make_tempdir("no-impact-disabled")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        // Warm the mapping through its writer (the full-inventory key
+        // route); the scoped route never stores.
+        workspace_cache_key_at_with_config(&root, &config)?;
+        let fast = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            true,
+            None,
+        )?;
+        let full = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+        )?;
+        // ClassifiedSeam carries evidence payloads without structural
+        // equality; compare canonical seam identities instead.
+        let seam_ids = |inventory: &ScopedClassifiedSeamInventory| {
+            inventory
+                .classified
+                .iter()
+                .map(|entry| entry.seam.id().as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+        if seam_ids(&fast) != seam_ids(&full)
+            || fast.workspace_cache_key != full.workspace_cache_key
+            || fast.total_rust_files != full.total_rust_files
+            || fast.total_production_files != full.total_production_files
+            || fast.scoped_production_files != full.scoped_production_files
+            || fast.changed_production_files != full.changed_production_files
+            || fast.immediate_caller_files != full.immediate_caller_files
+        {
+            return Err(
+                "disabled route must preserve output identity modulo work counters".to_owned(),
+            );
+        }
+        if fast.file_fact_cache.hits != 0 || fast.file_fact_cache.misses != 0 {
+            return Err("fast route must report zero file-fact work".to_owned());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn no_impact_production_edit_keeps_full_computation_active() -> Result<(), String> {
+        // Issue #3859, control 4: a production edit never shortcuts.
+        let root = make_tempdir("no-impact-production")?;
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?;
+        if inventory.classified.is_empty() {
+            return Err("production edit must keep full seam computation active".to_owned());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn given_content_change_with_mtime_bump_when_inventory_reruns_then_recomputes_and_refreshes_mapping()
     -> Result<(), String> {
         // A content change that also bumps the mtime must invalidate the
@@ -2836,16 +4421,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Change the content and force a distinct mtime so the new
         // signature cannot collide with the old one through mtime
@@ -2953,7 +4534,9 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             &root.join("src/foo.rs"),
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
         )?;
-        let (rust_files, pre_fingerprint) = scan_corpus_fingerprint(&root)?;
+        let corpus = scan_corpus_fingerprint(&root, &RiprConfig::default())?;
+        let rust_files = corpus.analyzable;
+        let pre_fingerprint = corpus.fingerprint;
         let state = collect_workspace_state_from_files(&root, &RiprConfig::default(), rust_files)?;
         let key = state.cache_key();
 
@@ -3112,16 +4695,9 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        RepoSeamFactCache::at(&root).store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Edit only the test file — production untouched, no .ripr/*
         // files involved. This must change the cache key so the
@@ -3468,6 +5044,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }
@@ -3535,6 +5112,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }
@@ -3678,8 +5256,17 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
         );
         let _ = std::fs::remove_dir_all(&root);
         match result {
-            Err(message) if message.contains("::missing_case") => Ok(()),
-            Err(message) => Err(format!("unexpected missing-node diagnostic: {message}")),
+            Err(TargetedTestInventoryError::Selector {
+                kind: CHANGED_TEST_UNRESOLVED,
+                message,
+                ..
+            }) if message.contains("::missing_case") => Ok(()),
+            Err(TargetedTestInventoryError::Selector { kind, message, .. }) => Err(format!(
+                "unexpected missing-node limitation {kind}: {message}"
+            )),
+            Err(TargetedTestInventoryError::Analysis(message)) => {
+                Err(format!("unexpected missing-node diagnostic: {message}"))
+            }
             Ok(_) => Err("unknown test node must fail closed".to_string()),
         }
     }
@@ -3708,11 +5295,336 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
         );
         let _ = std::fs::remove_dir_all(&root);
         match result {
-            Err(message) if message.contains("ambiguous direct production owner `same_name`") => {
-                Ok(())
+            Err(TargetedTestInventoryError::Selector {
+                kind: CHANGED_TEST_OWNER_AMBIGUOUS,
+                message,
+                selected_test_count: 1,
+                ..
+            }) if message.contains("ambiguous direct production owner `same_name`") => Ok(()),
+            Err(TargetedTestInventoryError::Selector { kind, message, .. }) => {
+                Err(format!("unexpected ambiguity limitation {kind}: {message}"))
             }
-            Err(message) => Err(format!("unexpected ambiguity diagnostic: {message}")),
+            Err(TargetedTestInventoryError::Analysis(message)) => {
+                Err(format!("unexpected ambiguity diagnostic: {message}"))
+            }
             Ok(_) => Err("ambiguous direct owner must fail closed".to_string()),
         }
+    }
+
+    const GENERATED_SKIP_PREDICATE: &str = concat!(
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+        "    if amount >= threshold { amount - 10 } else { amount }\n",
+        "}\n",
+    );
+
+    fn write_predicate_file(root: &Path, relative: &str) -> Result<(), String> {
+        write_file(&root.join(relative), GENERATED_SKIP_PREDICATE)
+    }
+
+    fn inventoried_files(seams: &[RepoSeam]) -> BTreeSet<String> {
+        seams
+            .iter()
+            .map(|seam| seam.file().to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    fn classified_files(classified: &[ClassifiedSeam]) -> BTreeSet<String> {
+        classified
+            .iter()
+            .map(|entry| entry.seam.file().to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    fn require_hand_written_and_no_generated(
+        files: &BTreeSet<String>,
+        hand_written: &str,
+        generated: &[&str],
+    ) -> Result<(), String> {
+        if !files.contains(hand_written) {
+            return Err(format!(
+                "hand-written {hand_written} must still produce seams, got {files:?}"
+            ));
+        }
+        let leaked: Vec<&str> = generated
+            .iter()
+            .copied()
+            .filter(|path| files.contains(*path))
+            .collect();
+        if !leaked.is_empty() {
+            return Err(format!(
+                "generated Rust skipped by `ripr check` must not become seams, leaked {leaked:?} from {files:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_generated_rust_conventions_when_repo_inventory_runs_then_those_files_are_not_seams()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-conventions")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bindings.rs")?;
+        write_predicate_file(&root, "src/schema.rs")?;
+        write_predicate_file(&root, "src/generated.rs")?;
+        write_predicate_file(&root, "src/model.gen.rs")?;
+        write_predicate_file(&root, "src/model_generated.rs")?;
+        write_predicate_file(&root, "src/generated_model.rs")?;
+        write_predicate_file(&root, "src/gen/model.rs")?;
+        write_predicate_file(&root, "src/generated/model.rs")?;
+        write_predicate_file(&root, "src/out/model.rs")?;
+
+        let seams = inventory_seams_at_with_config(&root, &RiprConfig::default())?;
+        let files = inventoried_files(&seams);
+        require_hand_written_and_no_generated(
+            &files,
+            "src/lib.rs",
+            &[
+                "src/bindings.rs",
+                "src/schema.rs",
+                "src/generated.rs",
+                "src/model.gen.rs",
+                "src/model_generated.rs",
+                "src/generated_model.rs",
+                "src/gen/model.rs",
+                "src/generated/model.rs",
+                "src/out/model.rs",
+            ],
+        )?;
+
+        let report =
+            inventory_classified_seams_report_at_with_config(&root, &RiprConfig::default())?;
+        if report.classified.is_empty() {
+            return Err("classified inventory must still see src/lib.rs".into());
+        }
+        require_hand_written_and_no_generated(
+            &classified_files(&report.classified),
+            "src/lib.rs",
+            &[
+                "src/bindings.rs",
+                "src/schema.rs",
+                "src/generated.rs",
+                "src/model.gen.rs",
+                "src/model_generated.rs",
+                "src/generated_model.rs",
+                "src/gen/model.rs",
+                "src/generated/model.rs",
+                "src/out/model.rs",
+            ],
+        )?;
+        let skipped: BTreeSet<String> = report
+            .skipped_generated
+            .iter()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        for expected in [
+            "src/bindings.rs",
+            "src/schema.rs",
+            "src/generated.rs",
+            "src/model.gen.rs",
+            "src/model_generated.rs",
+            "src/generated_model.rs",
+            "src/gen/model.rs",
+            "src/generated/model.rs",
+            "src/out/model.rs",
+        ] {
+            if !skipped.contains(expected) {
+                return Err(format!(
+                    "classified report must thread skipped generated path {expected}, got {skipped:?}"
+                ));
+            }
+        }
+        if skipped.contains("src/lib.rs") {
+            return Err(format!(
+                "hand-written src/lib.rs must not be listed as skipped, got {skipped:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_near_miss_rust_names_when_repo_inventory_runs_then_hand_written_files_stay_seams()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-near-miss")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bind.rs")?;
+        write_predicate_file(&root, "src/engine.rs")?;
+        write_predicate_file(&root, "src/ffi.rs")?;
+        write_predicate_file(&root, "src/out_of_band.rs")?;
+
+        let files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        for expected in [
+            "src/lib.rs",
+            "src/bind.rs",
+            "src/engine.rs",
+            "src/ffi.rs",
+            "src/out_of_band.rs",
+        ] {
+            if !files.contains(expected) {
+                return Err(format!(
+                    "near-miss {expected} is not a generated convention and must stay a seam, got {files:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_generator_header_only_ffi_when_repo_inventory_runs_then_file_stays_a_seam()
+    -> Result<(), String> {
+        // #4756's header/vendor predicate is not on this main. Aligning with
+        // `ripr check` must not invent that skip here.
+        let root = make_tempdir("generated-header-not-absorbed")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_file(
+            &root.join("src/ffi.rs"),
+            concat!(
+                "// @generated by bindgen\n",
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 10 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        if !files.contains("src/ffi.rs") {
+            return Err(format!(
+                "header-only src/ffi.rs must stay inventoried until #4756 lands, got {files:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_configured_generated_pattern_when_repo_inventory_runs_then_matching_file_is_not_a_seam()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-configured-pattern")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/ffi.rs")?;
+        let config = crate::config::tests_only_parse(
+            "[languages.rust]\ngenerated_file_patterns = [\"src/ffi.rs\"]\n",
+        )
+        .map_err(|error| format!("fixture config parses: {error}"))?;
+
+        let default_files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        if !default_files.contains("src/ffi.rs") {
+            return Err(format!(
+                "src/ffi.rs must remain a seam without a matching pattern, got {default_files:?}"
+            ));
+        }
+
+        let configured_files = inventoried_files(&inventory_seams_at_with_config(&root, &config)?);
+        require_hand_written_and_no_generated(&configured_files, "src/lib.rs", &["src/ffi.rs"])?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_only_generated_file_bytes_change_when_cache_key_is_rebuilt_then_identity_is_stable()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-cache-identity")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bindings.rs")?;
+        let before = collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
+
+        write_file(
+            &root.join("src/bindings.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 11 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let after_generated = collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
+        if after_generated.files_content_hash != before.files_content_hash {
+            return Err(
+                "editing a generated Rust file that check skips must not change the inventory cache identity"
+                    .into(),
+            );
+        }
+
+        write_file(
+            &root.join("src/lib.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 12 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let after_hand_written =
+            collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
+        if after_hand_written.files_content_hash == before.files_content_hash {
+            return Err(
+                "editing a hand-written production file must still change the inventory cache identity"
+                    .into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_generated_bindings_with_inline_test_when_classified_inventory_runs_then_grip_does_not_credit_them()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-no-false-grip")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_file(
+            &root.join("src/bindings.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 10 } else { amount }\n",
+                "}\n",
+                "#[cfg(test)]\n",
+                "mod tests {\n",
+                "    #[test]\n",
+                "    fn discounted_total_boundary() {\n",
+                "        assert_eq!(super::discounted_total(100, 100), 90);\n",
+                "    }\n",
+                "}\n",
+            ),
+        )?;
+        write_file(
+            &root.join("tests/pricing.rs"),
+            concat!(
+                "#[test]\n",
+                "fn discounted_total_runs() {\n",
+                "    let _ = discounted_total(1, 1);\n",
+                "}\n",
+            ),
+        )?;
+
+        let classified = inventory_classified_seams_at(&root)?;
+        require_hand_written_and_no_generated(
+            &classified_files(&classified),
+            "src/lib.rs",
+            &["src/bindings.rs"],
+        )?;
+        let credited_generated = classified.iter().any(|entry| {
+            entry.evidence.related_tests.iter().any(|related| {
+                related
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .ends_with("bindings.rs")
+                    || related.test_name.contains("discounted_total_boundary")
+            })
+        });
+        if credited_generated {
+            return Err(
+                "generated src/bindings.rs must not supply related-test grip after the skip".into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }

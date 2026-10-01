@@ -15,10 +15,12 @@
 //! the refresh worker. `None` keeps the invocation unbounded (the CLI
 //! behavior — byte-identical to the pre-#2303 path).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+use crate::process_owner::OwnedProcess;
 
 /// Grace period for draining stdout/stderr after a timed process-tree kill.
 ///
@@ -32,10 +34,23 @@ const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 /// a committed limited snapshot instead of a dropped refresh.
 pub(crate) const GIT_INVOCATION_TIMEOUT_PREFIX: &str = "git_invocation_timeout";
 
+/// Cause and repair when the git program itself is missing (#4735).
+///
+/// Shared by the git spawn authority, `ripr check`, and the doctor `tool_git`
+/// line so a gitless environment is not handed the raw argv and then told to
+/// run a command that also needs git.
+pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
+    "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
+
 /// True when `error` is the named git invocation timeout error (#2303).
 /// Matchable in the style of `analysis::cancellation::is_cancellation_error`.
 pub(crate) fn is_git_invocation_timeout(error: &str) -> bool {
     error.starts_with(GIT_INVOCATION_TIMEOUT_PREFIX)
+}
+
+/// True when `error` is the named missing-git spawn failure (#4735).
+pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
+    error == GIT_NOT_FOUND_ON_PATH_MESSAGE
 }
 
 /// Poll interval for the deadline/cancellation wait loop.
@@ -99,20 +114,173 @@ pub(crate) fn run_git_output_with_deadline(
     timeout: Option<Duration>,
 ) -> Result<Output, String> {
     let describe = format!("git -C {} {:?}", root.display(), args);
-    let mut command = git_command(root, args);
+    let command = git_command(root, args);
     // `current_dir(root)`, not `git -C <root>`: for a missing/unusable root
     // the spawn itself fails, preserving the established
     // `failed to run git …` error family the context/explain invalid-root
     // contract pins (a `-C` flag would let git report the bad root as a
     // non-zero exit instead, changing the error text). For valid roots the
     // two forms are equivalent.
-    collect_output_with_deadline(&mut command, timeout, &describe)
+    collect_output_with_deadline(command, timeout, &describe)
 }
+
+/// Longest working directory, in UTF-16 units and without the trailing
+/// separator, that `CreateProcessW` accepts (`MAX_PATH` minus the terminator
+/// and the separator `SetCurrentDirectoryW` appends). A `longPathAware`
+/// manifest does not lift it: on a host with `LongPathsEnabled=1`, a
+/// manifested Rust binary and PowerShell 7 both got error 267 for a
+/// 361-unit working directory (#4350 probe, 2026-09-29).
+const WINDOWS_MAX_WORKING_DIRECTORY_UNITS: usize = 258;
+
+/// Win32 codes `CreateProcessW` returns for a working directory it cannot
+/// use because of its length: `ERROR_DIRECTORY` (267, observed on #4350)
+/// and `ERROR_FILENAME_EXCED_RANGE` (206). Any other code, such as a
+/// missing or denied program, keeps its own message: moving the checkout
+/// would not fix it.
+const WINDOWS_PATH_LIMIT_ERRORS: [i32; 2] = [267, 206];
+
+/// What a spawn failure message needs from a [`Command`] that the spawn
+/// consumes.
+struct SpawnSite {
+    program: String,
+    working_directory: Option<PathBuf>,
+}
+
+impl SpawnSite {
+    fn of(command: &Command) -> Self {
+        Self {
+            program: command.get_program().to_string_lossy().into_owned(),
+            // Windows resolves a relative working directory against this
+            // process's directory, so the limit applies to the joined path.
+            working_directory: command
+                .get_current_dir()
+                .map(|dir| std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())),
+        }
+    }
+
+    /// Spawn-failure text for the shared process authority.
+    ///
+    /// Keeps the `failed to run …` family every caller and contract matches
+    /// on. When Windows refuses a working directory past `MAX_PATH` (#4350)
+    /// the raw `The directory name is invalid. (os error 267)` names neither
+    /// the cause nor a way out, and no other spawn shape helps: Git for
+    /// Windows refuses the same root through `-C` (even with
+    /// `core.longpaths`), through `GIT_DIR` (`'$GIT_DIR' too big`), and
+    /// through a short junction, because it resolves the junction back to the
+    /// long root before its work-tree commands (probe table on #4350,
+    /// issuecomment-5881212067). So that one case leads with
+    /// the limit and the remedy, ahead of the long invocation text that
+    /// bounded LSP status messages would otherwise truncate it behind.
+    fn failure_message(&self, describe: &str, err: &std::io::Error) -> String {
+        self.failure_message_on(cfg!(windows), describe, err)
+    }
+
+    fn failure_message_on(&self, is_windows: bool, describe: &str, err: &std::io::Error) -> String {
+        let path_limit_error = err
+            .raw_os_error()
+            .is_some_and(|code| WINDOWS_PATH_LIMIT_ERRORS.contains(&code));
+        if let Some(units) = self
+            .working_directory
+            .as_deref()
+            .filter(|_| path_limit_error)
+            .and_then(|dir| windows_overlong_working_directory(is_windows, dir))
+        {
+            return windows_path_limit_message(&self.program, units, err, describe);
+        }
+        if git_spawn_failed_because_missing_on_path(
+            &self.program,
+            self.working_directory.as_deref(),
+            err,
+        ) {
+            return GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string();
+        }
+        format!("failed to run {describe}: {err}")
+    }
+}
+
+/// `NotFound` is also what a missing working directory produces, so only a
+/// missing git program with a usable cwd becomes the PATH diagnosis. A
+/// non-git program (the doctor Perl-exporter probe) keeps its own spawn text.
+fn git_spawn_failed_because_missing_on_path(
+    program: &str,
+    working_directory: Option<&Path>,
+    err: &std::io::Error,
+) -> bool {
+    program_is_git(program)
+        && err.kind() == std::io::ErrorKind::NotFound
+        && working_directory.is_none_or(Path::exists)
+}
+
+fn program_is_git(program: &str) -> bool {
+    program
+        .rsplit(['/', '\\'])
+        .next()
+        .is_some_and(|name| name == "git" || name == "git.exe")
+}
+
+/// The remedy leads so it survives the LSP's 240-character client bound
+/// (`lsp::component_outcome::bounded_message`) behind the caller prefixes;
+/// the limit and the original error follow for the CLI, which prints all of
+/// it.
+pub(crate) fn windows_path_limit_message(
+    program: &str,
+    units: usize,
+    err: &std::io::Error,
+    describe: &str,
+) -> String {
+    format!(
+        "failed to run {program}: clone or move the repository to a shorter path; the \
+         workspace root is {units} characters, over the {WINDOWS_MAX_WORKING_DIRECTORY_UNITS} \
+         Windows allows for a working directory (MAX_PATH) ({err}; {describe})"
+    )
+}
+
+/// Length of `dir` in UTF-16 units when it exceeds the Windows working
+/// directory limit. Std strips a verbatim `\\?\` prefix before calling
+/// `CreateProcessW`, so the prefix does not count against the limit.
+fn windows_overlong_working_directory(is_windows: bool, dir: &Path) -> Option<usize> {
+    if !is_windows {
+        return None;
+    }
+    let text = dir.to_string_lossy();
+    let spelled = match text.strip_prefix(r"\\?\UNC\") {
+        Some(share) => format!(r"\\{share}"),
+        None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_string(),
+    };
+    let units = spelled.trim_end_matches(['\\', '/']).encode_utf16().count();
+    (units > WINDOWS_MAX_WORKING_DIRECTORY_UNITS).then_some(units)
+}
+
+/// Config every ripr git invocation carries. A repository's own
+/// `core.fsmonitor` names a program git runs on index refresh (`status`,
+/// worktree `diff`); a clone cannot ship `.git/config`, but an extracted
+/// archive or a planted nested repository can.
+pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor=false"];
 
 fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
-    command.current_dir(root).args(args);
     command
+        .current_dir(root)
+        .args(UNTRUSTED_REPOSITORY_CONFIG)
+        .args(args);
+    command
+}
+
+/// [`run_git_output_with_deadline`] with extra environment variables set on
+/// the child, for probes that must scope repository discovery (for example
+/// `GIT_CEILING_DIRECTORIES`).
+pub(crate) fn run_git_output_with_deadline_and_env(
+    root: &Path,
+    args: &[&str],
+    envs: &[(&str, &std::ffi::OsStr)],
+    timeout: Option<Duration>,
+) -> Result<Output, String> {
+    let describe = format!("git -C {} {:?}", root.display(), args);
+    let mut command = git_command(root, args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    collect_output_with_deadline(command, timeout, &describe)
 }
 
 /// Run Git through the shared deadline/process-tree authority while retaining
@@ -132,8 +300,12 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
         return Err("git output limit must be greater than zero".to_string());
     }
     let describe = format!("git -C {} {:?}", root.display(), args);
-    let mut command = git_command(root, args);
-    collect_output_with_deadline_and_limit(&mut command, timeout, max_output_bytes, &describe)
+    collect_output_with_deadline_and_limit(
+        git_command(root, args),
+        timeout,
+        max_output_bytes,
+        &describe,
+    )
 }
 
 #[cfg(test)]
@@ -155,40 +327,79 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE");
-    collect_output_with_deadline_and_limit(&mut command, timeout, max_output_bytes, &describe)
+    collect_output_with_deadline_and_limit(command, timeout, max_output_bytes, &describe)
 }
 
 /// Spawn an arbitrary prepared `command` under the shared deadline,
 /// cancellation and bounded-capture contract. Git callers reach it through
 /// the wrappers above; the doctor's Perl exporter capability probe uses it
 /// directly so an unknown PATH binary can neither hang nor flood the doctor.
+///
+/// The command is consumed by value: the owned subprocess authority
+/// (#3803) takes it over for the Job Object-backed spawn on Windows.
 pub(crate) fn collect_output_with_deadline_and_limit(
-    command: &mut Command,
+    command: Command,
     timeout: Duration,
     max_output_bytes: usize,
     describe: &str,
 ) -> Result<Output, String> {
-    if timeout.is_zero() {
+    collect_output_with_optional_deadline_and_limit(
+        command,
+        Some(timeout),
+        max_output_bytes,
+        describe,
+    )
+}
+
+/// [`run_git_output_with_deadline_and_limit`] for a caller whose deadline is
+/// optional: `None` (for example `--git-timeout 0`) waits for Git without a
+/// deadline while still bounding captured output.
+pub(crate) fn run_git_output_with_optional_deadline_and_limit(
+    root: &Path,
+    args: &[&str],
+    timeout: Option<Duration>,
+    max_output_bytes: usize,
+) -> Result<Output, String> {
+    if max_output_bytes == 0 {
+        return Err("git output limit must be greater than zero".to_string());
+    }
+    let describe = format!("git -C {} {:?}", root.display(), args);
+    collect_output_with_optional_deadline_and_limit(
+        git_command(root, args),
+        timeout,
+        max_output_bytes,
+        &describe,
+    )
+}
+
+fn collect_output_with_optional_deadline_and_limit(
+    mut command: Command,
+    timeout: Option<Duration>,
+    max_output_bytes: usize,
+    describe: &str,
+) -> Result<Output, String> {
+    if timeout.is_some_and(|timeout| timeout.is_zero()) {
         return Err(format!(
             "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
         ));
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("failed to run {describe}: {err}"))?;
+        .stderr(Stdio::piped());
+    let spawn_site = SpawnSite::of(&command);
+    let mut child =
+        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
     let stdout_reader = child
-        .stdout
+        .stdout_pipe()
         .take()
         .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
     let stderr_reader = child
-        .stderr
+        .stderr_pipe()
         .take()
         .map(|pipe| spawn_bounded_pipe_reader(pipe, max_output_bytes));
 
-    let wait = poll_child(&mut child, Some(timeout), describe);
+    let wait = poll_child(&mut child, timeout, describe);
     let timed_out = !matches!(&wait, ChildWait::Exited(_));
     let drain_deadline = timed_out.then(|| Instant::now() + POST_KILL_DRAIN_GRACE);
     let stdout_result =
@@ -209,6 +420,7 @@ pub(crate) fn collect_output_with_deadline_and_limit(
         }),
         ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => Err(message),
         ChildWait::WaitFailed(err) => Err(format!("failed while waiting on {describe}: {err}")),
+        ChildWait::CleanupFailed(message) => Err(message),
     }
 }
 
@@ -316,7 +528,7 @@ fn drain_bounded_pipe_reader(
 /// pre-#2303 Perl precedent avoided this with `Stdio::null`; git output is
 /// needed, so the pipes are drained instead).
 fn collect_output_with_deadline(
-    command: &mut Command,
+    mut command: Command,
     timeout: Option<Duration>,
     describe: &str,
 ) -> Result<Output, String> {
@@ -327,14 +539,15 @@ fn collect_output_with_deadline(
             "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} was given a zero deadline (not spawned)"
         ));
     }
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("failed to run {describe}: {err}"))?;
-    let stdout_reader = child.stdout.take().map(spawn_pipe_reader);
-    let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
+        .stderr(Stdio::piped());
+    let spawn_site = SpawnSite::of(&command);
+    let mut child =
+        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
+    let stderr_reader = child.stderr_pipe().take().map(spawn_pipe_reader);
 
     let wait = poll_child(&mut child, timeout, describe);
     let timed_out = !matches!(&wait, ChildWait::Exited(_));
@@ -354,18 +567,40 @@ fn collect_output_with_deadline(
         }),
         ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => Err(message),
         ChildWait::WaitFailed(err) => Err(format!("failed while waiting on {describe}: {err}")),
+        ChildWait::CleanupFailed(message) => Err(message),
     }
 }
 
 /// Outcome of the shared deadline-aware child wait (#2303). In every
-/// non-`Exited` arm the child has already been terminated and reaped, so no
-/// orphan process holds a handle. `WaitFailed` carries the raw wait error so
-/// each caller wraps it in its own established message text.
+/// non-`Exited` arm other than `CleanupFailed` the child has already been
+/// terminated and reaped, so no orphan process holds a handle. `WaitFailed`
+/// carries the raw wait error so each caller wraps it in its own
+/// established message text. `CleanupFailed` is the contract-keeping
+/// exception: the wait ended abnormally AND the terminate-and-reap could
+/// not be completed or confirmed, so the child or its tree may still be
+/// alive; the payload names the incomplete cleanup and the suppressed wait
+/// outcome instead of implying that termination completed.
 pub(crate) enum ChildWait {
     Exited(std::process::ExitStatus),
     TimedOut(String),
     Cancelled(String),
     WaitFailed(String),
+    CleanupFailed(String),
+}
+
+impl ChildWait {
+    /// Short summary of this outcome for cleanup-failure context: a
+    /// suppressed arm is reported inside `CleanupFailed` so a caller can
+    /// still see which wait outcome the failed cleanup replaced.
+    fn summary(&self) -> String {
+        match self {
+            Self::Exited(status) => format!("child exited with {status}"),
+            Self::TimedOut(message)
+            | Self::Cancelled(message)
+            | Self::WaitFailed(message)
+            | Self::CleanupFailed(message) => message.clone(),
+        }
+    }
 }
 
 /// Poll `child` with `try_wait` on a short interval up to the optional
@@ -373,8 +608,16 @@ pub(crate) enum ChildWait {
 /// child honors an LSP refresh supersede (#2303). Lifted from the Perl
 /// facts exporter wait in `app::check` (pre-#2303 `ChildWaitTimeoutExt`)
 /// and shared by both call families.
+///
+/// `child` is the shared owned-subprocess authority (#3803): on Windows a
+/// non-`Exited` arm terminates the whole Job Object tree and reaps the
+/// direct child before returning; on other platforms the direct-child
+/// kill/reap behavior is unchanged. A failed termination is never folded
+/// into a `Cancelled`/`TimedOut`/`WaitFailed` arm — the contract that every
+/// such arm already terminated and reaped stays true because the caller
+/// instead receives [`ChildWait::CleanupFailed`].
 pub(crate) fn poll_child(
-    child: &mut std::process::Child,
+    child: &mut OwnedProcess,
     timeout: Option<Duration>,
     describe: &str,
 ) -> ChildWait {
@@ -384,23 +627,62 @@ pub(crate) fn poll_child(
             Ok(Some(status)) => return ChildWait::Exited(status),
             Ok(None) => {
                 if let Err(cancelled) = crate::analysis::cancellation::checkpoint() {
-                    terminate_child_tree(child);
-                    return ChildWait::Cancelled(cancelled);
+                    return terminate_then_classify(
+                        describe,
+                        "cancellation",
+                        ChildWait::Cancelled(cancelled),
+                        || child.terminate_tree(),
+                    );
                 }
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    terminate_child_tree(child);
                     let timeout_ms = timeout.map_or(0, |limit| limit.as_millis());
-                    return ChildWait::TimedOut(format!(
-                        "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
-                    ));
+                    return terminate_then_classify(
+                        describe,
+                        "timeout",
+                        ChildWait::TimedOut(format!(
+                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the \
+                             {timeout_ms}ms deadline (process terminated). Repair route: \
+                             raise or disable the git deadline (0 disables it) — \
+                             --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI \
+                             runs, the gitTimeoutMs initialization option for editor \
+                             sessions — then re-run."
+                        )),
+                        || child.terminate_tree(),
+                    );
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
             Err(err) => {
-                terminate_child_tree(child);
-                return ChildWait::WaitFailed(err.to_string());
+                return terminate_then_classify(
+                    describe,
+                    "wait failure",
+                    ChildWait::WaitFailed(err.to_string()),
+                    || child.terminate_tree(),
+                );
             }
         }
+    }
+}
+
+/// Terminate the owned tree and return the pending non-`Exited` arm only
+/// when the terminate-and-reap completed. A failed termination keeps the
+/// [`ChildWait`] contract true by surfacing
+/// [`ChildWait::CleanupFailed`] — which records the suppressed outcome —
+/// instead of an arm that would imply cleanup succeeded. `terminate` is
+/// injected so the classification is provable without a live process.
+fn terminate_then_classify(
+    describe: &str,
+    trigger: &str,
+    pending: ChildWait,
+    terminate: impl FnOnce() -> Result<(), String>,
+) -> ChildWait {
+    match terminate() {
+        Ok(()) => pending,
+        Err(cleanup) => ChildWait::CleanupFailed(format!(
+            "{trigger} of {describe} did not complete tree cleanup; the child may still be \
+             running: {cleanup} (suppressed wait outcome: {})",
+            pending.summary()
+        )),
     }
 }
 
@@ -456,27 +738,341 @@ fn drain_pipe_reader(
     }
 }
 
-fn terminate_child_tree(child: &mut std::process::Child) {
-    #[cfg(windows)]
-    {
-        let pid = child.id().to_string();
-        let _ = Command::new("taskkill")
-            .args(["/PID", pid.as_str(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::analysis::cancellation::{
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
     use serial_test::serial;
+
+    /// Drive letter kept apart from its separator so the local-context gate
+    /// does not read these synthetic roots as a committed machine path.
+    const DRIVE: &str = "D:";
+
+    fn windows_dir_of_units(units: usize) -> String {
+        let prefix = format!(r"{DRIVE}\a\");
+        format!("{prefix}{}", "x".repeat(units - prefix.len()))
+    }
+
+    /// A repository's `core.fsmonitor` names a program git runs on index
+    /// refresh. ripr's git calls must not run it.
+    #[cfg(unix)]
+    #[test]
+    fn repository_fsmonitor_program_does_not_run() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("ripr-git-fsmonitor-{}-{stamp}", std::process::id()));
+        let marker = root.join("fsmonitor-ran");
+        let result = (|| {
+            std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+            let hook = format!("touch '{}'", marker.display());
+            for args in [
+                vec!["init", "-q"],
+                vec!["config", "core.fsmonitor", hook.as_str()],
+            ] {
+                let output = Command::new("git")
+                    .args(&args)
+                    .current_dir(&root)
+                    .env_remove("GIT_DIR")
+                    .env_remove("GIT_WORK_TREE")
+                    .output()
+                    .map_err(|err| format!("git {args:?}: {err}"))?;
+                if !output.status.success() {
+                    return Err(format!("git {args:?} failed: {output:?}"));
+                }
+            }
+            std::fs::write(root.join("lib.rs"), "fn a() {}\n")
+                .map_err(|err| format!("write: {err}"))?;
+            run_git(&root, &["add", "lib.rs"])?;
+            run_git(&root, &["status", "--porcelain"])?;
+            Ok(marker.exists())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        if result? {
+            return Err("git ran the repository's core.fsmonitor program".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn overlong_working_directory_is_measured_only_on_windows_past_max_path() {
+        let limit = WINDOWS_MAX_WORKING_DIRECTORY_UNITS;
+        let at_limit = windows_dir_of_units(limit);
+        let past_limit = windows_dir_of_units(limit + 1);
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&at_limit)),
+            None
+        );
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&past_limit)),
+            Some(limit + 1)
+        );
+        assert_eq!(
+            windows_overlong_working_directory(false, Path::new(&past_limit)),
+            None,
+            "no other platform has the MAX_PATH working-directory limit"
+        );
+    }
+
+    #[test]
+    fn overlong_working_directory_ignores_verbatim_prefix_and_trailing_separator() {
+        let at_limit = windows_dir_of_units(WINDOWS_MAX_WORKING_DIRECTORY_UNITS);
+        for spelling in [
+            format!(r"\\?\{at_limit}"),
+            format!(r"{at_limit}\"),
+            format!(r"\\?\{at_limit}\"),
+        ] {
+            assert_eq!(
+                windows_overlong_working_directory(true, Path::new(&spelling)),
+                None,
+                "{spelling} is what CreateProcessW receives as {at_limit}"
+            );
+        }
+        let share = format!(r"\\?\UNC\server\{}", "s".repeat(250));
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&share)),
+            Some(r"\\server\".len() + 250)
+        );
+    }
+
+    #[test]
+    fn overlong_working_directory_counts_utf16_units_not_bytes() {
+        // U+1D11E is four UTF-8 bytes and two UTF-16 units; Windows limits
+        // the latter.
+        let base = windows_dir_of_units(WINDOWS_MAX_WORKING_DIRECTORY_UNITS - 2);
+        let with_clef = format!("{base}\u{1D11E}");
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&with_clef)),
+            None
+        );
+        let past = format!("{with_clef}x");
+        assert_eq!(
+            windows_overlong_working_directory(true, Path::new(&past)),
+            Some(WINDOWS_MAX_WORKING_DIRECTORY_UNITS + 1)
+        );
+    }
+
+    /// Native control for #4350: the shared git authority, spawning under a
+    /// real directory past `MAX_PATH`, reports the limit and the remedy
+    /// instead of `The directory name is invalid. (os error 267)`.
+    /// `CreateProcessW` refuses the working directory whatever the host's
+    /// `LongPathsEnabled` policy or the binary's manifest says; if Windows or
+    /// std ever lifts that, this fails and names the change.
+    #[cfg(windows)]
+    #[test]
+    fn native_git_spawn_under_an_overlong_root_names_the_path_limit() -> Result<(), String> {
+        // One test per process uses this name, so the pid alone is unique.
+        let short = std::env::temp_dir().join(format!("ripr-4350-{}", std::process::id()));
+        let mut long = short.clone();
+        while long.as_os_str().len() <= WINDOWS_MAX_WORKING_DIRECTORY_UNITS + 20 {
+            long.push("long-path-segment-0123456789abcdef");
+        }
+        // Std prefixes `\\?\` for filesystem calls, so creating the tree works
+        // even though spawning into it does not.
+        std::fs::create_dir_all(&long).map_err(|err| format!("create {long:?}: {err}"))?;
+        let result = run_git_output_with_deadline(&long, &["--version"], None);
+        let _ = std::fs::remove_dir_all(&short);
+        match result {
+            Err(message) => {
+                assert!(
+                    message.starts_with(
+                        "failed to run git: clone or move the repository to a shorter path; the \
+                         workspace root is "
+                    ) && message.contains("(MAX_PATH)"),
+                    "{message}"
+                );
+                Ok(())
+            }
+            Ok(output) => Err(format!(
+                "git spawned under a {}-unit root ({:?}); the MAX_PATH premise of #4350 no \
+                 longer holds on this host",
+                long.as_os_str().len(),
+                output.status
+            )),
+        }
+    }
+
+    #[test]
+    fn spawn_site_measures_a_relative_root_joined_to_the_process_directory() -> Result<(), String> {
+        let site = SpawnSite::of(&git_command(Path::new("relative-root"), &[]));
+        let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+        assert_eq!(
+            site.working_directory,
+            Some(cwd.join("relative-root")),
+            "a short relative spelling can still name a directory past MAX_PATH"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn spawn_failure_names_the_windows_path_limit_and_remedy_for_overlong_roots() {
+        let root = windows_dir_of_units(387);
+        let site = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(PathBuf::from(&root)),
+        };
+        let err = std::io::Error::from_raw_os_error(267);
+        let describe = format!("git -C {root} [\"diff\"]");
+
+        let windows = site.failure_message_on(true, &describe, &err);
+        assert!(
+            windows.starts_with(
+                "failed to run git: clone or move the repository to a shorter path; the \
+                 workspace root is 387 characters, over the 258 Windows allows for a working \
+                 directory (MAX_PATH) ("
+            ),
+            "{windows}"
+        );
+        assert!(
+            windows.ends_with(&format!("{err}; {describe})")),
+            "{windows}"
+        );
+
+        assert_eq!(
+            site.failure_message_on(false, &describe, &err),
+            format!("failed to run {describe}: {err}"),
+            "other platforms keep the established spawn-failure text"
+        );
+        let too_long = std::io::Error::from_raw_os_error(206);
+        assert!(
+            site.failure_message_on(true, &describe, &too_long)
+                .contains("the workspace root is 387 characters"),
+            "ERROR_FILENAME_EXCED_RANGE is the other path-limit code"
+        );
+        for other in [
+            std::io::Error::from_raw_os_error(2),
+            std::io::Error::from_raw_os_error(5),
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        ] {
+            assert_eq!(
+                site.failure_message_on(true, &describe, &other),
+                format!("failed to run {describe}: {other}"),
+                "a missing or denied git is not a path-limit failure, however long the root"
+            );
+        }
+        let short = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(PathBuf::from(format!(r"{DRIVE}\repo"))),
+        };
+        assert_eq!(
+            short.failure_message_on(true, &describe, &err),
+            format!("failed to run {describe}: {err}"),
+            "a short root keeps the established text on Windows too"
+        );
+        let unset = SpawnSite {
+            program: "git".to_string(),
+            working_directory: None,
+        };
+        assert_eq!(
+            unset.failure_message_on(true, &describe, &err),
+            format!("failed to run {describe}: {err}")
+        );
+    }
+
+    #[test]
+    fn spawn_failure_names_missing_git_on_path_without_dumping_argv() {
+        let root = std::env::temp_dir();
+        assert!(
+            root.exists(),
+            "the process temp dir must exist so NotFound is the program, not the cwd"
+        );
+        let site = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(root.clone()),
+        };
+        let err = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let describe = format!(
+            "git -C {} [\"-c\", \"core.quotePath=true\", \"diff\", \"main...HEAD\"]",
+            root.display()
+        );
+        let message = site.failure_message_on(false, &describe, &err);
+        assert_eq!(message, GIT_NOT_FOUND_ON_PATH_MESSAGE);
+        assert!(is_git_not_found_on_path(&message));
+        assert!(
+            !message.contains("core.quotePath") && !message.contains('['),
+            "the git argv must not reach the user: {message}"
+        );
+
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            site.failure_message_on(false, &describe, &denied),
+            format!("failed to run {describe}: {denied}"),
+            "a denied git is not a missing-PATH diagnosis"
+        );
+
+        let missing_root = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(root.join(format!(
+                "ripr-missing-git-cwd-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_nanos())
+                    .unwrap_or(0)
+            ))),
+        };
+        assert_eq!(
+            missing_root.failure_message_on(false, &describe, &err),
+            format!("failed to run {describe}: {err}"),
+            "a missing working directory is not a missing-PATH diagnosis"
+        );
+
+        let perl = SpawnSite {
+            program: "perl-ripr-facts".to_string(),
+            working_directory: Some(std::env::temp_dir()),
+        };
+        assert_eq!(
+            perl.failure_message_on(false, "perl-ripr-facts --version", &err),
+            format!("failed to run perl-ripr-facts --version: {err}"),
+            "a missing non-git program must not steal the git PATH diagnosis"
+        );
+        assert!(program_is_git("git"));
+        assert!(program_is_git("git.exe"));
+        assert!(program_is_git(&format!(r"{DRIVE}\tools\git.exe")));
+        assert!(!program_is_git("git-lfs") && !program_is_git("perl-ripr-facts"));
+    }
+
+    /// Native control for #4735: spawning `git` with an empty PATH must name
+    /// the missing binary and the `--diff` route, not dump `core.quotePath`.
+    #[test]
+    fn native_git_spawn_with_empty_path_names_the_missing_binary() -> Result<(), String> {
+        let empty_path = std::env::temp_dir().join(format!(
+            "ripr-4735-empty-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&empty_path).map_err(|err| format!("create empty PATH: {err}"))?;
+        let mut command = git_command(&empty_path, &["--version"]);
+        command.env("PATH", &empty_path);
+        let result = collect_output_with_deadline(command, None, "git --version");
+        let _ = std::fs::remove_dir_all(&empty_path);
+        match result {
+            Err(message) => {
+                if message != GIT_NOT_FOUND_ON_PATH_MESSAGE {
+                    return Err(format!(
+                        "empty PATH must name the missing git binary, got: {message}"
+                    ));
+                }
+                if message.contains("core.quotePath") || message.contains('[') {
+                    return Err(format!("git argv leaked: {message}"));
+                }
+                Ok(())
+            }
+            Ok(output) => Err(format!(
+                "git spawned with PATH restricted to {empty_path:?} ({:?}); the \
+                 missing-binary premise of #4735 no longer holds on this host",
+                output.status
+            )),
+        }
+    }
 
     /// Env flag that makes the re-executed test binary hang instead of
     /// running tests, so timeout/cancellation tests get a deterministic
@@ -529,33 +1125,27 @@ mod tests {
 
     /// Spawn the deterministic hung fixture child (the re-executed test
     /// binary sleeps 2 minutes and never exits on its own).
-    fn spawn_hung_child() -> Result<std::process::Child, String> {
-        hang_command()?
+    fn spawn_hung_child() -> Result<OwnedProcess, String> {
+        let mut command = hang_command()?;
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|err| format!("spawn hung fixture child: {err}"))
+            .stderr(Stdio::null());
+        OwnedProcess::spawn(command).map_err(|err| format!("spawn hung fixture child: {err}"))
     }
 
     /// Guard that terminates and reaps the hung fixture child on every
     /// exit path, so a broken kill path reports a test failure instead of
-    /// orphaning a 2-minute sleeper. Disarm after the reap proof observes
-    /// the exit.
-    struct HungChildGuard(Option<std::process::Child>);
+    /// orphaning a 2-minute sleeper. The owned subprocess authority
+    /// (#3803) performs the terminate-and-reap on drop, so an armed guard
+    /// can never leak the sleeper; `disarm` after the reap proof is a
+    /// no-op termination of the already-exited child.
+    struct HungChildGuard(Option<OwnedProcess>);
 
     impl HungChildGuard {
         fn disarm(&mut self) {
             if let Some(child) = self.0.take() {
                 drop(child);
-            }
-        }
-    }
-
-    impl Drop for HungChildGuard {
-        fn drop(&mut self) {
-            if let Some(child) = self.0.as_mut() {
-                terminate_child_tree(child);
             }
         }
     }
@@ -573,8 +1163,7 @@ mod tests {
             return Err("fresh token should accept cancellation".to_string());
         }
         let mut guard = HungChildGuard(Some(spawn_hung_child()?));
-        let child: &mut std::process::Child =
-            guard.0.as_mut().ok_or("hung child guard is empty")?;
+        let child: &mut OwnedProcess = guard.0.as_mut().ok_or("hung child guard is empty")?;
         let wait = if cancelled {
             with_token(&token, || {
                 poll_child(child, Some(Duration::from_mins(2)), "hang-reap-proof")
@@ -607,7 +1196,7 @@ mod tests {
                 match wait {
                     ChildWait::Exited(status) => format!("exited: {status}"),
                     ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => message,
-                    ChildWait::WaitFailed(error) => error,
+                    ChildWait::WaitFailed(error) | ChildWait::CleanupFailed(error) => error,
                 }
             ));
         }
@@ -619,6 +1208,50 @@ mod tests {
         }
         guard.disarm();
         Ok(())
+    }
+
+    /// A failed terminate-and-reap must replace the pending wait arm with
+    /// `CleanupFailed`: returning `TimedOut`/`Cancelled`/`WaitFailed` there
+    /// would break the contract that every such arm already terminated and
+    /// reaped the child (stubbed termination — no live process needed).
+    #[test]
+    fn cleanup_failure_replaces_the_pending_wait_arm() -> Result<(), String> {
+        let wait = terminate_then_classify(
+            "stub child",
+            "timeout",
+            ChildWait::TimedOut("stub: exceeded the deadline".to_string()),
+            || Err("incomplete tree cleanup: refused termination request".to_string()),
+        );
+        let ChildWait::CleanupFailed(message) = &wait else {
+            return Err(format!(
+                "cleanup failure should surface as CleanupFailed, got: {}",
+                wait.summary()
+            ));
+        };
+        if !message.contains("incomplete tree cleanup") {
+            return Err(format!(
+                "CleanupFailed should carry the incomplete-cleanup evidence: {message}"
+            ));
+        }
+        if !message.contains("stub: exceeded the deadline") {
+            return Err(format!(
+                "CleanupFailed should record the suppressed wait outcome: {message}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A completed terminate-and-reap returns the pending arm unchanged —
+    /// the classification only intervenes when cleanup fails.
+    #[test]
+    fn completed_termination_returns_the_pending_wait_arm() {
+        let wait = terminate_then_classify(
+            "stub child",
+            "cancellation",
+            ChildWait::Cancelled("stub cancelled".to_string()),
+            || Ok(()),
+        );
+        assert!(matches!(wait, ChildWait::Cancelled(ref message) if message == "stub cancelled"));
     }
 
     #[test]
@@ -664,12 +1297,9 @@ mod tests {
         if reexec_harness() {
             return Ok(());
         }
-        let mut command = hang_command()?;
-        let result = collect_output_with_deadline(
-            &mut command,
-            Some(Duration::from_millis(50)),
-            "hang-test",
-        );
+        let command = hang_command()?;
+        let result =
+            collect_output_with_deadline(command, Some(Duration::from_millis(50)), "hang-test");
         let err = match result {
             Err(err) => err,
             Ok(_) => return Err("a hung invocation must fail, not collect output".to_string()),
@@ -680,6 +1310,27 @@ mod tests {
         if !err.contains("exceeded the 50ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
+            ));
+        }
+        // #4946(b): the timeout message names both deadline knobs and the
+        // 0-disables escape, matching diff_scope_oversized's in-message
+        // repair-route pattern — the error alone must be repairable. The
+        // same shared wait also serves the editor sidecar, whose deadline is
+        // configured by `gitTimeoutMs`, so the route names that knob too
+        // (#4946 review).
+        if !err.contains("--git-timeout") || !err.contains("RIPR_GIT_TIMEOUT") {
+            return Err(format!(
+                "timeout error should name the deadline knobs, got: {err}"
+            ));
+        }
+        if !err.contains("0 disables it") {
+            return Err(format!(
+                "timeout error should name the 0-disables escape, got: {err}"
+            ));
+        }
+        if !err.contains("gitTimeoutMs") {
+            return Err(format!(
+                "timeout error should name the editor-session deadline knob, got: {err}"
             ));
         }
         // Kill+reap proof without a wall-clock bound: drive the same
@@ -788,9 +1439,13 @@ mod tests {
                 "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 60') -NoNewWindow -PassThru; Set-Content -LiteralPath '{marker_path_text}' -Value $p.Id; Wait-Process -Id $p.Id"
             ),
         ]);
+        // The deadline must outlast two cold PowerShell starts, or the kill
+        // lands before the descendant exists and the marker is never written
+        // (seen on a loaded runner at 5s, #3922). The descendant still sleeps
+        // 60s, so the timeout remains the discriminating input.
         let result = collect_output_with_deadline(
-            &mut command,
-            Some(Duration::from_secs(5)),
+            command,
+            Some(Duration::from_secs(20)),
             "pipe-inheriting-descendant",
         );
         let err = match result {
@@ -802,7 +1457,7 @@ mod tests {
         if !is_git_invocation_timeout(&err) {
             return Err(format!("expected the named timeout error, got: {err}"));
         }
-        if !err.contains("exceeded the 5000ms deadline") {
+        if !err.contains("exceeded the 20000ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
             ));
@@ -838,7 +1493,7 @@ mod tests {
         // proving that the inherited writer was terminated). No wall-clock
         // bound: drain time past the kill is capped by
         // POST_KILL_DRAIN_GRACE inside the drain path, and the
-        // "exceeded the 5000ms deadline" assert above pins the 5s
+        // "exceeded the 20000ms deadline" assert above pins the 20s
         // discriminating input. An elapsed assert would only add flake
         // surface under parallel load.
         Ok(())
@@ -876,9 +1531,9 @@ mod tests {
         if !token.cancel(AnalysisAbortKind::Superseded) {
             return Err("fresh token should accept cancellation".to_string());
         }
-        let mut command = hang_command()?;
+        let command = hang_command()?;
         let result = with_token(&token, || {
-            collect_output_with_deadline(&mut command, Some(Duration::from_mins(2)), "hang-test")
+            collect_output_with_deadline(command, Some(Duration::from_mins(2)), "hang-test")
         });
         let err = match result {
             Err(err) => err,
@@ -905,12 +1560,9 @@ mod tests {
         if reexec_harness() {
             return Ok(());
         }
-        let mut command = self_reexec_command(FLOOD_ENV)?;
-        let output = collect_output_with_deadline(
-            &mut command,
-            Some(Duration::from_secs(30)),
-            "flood-test",
-        )?;
+        let command = self_reexec_command(FLOOD_ENV)?;
+        let output =
+            collect_output_with_deadline(command, Some(Duration::from_secs(30)), "flood-test")?;
         if !output.status.success() {
             return Err(format!("flood child failed: {}", output.status));
         }

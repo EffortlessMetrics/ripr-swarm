@@ -115,9 +115,9 @@ Rust-only when only Rust is enabled.
 Routing rules:
 
 - `*.rs` → Rust adapter (always).
-- `*.ts`, `*.tsx` → TypeScript adapter (preview, opt-in).
-- `*.js`, `*.jsx` → TypeScript-family adapter with JavaScript preview labels
-  (preview, opt-in).
+- `*.ts`, `*.tsx`, `*.mts`, `*.cts` → TypeScript adapter (preview, opt-in).
+- `*.js`, `*.jsx`, `*.mjs`, `*.cjs` → TypeScript-family adapter with
+  JavaScript preview labels (preview, opt-in).
 - `*.py` → Python adapter (preview, opt-in).
 - Perl fact-packet preview is a producer/consumer path, not a live Perl parser
   route in this contract slice. A configured Perl language value must fail
@@ -169,7 +169,8 @@ The contract is supported only when the implementation can show:
 - Additive `language` and `language_status` fields appear only when
   populated and roundtrip through JSON serialization.
 - The language router has fixture coverage for `.rs`, `.ts`, `.tsx`,
-  `.js`, `.jsx`, `.py`, unmatched extensions, and excluded paths. Perl
+  `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, unmatched
+  extensions, and excluded paths. Perl
   fact-packet preview coverage belongs to RIPR-SPEC-0064 until a live Perl
   router is intentionally added.
 - `ripr.toml` parses `[languages] enabled` and rejects unsupported
@@ -236,8 +237,9 @@ Follow-up fixtures and tests cover:
 - Rust fixture/golden regression suite (must remain unchanged).
 - Additive optional field roundtrip tests for `language`,
   `language_status`, `owner_kind`, and `static_limit_kind`.
-- Language router fixtures for `.rs`, `.ts`, `.tsx`, `.js`, `.jsx`,
-  `.py`, unmatched extensions, and excluded paths.
+- Language router fixtures for `.rs`, `.ts`, `.tsx`, `.mts`, `.cts`,
+  `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, unmatched extensions, and excluded
+  paths.
 - Repo configuration parsing of `[languages] enabled` including
   unsupported values.
 - Repo configuration parsing rejects `perl` with a clear `lang-perl` message

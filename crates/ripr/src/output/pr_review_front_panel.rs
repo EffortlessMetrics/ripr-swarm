@@ -162,6 +162,10 @@ struct PanelTopIssue {
     #[serde(skip_serializing_if = "Option::is_none")]
     repair_command: Option<String>,
     verify_command: Option<String>,
+    /// Carried from first-action `commands.analysis_outcome` (#4304): it
+    /// writes the file the receipt reads beside the verify output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analysis_outcome_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt_command: Option<String>,
     static_evidence_boundary: &'static str,
@@ -487,6 +491,11 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
         let (verify_label, receipt_label) = proof_path_labels(issue);
         if let Some(command) = &issue.repair_command {
             push_repair_start(&mut out, command);
+        }
+        if let Some(command) = &issue.analysis_outcome_command {
+            out.push_str(&format!(
+                "- Analysis outcome for the receipt: `{command}`\n"
+            ));
         }
         out.push_str(&format!(
             "- {verify_label}: {}\n",
@@ -1594,6 +1603,7 @@ fn top_issue_from_first_action(
         repair_command: repair_command.clone(),
         verify_command: string_path(action, &["commands", "verify"]),
         receipt_command: string_path(action, &["commands", "receipt"]),
+        analysis_outcome_command: string_path(action, &["commands", "analysis_outcome"]),
         static_evidence_boundary: STATIC_EVIDENCE_BOUNDARY,
         // Carried only: the repair start when first-action names one, else
         // its read-only context-packet command. Never a synthesized start.
@@ -1637,15 +1647,16 @@ fn top_issue_from_guidance(
             (Some(item), &["changed_expression"]),
             (Some(item), &["evidence", "changed_behavior"]),
         ]),
-        current_evidence_strength: current_evidence_strength_from_sources(&[Some(item)])
-            .or_else(|| {
+        current_evidence_strength: current_evidence_strength_from_sources(&[Some(item)]).or_else(
+            || {
                 string_from_sources(&[
                     (Some(item), &["classification"]),
                     (Some(item), &["class"]),
                     (Some(item), &["static_class"]),
                 ])
                 .map(normalize_class)
-            }),
+            },
+        ),
         missing_discriminator: string_path(item, &["missing_discriminator"]),
         no_action_reason: None,
         focused_proof_intent: string_from_sources(&[
@@ -1657,12 +1668,18 @@ fn top_issue_from_guidance(
         suggested_test: string_path(item, &["suggested_test", "assertion_shape"]),
         repair_command: repair_command.clone(),
         verify_command: seam_id.as_ref().map(|_| {
-            format!(
-                "ripr agent verify --root {} --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
-                input.root
+            // Shared builder, no per-surface verify text (ADR-0019). The
+            // redirect writes the artifact the card's receipt reads via
+            // `--verify-json` (#4307), matching the review-card surface.
+            crate::agent::loop_commands::agent_verify_command(
+                &input.root,
+                crate::agent::loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+                crate::agent::loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+                Some(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
             )
         }),
         receipt_command: None,
+        analysis_outcome_command: None,
         static_evidence_boundary: STATIC_EVIDENCE_BOUNDARY,
         // Carried only: the card's repair start, else its read-only
         // inspection command. Never a start synthesized from the seam id.
@@ -1723,6 +1740,7 @@ fn top_issue_from_gate_decision(
         repair_command: repair_command.clone(),
         verify_command: None,
         receipt_command: None,
+        analysis_outcome_command: None,
         static_evidence_boundary: STATIC_EVIDENCE_BOUNDARY,
         agent_command: repair_command.or(inspection_command),
         receipt: PanelReceipt {
@@ -1765,6 +1783,7 @@ fn top_issue_from_baseline_delta(
         repair_command: None,
         verify_command: string_path(item, &["repair", "verify_command"]),
         receipt_command: string_path(item, &["repair", "receipt_command"]),
+        analysis_outcome_command: None,
         static_evidence_boundary: STATIC_EVIDENCE_BOUNDARY,
         agent_command: None,
         receipt: PanelReceipt {
@@ -1816,6 +1835,7 @@ fn top_issue_from_assistant_health(
         repair_command: None,
         verify_command: recommendation.and_then(|value| string_path(value, &["verify_command"])),
         receipt_command: receipt.and_then(|value| string_path(value, &["command"])),
+        analysis_outcome_command: None,
         static_evidence_boundary: STATIC_EVIDENCE_BOUNDARY,
         agent_command: handoff.and_then(|value| string_path(value, &["agent_command"])),
         receipt: PanelReceipt {
@@ -2020,6 +2040,7 @@ fn top_issue_from_python_no_action_ledger(
         repair_command: None,
         verify_command: None,
         receipt_command: None,
+        analysis_outcome_command: None,
         static_evidence_boundary: STATIC_EVIDENCE_BOUNDARY,
         agent_command: None,
         receipt: PanelReceipt {
@@ -2224,24 +2245,15 @@ fn receipt_from_input(
 }
 
 fn normalize_class(value: String) -> String {
-    match value.as_str() {
-        "weakly_gripped" => "weakly_exposed".to_string(),
-        "strongly_gripped" => "exposed".to_string(),
-        _ => value,
-    }
+    // #4381: the presentation mapping lives only in
+    // `output::gap_vocabulary`; this wrapper keeps the call sites local but
+    // carries no translation table of its own.
+    crate::output::gap_vocabulary::present_exposure_class(&value)
 }
 
 fn normalized_receipt_class(value: &str) -> Option<&'static str> {
-    match value {
-        "weakly_gripped" | "weakly_exposed" => Some("weakly_exposed"),
-        "strongly_gripped" | "exposed" => Some("exposed"),
-        "reachable_unrevealed" => Some("reachable_unrevealed"),
-        "ungripped" | "no_static_path" => Some("no_static_path"),
-        "infection_unknown" => Some("infection_unknown"),
-        "propagation_unknown" => Some("propagation_unknown"),
-        "static_unknown" => Some("static_unknown"),
-        _ => None,
-    }
+    // #4381: single shared authority; no per-surface fork.
+    crate::output::gap_vocabulary::exposure_class_of(value)
 }
 
 fn string_from_sources(sources: &[(Option<&Value>, &[&str])]) -> Option<String> {
@@ -2504,12 +2516,22 @@ mod tests {
                 );
             }
 
+            // #3872/#4307: the guidance-route verify command anchors its
+            // redirect at the resolved --root, so the machine prefix projects
+            // to `<cwd>/` before comparing AND before re-blessing — a pinned
+            // fixture must never carry a real machine directory (placeholder
+            // rule: loop_commands).
+            let rendered_json = crate::testing::cwd_placeholder::project_cwd_text(
+                &render_pr_review_front_panel_json(&report)?,
+            );
             assert_eq!(
-                render_pr_review_front_panel_json(&report)?,
+                rendered_json.trim_end(),
                 read_file(&expected_json_path)?.trim_end(),
                 "{case_id} JSON fixture drifted"
             );
-            let markdown = render_pr_review_front_panel_markdown(&report);
+            let markdown = crate::testing::cwd_placeholder::project_cwd_text(
+                &render_pr_review_front_panel_markdown(&report),
+            );
             // #3742 class (e): only the explicit RIPR_UPDATE_FIXTURES=1
             // opt-in rewrites the Markdown pin; JSON stays asserted.
             if crate::testing::rebless::fixture_rebless_enabled() {

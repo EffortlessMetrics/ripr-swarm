@@ -8,7 +8,7 @@ use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
 use crate::domain::Finding;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -734,6 +734,21 @@ impl AnalysisSnapshot {
             .flatten()
             .filter(|diagnostic| diagnostic_has_string_data(diagnostic, "gap_id"))
             .count();
+        // Limited-run scope-guard disclosures (#2299, #4325): the oversized
+        // diff warning is a governed, code-marked publication that is not a
+        // finding, seam, or gap-record projection. Accounting it here keeps
+        // the reject-unknown-extras property for every other plain diagnostic.
+        let scope_guard_disclosures = self
+            .diagnostics_by_uri
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic_has_code(
+                    diagnostic,
+                    super::diagnostic_catalog::DIFF_SCOPE_OVERSIZED_CODE,
+                )
+            })
+            .count();
         let published_finding_count = super::diagnostics::canonical_finding_groups(&self.findings)
             .into_iter()
             .filter(|(primary, _)| {
@@ -746,7 +761,11 @@ impl AnalysisSnapshot {
                 .as_ref()
                 .is_none_or(|base| !base.trim().is_empty())
             && !self.mode.as_str().is_empty()
-            && published_finding_count + surfacable_seams + gap_diagnostics == diagnostic_count
+            && published_finding_count
+                + surfacable_seams
+                + gap_diagnostics
+                + scope_guard_disclosures
+                == diagnostic_count
             && self
                 .gap_artifacts
                 .iter()
@@ -815,11 +834,27 @@ impl AnalysisSnapshot {
         super::diagnostics::canonical_finding_groups(&self.findings).len()
     }
 
+    /// Count published diagnostics that carry a bounded next action: a
+    /// canonical gap diagnostic, or an ordinary finding diagnostic whose
+    /// finding passes the actionable-profile authority
+    /// (`finding_is_visible_in_profile`). Rust producers do not set
+    /// `canonical_gap`, so counting only `canonical_gap_id` reported zero
+    /// actionable items while a fix-site-ready diagnostic was live.
     pub(super) fn actionable_diagnostic_count(&self) -> usize {
         self.diagnostics_by_uri
             .values()
             .flatten()
-            .filter(|diagnostic| diagnostic_has_string_data(diagnostic, "canonical_gap_id"))
+            .filter(|diagnostic| {
+                diagnostic_has_string_data(diagnostic, "canonical_gap_id")
+                    || self
+                        .finding_for_diagnostic(diagnostic)
+                        .is_some_and(|finding| {
+                            super::diagnostics::finding_is_visible_in_profile(
+                                LspDiagnosticProfile::Actionable,
+                                finding,
+                            )
+                        })
+            })
             .count()
     }
 
@@ -876,6 +911,13 @@ fn diagnostic_has_string_data(diagnostic: &Diagnostic, key: &str) -> bool {
         .and_then(|data| data.get(key))
         .and_then(|value| value.as_str())
         .is_some()
+}
+
+fn diagnostic_has_code(diagnostic: &Diagnostic, code: &str) -> bool {
+    matches!(
+        diagnostic.code.as_ref(),
+        Some(tower_lsp_server::ls_types::NumberOrString::String(value)) if value == code
+    )
 }
 
 /// Stable content identity for saved workspace bytes. Only a digest is
@@ -987,9 +1029,9 @@ impl DocumentState {
         let path = document_path(&uri);
         // Saved-workspace authority: the saved-content identity comes from
         // the persisted bytes, not the client-sent text (#2129 rationale).
-        let saved_digest = std::fs::read(&path)
-            .ok()
-            .map(|bytes| content_digest(&bytes));
+        // Only an admitted local path is readable. The display fallback is
+        // not a filesystem path (#4145).
+        let saved_digest = read_saved_digest(&uri);
         Self {
             uri,
             path,
@@ -1335,10 +1377,7 @@ impl DocumentStore {
         let mut digests = BTreeMap::new();
         let mut entered = Vec::new();
         for (uri, state) in &self.documents {
-            let analyzed = std::fs::read(&state.path)
-                .ok()
-                .map(|bytes| content_digest(&bytes))
-                .or_else(|| state.saved_digest.clone());
+            let analyzed = read_saved_digest(uri).or_else(|| state.saved_digest.clone());
             if !state.is_quarantined() && state.staleness_for_analyzed(analyzed.as_ref()).is_some()
             {
                 entered.push(uri.clone());
@@ -1415,8 +1454,52 @@ impl DocumentStore {
     }
 }
 
+/// Project a document URI to the path used for display. A URI the shared
+/// decoder (`lsp::uri::normalized_file_uri_path`) refuses has no local file
+/// path, so the wire string is kept as display text.
+///
+/// Digest reads do not use this fallback. [`read_saved_digest`] reads only a
+/// path [`path_from_file_uri`] admits. A refused URI, including one whose
+/// path contains `..`, therefore has no saved-content bytes. On Unix the wire
+/// string is a relative path, and a working directory that contains a
+/// directory named `file:` would otherwise let `std::fs::read` follow `..`
+/// out of that directory.
+///
+/// Containment is a separate check. `path_is_within_root` refuses a relative
+/// candidate whose first component carries a URI scheme separator, so this
+/// fallback cannot read as contained under the selected root. The fallback is
+/// published in the MCP-visible `workspace_status` projection as a display
+/// string. It does not reach code actions, apply-edit, or any spawned command
+/// payload; those are built from admitted `file_uri_for_path` output.
 fn document_path(uri: &Uri) -> PathBuf {
     path_from_file_uri(uri).unwrap_or_else(|| PathBuf::from(uri.as_str()))
+}
+
+/// Digest of the persisted bytes for an admitted local file URI.
+/// `None` when the decoder refuses the URI, the admitted path is not a regular
+/// file, or it cannot be read within the bound.
+fn read_saved_digest(uri: &Uri) -> Option<String> {
+    let path = path_from_file_uri(uri)?;
+    read_saved_bytes(&path).map(|bytes| content_digest(&bytes))
+}
+
+/// A client names this path in `didOpen`, so it may be a device, FIFO or
+/// huge file (`/dev/zero`, `/dev/stdin`). Read only a regular file, and no
+/// more than one LSP message can carry: an open document never exceeds that.
+fn read_saved_bytes(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let limit = crate::lsp::transport_bounds::MAX_MESSAGE_BYTES as u64;
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= limit).then_some(bytes)
 }
 
 pub(super) fn format_duration(duration: Duration) -> String {
@@ -2063,6 +2146,246 @@ mod tests {
     }
 
     #[test]
+    fn saved_digest_refuses_oversized_and_non_regular_paths() -> Result<(), String> {
+        let stamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-state-saved-bound-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir failed: {err}"))?;
+        let result = (|| {
+            let limit = crate::lsp::transport_bounds::MAX_MESSAGE_BYTES as u64;
+            let at_limit = dir.join("at_limit.rs");
+            std::fs::File::create(&at_limit)
+                .and_then(|file| file.set_len(limit))
+                .map_err(|err| format!("create at-limit file failed: {err}"))?;
+            let at_limit_uri = crate::lsp::uri::file_uri_for_path(&at_limit)
+                .map_err(|err| format!("file URI failed: {err}"))?;
+            if read_saved_digest(&at_limit_uri).is_none() {
+                return Err("a file within the message bound must still be digested".to_string());
+            }
+            // Sparse: a client-named multi-GB file must not be read whole.
+            let oversized = dir.join("oversized.rs");
+            std::fs::File::create(&oversized)
+                .and_then(|file| file.set_len(limit + 1))
+                .map_err(|err| format!("create oversized file failed: {err}"))?;
+            let oversized_uri = crate::lsp::uri::file_uri_for_path(&oversized)
+                .map_err(|err| format!("file URI failed: {err}"))?;
+            if read_saved_digest(&oversized_uri).is_some() {
+                return Err("a file larger than one LSP message must not be read".to_string());
+            }
+            let directory_uri = crate::lsp::uri::file_uri_for_path(&dir)
+                .map_err(|err| format!("file URI failed: {err}"))?;
+            if read_saved_digest(&directory_uri).is_some() {
+                return Err("a directory has no saved digest".to_string());
+            }
+            #[cfg(target_os = "linux")]
+            if read_saved_bytes(Path::new("/dev/zero")).is_some() {
+                return Err("a device must not be read as saved content".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
+    fn parent_directory_uri_does_not_seed_saved_digest_from_traversed_bytes() -> Result<(), String>
+    {
+        let stamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("ripr-state-dotdot-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(dir.join("a"))
+            .map_err(|err| format!("create temp dir failed: {err}"))?;
+        std::fs::write(dir.join("secret.txt"), "secret-bytes")
+            .map_err(|err| format!("write secret failed: {err}"))?;
+        let keep_path = dir.join("a").join("keep.txt");
+        std::fs::write(&keep_path, "keep-bytes")
+            .map_err(|err| format!("write keep failed: {err}"))?;
+        let keep_uri = crate::lsp::uri::file_uri_for_path(&keep_path)
+            .map_err(|err| format!("keep URI failed: {err}"))?;
+        // `%2e%2e` decodes to `..`. The `a` directory exists, so a decoder that
+        // admits the segment lets `std::fs::read` resolve it to secret.txt.
+        let display = dir.to_string_lossy().replace('\\', "/");
+        let rooted = if display.starts_with('/') {
+            display
+        } else {
+            format!("/{display}")
+        };
+        let traversal = format!("file://{rooted}/a/%2e%2e/secret.txt");
+        let traversal_uri = test_uri(&traversal)?;
+        let mut store = DocumentStore::default();
+        store.open(DidOpenTextDocumentParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentItem::new(
+                keep_uri.clone(),
+                "rust".to_string(),
+                1,
+                "client-keep".to_string(),
+            ),
+        });
+        store.open(DidOpenTextDocumentParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentItem::new(
+                traversal_uri.clone(),
+                "rust".to_string(),
+                1,
+                "client-secret".to_string(),
+            ),
+        });
+        let result = (|| {
+            let Some(keep) = store.documents.get(&keep_uri) else {
+                return Err("missing admitted document".to_string());
+            };
+            if keep.saved_digest.as_deref() != Some(digest_of("keep-bytes").as_str()) {
+                return Err(
+                    "an admitted sibling must still seed its digest from its own bytes".to_string(),
+                );
+            }
+            if path_from_file_uri(&traversal_uri).is_some() {
+                return Err("parent-segment URI must not be admitted as a local path".to_string());
+            }
+            let Some(state) = store.documents.get(&traversal_uri) else {
+                return Err("missing traversal document".to_string());
+            };
+            if state.saved_digest.is_some() {
+                return Err(format!(
+                    "refused parent-segment URI must not seed a saved digest: {:?}",
+                    state.saved_digest
+                ));
+            }
+            let (pending, _) = store.pending_analyzed_digests();
+            if matches!(pending.get(&traversal_uri), Some(Some(_))) {
+                return Err(
+                    "pending analyzed digest must not read through a parent segment".to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    /// A refused `file:` URI is a relative path. On Unix, `file:/a/../../secret`
+    /// resolves to `<cwd>/secret` when `<cwd>/file:/a` exists. The digest reads
+    /// must not follow that fallback. The control read is the oracle: if it
+    /// cannot see the secret, this test is blind rather than green.
+    #[cfg(unix)]
+    #[test]
+    fn refused_parent_uri_is_not_read_from_a_file_scheme_cwd_directory() -> Result<(), String> {
+        let cwd = std::env::current_dir().map_err(|err| format!("cwd failed: {err}"))?;
+        let scheme_root = cwd.join("file:");
+        let nested = scheme_root.join("a");
+        let created_root = !scheme_root.exists();
+        let created_nested = !nested.exists();
+        let secret_name = format!("ripr-uri-cwd-secret-{}", std::process::id());
+        let secret = cwd.join(&secret_name);
+        let wire = format!("file:///a/../../{secret_name}");
+        let prepared = (|| {
+            std::fs::create_dir_all(&nested)
+                .map_err(|err| format!("create file-scheme dir failed: {err}"))?;
+            std::fs::write(&secret, "secret-bytes")
+                .map_err(|err| format!("write secret failed: {err}"))?;
+            Ok(())
+        })();
+        let result = prepared.and_then(|()| {
+            let control = std::fs::read(PathBuf::from(&wire)).map_err(|err| {
+                format!(
+                    "cwd fixture must resolve the refused wire string, or the oracle is blind: {err}"
+                )
+            })?;
+            if control != b"secret-bytes" {
+                return Err("cwd fixture resolved a different file".to_string());
+            }
+            let uri = test_uri(&wire)?;
+            if path_from_file_uri(&uri).is_some() {
+                return Err("parent-segment URI must stay refused".to_string());
+            }
+            let mut store = DocumentStore::default();
+            store.open(DidOpenTextDocumentParams {
+                text_document: tower_lsp_server::ls_types::TextDocumentItem::new(
+                    uri.clone(),
+                    "rust".to_string(),
+                    1,
+                    "client-text".to_string(),
+                ),
+            });
+            let Some(state) = store.documents.get(&uri) else {
+                return Err("missing document".to_string());
+            };
+            if state.saved_digest.is_some() {
+                return Err(format!(
+                    "refused URI must not digest the cwd traversal target: {:?}",
+                    state.saved_digest
+                ));
+            }
+            let (pending, _) = store.pending_analyzed_digests();
+            if matches!(pending.get(&uri), Some(Some(_))) {
+                return Err("pending digest must not read the cwd traversal target".to_string());
+            }
+            Ok(())
+        });
+        let _ = std::fs::remove_file(&secret);
+        if created_nested {
+            let _ = std::fs::remove_dir_all(&nested);
+        }
+        if created_root {
+            let _ = std::fs::remove_dir(&scheme_root);
+        }
+        result
+    }
+
+    #[test]
+    fn rejected_uri_document_path_fallback_is_never_contained() -> Result<(), String> {
+        // `document_path` keeps the wire string when the shared URI decoder
+        // refuses the URI. That text is relative, so without the containment
+        // guard it would join under any selected root and read as a workspace
+        // file. #4060.
+        let root = PathBuf::from("/workspace/ripr");
+        for value in [
+            "file://remote.example/workspace/ripr/src/lib.rs",
+            "file://127.0.0.1/workspace/ripr/src/lib.rs",
+            "file:////remote.example/share/workspace/ripr/src/lib.rs",
+            "FILE://LOCALHOST/workspace/ripr/src/lib.rs?revision=1",
+            "file:/workspace/ripr/src/lib.rs#symbol",
+            "file:///a/../../etc/passwd",
+            "file://localhost/tmp/%2e%2e/etc/passwd",
+            "file:///workspace/src/../lib.rs",
+        ] {
+            let uri = test_uri(value)?;
+            let fallback = document_path(&uri);
+            if !fallback.is_relative() {
+                return Err(format!("expected a relative fallback for {value}"));
+            }
+            if crate::lsp::uri::path_is_within_root(&root, &fallback) {
+                return Err(format!(
+                    "rejected-URI fallback must not read as contained: {value}"
+                ));
+            }
+            if crate::lsp::uri::file_uri_is_within_root(&root, &uri) {
+                return Err(format!("rejected URI must not be contained: {value}"));
+            }
+        }
+
+        // The admitted spelling still yields a real absolute path that does
+        // resolve under the same root, so the guard is not over-broad.
+        let admitted = document_path(&test_uri("file:///workspace/ripr/src/lib.rs")?);
+        if admitted.as_path() != std::path::Path::new("/workspace/ripr/src/lib.rs") {
+            return Err(format!(
+                "admitted URI must keep its local path: {admitted:?}"
+            ));
+        }
+        if !crate::lsp::uri::path_is_within_root(&root, &admitted) {
+            return Err("an admitted local path must stay contained".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn analysis_health_run_status_preserves_limited_partial_scope() {
         // RIPR-PROP-0019 (#1999): a partial partition is a limited run
         // state; the DTO must not fall through to "full" (#2142 review).
@@ -2137,6 +2460,61 @@ mod tests {
             return Err(
                 "plain diagnostics should still require matching source evidence".to_string(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_consistency_counts_scope_guard_disclosures() -> Result<(), String> {
+        // #2299 / #4325: the oversized-diff warning is a governed,
+        // code-marked limited-run disclosure, so it is accounted without
+        // findings, seams, or gap records. A lookalike with a different code
+        // stays unaccounted.
+        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let mut scope_guard = plain_diagnostic();
+        scope_guard.code = Some(tower_lsp_server::ls_types::NumberOrString::String(
+            crate::lsp::diagnostic_catalog::DIFF_SCOPE_OVERSIZED_CODE.to_string(),
+        ));
+        let mut diagnostics_by_uri = BTreeMap::new();
+        diagnostics_by_uri.insert(uri.clone(), vec![scope_guard]);
+        let snapshot = AnalysisSnapshot {
+            root: PathBuf::from("/workspace"),
+            input_identity: None,
+            base: None,
+            mode: Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: Vec::new(),
+            analysis_outcome: None,
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            classified_seams: Vec::new(),
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            harness_facts: HarnessFactsOnSnapshot::NotRegistered,
+            diagnostics_by_uri,
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+        };
+
+        if !snapshot.is_consistent() {
+            return Err("scope-guard disclosures should count as explicit diagnostics".to_string());
+        }
+
+        let mut lookalike = plain_diagnostic();
+        lookalike.code = Some(tower_lsp_server::ls_types::NumberOrString::String(
+            "ripr-something-else".to_string(),
+        ));
+        let mut lookalike_by_uri = BTreeMap::new();
+        lookalike_by_uri.insert(uri, vec![lookalike]);
+        let lookalike_snapshot = AnalysisSnapshot {
+            diagnostics_by_uri: lookalike_by_uri,
+            ..snapshot
+        };
+
+        if lookalike_snapshot.is_consistent() {
+            return Err("a lookalike code must stay unaccounted".to_string());
         }
         Ok(())
     }

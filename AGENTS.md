@@ -349,6 +349,7 @@ cargo xtask check-python-judged-panel
 cargo xtask check-rust-source-role-authority
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-pr-shape # advisory
@@ -370,8 +371,8 @@ cargo xtask check-agent-skills
 
 `shape` may make safe local format/allowlist edits and reports. `fix-pr` shapes
 then refreshes the summary. `pr-summary`, `pr-triage-report`, `gh-pr-status`,
-`ci-budget` and `module-health` supply scoped operational evidence; advisory
-reports do not independently block merge. `worktree doctor` reports local
+`ci-budget`, `merge-queue capture`, and `module-health` supply scoped
+operational evidence; advisory reports do not independently block merge. `worktree doctor` reports local
 hygiene, not an instruction to chase main. See `docs/PR_AUTOMATION.md`.
 
 Large-repo scans are build-heavy. Prefer `repo-badge-json`, generated receipts,
@@ -514,3 +515,8 @@ in `docs/ROADMAP.md` and `docs/IMPLEMENTATION_PLAN.md`; campaign history is in
 `.allow/spec-system/slices/`; specs and `.ripr/traceability.toml` connect claims,
 tests and code. Keep durable failure knowledge in `docs/LEARNINGS.md`. Do not
 resurrect deleted active-goal manifests or store global writer/lifecycle state.
+
+`check-traceability` validates authored mappings and registered paths; its pass
+does not enumerate newly added tests or prove `::symbol` identity. During review,
+map behavior-discriminating tests to the relevant spec and explain intentional
+omissions. Symbol/test-role verification remains owned by #2345.

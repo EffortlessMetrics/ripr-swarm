@@ -2,11 +2,16 @@ pub(crate) mod cancellation;
 pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
+pub(crate) mod committed_source;
+pub(crate) mod diagnostic_origin;
 mod diff;
 mod extract;
 mod facts;
+mod generated_rust_corpus;
 pub(crate) mod harness_projection;
 mod language;
+pub(crate) mod new_test_target;
+pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
 pub(crate) mod repair_route;
@@ -34,7 +39,8 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_worktree_diff, parse_unified_diff, resolve_base_commit,
+    load_diff, load_diff_range_with_deadline, load_worktree_diff, no_merge_base_diagnosis,
+    parse_unified_diff, resolve_base_commit, resolve_effective_base,
     working_tree_has_tracked_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
@@ -42,32 +48,44 @@ pub(crate) use diff::{
 /// consumed by the analysis route and the xtask badge route alike. Neither
 /// route may hardcode a base ref or rebuild the diff argv inline.
 pub use diff::{load_diff_range, resolve_default_base_commit};
+pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
-pub(crate) use language::{DIFF_SCOPE_OVERSIZED_PREFIX, is_diff_scope_oversized};
+pub(crate) use language::{
+    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
+    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
+    is_ts_js_source_extension, ts_js_source_kind,
+};
 pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
-pub(crate) use probes::{fingerprint_probe_id, normalize_expression};
+pub(crate) use probes::{
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+};
+pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
 pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
-    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory, SeamLimitInfo,
-    SeamLimitSource, apply_pilot_seam_budget,
-    inventory_changed_test_classified_seams_at_with_config_node,
-    inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_at_with_config, inventory_seams_at_with_config,
+    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages,
+    ScopedClassifiedSeamInventory, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
+    inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
+    inventory_compact_classified_seams_at_with_config,
+    inventory_diff_scoped_classified_seams_at_with_config,
+    inventory_diff_scoped_classified_seams_staged_at_with_config, inventory_seams_at_with_config,
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
-pub(crate) use workspace::classify_with;
+pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
+pub(crate) use workspace::seeds_diff_probes;
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace
@@ -76,6 +94,16 @@ pub(crate) fn workspace_preview_language_files(
     root: &Path,
 ) -> Vec<(language::LanguageId, PathBuf)> {
     workspace::discover_preview_language_files(root)
+}
+
+/// Source files in languages no ripr adapter reads, counted per language
+/// name in stable name order; see `workspace::discover_unanalyzed_source_files`.
+pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'static str, usize)> {
+    let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
+    for (language, _) in workspace::discover_unanalyzed_source_files(root) {
+        *counts.entry(language).or_default() += 1;
+    }
+    counts.into_iter().collect()
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can
@@ -539,6 +567,12 @@ pub struct PreviewLanguageAdvisory {
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,
+    /// How many of the `file_count` files are JavaScript-family sources
+    /// (`.js`, `.jsx`, `.mjs`, `.cjs`). The TypeScript adapter analyzes both
+    /// halves of the family under the `typescript` wire name, so this lets
+    /// prose call a JavaScript-only diff JavaScript (#4555). Always `0` for
+    /// other languages.
+    pub javascript_file_count: usize,
     /// Whether this preview adapter was configured and available for this
     /// analysis.
     ///
@@ -686,6 +720,14 @@ pub struct AnalysisResult {
     /// otherwise, and `None` when no base was involved (diff-file/stdin
     /// inputs, repo-scope runs, subject-materialized runs).
     pub effective_base: Option<String>,
+    /// Tracked source and test files with uncommitted edits in a
+    /// committed-history run. The run read their `HEAD` content (or left a
+    /// staged addition out), so these are the edits a `--worktree` run would
+    /// add; they decide the uncommitted-edits note. Empty for every other
+    /// mode.
+    pub(crate) uncommitted_source_paths: Vec<String>,
+    /// Crate-private numeric diagnostic origins for Rust findings (#4464).
+    pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

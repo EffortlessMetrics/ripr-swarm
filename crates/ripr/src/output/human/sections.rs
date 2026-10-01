@@ -5,6 +5,7 @@ use crate::domain::{
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
+    validate_agent_gap_record_packet,
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::path::display_path;
@@ -39,15 +40,15 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
         }
     }
     out.push_str(&format!(
-        "  Static exposure: {} ({}, confidence {:.2})\n",
-        finding.class.as_str(),
+        "  Static exposure: {}{}, confidence {:.2})\n",
+        finding.class.human_lead(),
         severity,
         finding.confidence
     ));
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
     if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
-        out.push_str(&format!("  Why {0}: {hint}\n", finding.class.as_str()));
+        out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     if let Some(gap) = &finding.canonical_gap {
         out.push_str(&format!("  Canonical gap: {}\n", gap.id));
@@ -90,11 +91,30 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
         let missing = missing
             .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
             .unwrap_or(missing);
+        // #4320: the digest renders one entry while the exhaustive form's
+        // Weakness section may carry several; disclose the window the same way
+        // the evidence window below does, so the reader knows more
+        // missing-discriminator evidence exists in `--format human-full`.
+        let total_weakness_entries = weakness_lines(finding).len();
+        let label = if label == "Missing discriminator" && total_weakness_entries > 1 {
+            format!("Missing discriminator (1 of {total_weakness_entries})")
+        } else {
+            label.to_string()
+        };
         out.push_str(&format!("  {label}: {}\n", one_line(missing)));
     }
     if let Some(test) = finding.related_tests.first() {
+        // #4320: the digest shows only the first related test; carry the total
+        // so the reader knows how much reaching-test evidence exists (the
+        // evidence window in the full form discloses the same bound).
+        let related_tests_total = finding.related_tests.len();
+        let label = if related_tests_total > 1 {
+            format!("Related test (1 of {related_tests_total})")
+        } else {
+            "Related test".to_string()
+        };
         out.push_str(&format!(
-            "  Related test: {}:{} {}\n",
+            "  {label}: {}:{} {}\n",
             display_path(&test.file),
             test.line,
             test.name
@@ -112,20 +132,42 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
         ));
     }
     if finding.recommended_next_step.is_some() {
-        out.push_str(&format!(
-            "  Next step: {}\n",
-            one_line(&reconcile_next_step(finding))
-        ));
+        // #4323: wrap, never truncate. The guidance leads with context and
+        // ends with the imperative, so a hard cut deletes the remedy. Text
+        // that fits the line budget keeps its single line.
+        let next_step = reconcile_next_step(finding);
+        const NEXT_STEP_PREFIX: &str = "  Next step: ";
+        let collapsed = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
+        if NEXT_STEP_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{NEXT_STEP_PREFIX}{collapsed}\n"));
+        } else {
+            out.push_str(&wrap_human_prose(&collapsed, NEXT_STEP_PREFIX, "    "));
+            out.push('\n');
+        }
     }
     let evidence = evidence_path_lines(finding);
     if !evidence.is_empty() {
-        out.push_str("  Evidence:\n");
+        // #4324: evidence ordering is pipeline-ordered (reach, infection,
+        // propagation, observation, discriminator), so the positional 2-line
+        // window below used to hide the decisive stages behind a bare count.
+        // Print the five stage states compactly — every stage is always
+        // named, because `evidence_path_lines` builds all five lines for
+        // every finding — and keep only the per-stage prose detail inside
+        // the window.
+        out.push_str(&format!(
+            "  Evidence: reach {} · infection {} · propagation {} · observation {} · discriminator {}\n",
+            finding.ripr.reach.state.as_str(),
+            finding.ripr.infect.state.as_str(),
+            finding.ripr.propagate.state.as_str(),
+            finding.ripr.reveal.observe.state.as_str(),
+            compact_discriminator_token(finding),
+        ));
         for line in evidence.iter().take(2) {
             out.push_str(&format!("    - {}\n", one_line(line)));
         }
         if evidence.len() > 2 {
             out.push_str(&format!(
-                "    - {} more evidence line(s) hidden\n",
+                "    - {} more detail line(s) in --format human-full\n",
                 evidence.len() - 2
             ));
         }
@@ -133,17 +175,58 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
     out
 }
 
+/// Compact discriminator token for the #4324 stage-states line. The
+/// `discriminate` stage grades the strongest related oracle, not whether that
+/// oracle distinguishes the changed behavior, so for a non-`exposed` finding
+/// a `yes` grade must not read as "a discriminator exists" — the digest may
+/// simultaneously name the missing discriminating input. Mirror the semantic
+/// `discriminator_evidence_line` keeps for the full evidence line: only an
+/// `exposed` finding (or a non-`yes` grade) prints the bare state.
+fn compact_discriminator_token(finding: &Finding) -> &'static str {
+    let stage = &finding.ripr.reveal.discriminate;
+    if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
+        return stage.state.as_str();
+    }
+    if finding.activation.missing_discriminators.is_empty() {
+        "not established"
+    } else {
+        "missing"
+    }
+}
+
 /// Collapse a possibly-multi-line value to one bounded display line.
 ///
 /// This is the *digest* policy: the digest shows one selected finding and routes
 /// the reader to `--format human-full`, so losing detail here is recoverable.
 /// The full form must not use it — see [`wrapped_fragment`].
-fn one_line(value: &str) -> String {
+pub(super) fn one_line(value: &str) -> String {
     let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= LINE_BUDGET {
         collapsed
     } else {
         let mut truncated = collapsed.chars().take(LINE_BUDGET).collect::<String>();
+        // Cut at a word boundary when one is near, so the line never ends
+        // mid-word ("places amo…"); a long unbroken token still cuts hard.
+        if let Some(space) = truncated.rfind(" ")
+            && truncated[space..].chars().count() <= WORD_BOUNDARY_SLACK
+        {
+            truncated.truncate(space);
+        }
+        // Never leave a code span open: "input `discountedTotal(…" reads as
+        // a broken command. Cut before the unmatched backtick when that loses
+        // little; when the span is long, keep its start and close it
+        // ("`xxxx…`") instead of wiping the line down to "see…".
+        if truncated.matches('`').count() % 2 == 1
+            && let Some(open) = truncated.rfind('`')
+        {
+            if truncated[open..].chars().count() <= CODE_SPAN_SLACK {
+                truncated.truncate(open);
+                truncated.truncate(truncated.trim_end().len());
+            } else {
+                truncated.push_str("…`");
+                return truncated;
+            }
+        }
         truncated.push('…');
         truncated
     }
@@ -151,6 +234,12 @@ fn one_line(value: &str) -> String {
 
 /// Maximum displayed characters for one rendered source fragment.
 const LINE_BUDGET: usize = 180;
+
+/// How far back from [`LINE_BUDGET`] `one_line` looks for a word boundary.
+const WORD_BOUNDARY_SLACK: usize = 30;
+
+/// Longest open code span `one_line` drops whole rather than closing.
+const CODE_SPAN_SLACK: usize = 60;
 
 /// Render a changed-source fragment for the exhaustive surface: **complete**,
 /// but hard-wrapped so no display line runs past the budget.
@@ -196,6 +285,11 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
         display_path(&finding.probe.location.file),
         finding.probe.location.line
     ));
+    // #4321: name the finding this block carries, so a reader routed here by
+    // the digest's `--format human-full` pointer can run `ripr explain` /
+    // `ripr context` and cross-reference the JSON `id` without counting
+    // identical-looking headers.
+    out.push_str(&format!("  id: {}\n", finding.id));
 
     // #2752: these three printed at full source width, so a long changed
     // expression (a chained iterator, a jq pipeline, a heredoc) rendered 400+
@@ -282,7 +376,11 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
     if !stop_reasons.is_empty() {
         out.push_str("\nStop reasons:\n");
         for reason in &stop_reasons {
-            out.push_str(&format!("  - {}\n", reason.as_str()));
+            out.push_str(&format!(
+                "  - {} \u{2014} {}\n",
+                reason.as_str(),
+                reason.describe()
+            ));
         }
     }
 
@@ -703,8 +801,17 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
 
     let maybe_record = typescript_gap_record_for(finding);
 
+    // The packet field-note is actionable only when the projected record
+    // passes the SHARED validator — the same flip authority as the JSON
+    // packet and `preview_actionability` (#4105). A projected-but-ineligible
+    // record (e.g. the observed oracle input cannot reach the named
+    // discriminator boundary) must not render as a delegatable packet.
+    let record_is_actionable = maybe_record
+        .as_ref()
+        .is_some_and(|record| validate_agent_gap_record_packet(record).is_ok());
+
     match maybe_record {
-        Some(record) => {
+        Some(record) if record_is_actionable => {
             // Actionable — render the full work-packet field-note.
             out.push_str("\nTypeScript repair packet (advisory)\n");
             out.push_str(&format!("  canonical gap: {}\n", record.canonical_gap_id));
@@ -750,7 +857,7 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
             out.push_str("  why actionable: complete-contract TypeScript finding — package root, runner, owner, oracle all resolved; no blocking limitation\n");
             out.push_str("  authority: preview_advisory_only\n");
         }
-        None => {
+        maybe_record => {
             // Blocked — name the limitation, never emit a partial packet.
             // Only render this subsection if we have at least some preview
             // actionability data to surface (otherwise stay silent).
@@ -762,6 +869,17 @@ pub(crate) fn push_typescript_repair_packet_field_note(out: &mut String, finding
             out.push_str("\nTypeScript repair packet (advisory)\n");
             out.push_str("  status: not actionable\n");
             out.push_str(&format!("  limitation: {why}\n"));
+            // #4105: when a record WAS projected but the shared validator kept
+            // it ineligible, disclose the non-delegatable target shape so the
+            // boundary stays visible without presenting a delegatable packet.
+            if let Some(shape) = maybe_record
+                .as_ref()
+                .and_then(|record| record.repair_route.as_ref())
+                .and_then(|route| route.assertion_shape.as_deref())
+                .filter(|shape| !shape.trim().is_empty())
+            {
+                out.push_str(&format!("  target shape (not delegatable): {shape}\n"));
+            }
             out.push_str(&format!("  next capability needed: {next_capability}\n"));
         }
     }
@@ -878,17 +996,42 @@ struct RepairPlacement<'a> {
 /// from the class name alone. The hint restates the stage evidence that put
 /// the finding in its class, so it must agree with the reach/observe lines
 /// printed beneath it (F5-10).
+/// Names the first incomplete stage instead of deferring to the full form
+/// (#4379 rewalk W4): "partially complete — see full form" told a reader
+/// nothing they could act on from the digest.
+fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
+    let incomplete = |stage: &crate::domain::StageEvidence| stage.state != StageState::Yes;
+    // An Unknown stage is not established, so its hint says so rather than
+    // stating the gap as fact (#4411 review).
+    if incomplete(&ripr.infect) {
+        if ripr.infect.state == StageState::Unknown {
+            "a related test reaches this change, but static evidence cannot tell whether any test input tells the old and new behavior apart"
+        } else {
+            "a related test reaches this change, but no test input tells the old and new behavior apart"
+        }
+    } else if incomplete(&ripr.propagate) {
+        "a related test reaches this change, but the path from it to what the test checks is only partly traced"
+    } else if incomplete(&ripr.reveal.observe) {
+        if ripr.reveal.observe.state == StageState::Unknown {
+            "a related test reaches this change, but whether its assertions observe the result is not established"
+        } else {
+            "a related test reaches this change, but its assertions observe the result only loosely"
+        }
+    } else {
+        "a related test reaches this change, but the static evidence path is partially complete — see full form for details"
+    }
+}
+
 fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
     let reveal = &ripr.reveal;
     match class {
         ExposureClass::WeaklyExposed => {
             if reveal.discriminate.state == StageState::Weak {
-                Some("a related test reaches this change but does not observe the exact changed value".to_string())
+                // #4381: the shared missing-discriminator sentence lives in
+                // output::gap_vocabulary; quote the constant, never re-type it.
+                Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE.to_string())
             } else {
-                Some(
-                    "the evidence path is partially complete — see full form for details"
-                        .to_string(),
-                )
+                Some(partial_path_hint(ripr).to_string())
             }
         }
         ExposureClass::ReachableUnrevealed => {
@@ -898,10 +1041,7 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
                         .to_string(),
                 )
             } else {
-                Some(
-                    "the evidence path is partially complete — see full form for details"
-                        .to_string(),
-                )
+                Some(partial_path_hint(ripr).to_string())
             }
         }
         ExposureClass::NoStaticPath => {
@@ -1021,5 +1161,96 @@ mod classification_hint_tests {
                 .is_some_and(|hint| !hint.contains("no related test")),
             "a reaching test must never be described as absent: {partial:?}"
         );
+    }
+
+    #[test]
+    fn weakly_exposed_hint_names_the_incomplete_stage() {
+        // Rewalk W4: the boundary gap (infection weak, exact oracle present)
+        // used to read "partially complete — see full form for details".
+        let mut evidence = ripr(StageState::Yes, StageState::Yes);
+        evidence.reveal.discriminate = StageEvidence::new(StageState::Yes, Confidence::High, "x");
+        evidence.infect = StageEvidence::new(StageState::Weak, Confidence::Medium, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but no test input tells the old and new behavior apart"
+            )
+        );
+
+        evidence.infect = StageEvidence::new(StageState::Yes, Confidence::High, "x");
+        evidence.reveal.observe = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but its assertions observe the result only loosely"
+            )
+        );
+
+        // Unknown is not established evidence, so the hint must not state
+        // the gap as fact.
+        evidence.reveal.observe = StageEvidence::new(StageState::Unknown, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but whether its assertions observe the result is not established"
+            )
+        );
+        evidence.reveal.observe = StageEvidence::new(StageState::Yes, Confidence::High, "x");
+        evidence.infect = StageEvidence::new(StageState::Unknown, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(
+                "a related test reaches this change, but static evidence cannot tell whether any test input tells the old and new behavior apart"
+            )
+        );
+    }
+}
+
+#[cfg(test)]
+mod one_line_tests {
+    use super::{LINE_BUDGET, one_line};
+
+    #[test]
+    fn one_line_closes_a_long_open_code_span_instead_of_dropping_it() {
+        // #4411 review: cutting before a long span's backtick reduced
+        // "see `xxxx…` then" to "see…".
+        let text = format!("see `{}` then", "x".repeat(200));
+        let rendered = one_line(&text);
+        assert!(rendered.starts_with("see `xxxx"), "{rendered}");
+        assert!(rendered.ends_with("…`"), "{rendered}");
+        assert_eq!(rendered.matches('`').count() % 2, 0, "{rendered}");
+    }
+
+    #[test]
+    fn one_line_truncates_at_a_word_boundary() {
+        // Rewalk W4: the Python digest cut "places amount" to "places amo…".
+        let text = format!("{} places amount at the boundary", "word ".repeat(34));
+        let rendered = one_line(&text);
+        assert!(rendered.ends_with("places…"), "{rendered}");
+        assert!(rendered.chars().count() <= LINE_BUDGET + 1);
+    }
+
+    #[test]
+    fn one_line_never_leaves_a_code_span_open() {
+        // Rewalk (TypeScript): the safe-next-action reason ended
+        // "the observed call input `discountedTotal(…" with an open span.
+        let text = format!(
+            "{}missing discriminator `amount == DISCOUNT_THRESHOLD` is absent",
+            "word ".repeat(29)
+        );
+        let rendered = one_line(&text);
+        assert_eq!(rendered.matches('`').count() % 2, 0, "{rendered}");
+        assert!(rendered.ends_with("missing discriminator…"), "{rendered}");
+    }
+
+    #[test]
+    fn one_line_cuts_an_unbroken_token_hard() {
+        let rendered = one_line(&"x".repeat(LINE_BUDGET + 20));
+        assert_eq!(rendered.chars().count(), LINE_BUDGET + 1);
+        assert!(rendered.ends_with('…'));
     }
 }

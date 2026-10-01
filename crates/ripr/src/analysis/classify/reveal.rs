@@ -2,6 +2,10 @@ use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
 
+use super::propagation_witness::{
+    assertion_observes_direct_collection, direct_collection_mutation_receiver,
+};
+use super::reach::is_proximity_only;
 use super::rust_string_literals;
 use crate::domain::*;
 
@@ -51,12 +55,24 @@ pub(in crate::analysis) fn reveal_evidence_with_expression(
     );
     let related = finalize_related_tests(analysis.related);
     let observe = build_observe_evidence(analysis.matched_any);
-    let discriminate = build_discriminate_evidence(
-        &analysis.strongest,
-        &analysis.strongest_kind,
-        &probe.family,
-        analysis.observation_unverified,
-    );
+    let discriminate = if needs_token_confirmation(&probe.family)
+        && analysis.matched_any
+        && !analysis.observation_unverified
+        && !analysis.strongest_observation_confirmed
+    {
+        StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            "Strongest oracle does not confirm observation of the changed expression; a weaker assertion cannot supply its confirmation (oracle_confirmation_mixed)",
+        )
+    } else {
+        build_discriminate_evidence(
+            &analysis.strongest,
+            &analysis.strongest_kind,
+            &probe.family,
+            analysis.observation_unverified,
+        )
+    };
 
     (observe, discriminate, related)
 }
@@ -65,6 +81,10 @@ struct RevealAssertionAnalysis {
     related: Vec<RelatedTest>,
     strongest: OracleStrength,
     strongest_kind: OracleKind,
+    /// Confirmation belongs to the assertion supplying the selected oracle
+    /// strength. A weaker token match must not upgrade an unrelated exact
+    /// oracle, even when both assertions are in the same related test.
+    strongest_observation_confirmed: bool,
     matched_any: bool,
     /// True when this probe's family requires a `token_match` to confirm that
     /// an assertion actually references the specific changed sub-expression, and
@@ -147,6 +167,13 @@ fn effect_observer_confirms(assertion: &OracleFact) -> bool {
         assertion.kind,
         OracleKind::MockExpectation | OracleKind::Snapshot | OracleKind::WholeObjectEquality
     )
+}
+
+fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> bool {
+    let Some(receiver) = direct_collection_mutation_receiver(expression) else {
+        return false;
+    };
+    assertion_observes_direct_collection(&assertion.text, receiver)
 }
 
 /// For a `MatchArm` probe expression, extract only the "variant" tokens —
@@ -255,7 +282,7 @@ fn analyze_related_assertions(
     // confirming signal is token coincidence by construction); it stays
     // below `exposed` and carries the typed
     // `wrapper_error_binding_unresolved` limitation attached by
-    // `apply_wrapper_error_binding_limit` (analysis/language/rust.rs).
+    // `apply_wrapper_error_binding_limit` (analysis/language/rust/oracles.rs).
     let wrapper_seam = error_construction_variant.is_none()
         && matches!(
             probe.family,
@@ -283,14 +310,38 @@ fn analyze_related_assertions(
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
     let mut strongest_kind = OracleKind::Unknown;
+    let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     // For families that need token confirmation: start pessimistic and clear
     // once a token_match fires.
     let mut observation_unverified = false;
+    // When any related test is tied to the owner by a call, helper chain,
+    // assertion affinity or seam callee, reach comes from that test.
+    // Same-file and same-module relations do not count: `reach.rs` treats
+    // them as proximity with no reach. A test related only because its name or
+    // path contains a changed token or the owner's name, with no captured
+    // call, helper chain or assertion affinity (`WeakTokenSubstring`,
+    // `OwnerNamedTest`), may never run the changed code, so its
+    // assertions stay visible but cannot supply the credited oracle: a test
+    // named `malformedsource_variant_is_distinct` that pins
+    // `ParseError::MalformedSource == ParseError::MalformedSource` observes
+    // nothing the changed `try_parse` does (#4486). Same-file and same-module
+    // tests keep crediting: they commonly exercise a private helper through
+    // the module's own entry point, which the relation cannot see.
+    let name_only = |reason: RelationReason| {
+        matches!(
+            reason,
+            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest
+        )
+    };
+    let reach_bearing_related = related_tests
+        .iter()
+        .any(|(_, reason)| !name_only(*reason) && !is_proximity_only(*reason));
 
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
+        let credits_oracle = !(reach_bearing_related && name_only(*reason));
         if test.assertions.is_empty() {
             related.push(RelatedTest {
                 name: test.name.clone(),
@@ -326,7 +377,24 @@ fn analyze_related_assertions(
                 import_defeats_owner,
                 cross_package_defeats_owner,
             );
-            if matched {
+            if matched && !credits_oracle {
+                related.push(RelatedTest {
+                    name: test.name.clone(),
+                    file: test.file.clone(),
+                    line: test.start_line,
+                    oracle: Some(assertion.text.clone()),
+                    oracle_kind: assertion.kind.clone(),
+                    oracle_strength: probe_relative_oracle_strength(&probe.family, assertion),
+                    relation_reason,
+                    relation_confidence,
+                });
+            } else if matched {
+                let observation_confirmed = !confirm_required
+                    || collection_observer_confirms(&probe.expression, assertion)
+                    || (direct_collection_mutation_receiver(&probe.expression).is_none()
+                        && (has_token_match
+                            || (is_effect_family(&probe.family)
+                                && effect_observer_confirms(assertion))));
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
                     // references the changed sub-expression. For value families
@@ -339,8 +407,6 @@ fn analyze_related_assertions(
                     // flagged `observation_unverified`, while a plain
                     // non-observing assertion (no token, no effect observer)
                     // stays unverified.
-                    let observation_confirmed = has_token_match
-                        || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
                     if !matched_any {
                         // First matching assertion: observation is unverified
                         // unless confirmed.
@@ -352,9 +418,17 @@ fn analyze_related_assertions(
                 }
                 matched_any = true;
                 let relative_strength = probe_relative_oracle_strength(&probe.family, assertion);
-                if relative_strength.rank() > strongest.rank() {
+                // Keep strength, kind, and confirmation on one assertion.
+                // An equally strong confirmed oracle wins over an unrelated
+                // one regardless of encounter order; a weaker oracle cannot.
+                if relative_strength.rank() > strongest.rank()
+                    || (relative_strength.rank() == strongest.rank()
+                        && observation_confirmed
+                        && !strongest_observation_confirmed)
+                {
                     strongest = relative_strength.clone();
                     strongest_kind = assertion.kind.clone();
+                    strongest_observation_confirmed = observation_confirmed;
                 }
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -374,6 +448,7 @@ fn analyze_related_assertions(
         related,
         strongest,
         strongest_kind,
+        strongest_observation_confirmed,
         matched_any,
         observation_unverified,
     }
@@ -1062,7 +1137,7 @@ fn owner_call_literals(text: &str, owner: &str) -> Vec<String> {
 /// error variant the guarded pin must name that exact variant, the
 /// related test's file must not import the owner callee's bare name from
 /// a FOREIGN path (a same-name import makes the bare binding ambiguous —
-/// see `file_imports_foreign_callee_name`), the test's own package
+/// see `use_statements_import_foreign_callee_name`), the test's own package
 /// must not define a same-named function while the changed owner lives in
 /// another package (a bare call may bind the test package's own function —
 /// the cross-package ambiguity gate), and — for a return-value probe whose
@@ -1251,6 +1326,25 @@ fn assertion_matches_probe_detail(
     )
 }
 
+/// Every `use` declaration of a file source, masked, trimmed, and without
+/// its terminating `;` — the callee-independent half of
+/// `use_statements_import_foreign_callee_name`, so one scan of a file serves every
+/// callee and every probe (see `FileUseStatements`).
+fn file_use_statements(source: &str) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    all_use_statements(&masked)
+        .iter()
+        .map(|statement| {
+            let statement = statement.trim();
+            statement
+                .strip_suffix(';')
+                .unwrap_or(statement)
+                .trim_end()
+                .to_string()
+        })
+        .collect()
+}
+
 /// #3731 review (F11, F22): whether the related test's file imports the
 /// owner callee's bare name FROM A FOREIGN PATH — a `use` binding whose
 /// first path segment is neither `crate`/`self`/`super` nor one of the
@@ -1275,18 +1369,19 @@ fn assertion_matches_probe_detail(
 /// module boundaries can defeat a confirmation for a test the nested
 /// import is not visible to — a documented under-credit residual, since
 /// lexical scope resolution is exactly what this scan cannot do.
-pub(in crate::analysis) fn file_imports_foreign_callee_name(
-    source: &str,
+///
+/// This is the callee-dependent half; `file_use_statements` produces its
+/// statements and `FileUseStatements` memoizes them per file.
+fn use_statements_import_foreign_callee_name(
+    statements: &[String],
     callee: &str,
     crate_names: &std::collections::BTreeSet<String>,
 ) -> bool {
     if callee.is_empty() {
         return false;
     }
-    let masked = crate::analysis::extract::mask_comments_and_strings(source);
-    for statement in all_use_statements(&masked) {
-        let statement = statement.trim();
-        let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+    for statement in statements {
+        let statement = statement.as_str();
         let Some(first_segment) = use_statement_first_segment(statement) else {
             continue;
         };
@@ -1306,12 +1401,63 @@ pub(in crate::analysis) fn file_imports_foreign_callee_name(
     false
 }
 
+/// Scans `source` and applies the gate in one call; production reads the
+/// same two halves through `FileUseStatements`.
+#[cfg(test)]
+fn file_imports_foreign_callee_name(
+    source: &str,
+    callee: &str,
+    crate_names: &std::collections::BTreeSet<String>,
+) -> bool {
+    use_statements_import_foreign_callee_name(&file_use_statements(source), callee, crate_names)
+}
+
 /// The crate-identifier form of a manifest name: hyphens normalize to
 /// underscores in crate identifiers, so a package named `foo-bar` is
 /// imported as `foo_bar` and an import gate must treat the two spellings
 /// as the same crate (#3731 review F23).
 fn crate_identifier(name: &str) -> String {
     name.replace('-', "_")
+}
+
+/// Per-file `use` declarations for the reveal-side same-name-import gate,
+/// scanned at most once per file for as long as the memo lives.
+///
+/// The gate depends only on the test file's source, the owner callee, and
+/// the index's package names, never on the probe, so a classification run
+/// shares one memo across all its probes (it rides the run-scoped
+/// `RelatedTestCandidateIndex`). Re-masking every related test file for
+/// every probe was about a third of the sampled stacks of a warm
+/// `ripr check` on this repository. The memo must not outlive the index it was filled from.
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct FileUseStatements {
+    by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+}
+
+impl FileUseStatements {
+    /// `use_statements_import_foreign_callee_name` over `source`'s statements,
+    /// scanning `source` only on the first query for `file`. Every caller
+    /// must pass the indexed source that `file` resolves to.
+    pub(in crate::analysis) fn imports_foreign_callee_name(
+        &self,
+        file: &std::path::Path,
+        source: &str,
+        callee: &str,
+        crate_names: &std::collections::BTreeSet<String>,
+    ) -> bool {
+        if callee.is_empty() {
+            return false;
+        }
+        if let Some(statements) = self.by_file.borrow().get(file) {
+            return use_statements_import_foreign_callee_name(statements, callee, crate_names);
+        }
+        let statements = file_use_statements(source);
+        let imports = use_statements_import_foreign_callee_name(&statements, callee, crate_names);
+        self.by_file
+            .borrow_mut()
+            .insert(file.to_path_buf(), statements);
+        imports
+    }
 }
 
 /// Every `use` declaration in a (masked) source, at any brace depth: the
@@ -1622,7 +1768,9 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
         if before_ok && after_ok {
             return true;
         }
-        start = abs_pos + 1;
+        // Step past the match's first char, not one byte: a token that starts
+        // with a multibyte char would otherwise leave `start` inside it.
+        start = abs_pos + token.chars().next().map_or(1, char::len_utf8);
     }
     false
 }
@@ -1630,7 +1778,59 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
 fn finalize_related_tests(mut related: Vec<RelatedTest>) -> Vec<RelatedTest> {
     related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
     related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
+    // Renderers present the first entry as the primary related test, so the
+    // strongest relation leads. The sort is stable: name and line order holds
+    // within one confidence tier, and the dedup above is unchanged.
+    related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
+    // JSON/human renderers cap at eight rows. When one test's assertions would
+    // fill that window, unique tests go first (#4760). Under the cap, keep
+    // per-assertion rows so existing goldens and #1728 witnesses stay intact.
+    if related.len() > RELATED_TESTS_RENDER_CAP {
+        related = pack_unique_tests_first(related, RELATED_TESTS_RENDER_CAP);
+    }
     related
+}
+
+const RELATED_TESTS_RENDER_CAP: usize = 8;
+
+fn pack_unique_tests_first(related: Vec<RelatedTest>, cap: usize) -> Vec<RelatedTest> {
+    let mut packed = Vec::with_capacity(cap.min(related.len()));
+    let mut seen = std::collections::BTreeSet::new();
+    for test in &related {
+        if packed.len() >= cap {
+            break;
+        }
+        let key = (test.name.as_str(), test.file.as_path(), test.line);
+        if seen.insert(key) {
+            packed.push(test.clone());
+        }
+    }
+    for test in &related {
+        if packed.len() >= cap {
+            break;
+        }
+        if packed.iter().any(|kept| {
+            kept.name == test.name
+                && kept.file == test.file
+                && kept.line == test.line
+                && kept.oracle == test.oracle
+        }) {
+            continue;
+        }
+        packed.push(test.clone());
+    }
+    packed
+}
+
+/// Sort rank of an emitted related test: higher relation confidence ranks
+/// first; an unknown relation origin ranks with `Opaque`.
+fn related_test_rank(test: &RelatedTest) -> u8 {
+    match test.relation_confidence {
+        Some(RelationConfidence::High) => 3,
+        Some(RelationConfidence::Medium) => 2,
+        Some(RelationConfidence::Low) => 1,
+        Some(RelationConfidence::Opaque) | None => 0,
+    }
 }
 
 fn build_observe_evidence(matched_any: bool) -> StageEvidence {
@@ -1990,6 +2190,218 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    fn related(name: &str, line: usize, reason: Option<RelationReason>) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/lib.rs"),
+            line,
+            oracle: Some(format!("assert_eq!({name}, 1);")),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: reason,
+            relation_confidence: reason.map(RelationReason::confidence),
+        }
+    }
+
+    /// Renderers show the first related test as the primary one, so the
+    /// finalized order must lead with the strongest relation rather than
+    /// the alphabetically first name.
+    #[test]
+    fn finalized_related_tests_lead_with_the_strongest_relation() {
+        let finalized = finalize_related_tests(vec![
+            related(
+                "a_same_file_neighbor",
+                3,
+                Some(RelationReason::SameTestFile),
+            ),
+            related("b_unknown_origin", 5, None),
+            related(
+                "c_direct_owner_call",
+                9,
+                Some(RelationReason::DirectOwnerCall),
+            ),
+            related(
+                "c_direct_owner_call",
+                9,
+                Some(RelationReason::DirectOwnerCall),
+            ),
+            related(
+                "d_direct_owner_call",
+                1,
+                Some(RelationReason::DirectOwnerCall),
+            ),
+        ]);
+        let names: Vec<&str> = finalized.iter().map(|test| test.name.as_str()).collect();
+        let ranks: Vec<u8> = finalized.iter().map(related_test_rank).collect();
+        let mut descending = ranks.clone();
+        descending.sort_by(|a, b| b.cmp(a));
+        assert_eq!(ranks, descending, "ranks must not increase: {names:?}");
+        assert_eq!(names.first(), Some(&"c_direct_owner_call"));
+        assert_eq!(names.last(), Some(&"b_unknown_origin"));
+        assert_eq!(names.len(), 4, "duplicate entries still dedup: {names:?}");
+    }
+
+    #[test]
+    fn strongest_oracle_cannot_borrow_weaker_assertion_confirmation() -> Result<(), String> {
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::CallDeletion] {
+            let probe = probe(family, "compute_score(input)");
+            let exact = oracle(
+                "assert_eq!(unrelated, 42);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            );
+            let weak = oracle(
+                "assert!(compute_score > 0);",
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+            );
+            for assertions in [
+                vec![exact.clone(), weak.clone()],
+                vec![weak.clone(), exact.clone()],
+            ] {
+                let test = test_with_assertions("mixed_oracles", assertions);
+                let (_, discriminate, _) =
+                    reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+                if discriminate.state != StageState::Weak {
+                    return Err(format!(
+                        "unrelated exact oracle borrowed weak confirmation: {discriminate:?}"
+                    ));
+                }
+            }
+            let strong_test = test_with_assertions("unrelated_exact", vec![exact]);
+            let weak_test = test_with_assertions("weak_owner_observer", vec![weak]);
+            for related in [
+                vec![
+                    (&strong_test, RelationReason::SameTestFile),
+                    (&weak_test, RelationReason::DirectOwnerCall),
+                ],
+                vec![
+                    (&weak_test, RelationReason::DirectOwnerCall),
+                    (&strong_test, RelationReason::SameTestFile),
+                ],
+            ] {
+                let (_, discriminate, _) = reveal_evidence(&probe, &related);
+                if discriminate.state != StageState::Weak {
+                    return Err(format!(
+                        "unrelated test supplied exact discrimination: {discriminate:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn name_only_test_cannot_supply_the_oracle_for_reach_from_another_test() -> Result<(), String> {
+        let probe = probe(ProbeFamily::ReturnValue, "compute_score(input)");
+        // Token-confirmed and strong on its own: #4404's single-assertion
+        // binding does not stop it, only its relation can.
+        let confirmed_exact = oracle(
+            "assert_eq!(compute_score, 42);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let weak = oracle(
+            "assert!(compute_score(input).is_ok());",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        );
+        let proximity_test = test_with_assertions("compute_score_named", vec![confirmed_exact]);
+        let owner_test = test_with_assertions("calls_owner", vec![weak]);
+        for name_only in [
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
+        ] {
+            for related in [
+                vec![
+                    (&proximity_test, name_only),
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                ],
+                vec![
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                    (&proximity_test, name_only),
+                ],
+            ] {
+                let (_, discriminate, _) = reveal_evidence(&probe, &related);
+                if discriminate.state == StageState::Yes {
+                    return Err(format!(
+                        "{name_only:?} test supplied the oracle for reach from another test: {discriminate:?}"
+                    ));
+                }
+            }
+        }
+        // A same-file or same-module test commonly reaches a private helper
+        // through the module's entry point, so it keeps crediting.
+        for proximity in [RelationReason::SameTestFile, RelationReason::SameModule] {
+            let (_, discriminate, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&proximity_test, proximity),
+                    (&owner_test, RelationReason::DirectOwnerCall),
+                ],
+            );
+            if discriminate.state != StageState::Yes {
+                return Err(format!(
+                    "{proximity:?} test lost its oracle credit: {discriminate:?}"
+                ));
+            }
+        }
+        // With no reach-bearing relation, reach itself stays weak or absent
+        // (reach.rs), so the proximity oracle keeps its old reading here.
+        // An assertionless same-file or same-module neighbour supplies no
+        // reach either, so it must not switch the rule on.
+        let bystander = test_with_assertions("same_file_bystander", Vec::new());
+        for related in [
+            vec![(&proximity_test, RelationReason::WeakTokenSubstring)],
+            vec![
+                (&bystander, RelationReason::SameTestFile),
+                (&proximity_test, RelationReason::WeakTokenSubstring),
+            ],
+            vec![
+                (&bystander, RelationReason::SameModule),
+                (&proximity_test, RelationReason::OwnerNamedTest),
+            ],
+        ] {
+            let (_, discriminate, _) = reveal_evidence(&probe, &related);
+            if discriminate.state != StageState::Yes {
+                return Err(format!(
+                    "relation with no reach-bearing test lost its oracle reading: {discriminate:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn equally_strong_confirmed_oracle_preserves_discrimination_in_either_order()
+    -> Result<(), String> {
+        let probe = probe(ProbeFamily::ReturnValue, "compute_score(input)");
+        let unrelated = oracle(
+            "assert_eq!(unrelated, 42);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let aligned = oracle(
+            "assert_eq!(compute_score(input), 42);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        for assertions in [
+            vec![unrelated.clone(), aligned.clone()],
+            vec![aligned, unrelated],
+        ] {
+            let test = test_with_assertions("exact_owner_observer", assertions);
+            let (_, discriminate, _) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            if discriminate.state != StageState::Yes {
+                return Err(format!(
+                    "confirmed exact oracle lost discrimination: {discriminate:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn reveal_evidence_keeps_assertionless_related_test_without_observe_signal() {
         let probe = probe(ProbeFamily::ReturnValue, "score");
@@ -2040,6 +2452,51 @@ mod tests {
         assert_eq!(related[0].name, "a_error_path");
         assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
         assert_eq!(related[1].name, "z_error_path");
+    }
+
+    /// #4760: per-assertion rows stay under the render cap. When one test has
+    /// more matching oracles than the cap, unique tests still occupy a slot.
+    #[test]
+    fn related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles() {
+        let probe = probe(ProbeFamily::ReturnValue, "(0, self.iter.size_hint().1)");
+        let multi = test_with_assertions(
+            "combinations_inexact_size_hints",
+            (0..9)
+                .map(|index| {
+                    oracle(
+                        &format!("assert_eq!(it.size_hint().1, Some({index}));"),
+                        OracleKind::ExactValue,
+                        OracleStrength::Strong,
+                    )
+                })
+                .collect(),
+        );
+        let other = test_with_assertions(
+            "while_some_is_untested",
+            vec![oracle(
+                "assert_eq!(1, 1);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            )],
+        );
+        let (_, _, related) = reveal_evidence(
+            &probe,
+            &[
+                (&multi, RelationReason::DirectOwnerCall),
+                (&other, RelationReason::SameTestFile),
+            ],
+        );
+
+        let named: Vec<&str> = related.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(
+            related.len(),
+            RELATED_TESTS_RENDER_CAP,
+            "packed to the render cap: {named:?}"
+        );
+        assert!(
+            named.contains(&"while_some_is_untested"),
+            "a second test must survive the 8-row cap: {named:?}"
+        );
     }
 
     #[test]
@@ -3740,6 +4197,61 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// The run-scoped memo answers every (file, callee) query exactly as a
+    /// fresh scan of that file does, on the first (scanning) query and on
+    /// every later (cached) one, so sharing it across probes cannot change
+    /// a defeat.
+    #[test]
+    fn shared_file_use_statements_match_a_fresh_scan_for_every_callee() {
+        let crate_names: std::collections::BTreeSet<String> =
+            ["own_crate"].into_iter().map(str::to_string).collect();
+        let files = [
+            (
+                "tests/foreign.rs",
+                "// use comment_crate::setup;\nuse other_crate::{setup, expect_response};\n",
+            ),
+            (
+                "tests/own.rs",
+                "use own_crate::expect_response;\nfn t() {\n    use other_crate::teardown;\n}\n",
+            ),
+            (
+                "tests/none.rs",
+                "fn t() {\n    let text = \"use other_crate::expect_response;\";\n}\n",
+            ),
+        ];
+        let callees = ["expect_response", "setup", "teardown", "absent", ""];
+        let memo = FileUseStatements::default();
+        for round in 0..2 {
+            for (file, source) in files {
+                for callee in callees {
+                    assert_eq!(
+                        memo.imports_foreign_callee_name(
+                            std::path::Path::new(file),
+                            source,
+                            callee,
+                            &crate_names,
+                        ),
+                        file_imports_foreign_callee_name(source, callee, &crate_names),
+                        "round {round}: {file} / {callee:?}"
+                    );
+                }
+            }
+        }
+        // The fixture exercises both answers, so agreement is not vacuous.
+        assert!(memo.imports_foreign_callee_name(
+            std::path::Path::new("tests/foreign.rs"),
+            files[0].1,
+            "setup",
+            &crate_names,
+        ));
+        assert!(!memo.imports_foreign_callee_name(
+            std::path::Path::new("tests/own.rs"),
+            files[1].1,
+            "expect_response",
+            &crate_names,
+        ));
+    }
+
     /// F23 (#3731 review): the analyzed crate's own names include the
     /// `[lib]` target name, and hyphenated package names normalize to
     /// underscores in crate identifiers — an import through the
@@ -4488,5 +5000,162 @@ return Err(\"typed pin\".into());
     #[test]
     fn whole_word_match_rejects_empty_token() {
         assert!(!contains_as_whole_word("anything", ""));
+    }
+
+    #[test]
+    fn whole_word_match_steps_past_non_ascii_token_without_panicking() {
+        // A rejected first occurrence of a token that starts with a
+        // multibyte char (`new_заказ`) must advance by that char's width,
+        // not one byte, or the next `find` slices inside the char.
+        assert!(!contains_as_whole_word(
+            "assert_eq!(total(new_заказ), 3);",
+            "заказ"
+        ));
+        assert!(contains_as_whole_word("new_заказ + заказ", "заказ"));
+    }
+
+    #[test]
+    fn mutating_collection_a_while_asserting_b_stays_unverified() {
+        let probe = probe(ProbeFamily::SideEffect, "items.push(5)");
+        for (name, assertions) in [
+            (
+                "wrong_collection",
+                vec![oracle(
+                    "assert_eq!(other, expected);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            ),
+            (
+                "expected_side_token",
+                vec![oracle(
+                    "assert_eq!(other, items);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            ),
+            (
+                "return_only",
+                vec![oracle(
+                    "assert_eq!(result, 5);",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            ),
+            (
+                "callee_name_string",
+                vec![oracle(
+                    "assert!(label.contains(\"record_items\"));",
+                    OracleKind::RelationalCheck,
+                    OracleStrength::Weak,
+                )],
+            ),
+            (
+                "unrelated_mock",
+                vec![oracle(
+                    "mock.verify();",
+                    OracleKind::MockExpectation,
+                    OracleStrength::Medium,
+                )],
+            ),
+        ] {
+            let test = test_with_assertions(name, assertions);
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            assert_eq!(
+                discriminate.state,
+                StageState::Weak,
+                "{name} must stay weakly discriminating"
+            );
+            assert!(
+                discriminate.summary.contains("observation_unverified"),
+                "{name} must not confirm a different observer: got `{}`",
+                discriminate.summary
+            );
+        }
+    }
+
+    #[test]
+    fn asserting_affected_collection_retains_confirmation_in_either_order() {
+        let probe = probe(ProbeFamily::SideEffect, "items.push(5)");
+        let actual = oracle(
+            "assert_eq!(items, expected);",
+            OracleKind::WholeObjectEquality,
+            OracleStrength::Strong,
+        );
+        let wrong = oracle(
+            "assert_eq!(other, expected);",
+            OracleKind::WholeObjectEquality,
+            OracleStrength::Strong,
+        );
+        for (name, assertions) in [
+            ("actual_only", vec![actual.clone()]),
+            ("wrong_then_actual", vec![wrong.clone(), actual.clone()]),
+            ("actual_then_wrong", vec![actual.clone(), wrong.clone()]),
+        ] {
+            let test = test_with_assertions(name, assertions);
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            assert!(
+                !discriminate.summary.contains("observation_unverified"),
+                "{name} must retain the actual collection observer: got `{}`",
+                discriminate.summary
+            );
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "{name} must keep strong discrimination"
+            );
+        }
+
+        let removed = test_with_assertions("removed_actual", vec![wrong]);
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&removed, RelationReason::DirectOwnerCall)]);
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "removing the actual observer must fail closed: got `{}`",
+            discriminate.summary
+        );
+    }
+
+    #[test]
+    fn sibling_effect_whole_object_without_collection_identity_still_confirms() {
+        // Preserve delivered CallDeletion whole-object observer behavior.
+        let cache = probe(
+            ProbeFamily::CallDeletion,
+            "cache.insert(\"result_key\", result)",
+        );
+        let cache_test = test_with_assertions(
+            "store_result_inserts_result_key_with_value",
+            vec![oracle(
+                "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&cache, &[(&cache_test, RelationReason::DirectOwnerCall)]);
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "delivered cache.insert confirmation must stay on Part C: got `{}`",
+            discriminate.summary
+        );
+
+        let probe = probe(ProbeFamily::CallDeletion, "persist_audit(record)");
+        let test = test_with_assertions(
+            "store_matches_expected",
+            vec![oracle(
+                "assert_eq!(store, expected);",
+                OracleKind::WholeObjectEquality,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "non-collection effect observers stay on the existing Part C path: got `{}`",
+            discriminate.summary
+        );
     }
 }

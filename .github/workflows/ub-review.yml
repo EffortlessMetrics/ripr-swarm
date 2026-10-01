@@ -56,6 +56,14 @@ jobs:
           pr-head-sha: ${{ github.event.pull_request.head.sha }}
           out: target/ub-review
           posting: review
+          # The pinned action defaults to the bun-ub preset, whose
+          # artifact-verifier sensor runs
+          # `python scripts/verify-bun-review-artifacts.py --self-test`.
+          # That script is not in this repository, so the sensor exits 2
+          # and shows up as missing evidence (#4121). Skipping it marks the
+          # Bun-only verifier not applicable. It is not a pass, and the
+          # other planned sensors stay in the review.
+          except-tools: artifact-verifier
 
       - name: Upload ub-review artifacts
         if: always()

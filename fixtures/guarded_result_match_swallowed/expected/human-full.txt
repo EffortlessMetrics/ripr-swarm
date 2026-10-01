@@ -2,12 +2,13 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/guarded_result_match_swallowed/input
 
-Summary: 2 probe(s), 0 exposed, 2 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) shown
 
-Analysis outcome: complete_with_findings (analysis complete).
+Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
 WARNING fixtures/guarded_result_match_swallowed/input/src/lib.rs:9
+  id: probe:src_lib.rs:error_path:94d13aee
 
 Changed
   before: return Err(ParseError::UnexpectedEof);
@@ -43,8 +44,12 @@ Weakness
 
 Next step
   Assert the exact error variant or payload instead of only is_err().
+Drill in:
+  ripr explain --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
+  ripr context --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
 
 WARNING fixtures/guarded_result_match_swallowed/input/src/lib.rs:9
+  id: probe:src_lib.rs:return_value:1f4cb0e7
 
 Changed
   before: return Err(ParseError::UnexpectedEof);
@@ -80,3 +85,6 @@ Weakness
 
 Next step
   Add a test input that reaches the changed error path and assert the exact error variant it returns.
+Drill in:
+  ripr explain --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:return_value:1f4cb0e7
+  ripr context --root fixtures/guarded_result_match_swallowed/input --diff fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:return_value:1f4cb0e7

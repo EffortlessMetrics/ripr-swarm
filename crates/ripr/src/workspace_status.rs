@@ -72,6 +72,43 @@ pub(crate) enum RootErrorCode {
     RepositoryMarkerMissing,
 }
 
+impl RootErrorCode {
+    /// Stable wire code, as serialized in `root.error_code`.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::CurrentDirectoryUnavailable => "current_directory_unavailable",
+            Self::RootMissing => "root_missing",
+            Self::RootNotDirectory => "root_not_directory",
+            Self::RootCanonicalizeFailed => "root_canonicalize_failed",
+            Self::RepositoryMarkerMissing => "repository_marker_missing",
+        }
+    }
+
+    /// The cause a person or model can act on. An explicit root is checked
+    /// by itself; only a discovered root searches ancestors.
+    pub(crate) fn cause(self, source: RootSource) -> String {
+        match self {
+            Self::CurrentDirectoryUnavailable => {
+                "the server's current directory could not be read".to_string()
+            }
+            Self::RootMissing => "the configured root does not exist".to_string(),
+            Self::RootNotDirectory => "the configured root is not a directory".to_string(),
+            Self::RootCanonicalizeFailed => "the configured root could not be resolved".to_string(),
+            Self::RepositoryMarkerMissing => {
+                let place = if source == RootSource::Explicit {
+                    "at the configured root"
+                } else {
+                    "at the current directory or its ancestors"
+                };
+                format!(
+                    "no repository marker ({}) was found {place}",
+                    REPOSITORY_MARKERS.join(", ")
+                )
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct ConfigurationStatus {
     pub(crate) project_config_state: ProjectConfigState,
@@ -149,14 +186,26 @@ impl WorkspaceStatus {
                 "execute verification or mutation, load project-local provider configuration, ",
                 "or claim runtime correctness."
             ),
-            limitations: vec![
-                "workspace identity is host-local and not a portable repository identifier",
-                "project-local ripr.toml is detected but not loaded by workspace discovery",
-                "client launch does not establish project-configuration trust",
-                "status does not run analysis or refresh evidence",
-            ],
+            limitations: limitations(resolved.project_config_state),
         }
     }
+}
+
+/// The `ripr.toml` line is a fact about this root, not a constant: a cold
+/// agent on a Python or TypeScript repository without `ripr.toml` read
+/// "ripr.toml is detected" and went looking for a file that was not there.
+fn limitations(project_config_state: ProjectConfigState) -> Vec<&'static str> {
+    let mut limitations =
+        vec!["workspace identity is host-local and not a portable repository identifier"];
+    if project_config_state == ProjectConfigState::DetectedNotLoaded {
+        limitations
+            .push("project-local ripr.toml is detected but not loaded by workspace discovery");
+    }
+    limitations.extend([
+        "client launch does not establish project-configuration trust",
+        "status does not run analysis or refresh evidence",
+    ]);
+    limitations
 }
 
 struct ResolvedRoot {
@@ -305,6 +354,29 @@ mod tests {
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    #[test]
+    fn root_error_code_text_matches_its_wire_code_and_root_source() -> Result<(), String> {
+        for code in [
+            RootErrorCode::CurrentDirectoryUnavailable,
+            RootErrorCode::RootMissing,
+            RootErrorCode::RootNotDirectory,
+            RootErrorCode::RootCanonicalizeFailed,
+            RootErrorCode::RepositoryMarkerMissing,
+        ] {
+            let wire = serde_json::to_value(code).map_err(|error| error.to_string())?;
+            assert_eq!(wire, code.as_str(), "{code:?}");
+        }
+        let explicit = RootErrorCode::RepositoryMarkerMissing.cause(RootSource::Explicit);
+        assert!(
+            explicit.ends_with("found at the configured root"),
+            "{explicit}"
+        );
+        assert!(explicit.contains("Cargo.toml") && explicit.contains("Makefile.PL"));
+        let discovered = RootErrorCode::RepositoryMarkerMissing.cause(RootSource::Unavailable);
+        assert!(discovered.ends_with("its ancestors"), "{discovered}");
+        Ok(())
+    }
+
     fn temporary_root(label: &str) -> PathBuf {
         let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
@@ -354,6 +426,54 @@ mod tests {
         }
 
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    /// The `ripr.toml` limitation must follow detection: present only when the
+    /// root has a `ripr.toml`, absent for a root without one and for an
+    /// unavailable root.
+    #[test]
+    fn ripr_toml_limitation_is_reported_only_when_detected() -> Result<(), String> {
+        const DETECTED: &str =
+            "project-local ripr.toml is detected but not loaded by workspace discovery";
+        let root = temporary_root("limitation");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"p\"\n")
+            .map_err(|error| error.to_string())?;
+
+        let without = WorkspaceStatus::resolve(Some(root.clone()));
+        if without.configuration.project_config_state != ProjectConfigState::BuiltInDefaultsOnly {
+            return Err("a root without ripr.toml must use built-in defaults".to_string());
+        }
+        if without.limitations.contains(&DETECTED) {
+            return Err(format!(
+                "a root without ripr.toml must not claim one is detected: {:?}",
+                without.limitations
+            ));
+        }
+
+        std::fs::write(root.join("ripr.toml"), "mode = \"draft\"\n")
+            .map_err(|error| error.to_string())?;
+        let with = WorkspaceStatus::resolve(Some(root.clone()));
+        if with.configuration.project_config_state != ProjectConfigState::DetectedNotLoaded
+            || !with.limitations.contains(&DETECTED)
+        {
+            return Err(format!(
+                "a root with ripr.toml must report it detected and not loaded: {:?}",
+                with.limitations
+            ));
+        }
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+
+        let missing = WorkspaceStatus::resolve(Some(root));
+        if missing.workspace_state != WorkspaceState::Unavailable
+            || missing.limitations.contains(&DETECTED)
+        {
+            return Err(format!(
+                "an unavailable root must not claim ripr.toml is detected: {:?}",
+                missing.limitations
+            ));
+        }
+        Ok(())
     }
 
     #[test]

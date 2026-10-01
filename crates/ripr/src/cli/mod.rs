@@ -1,5 +1,7 @@
 mod agent;
 mod command;
+mod command_catalog;
+mod command_metadata;
 mod commands;
 mod commands_agent_support;
 mod commands_context;
@@ -8,11 +10,65 @@ mod commands_options;
 mod commands_timestamps;
 mod execute;
 mod help;
+mod help_json;
 mod parse;
+mod progress;
 mod rerun;
 mod suggest;
+mod workflow_catalog;
 
+pub(crate) use parse::expect_value;
 pub(crate) use suggest::unknown_argument;
+
+/// Top-level error of command dispatch, carrying the process exit-code
+/// contract documented in `docs/EXIT_CODES.md`.
+///
+/// Most command layers keep producing plain `String` errors; `From<String>`
+/// maps them to [`CommandError::Failure`], so the only call sites that must
+/// name this type are the ones that reached a blocking decision or typed
+/// refusal and therefore exit with code 3.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandError {
+    /// The command could not complete: usage, parse, operational, or
+    /// internal error. Maps to exit code 2.
+    Failure(String),
+    /// The command ran successfully and reached a blocking decision or a
+    /// typed refusal. Maps to exit code 3, so orchestrators can branch on
+    /// `0` (completed), `3` (decision/refusal), and `2` (could not
+    /// complete) without parsing output.
+    Decision(String),
+}
+
+impl CommandError {
+    /// The human-readable error message, reported on stderr unchanged.
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Failure(message) | Self::Decision(message) => message,
+        }
+    }
+
+    /// The process exit code this error maps to (2 or 3).
+    pub const fn exit_code(&self) -> i32 {
+        match self {
+            Self::Failure(_) => 2,
+            Self::Decision(_) => 3,
+        }
+    }
+}
+
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        Self::Failure(message)
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl std::error::Error for CommandError {}
 
 use crate::agent::loop_commands::{
     WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
@@ -23,7 +79,7 @@ use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
 
-pub fn run(mut args: Vec<String>) -> Result<(), String> {
+pub fn run(mut args: Vec<String>) -> Result<(), CommandError> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: extract --verbose before command dispatch so it works with any
     // subcommand. Version is a side-effect-free identity query, so it must not
@@ -32,6 +88,18 @@ pub fn run(mut args: Vec<String>) -> Result<(), String> {
     {
         args.remove(pos);
         crate::set_verbose(true);
+        // #4825: the machine-discovery route has a strict one-flag grammar and
+        // a silent-stderr contract. Combining it with the global verbosity
+        // flag is a usage error — the flag must not be silently extracted,
+        // leaving a plausible document plus a stderr diagnostic.
+        // `args` still carries argv[0]; the command body starts at index 1.
+        if args.get(1).is_some_and(|arg| arg == "help")
+            && args.get(2).is_some_and(|arg| arg == "--json")
+        {
+            return Err(CommandError::from(
+                "usage: ripr help --json (this route accepts no other arguments)".to_string(),
+            ));
+        }
         eprintln!("ripr: verbose mode enabled");
     }
     // Selection is side-effect-free parsing; the lock is acquired before the
@@ -42,9 +110,18 @@ pub fn run(mut args: Vec<String>) -> Result<(), String> {
         .as_ref()
         .map(|options| lock_before_repair_attempt(&options.root))
         .transpose()?;
-    execute::execute(parse::parse_args(args)?)?;
     if let Some(options) = before_attempt {
-        persist_before_repair_attempt(&options)?;
+        let seam_id = options.seam_id.as_deref().ok_or_else(|| {
+            "before-phase repair attempt is missing its seam identity".to_string()
+        })?;
+        let identity = crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(
+            &options.root,
+            seam_id,
+        )?;
+        commands::run_before_repair_with_identity(options.clone(), &identity)?;
+        persist_before_repair_attempt(&options, &identity)?;
+    } else {
+        execute::execute(parse::parse_args(args)?)?;
     }
     Ok(())
 }
@@ -61,7 +138,16 @@ fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("create {} failed: {error}", directory.display()))?;
     let lock_path = directory.join(".before.lock");
-    let lock = File::create(&lock_path)
+    // Refuse a planted symlink or other non-file, and never truncate: the
+    // no-follow writer's Windows share mode would turn a held lock into a
+    // sharing violation before `try_lock` could name it.
+    crate::output::file_write::validate_destination(&lock_path)
+        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
         .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
     if let Err(error) = lock.try_lock() {
         if matches!(error, std::fs::TryLockError::WouldBlock) {
@@ -91,7 +177,10 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
     }
 }
 
-fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<(), String> {
+fn persist_before_repair_attempt(
+    options: &agent::AgentRepairOptions,
+    identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
+) -> Result<(), String> {
     let root = &options.root;
     let seam_id = options
         .seam_id
@@ -102,11 +191,15 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
     let before_snapshot = root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
     let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
-    let packet_bytes = std::fs::read(&agent_packet)
+    let packet_bytes = crate::bounded_input::read(&agent_packet)
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
     let packet_text = String::from_utf8(packet_bytes.clone())
         .map_err(|error| format!("agent packet is not UTF-8: {error}"))?;
     let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+    // Recheck immediately before baseline capture so ignore-rule drift observed
+    // during preparation refuses attempt publication.
+    crate::edit_cage::validate_build_output_precondition(root, &policy)
+        .map_err(|error| format!("{error} No repair attempt was started."))?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
@@ -162,7 +255,7 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
             path: &binding.record_path,
         });
     }
-    let result = crate::app::repair_attempt::begin_repair_attempt_with(
+    let result = crate::app::repair_attempt::begin_repair_attempt_with_identity(
         crate::app::repair_attempt::BeginRepairAttemptOptions {
             root,
             root_argument: root,
@@ -177,9 +270,24 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
             // driver never persists a granted authorization.
             next_command_suffix: binding
                 .as_ref()
-                .map(|_| " --edit-authorized --edit-authority <operator-or-agent-identity>"),
+                .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
         },
+        identity,
     )?;
+    // The before-phase success stdout is one document, printed only after the
+    // attempt is published, so a refusal above is never preceded by a success
+    // document. With `--json` it is the packet envelope carrying the additive
+    // `repair_attempt` continuation (#4329) — attempt id, manifest path,
+    // packet path, and the exact `--phase after` command — so a driver that
+    // captures only stdout can complete before → edit → after without reading
+    // stderr. Without it, the human summary plus the one command a reader of
+    // stdout alone needs next.
+    let continuation = crate::output::agent_seam_packets::BeforePhaseAttemptContinuation {
+        attempt_id: result.manifest.repair_attempt_id.as_str().to_string(),
+        manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
+        next_command: result.manifest.next_command.clone(),
+        packet_path: crate::agent::loop_commands::display_path(&agent_packet),
+    };
     if let Some(binding) = &binding {
         eprintln!(
             "ripr: python repair-trust binding staged for selection attempt `{}` (selection digest {})",
@@ -187,7 +295,10 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
         );
     }
     eprintln!(
-        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
+    );
+    eprintln!(
+        "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
     eprintln!(
         "ripr: repair attempt {} is awaiting the focused test edit",
@@ -198,6 +309,21 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
         "ripr: attempt next command: {}",
         result.manifest.next_command
     );
+    print!(
+        "{}",
+        commands::before_phase_stdout(
+            &packet_text,
+            &agent_packet.display().to_string(),
+            options.json,
+            &continuation,
+        )?
+    );
+    if !options.json {
+        println!(
+            "Next, after the test edit: {}",
+            result.manifest.next_command
+        );
+    }
     Ok(())
 }
 
@@ -330,7 +456,9 @@ mod tests {
     fn run_rejects_unknown_command() {
         assert_eq!(
             run(args(&["ripr", "unknown"])),
-            Err("unknown command \"unknown\". Run `ripr --help`.".to_string())
+            Err(CommandError::Failure(
+                "unknown command \"unknown\". Run `ripr --help`.".to_string()
+            ))
         );
     }
 
@@ -338,10 +466,10 @@ mod tests {
     fn run_dispatches_check_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "check", "--format", "xml"])),
-            Err(
-                "unknown format \"xml\"; see `ripr check --help` for the accepted formats"
+            Err(CommandError::Failure(
+                "unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json."
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -349,7 +477,9 @@ mod tests {
     fn run_dispatches_doctor_root_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "doctor", "--root"])),
-            Err("missing value for --root".to_string())
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -357,7 +487,9 @@ mod tests {
     fn run_dispatches_init_parse_errors() {
         assert_eq!(
             run(args(&["ripr", "init", "--root"])),
-            Err("missing value for --root".to_string())
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -367,38 +499,66 @@ mod tests {
         assert_eq!(run(args(&["ripr", "--version"])), Ok(()));
         assert_eq!(
             run(args(&["ripr", "explain"])),
-            Err("missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string())
+            Err(CommandError::Failure(
+                "missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "context"])),
-            Err("missing --at or --finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string())
+            Err(CommandError::Failure(
+                "missing --at or --finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "diff", "--format", "xml"])),
-            Err("unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string())
+            Err(CommandError::Failure(
+                "unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "lsp", "--bad"])),
-            Err("unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string())
+            Err(CommandError::Failure(
+                "unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "agent", "brief", "--diff", "change.diff"])),
-            Err(
+            Err(CommandError::Failure(
                 "agent brief requires --json (the supported output for this subcommand)"
                     .to_string()
-            )
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "first-pr", "--gap-ledger"])),
-            Err("missing value for --gap-ledger".to_string())
+            Err(CommandError::Failure(
+                "missing value for --gap-ledger".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "start-here", "--gap-ledger"])),
-            Err("missing value for --gap-ledger".to_string())
+            Err(CommandError::Failure(
+                "missing value for --gap-ledger".to_string()
+            ))
         );
         assert_eq!(
             run(args(&["ripr", "first-action", "--assistant-proof"])),
-            Err("missing value for --assistant-proof".to_string())
+            Err(CommandError::Failure(
+                "missing value for --assistant-proof".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn command_error_exit_codes_distinguish_failure_from_decision() {
+        assert_eq!(CommandError::Failure("usage".to_string()).exit_code(), 2);
+        assert_eq!(CommandError::Decision("blocked".to_string()).exit_code(), 3);
+        assert_eq!(
+            CommandError::Decision("blocked".to_string()).message(),
+            "blocked"
+        );
+        assert_eq!(
+            format!("{}", CommandError::Failure("usage".to_string())),
+            "usage"
         );
     }
 }

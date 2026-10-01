@@ -430,8 +430,10 @@ mod tests {
             literals: Vec::new(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         super::rebase_function_identity(&mut function, &parents);
         assert_eq!(function.id.0, "src/lib.rs::impl W::f");
