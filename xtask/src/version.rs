@@ -308,7 +308,13 @@ fn replace_npm_launcher_versions(
     new_version: &str,
     contract: &crate::policy::distribution::DistributionContract,
 ) -> Result<String, String> {
-    let mut updated = replace_json_version_lines(text, old_version, new_version, 1)?;
+    let mut updated = replace_named_json_string(
+        text,
+        NPM_LAUNCHER_MANIFEST,
+        "version",
+        old_version,
+        new_version,
+    )?;
     for target in &contract.target {
         updated = replace_named_json_string(
             &updated,
@@ -321,6 +327,12 @@ fn replace_npm_launcher_versions(
     Ok(updated)
 }
 
+/// Replaces exactly one string-valued JSON object key, whatever formatting the
+/// document uses. Line-shaped inputs keep every unrelated byte; compact or
+/// inline inputs are matched by token, not by line, so a manifest the launcher
+/// validator accepts is also a manifest this transaction can bump. A key that
+/// is missing, duplicated, drifts from `old_value`, or carries a non-string
+/// value fails closed before any file is written.
 fn replace_named_json_string(
     text: &str,
     path: &str,
@@ -329,35 +341,52 @@ fn replace_named_json_string(
     new_value: &str,
 ) -> Result<String, String> {
     let quoted_field = format!("\"{field}\"");
+    let bytes = text.as_bytes();
     let mut output = String::with_capacity(text.len() + new_value.len());
     let mut replaced = 0;
-    for line in text.split_inclusive('\n') {
-        let Some(colon) = line.find(':') else {
-            output.push_str(line);
-            continue;
-        };
-        if line[..colon].trim() != quoted_field {
-            output.push_str(line);
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'"' {
+            let stop = bytes[index..]
+                .iter()
+                .position(|byte| *byte == b'"')
+                .map_or(bytes.len(), |offset| index + offset);
+            output.push_str(&text[index..stop]);
+            index = stop;
             continue;
         }
-        let value_start = line[colon + 1..]
-            .find('\"')
-            .map(|offset| colon + 1 + offset + 1)
-            .ok_or_else(|| format!("{path}: {field} has no quoted value"))?;
-        let value_end = line[value_start..]
-            .find('\"')
-            .map(|offset| value_start + offset)
-            .ok_or_else(|| format!("{path}: {field} has no closing quote"))?;
-        if &line[value_start..value_end] != old_value {
+        let Some(token_end) = closing_json_quote(text, index) else {
             return Err(format!(
-                "{path}: expected {field} version {old_value:?}, found {:?}",
-                &line[value_start..value_end]
+                "{path}: {field} scan found an unterminated JSON string"
+            ));
+        };
+        let colon = next_json_nonspace(bytes, token_end + 1);
+        let is_key = text[index..=token_end] == quoted_field
+            && colon.is_some_and(|next| bytes[next] == b':');
+        if !is_key {
+            output.push_str(&text[index..=token_end]);
+            index = token_end + 1;
+            continue;
+        }
+        let colon = colon.ok_or_else(|| format!("{path}: {field} has no quoted value"))?;
+        let value_start = next_json_nonspace(bytes, colon + 1)
+            .ok_or_else(|| format!("{path}: {field} has no quoted value"))?;
+        if bytes[value_start] != b'"' {
+            return Err(format!("{path}: {field} has no quoted value"));
+        }
+        let value_end = closing_json_quote(text, value_start)
+            .ok_or_else(|| format!("{path}: {field} has no closing quote"))?;
+        let value = &text[value_start + 1..value_end];
+        if value != old_value {
+            return Err(format!(
+                "{path}: expected {field} version {old_value:?}, found {value:?}"
             ));
         }
-        output.push_str(&line[..value_start]);
+        output.push_str(&text[index..value_start + 1]);
         output.push_str(new_value);
-        output.push_str(&line[value_end..]);
+        output.push('"');
         replaced += 1;
+        index = value_end + 1;
     }
     if replaced != 1 {
         return Err(format!(
@@ -365,6 +394,23 @@ fn replace_named_json_string(
         ));
     }
     Ok(output)
+}
+
+fn closing_json_quote(text: &str, opening: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut index = opening + 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'"' => return Some(index),
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn next_json_nonspace(bytes: &[u8], from: usize) -> Option<usize> {
+    (from..bytes.len()).find(|index| !bytes[*index].is_ascii_whitespace())
 }
 
 fn verify_updated_json(
@@ -483,8 +529,9 @@ mod tests {
     use super::{
         EXTENSION_LOCKFILE, EXTENSION_MANIFEST, WORKSPACE_MANIFEST, bump_version,
         cargo_metadata_validation, format_write_failure, json_root_version, lockfile_versions,
-        prepare_update, replace_json_version_lines, replace_section_version, restore_files,
-        section_version, validate_version_input, verify_updated_json, verify_updated_lockfile,
+        prepare_update, replace_json_version_lines, replace_named_json_string,
+        replace_section_version, restore_files, section_version, validate_version_input,
+        verify_updated_json, verify_updated_lockfile,
     };
     use std::fs;
     use std::io;
@@ -584,11 +631,91 @@ mod tests {
                 .map_err(|error| error.to_string())?;
             let lockfile = fs::read_to_string(root.join(EXTENSION_LOCKFILE))
                 .map_err(|error| error.to_string())?;
+            let launcher = fs::read_to_string(root.join(super::NPM_LAUNCHER_MANIFEST))
+                .map_err(|error| error.to_string())?;
             if !workspace.contains("version = \"0.11.0\"")
                 || !extension.contains("\"version\": \"0.11.0\"")
                 || lockfile.matches("\"version\": \"0.11.0\"").count() != 2
             {
                 return Err("fixture release files did not receive the new version".to_string());
+            }
+            if launcher.matches("\"0.11.0\"").count() != 6
+                || launcher.contains("\"0.10.0\"")
+                || !launcher.contains("\"access\": \"public\"")
+                || !launcher.contains("\"node\": \">=20\"")
+            {
+                return Err("the launcher fixture did not update all six version fields without touching unrelated metadata".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn rolls_back_all_files_when_launcher_write_fails() -> Result<(), String> {
+        crate::tests::with_temp_cwd("version-launcher-rollback", |root| {
+            let workspace_text =
+                "[workspace]\nresolver = \"2\"\n\n[workspace.package]\nversion = \"0.10.0\"\n"
+                    .to_string();
+            let extension_text =
+                "{\n  \"name\": \"ripr\",\n  \"version\": \"0.10.0\"\n}\n".to_string();
+            let lockfile_text = "{\n  \"version\": \"0.10.0\",\n  \"packages\": {\n    \"\": {\n      \"version\": \"0.10.0\"\n    }\n  }\n}\n"
+                .to_string();
+            fs::write(root.join(WORKSPACE_MANIFEST), &workspace_text)
+                .map_err(|error| error.to_string())?;
+            fs::create_dir_all(root.join("editors/vscode")).map_err(|error| error.to_string())?;
+            fs::write(root.join(EXTENSION_MANIFEST), &extension_text)
+                .map_err(|error| error.to_string())?;
+            fs::write(root.join(EXTENSION_LOCKFILE), &lockfile_text)
+                .map_err(|error| error.to_string())?;
+            fs::create_dir_all(root.join("policy")).map_err(|error| error.to_string())?;
+            fs::write(
+                root.join("policy/distribution.toml"),
+                include_str!("../../policy/distribution.toml"),
+            )
+            .map_err(|error| error.to_string())?;
+            let launcher_path = root.join(super::NPM_LAUNCHER_MANIFEST);
+            if let Some(parent) = launcher_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(
+                &launcher_path,
+                include_str!("../../packaging/npm/launcher/package.json")
+                    .replace("\"0.11.0\"", "\"0.10.0\""),
+            )
+            .map_err(|error| error.to_string())?;
+
+            let mut read_only = fs::metadata(&launcher_path)
+                .map_err(|error| error.to_string())?
+                .permissions();
+            read_only.set_readonly(true);
+            fs::set_permissions(&launcher_path, read_only).map_err(|error| error.to_string())?;
+            let bump_result = bump_version(&["0.11.0".to_string()]);
+            let mut writable = fs::metadata(&launcher_path)
+                .map_err(|error| error.to_string())?
+                .permissions();
+            writable.set_readonly(false);
+            fs::set_permissions(&launcher_path, writable).map_err(|error| error.to_string())?;
+
+            let error = bump_result.err().ok_or_else(|| {
+                "a read-only launcher manifest did not fail the write".to_string()
+            })?;
+            if !error.contains("write packaging/npm/launcher/package.json failed") {
+                return Err(format!("launcher write failure was not reported: {error}"));
+            }
+            if fs::read_to_string(root.join(WORKSPACE_MANIFEST))
+                .map_err(|error| error.to_string())?
+                != workspace_text
+                || fs::read_to_string(root.join(EXTENSION_MANIFEST))
+                    .map_err(|error| error.to_string())?
+                    != extension_text
+                || fs::read_to_string(root.join(EXTENSION_LOCKFILE))
+                    .map_err(|error| error.to_string())?
+                    != lockfile_text
+            {
+                return Err(
+                    "the failed fourth write did not roll every earlier file back byte-for-byte"
+                        .to_string(),
+                );
             }
             Ok(())
         })
@@ -794,6 +921,74 @@ mod tests {
     }
 
     #[test]
+    fn named_json_replacement_is_shape_agnostic_and_fail_closed() -> Result<(), String> {
+        let inline = replace_named_json_string(
+            "{\"name\": \"ripr\", \"version\": \"0.10.0\", \"bin\": {\"ripr\": \"bin/ripr.cjs\"}}",
+            "package.json",
+            "version",
+            "0.10.0",
+            "0.11.0",
+        )?;
+        if inline
+            != "{\"name\": \"ripr\", \"version\": \"0.11.0\", \"bin\": {\"ripr\": \"bin/ripr.cjs\"}}"
+        {
+            return Err("an inline version field was not replaced byte-preservingly".to_string());
+        }
+
+        let value_named_like_field = replace_named_json_string(
+            "{\"description\": \"version\", \"version\": \"0.10.0\"}",
+            "package.json",
+            "version",
+            "0.10.0",
+            "0.11.0",
+        )?;
+        if !value_named_like_field.contains("\"description\": \"version\"")
+            || !value_named_like_field.contains("\"version\": \"0.11.0\"")
+        {
+            return Err(
+                "a string value equal to the field name broke the key-position scan".to_string(),
+            );
+        }
+
+        let escaped_key = replace_named_json_string(
+            "{\"ver\\\"sion\": \"x\", \"version\": \"0.10.0\"}",
+            "package.json",
+            "version",
+            "0.10.0",
+            "0.11.0",
+        )?;
+        if !escaped_key.contains("\"version\": \"0.11.0\"") {
+            return Err("an escaped lookalike key broke the replacement".to_string());
+        }
+
+        for (text, expected) in [
+            (
+                "{\"version\": \"0.9.0\"}",
+                "expected version version \"0.10.0\", found \"0.9.0\"",
+            ),
+            ("{\"version\": 10}", "has no quoted value"),
+            ("{\"version\": \"0.10.0", "has no closing quote"),
+            (
+                "{\"other\": \"0.10.0\"}",
+                "expected one version string field, replaced 0",
+            ),
+            (
+                "{\"version\": \"0.10.0\"} {\"version\": \"0.10.0\"}",
+                "expected one version string field, replaced 2",
+            ),
+        ] {
+            let error =
+                replace_named_json_string(text, "package.json", "version", "0.10.0", "0.11.0")
+                    .err()
+                    .ok_or_else(|| format!("invalid named field shape was accepted: {text}"))?;
+            if !error.contains(expected) {
+                return Err(format!("unexpected named field error: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn reports_cargo_metadata_failure_after_spawn() -> Result<(), String> {
         crate::tests::with_temp_cwd("version-metadata-failure", |root| {
             fs::write(root.join("Cargo.toml"), "[workspace\n")
@@ -838,6 +1033,30 @@ mod npm_launcher_version_tests {
             || !updated.contains("\"node\": \">=20\"")
         {
             return Err("launcher version update changed an unrelated field".to_string());
+        }
+        crate::policy::distribution::validate_npm_launcher_manifest(
+            NPM_LAUNCHER_MANIFEST,
+            &updated,
+            "0.11.0",
+            &contract,
+        )
+    }
+
+    #[test]
+    fn bumps_compact_launcher_manifest_the_validator_accepts() -> Result<(), String> {
+        let contract = contract()?;
+        let value: serde_json::Value = serde_json::from_str(LAUNCHER)
+            .map_err(|error| format!("launcher fixture is not valid JSON: {error}"))?;
+        let compact = serde_json::to_string(&value)
+            .map_err(|error| format!("failed to compact the launcher fixture: {error}"))?;
+        let original = compact.replace("\"0.11.0\"", "\"0.10.0\"");
+        let updated = replace_npm_launcher_versions(&original, "0.10.0", "0.11.0", &contract)?;
+        if updated.matches("\"0.11.0\"").count() != 6
+            || updated.contains("\"0.10.0\"")
+            || updated.lines().count() != 1
+            || updated.len() != original.len()
+        {
+            return Err("the compact launcher update changed unrelated bytes".to_string());
         }
         crate::policy::distribution::validate_npm_launcher_manifest(
             NPM_LAUNCHER_MANIFEST,
