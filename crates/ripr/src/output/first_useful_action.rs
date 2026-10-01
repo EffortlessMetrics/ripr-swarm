@@ -740,7 +740,12 @@ fn repair_start_report(
         selected.missing_discriminator.as_deref(),
     ) {
         (Some(_), Some(missing)) => format!(
-            "The changed behavior lacks a discriminator for `{missing}`; the review card names its repair start."
+            // #4381: quote the shared missing-discriminator sentence and the
+            // canonical label instead of a per-surface "lacks a
+            // discriminator" phrasing; all surfaces must read the same.
+            "The changed behavior — {}; {} `{missing}`. The review card names its repair start.",
+            crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE,
+            crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL,
         ),
         _ => {
             "The review card names a repair start for this seam; no repair has run yet.".to_string()
@@ -1817,11 +1822,11 @@ fn normalize_suggested_assertion(value: &str) -> String {
 }
 
 fn classification_from_sources(sources: &[(Option<&Value>, &[&str])]) -> Option<String> {
-    string_from_sources(sources).map(|value| match value.as_str() {
-        "weakly_gripped" => "weakly_exposed".to_string(),
-        "strongly_gripped" => "exposed".to_string(),
-        other => other.to_string(),
-    })
+    // #4381: the grip-to-exposure presentation lives only in
+    // output::gap_vocabulary; this resolves mixed-domain inputs through the
+    // shared authority instead of a local translation table.
+    string_from_sources(sources)
+        .map(|value| crate::output::gap_vocabulary::present_exposure_class(&value))
 }
 
 fn current_evidence_strength_from_sources(sources: &[Option<&Value>]) -> Option<String> {
