@@ -11,14 +11,43 @@ are scoped or reviewed.
 
 ### Added
 
+- CLI: the seven full-repo audit-path formats (`repo-seams-json`,
+  `repo-seams-md`, `repo-exposure-json`, `repo-exposure-summary-json`,
+  `repo-exposure-md`, `repo-sarif`, `agent-seam-packets-json`) are no longer
+  fully silent. Every invocation prints one stderr line naming the expected
+  cost class before the run begins, and the walk now projects the same
+  `ripr progress:` producer stages as the diff path (`loading_input`,
+  `analyzing`, `building_output`, `completed [repo]`, throttled heartbeats,
+  fail-closed `failed`/`cancelled`). The warm-rerun clause is honest per
+  format: the classified/compact-classified formats disclose seam-facts
+  cache reuse on warm reruns, while the raw `repo-seams-*` formats disclose
+  that every run pays the full walk. Stdout is unchanged; the disclosure
+  line survives `--quiet` while the progress stream does not (#4945).
+- CLI: one typed public command catalog now owns RIPR command paths, aliases,
+  and public/compatibility/advanced/internal classification, with parser and
+  typo-suggestion two-way parity. Human help, workflow discovery, and
+  `help --json` are unchanged (#4822).
 - CLI: `ripr pr-ledger record --out-jsonl` and `ripr policy history --out-jsonl`
   append one compact JSONL record so adopting consumers can populate history
   trend fields. Generated CI still only reads those files when present and
   never passes `--out-jsonl` (#4392).
+- Ops: `cargo xtask merge-queue capture` writes the MQ0 read-only current-state
+  receipt for merge/protection surfaces (`#4832`). Desired settings, live
+  observation, apply-route capability, and rollback identity stay separate
+  facts. The command ends in exactly one of `READY_FOR_DESIRED_STATE`,
+  `CAPABILITY_BLOCKED`, `NOT_PROVEN`, or `DRIFT_REPAIR_REQUIRED`, and it never
+  applies settings or enables a queue.
 - CI: a dispatch-only local-wheelhouse qualification lane records pip and uv
   isolation facts and evaluates a fail-closed aggregate. Missing, skipped,
   zero-subject, or mismatched rows cannot pass. No PyPI credentials or
   publication (#4631).
+- CI: `windows-advisory.yml` runs an always-on `windows-advisory-subset` job on
+  every subscribed `pull_request` action (`opened`, `synchronize`, `reopened`,
+  `labeled`): the #4921 `lsp::gap_artifacts` lib tests, the #4918
+  cache-warning smoke, and Windows `cargo clippy -p ripr --all-targets`,
+  advisory under the lane contract (test/lint verdicts never gate; missing or
+  zero-subject evidence fails the job). The label-gated full suite is
+  unchanged (#4938).
 - LSP: `cargo xtask lsp-performance-report` writes an identity-bound saved-edit
   sequence receipt (`ripr-lsp-saved-edit-sequence-v1`) covering cold start,
   unchanged save/refresh, production/related/unrelated edits, rename, config
@@ -29,9 +58,89 @@ are scoped or reviewed.
 - Identity: `cargo xtask check-identity-registry` enforces one governed
   identifier catalog and generated `docs/identity` table. Vocabulary and
   compatibility map only; it does not migrate consumers (#4804).
+- CLI: `ripr check` projects producer-owned analysis stages and throttled
+  heartbeats onto stderr (`ripr progress: <stage> [<scope>]`) without changing
+  JSON, SARIF, or other machine stdout. A TTY stays silent under 250ms, then
+  reveals the active stage and heartbeats; producer `completed` is held until
+  the command actually succeeds. Unknown totals stay unknown; `--quiet`
+  suppresses the stream. This does not make analysis faster (#4810).
 
 ### Fixed
 
+- A changed Rust file whose only route into its crate is a `mod` with an
+  unresolved `#[path]` target (`#[cfg_attr(unix, path = "unix.rs")] mod sys;`,
+  including that declaration's default `sys.rs` and the target's own child
+  modules) no longer reads as a complete analysis. ripr cannot compose its
+  module context, so related tests can be missed; when the file produces a
+  finding, the run reports a limitation naming the file and the declaration
+  (#4435). Files reached through resolved `mod` edges, in the same workspace
+  or in crates that use conditional paths elsewhere, are unchanged.
+- CLI: `ripr progress:` heartbeats no longer stop partway through a long
+  stage. The standard policy capped the stream at 16 heartbeat lines, so a
+  minutes-long repo audit walk went silent roughly half a minute in while
+  still running. The wall-time throttle is now the only bound: at most one
+  heartbeat per 8 seconds of stage activity (previously one per 2s) for as
+  long as the stage stays active, so worst-case silence is ~8s and
+  non-TTY output grows one line per 8s of stage time. Custom policies keep
+  their hard count ceiling (#4957).
+- CLI argument errors now name the fix on every command. `ripr context`
+  no-finding errors carry `ripr explain`'s remediation suffix on both the
+  fresh and `--from` paths; `ripr check --format`, `ripr outcome`, and
+  `ripr calibrate` value errors enumerate the accepted names with a near-miss
+  suggestion; `ripr doctor` names a repeated `--root` and a rejected
+  positional instead of calling a documented flag unknown, and no longer
+  consumes a known flag as the `--root` path; a subcommand that rejects
+  `--version` points at `ripr --version` (`ripr lsp --version` keeps its
+  local contract); numeric flags follow the `--git-timeout` shape with the
+  typed value, and `ripr context --max-related-tests 0` parses again — zero
+  suppresses related tests, matching the config surface
+  ([#4318](https://github.com/EffortlessMetrics/ripr-swarm/issues/4318)).
+- Perl preview findings with an unavailable test runner now disclose that
+  limitation and ask for runner verification instead of saying no test change
+  is needed solely because static evidence aligns with the changed sink
+  ([#4146](https://github.com/EffortlessMetrics/ripr-swarm/issues/4146)).
+- Repo-seam `FieldConstruction` evidence now emits a compatible missing
+  `field_value` fact when a parser-backed direct owner-result binding is
+  observed only by a weak field oracle, and only after activation is already
+  known. Exact field equality stays already-gripped; wrappers, helper
+  transfer, shadows, sibling fields, token coincidence, unknown activation,
+  failed target authority, mutable field borrows, assertion-message-only
+  field mentions, assertion-local shadows, same-name local or imported
+  callees, and local callee bindings of the owner name stay non-ready.
+  A grouped nested-`super` import of the unique production owner completes
+  the route; the same spelling from another module and cfg-ambiguous
+  same-name owners stay non-ready. A leading `::` extern-prelude import is
+  not a local owner even when a same-named dependency crate exists.
+  A DirectOwnerCall related test that failed target admission stays missing
+  rather than falling through to a proposed new-test target; advisory related
+  observers do not block an independently admitted proposal (#1981).
+- Rust: a predicate probe no longer reads `exposed` when a boundary input
+  comes from a test that asserts nothing and a discriminating oracle comes
+  from a different test. `exposed` requires one test that both feeds a
+  boundary input to the owner and holds a discriminating oracle on that
+  call's result. Otherwise the finding stays at most `weakly_exposed` and
+  names `same_test_pairing_missing`. `assert_eq!(gate(10), true)` stays
+  `exposed` (#4828).
+- An unusable cache directory no longer prints one `repo file fact cache entry
+  ignored` line per source file. With `RIPR_CACHE_DIR` pointing at a file,
+  `ripr check` on this repository printed 723 identical-shape lines before the
+  one warning that mattered. A build now prints one line naming the count and
+  the first reason; a single bad entry keeps its old message (#4888).
+- That same warning no longer stays silent on native Windows. A cache base
+  that is a regular file makes every Windows file-fact read report `NotFound`
+  — the same kind as an ordinary miss — so the count-and-reason line never
+  printed and the run looked cleanly cached. A once-per-build probe of the
+  cache base now emits `cache dir is not a directory: <path>` and the build
+  re-parses in memory; a missing or usable cache base stays silent (#4918).
+- `ripr init --force` no longer deletes the existing `ripr.toml` before
+  writing the new one. A full disk or a file-size limit mid-write used to leave
+  a truncated fragment in its place (a rerun then refused to replace it, and
+  the fragment could still parse), after printing `Overwrote existing`. The
+  config is now replaced atomically, the replacement no longer takes on the
+  permissions of a symlink's target, and the message prints only after it
+  succeeds. A plain `ripr init` stages and fsyncs the new file, then links it
+  into place only if nothing appeared there, so a failed write leaves no file
+  (#4883).
 - An unchanged Rust test file that the reference parser refuses is no longer
   a silent related-test hole. If a classified owner consults that
   lexical-fallback file (the file contributed a related test, or it calls the
@@ -79,6 +188,17 @@ are scoped or reviewed.
   message and the recovery detail no longer say "at least 0 changed line(s)"
   when every changed file ripr's language adapters read was selected, and
   the VS Code next step no longer points only at the file budget.
+- Python: a parameter default on its own line inside a multi-line `def`
+  header is no longer credited `exposed` when every strong related call
+  passes that parameter by keyword or position. It reads `weakly_exposed`
+  and names the call to add, one that omits the parameter. A keyword never
+  counts as binding a positional-only parameter, in one-line headers too.
+- Python: a dunder method of a nested class (`Outer.Inner.__init__`) relates
+  to tests that build `Outer.Inner(...)` from an imported `Outer`. A dunder
+  with no related test whose tests import anything from its package (a
+  private descriptor's `__get__` behind a public decorator, cachetools
+  57d2e48) reads `static_unknown` with the `dynamic_dispatch` limit instead
+  of `no_static_path`. A root `lib/` directory is an import root like `src/`.
 - `ripr check` is faster on large repositories, with byte-identical JSON on
   12 real commits of tokio, vite, Django and ripr. TypeScript test selection
   walked the directory tree for `package.json` twice per owner and test;
@@ -109,6 +229,16 @@ are scoped or reviewed.
   packaging and cachetools bug fixes moved 25 false `no_static_path` or
   wrongly related findings; each flagged line's mutants were killed by the
   project's own suite.
+- `ripr doctor` in a TypeScript repository no longer recommends `ripr check`
+  without saying TypeScript is off: it names the enable step beside the
+  first command, because `check` skips files of a language that is not
+  enabled. In a mixed Python and TypeScript repository the enable tip now
+  keeps the languages already enabled (`["rust", "python", "typescript"]`)
+  instead of offering `["rust", "typescript"]`, which switched Python off and
+  made the next doctor run suggest the opposite edit. In a JavaScript-only
+  repository the tip offered `["rust", "javascript"]`, which configuration
+  loading rejects; it now offers the `typescript` entry, which analyzes
+  JavaScript.
 - Rust: the bounded transitive-reach walk behind `no_static_path` disclosures
   now follows every function sharing a callee's name. It followed only the
   first one indexed, so jiter's `decode_to_tape`, reached through one of two
@@ -320,6 +450,16 @@ are scoped or reviewed.
   (`changed_test_unresolved`, `changed_test_owner_unresolved`,
   `changed_test_owner_ambiguous`) with exit 0. It used to exit 2 with empty
   stdout, so a `--json` caller got nothing to parse (#4571).
+- Rust workspaces: a test in one crate that calls `Type::method()` on a type
+  imported from a path dependency (`use tracing_core::LevelFilter;` then
+  `LevelFilter::current()`) now relates to the changed method even when the
+  method name is common. Same-named functions and methods of other types can
+  never be the target of `Type::method(`, so they no longer refuse the call;
+  another impl of a type with that name, a trait default method or a blanket
+  impl still does. Dependency names with `-` now match the `_` spelling in
+  `use` paths. Before, the tracing `LevelFilter::current` test in
+  `tracing-subscriber` left the change `weakly_exposed` with no related
+  call (#4558).
 - Monorepos: `ripr check` run from a package directory of a pnpm, npm, yarn
   or bun workspace, or of a uv workspace, now roots at the directory that
   declares the workspace. The implicit root walk counts the nearest
@@ -1603,6 +1743,74 @@ are scoped or reviewed.
   from the committed file rather than uncommitted edits, and
   repository-wide runs count the skipped files as a partial run. A
   hand-written `src/vendor/` module stays analyzed.
+- `ripr agent repair` no longer prints 9 to 13 KB of JSON to stdout unasked.
+  By default each phase prints a short human summary that names the seam, the
+  movement and where the full packet, receipt and verify documents were
+  written. `--json` prints the packet (before phase), the envelope (after
+  phase) or the verification receipt (verify phase) on stdout as before,
+  matching `ripr agent status --json`. `ripr check`'s default output now
+  leads its `Analysis outcome:` and `State:` lines with plain words and keeps
+  the id in parentheses, for example `Analysis outcome: findings below
+  (analysis complete; complete_with_findings).` and `State: a test gap to
+  inspect or repair (top_gap)`.
+- `ripr check`'s `Limitation:` lines lead with plain words and keep the
+  schema tokens in parentheses, for example `Limitation: some changed files
+  were not analyzed during language analysis (language_scope_unsupported at
+  language_adapter); file: src/broken.ts; ...; recovery: enable the language
+  (enable_language) — ...`. Before, the kind, stage and recovery were bare
+  snake_case tokens (#4323).
+
+- Python: a parametrized test whose cases never reach a changed comparison
+  boundary no longer makes the finding `exposed`. `sign(x)` under
+  `@pytest.mark.parametrize("x", [5, -3])` bound no literal input, so a
+  `x > 0` -> `x >= 0` change kept the oracle's `exposed` verdict although the
+  mutant survives both cases. Each statically certain parametrize case now
+  binds its literal argvalue, so the finding is `weakly_exposed` and names
+  `x == 0` as the missing boundary (#4559). A case marked skip or xfail, or
+  an argname a lambda, loop or tuple target may shadow, binds nothing.
+- Python: a test that imports a package and calls the owner through its
+  submodule attribute (`import click` then `click.utils._expand_args(...)`)
+  is now related to the owner, and so is an owner in a package
+  `__init__.py` called through its module import (`from dateutil import
+  zoneinfo` then `zoneinfo.get_zonefile_instance(...)`). On pallets/click and
+  dateutil such changes were `no_static_path` although the calling tests kill
+  the mutants (#4560).
+- Python: `unittest` classes that inherit `TestCase` through another class in
+  the same file (`class ZoneInfoGettzTest(GettzTest)`), and test methods on a
+  mixin such a class inherits, are now collected, under the subclass that
+  runs them. On dateutil a change killed by
+  `ZoneInfoGettzTest.testZoneInfoNewInstance` was `no_static_path` (#4562).
+- Python: a related test that replaces the owner with `patch.object(...)`
+  (context manager or decorator) now gives the same `mocked_module`
+  static limit as `patch(...)` and `monkeypatch.setattr(...)`. It was
+  `weakly_exposed` although the test calls the mock, not the owner (#4565).
+- Python: an exact assertion on the owner's own output now counts as
+  observing it when the call goes through the owner's module
+  (`assert utils.sign(0) == 0`), through a result local
+  (`result = sign(0)` then `assert result == 0`), or through an import inside
+  the test function. These findings said the assertion "does not observe the
+  changed owner's output" and stayed `weakly_exposed` although the tests kill
+  the mutants. The comparison-boundary check still applies to these calls
+  (#4567).
+
+- Two-way diff hunks with missing or excess body lines, or invalid numeric
+  ranges, disclose incomplete analysis instead of reporting a complete result.
+  File and piped input retain earlier changes as advisory evidence and carry
+  the typed malformed-diff recovery route (#4375).
+- A diff stream truncated after a valid file header no longer reports
+  `no_changed_lines (analysis complete)`. When a file section parsed its
+  textual header but closed without a validated hunk body, `ripr check --diff`
+  now produces a typed incomplete outcome (`unsupported_input`) carrying a
+  `malformed_diff` limitation that names the exact evidence ("N file
+  section(s) parsed a header but no hunk body; the diff appears truncated"),
+  plus a stderr disclosure. The evidence is per-section, so a complete hunk
+  in one file does not mask a later truncated section, a valid hunkless
+  gitlink or binary section does not suppress truncation detection elsewhere,
+  and only validated body lines count as parsed hunks. A CI diff producer
+  dying mid-stream is therefore visible in the machine-readable outcome
+  instead of reading as a green empty result. Genuinely empty input stays
+  `no_scope` complete, and unparseable garbage keeps its existing
+  `unsupported_input` contract (#4375).
 
 ### Added
 
@@ -2179,6 +2387,15 @@ are scoped or reviewed.
   `npm run compile` before `npm run package`. Run alone in a fresh checkout,
   `npm run package` stops with `Extension entrypoint(s) missing`
   ([#4865](https://github.com/EffortlessMetrics/ripr-swarm/pull/4865)).
+
+### Docs
+
+- `docs/COMMAND_HIERARCHY.md` now names the discovery surfaces that shipped
+  after #2931: the typed command metadata table validates the human help and
+  hierarchy documentation, `ripr help workflow` lists the bounded task
+  workflows, and `help --json` emits the versioned machine-readable catalog.
+  The guide no longer defers these to #1613 as future work, and its help row
+  includes the workflow surface (#2930, #4976).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 

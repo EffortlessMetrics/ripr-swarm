@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -539,13 +540,13 @@ suite('Extension Smoke', () => {
 
     await vscode.commands.executeCommand(contextCommand.command, ...(contextCommand.arguments ?? []));
     const contextPacket = await waitForClipboardText((text) =>
-      text.includes('"schema_version": "0.4"') && text.includes('"seam_id": "67fc764ba37d77bd"')
+      text.includes('"schema_version": "0.5"') && text.includes('"seam_id": "67fc764ba37d77bd"')
     );
     const parsedContextPacket = JSON.parse(contextPacket) as {
       schema_version?: string;
       packets?: Array<{ seam_id?: string }>;
     };
-    assert.strictEqual(parsedContextPacket.schema_version, '0.4');
+    assert.strictEqual(parsedContextPacket.schema_version, '0.5');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
 
     await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
@@ -769,6 +770,9 @@ suite('Extension Smoke', () => {
       // Keep the preview journey on the same host/session as the trusted Rust
       // journey so state leakage remains observable across the sequence.
       await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
+      // The server withholds a ledger whose source_subject does not match the
+      // files on disk (#4544), so stamp it after the save changed pricing.ts.
+      await writeEditorGapSmokeLedger();
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
       await vscode.commands.executeCommand('ripr.showStatus');
 
@@ -5220,13 +5224,41 @@ async function writeEditorGapSmokeFiles(): Promise<void> {
       ''
     ].join('\n')
   );
+}
+
+// Stamp every file the ledger records name (anchor, repair target, related
+// test) with its current digest, the way a real producer stamps the files its
+// analysis read. Deriving the set from the records keeps the stamp complete
+// when the fixture ledger changes.
+async function writeEditorGapSmokeLedger(): Promise<void> {
+  const ledger = editorGapSmokeLedger();
+  const files = await Promise.all(
+    gapLedgerSubjectPaths(ledger).map(async (relativePath) => ({
+      path: relativePath,
+      digest: `sha256:${createHash('sha256').update(await fs.readFile(workspaceFilePath(relativePath))).digest('hex')}`
+    }))
+  );
   await writeWorkspaceFile(
     'target/ripr/reports/gap-decision-ledger.json',
-    JSON.stringify(editorGapSmokeLedger(), null, 2)
+    JSON.stringify({ ...ledger, source_subject: { digest_algorithm: 'sha256', files } }, null, 2)
   );
 }
 
-function editorGapSmokeLedger(): unknown {
+function gapLedgerSubjectPaths(ledger: Record<string, unknown>): string[] {
+  type SubjectRecord = {
+    anchor?: { file?: string };
+    repair_route?: { target_file?: string; related_test?: string };
+  };
+  const records = (ledger.records ?? []) as SubjectRecord[];
+  const paths = records.flatMap((record) => [
+    record.anchor?.file,
+    record.repair_route?.target_file,
+    record.repair_route?.related_test?.split('::')[0]
+  ]);
+  return [...new Set(paths.filter((path): path is string => Boolean(path)))].sort();
+}
+
+function editorGapSmokeLedger(): Record<string, unknown> {
   return {
     schema_version: '0.1',
     tool: 'ripr',

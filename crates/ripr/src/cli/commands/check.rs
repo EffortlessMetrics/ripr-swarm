@@ -15,6 +15,7 @@ use crate::cli::parse::{
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 fn repo_scope_diff_bound_warning(
@@ -279,6 +280,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let mut git_timeout_explicitly_provided = false;
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
+    let mut quiet = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -360,6 +362,9 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 let value = expect_value(args, i, "--git-timeout")?;
                 input.git_timeout = parse_git_timeout(value)?;
                 git_timeout_explicitly_provided = true;
+            }
+            "--quiet" => {
+                quiet = true;
             }
             "--help" | "-h" => {
                 help::print_check_help();
@@ -495,6 +500,28 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // requested artifact. --worktree runs record the base-to-worktree diff
     // source, which is re-resolvable at reuse time.
     if let Some(path) = write_artifact.as_ref() {
+        // #4951/#4958: Windows strips trailing dots and spaces from EVERY
+        // path component, not only the final one. `--write-artifact artifact.`
+        // would silently write `artifact` (and the literal final name cannot
+        // be created through the std filesystem API this artifact writer
+        // uses — even a `\\?\` verbatim path is rejected), and an interior
+        // `--write-artifact a./b.json` would write `a/b.json` — while the
+        // completion output and the suggested `explain --from` / `context
+        // --from` follow-ups keep naming the typed spelling. The literal
+        // path is not addressable as typed through this writer, so the
+        // substitution must not be silent: refuse, naming the normalized
+        // path the platform would actually write. Elsewhere the names are
+        // literal and writable, so nothing is refused.
+        if !crate::cli::commands_context::windows_stripped_components(path).is_empty() {
+            let written = crate::cli::commands_context::windows_normalized_path(path);
+            return Err(format!(
+                "--write-artifact {} would be written as {written:?} on this platform \
+                 (Windows strips trailing dots and spaces), so the on-disk artifact and the \
+                 suggested follow-up commands would name different files; \
+                 pass a name without trailing dots or spaces",
+                path.display()
+            ));
+        }
         // #3278 review B1: the artifact records a diff source and its
         // reuse verifier re-resolves it; a tree-to-tree subject diff is
         // not re-resolvable from the recorded shape, so the artifact
@@ -565,6 +592,36 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
              Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml)."
         );
     }
+    // #4946(a): restate the unchanged-tests tradeoff where the user waits.
+    // Fires on the EFFECTIVE setting after `apply_to_check_input`, and only
+    // on the paths that actually consume it: the diff-scoped pipeline
+    // narrows the index from `input.include_unchanged_tests`
+    // (`analysis/workspace/select.rs` narrows every mode when it is false),
+    // while repo-scoped formats run their own corpus walks that never read
+    // this setting, so a smaller/faster-index claim there would be false
+    // (#4946 review). The repair route names the knob that owns the value —
+    // the CLI flag when it was passed, `[analysis] include_unchanged_tests`
+    // otherwise — because there is no positive CLI counterpart, so "drop
+    // the flag" is unreachable advice for the config-driven case (#4946
+    // review). stderr only: stdout and every machine format are unchanged.
+    if !input.include_unchanged_tests && !format.is_repo_scope() {
+        let (knob, repair) = if explicit.include_unchanged_tests {
+            (
+                "--no-unchanged-tests",
+                "Drop the flag to restore default test recall.",
+            )
+        } else {
+            (
+                "[analysis] include_unchanged_tests = false",
+                "Set it to true or remove it from ripr.toml to restore default test recall.",
+            )
+        };
+        eprintln!(
+            "ripr: unchanged tests are excluded from the index ({knob}): Reach evidence \
+             cannot name tests the diff does not touch, in exchange for a much smaller, \
+             faster index. {repair}"
+        );
+    }
     // #2901: OraclePolicy (snapshot_strength, mock_expectation_strength,
     // broad_error_strength) is consumed only by the Rust adapter. Python,
     // Perl, and TypeScript silently ignore it. Warn when a non-Rust language
@@ -598,35 +655,74 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )?)?;
         return Ok(());
     }
+    // #4945: the sink is wired BEFORE every repo-format path so the
+    // longest-running surfaces project the same producer stages the
+    // diff-scoped path promises (`ripr progress: <stage> [<scope>]`,
+    // throttled heartbeats included). Both the audit-path disclosure and the
+    // stage lines are stderr-only and cannot change machine stdout.
+    let progress = (!quiet).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::stderr().is_terminal(),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn crate::app::AnalysisProgressSink);
+    // #4945: invocation-time cost disclosure for the full-repo audit-path
+    // formats. One line, before the run begins, naming the expected cost
+    // class (cold full-corpus walk; the warm-rerun clause is honest per
+    // format — see `repo_audit_path_disclosure`) — like the repo-scope
+    // --base/--diff warning above, this is an advisory notice, so it is not
+    // part of the --quiet-suppressed progress stream.
+    if let Some(disclosure) = format.repo_audit_path_disclosure() {
+        eprintln!("{disclosure}");
+    }
     if matches!(format, OutputFormat::RepoExposureJson) {
-        let report =
-            analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
-        let ts_guidance =
-            output::render::detect_ts_full_repo_guidance_pub(&input.root, &report.classified);
-        let python_guidance = output::render::detect_python_repo_exposure_guidance_pub(
-            &input.root,
-            &report.classified,
-        );
-        let generated_skip =
-            output::repo_exposure::GeneratedRustSkip::from_paths(report.skipped_generated);
-        let artifact_context =
-            crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
-                input.root.clone(),
-                input.mode.as_str().to_string(),
-                input.base.clone(),
-                &config,
-            )?;
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        output::repo_exposure::write_repo_exposure_json_with_context(
-            &report.classified,
-            report.limit_info.as_ref(),
-            ts_guidance.as_ref(),
-            python_guidance.as_ref(),
-            generated_skip.as_ref(),
-            &artifact_context,
-            &mut handle,
+        // #4945: this early return renders straight from the inventory, so it
+        // brackets the walk itself with repo-scope stage boundaries instead of
+        // relying on `check_with_progress` (which this path never reaches).
+        app::repo_inventory_with_progress(
+            progress_sink,
+            || analysis::inventory_classified_seams_report_at_with_config(&input.root, &config),
+            |report| {
+                let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(
+                    &input.root,
+                    &report.classified,
+                );
+                let python_guidance = output::render::detect_python_repo_exposure_guidance_pub(
+                    &input.root,
+                    &report.classified,
+                );
+                let generated_skip =
+                    output::repo_exposure::GeneratedRustSkip::from_paths(report.skipped_generated);
+                let artifact_context =
+                    crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+                        input.root.clone(),
+                        input.mode.as_str().to_string(),
+                        input.base.clone(),
+                        &config,
+                    )?;
+                let stdout = std::io::stdout();
+                let mut handle = stdout.lock();
+                output::repo_exposure::write_repo_exposure_json_with_context(
+                    &report.classified,
+                    report.limit_info.as_ref(),
+                    ts_guidance.as_ref(),
+                    python_guidance.as_ref(),
+                    generated_skip.as_ref(),
+                    &artifact_context,
+                    &mut handle,
+                )?;
+                Ok(())
+            },
         )?;
+        // Producer `completed` was held until the streaming stdout write
+        // finished; a failed write already dropped the sink, which projected
+        // `failed` instead.
+        if let Some(sink) = &progress {
+            sink.commit_success();
+        }
         return Ok(());
     }
     // Capture diff_file before input is moved into the analysis call; the
@@ -643,18 +739,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if !format.is_repo_scope() && !format.is_repo_seam_inventory() {
         disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
     }
+    let progress_scope = if format.is_repo_scope() {
+        app::AnalysisProgressScope::Repo
+    } else if worktree_explicitly_provided {
+        app::AnalysisProgressScope::Worktree
+    } else {
+        app::AnalysisProgressScope::Diff
+    };
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
         // seam walker directly from `output.root`. The synthesized
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
-    } else if format.is_repo_scope() {
-        app::check_workspace_repo_with_config(input, &config)
-    } else if worktree_explicitly_provided {
-        app::check_workspace_worktree_with_config(input, &config)
     } else {
-        app::check_workspace_with_config(input, &config)
+        app::check_with_progress(input, &config, progress_scope, progress_sink)
     };
     let mut output = match output_result {
         Ok(output) => output,
@@ -742,21 +841,32 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     if !committed_history_diff {
         output.unanalyzed_working_tree = false;
     }
-    let navigation = if worktree_explicitly_provided && write_artifact.is_none() {
-        None
+    // #4321: a `--worktree` run without `--write-artifact` has no artifact
+    // for drill-in commands to replay (a committed-history replay would
+    // analyze a different diff), so the human surfaces say so and name
+    // `--write-artifact` instead of dropping the block silently.
+    let drill_in = if worktree_explicitly_provided && write_artifact.is_none() {
+        app::FindingDrillIn::WorktreeReplayNeedsArtifact
     } else {
-        Some(app::finding_navigation(
+        app::FindingDrillIn::Commands(app::finding_navigation(
             &limited_check_input,
             write_artifact.as_deref(),
             explicit.mode,
         ))
     };
-    write_stdout_chunked(&app::render_check_with_config_and_navigation(
+    // #4945: repo seam-driven formats run their walks inside the render arms,
+    // so the sink threads through rendering to bracket those walks with
+    // repo-scope stage boundaries; diff-scoped arms ignore it.
+    write_stdout_chunked(&app::render_check_with_config_and_navigation_and_progress(
         &output,
         &format,
         &config,
-        navigation.as_ref(),
+        Some(&drill_in),
+        progress_sink,
     )?)?;
+    if let Some(sink) = &progress {
+        sink.commit_success();
+    }
     Ok(())
 }
 
@@ -1438,6 +1548,11 @@ mod tests {
     }
 
     #[test]
+    fn quiet_is_accepted_without_running_analysis() {
+        assert_eq!(check(&args(&["--quiet", "--help"])), Ok(()));
+    }
+
+    #[test]
     fn git_timeout_environment_is_a_fallback_and_zero_disables() -> Result<(), String> {
         assert_eq!(
             git_timeout_from_env(false, Ok("12".to_string())),
@@ -1593,5 +1708,105 @@ mod tests {
             check(&args(&["--format"])),
             Err("missing value for --format".to_string())
         );
+    }
+}
+
+// #4951/#4958: on Windows trailing dots and spaces are stripped from every
+// path component, so an artifact name carrying one — final or interior —
+// cannot land on disk as typed and must be refused with the normalized path
+// the platform would actually write.
+#[cfg(all(test, windows))]
+mod write_artifact_stripped_name_tests {
+    use super::super::super::commands::check;
+
+    struct Guard(std::path::PathBuf);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn trailing_dot_artifact_name_is_refused_with_the_stripped_name() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-4951-artifact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        let _guard = Guard(root.clone());
+        let error = check(&[
+            "--root".to_string(),
+            root.display().to_string(),
+            "--write-artifact".to_string(),
+            "artifact.".to_string(),
+        ])
+        .err()
+        .unwrap_or_default();
+        assert!(
+            error.contains("--write-artifact artifact. would be written as \"artifact\""),
+            "{error}"
+        );
+        assert!(
+            error.contains("Windows strips trailing dots and spaces"),
+            "{error}"
+        );
+        assert!(
+            error.contains("pass a name without trailing dots or spaces"),
+            "{error}"
+        );
+        // The refusal precedes analysis, so nothing was written under either
+        // spelling.
+        assert!(
+            !root.join("artifact").exists(),
+            "artifact must not be written"
+        );
+        assert!(
+            !root.join("artifact.").exists(),
+            "artifact. must not be written"
+        );
+        Ok(())
+    }
+
+    // #4958: an interior stripped component is refused too, naming the
+    // normalized path the platform would actually write.
+    #[test]
+    fn interior_stripped_artifact_component_is_refused_with_the_written_path() -> Result<(), String>
+    {
+        let root = std::env::temp_dir().join(format!("ripr-4958-artifact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        let _guard = Guard(root.clone());
+        let error = check(&[
+            "--root".to_string(),
+            root.display().to_string(),
+            "--write-artifact".to_string(),
+            "a./b.json".to_string(),
+        ])
+        .err()
+        .unwrap_or_default();
+        assert!(
+            error.contains("--write-artifact a./b.json would be written as"),
+            "{error}"
+        );
+        // The normalized written path is named (path Debug escapes the
+        // separator), and the refusal keeps the landed repair hint.
+        assert!(error.contains(r"a\\b.json"), "{error}");
+        assert!(
+            error.contains("Windows strips trailing dots and spaces"),
+            "{error}"
+        );
+        assert!(
+            error.contains("pass a name without trailing dots or spaces"),
+            "{error}"
+        );
+        // The refusal precedes analysis, so nothing was written under either
+        // interior spelling.
+        assert!(
+            !root.join("a").exists(),
+            "normalized directory must not be written"
+        );
+        assert!(
+            !root.join("a.").exists(),
+            "typed directory must not be written"
+        );
+        Ok(())
     }
 }

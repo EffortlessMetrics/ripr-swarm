@@ -8,10 +8,12 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::time::Duration;
 
 const RUN_PY: &str = "tools/python/portable-ripr-consumer/run.py";
 const PACKET_SCHEMA: &str = "ripr.portable_consumer.packet/v1";
+#[cfg(unix)]
 const CONSUMER_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn workspace_root() -> Result<PathBuf, String> {
@@ -46,6 +48,7 @@ fn packet_digest(binary_relative: &str, binary_sha: &str, script_sha: &str) -> S
     format!("{:x}", Sha256::digest(lines.join("\n").as_bytes()))
 }
 
+#[cfg(unix)]
 fn python3() -> Result<PathBuf, String> {
     for candidate in [
         "/usr/bin/python3",
@@ -166,46 +169,55 @@ printf '%s\n' '{"schema_version":"0.2","tool":"stub","findings":[{"id":"gap-1"}]
 exit 0
 "#;
 
+#[cfg(unix)]
 const ZERO_STUB: &str = r#"#!/bin/sh
 printf '%s\n' '{"schema_version":"0.2","tool":"stub","findings":[],"analysis_outcome":{"analysis_complete":true,"outcome":{"kind":"complete_with_findings"}}}'
 exit 0
 "#;
 
+#[cfg(unix)]
 const MALFORMED_STUB: &str = r#"#!/bin/sh
 printf 'not-json\n'
 exit 0
 "#;
 
+#[cfg(unix)]
 const EMPTY_STUB: &str = r#"#!/bin/sh
 exit 0
 "#;
 
+#[cfg(unix)]
 const FAIL_STUB: &str = r#"#!/bin/sh
 printf 'boom\n' >&2
 exit 7
 "#;
 
+#[cfg(unix)]
 const SLEEP_STUB: &str = r#"#!/bin/sh
 sleep 30
 exit 0
 "#;
 
+#[cfg(unix)]
 const DECOY_STUB: &str = r#"#!/bin/sh
 printf 'DECOY_RAN\n' >&2
 printf '%s\n' '{"schema_version":"0.2","findings":[],"decoy":true}'
 exit 0
 "#;
 
+#[cfg(unix)]
 const LIMITATION_STUB: &str = r#"#!/bin/sh
 printf '%s\n' '{"schema_version":"0.2","tool":"stub","findings":[{"id":"limited-1"}],"analysis_outcome":{"analysis_complete":true,"outcome":{"kind":"partial_with_limitations"}}}'
 exit 0
 "#;
 
+#[cfg(unix)]
 const PARTIAL_STUB: &str = r#"#!/bin/sh
 printf '%s\n' '{"schema_version":"0.2","tool":"stub","findings":[{"id":"partial-1"}],"analysis_outcome":{"analysis_complete":false,"outcome":{"kind":"incomplete"}}}'
 exit 0
 "#;
 
+#[cfg(unix)]
 const MUTATE_STUB: &str = r#"#!/bin/sh
 root=""
 while [ "$#" -gt 0 ]; do
@@ -226,6 +238,7 @@ printf '%s\n' '{"schema_version":"0.2","tool":"stub","findings":[{"id":"gap-1"}]
 exit 0
 "#;
 
+#[cfg(unix)]
 const PILOT_STUB: &str = r#"#!/bin/sh
 out=""
 while [ "$#" -gt 0 ]; do
@@ -249,6 +262,7 @@ printf 'PILOT_RAN\n' >&2
 exit 0
 "#;
 
+#[cfg(unix)]
 const PILOT_TERMINAL_ONLY_STUB: &str = r#"#!/bin/sh
 printf 'human pilot terminal without artifact\n'
 exit 0
@@ -257,22 +271,29 @@ exit 0
 struct Staged {
     _guard: TempDirGuard,
     packet: PathBuf,
+    #[cfg(unix)]
     subject: PathBuf,
+    #[cfg(unix)]
     out: PathBuf,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::run::capture_output_with_timeout;
-    use serde_json::{Value, json};
+    use serde_json::Value;
+    #[cfg(unix)]
+    use serde_json::json;
 
+    #[cfg(unix)]
     struct Consumption {
         status: i32,
         stderr: String,
         receipt: Option<Value>,
     }
 
+    #[cfg(unix)]
     fn invoke(
         packet: &Path,
         subject: &Path,
@@ -336,6 +357,7 @@ mod tests {
         })
     }
 
+    #[cfg(unix)]
     fn consume(
         packet: &Path,
         subject: &Path,
@@ -353,6 +375,7 @@ mod tests {
         Ok((consumption.status, receipt))
     }
 
+    #[cfg(unix)]
     fn expect_class(
         status: i32,
         receipt: &Value,
@@ -378,6 +401,7 @@ mod tests {
         let root = temp_dir(label)?;
         let packet = root.path.join("packet");
         let subject = root.path.join("subject");
+        #[cfg(unix)]
         let out = root.path.join("out");
         fs::create_dir_all(&subject).map_err(|error| format!("subject: {error}"))?;
         fs::write(subject.join("lib.py"), "value = 1\n")
@@ -388,7 +412,9 @@ mod tests {
         Ok(Staged {
             _guard: root,
             packet,
+            #[cfg(unix)]
             subject,
+            #[cfg(unix)]
             out,
         })
     }
@@ -401,6 +427,7 @@ mod tests {
         .map_err(|error| format!("parse manifest: {error}"))
     }
 
+    #[cfg(unix)]
     fn write_manifest(packet: &Path, manifest: &Value) -> Result<(), String> {
         fs::write(
             packet.join("manifest.json"),
@@ -410,6 +437,7 @@ mod tests {
         .map_err(|error| format!("write manifest: {error}"))
     }
 
+    #[cfg(unix)]
     fn require_no_launch(receipt: &Value) -> Result<(), String> {
         if receipt["exit_code"] != Value::Null {
             return Err(format!(
@@ -419,6 +447,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
     fn tree_digest_of(subject: &Path) -> Result<String, String> {
         let python = python3()?;
         let script = workspace_root()?.join(RUN_PY);
