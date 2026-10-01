@@ -1262,6 +1262,7 @@ mod tests {
                     },
                 verify_rollback: false,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
+                json: false,
             }))
         );
         assert_eq!(
