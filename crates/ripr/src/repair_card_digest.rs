@@ -223,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn every_load_bearing_field_move_remiints_the_digest() -> Result<(), String> {
+    fn every_load_bearing_field_move_remints_the_digest() -> Result<(), String> {
         let base = card_fixture();
         let base_digest = repair_card_semantic_digest(&base)?;
 
