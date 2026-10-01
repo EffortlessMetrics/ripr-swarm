@@ -45,14 +45,18 @@ mod lexical_test_grip;
 /// packages), and building that working set can exhaust a constrained runner
 /// (issue #1023). Above this many files the analysis fails closed with a named
 /// `diff_scope_oversized` error rather than exhausting host memory and aborting.
-const DIFF_INDEX_FILE_LIMIT: usize = 800;
+/// Raised 800 -> 1024 (#4967): the repository's own module splits (#4389,
+/// #4390) pushed this workspace to 802 indexable Rust files, tripping the
+/// guard on the repo's own `cargo test --workspace` subject runs.
+const DIFF_INDEX_FILE_LIMIT: usize = 1024;
 
 /// Hard analysis-cost guard for the repo-scoped path (#2109): the diff path
 /// caps its working set at [`DIFF_INDEX_FILE_LIMIT`], and the repo path now
 /// has the same guard so `ripr check --mode deep|ready` on a large monorepo
 /// fails closed with a named `repo_scope_oversized` error instead of loading
-/// and indexing the entire workspace unbounded.
-const REPO_INDEX_FILE_LIMIT: usize = 800;
+/// and indexing the entire workspace unbounded. Raised in step with
+/// [`DIFF_INDEX_FILE_LIMIT`] (#4967).
+const REPO_INDEX_FILE_LIMIT: usize = 1024;
 
 /// Env override for [`REPO_INDEX_FILE_LIMIT`].
 const REPO_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_REPO_INDEX_FILES";
@@ -3331,7 +3335,7 @@ fn absent_delimiter_boundary_returns_head() {
         let unset = repo_index_file_limit_from_env(Err(std::env::VarError::NotPresent))
             .map_err(|err| format!("default should parse: {err}"))?;
         assert_eq!(
-            unset, 800,
+            unset, 1024,
             "default must be the {REPO_INDEX_FILE_LIMIT_ENV} guard"
         );
         let raised = repo_index_file_limit_from_env(Ok("5000".to_string()))
