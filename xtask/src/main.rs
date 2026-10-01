@@ -13862,8 +13862,7 @@ fn check_output_contracts() -> Result<(), String> {
         domain.push('\n');
     }
     let app = read_text_lossy(Path::new("crates/ripr/src/app.rs"))?;
-    let repair_card_domain =
-        read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
+    let repair_card_domain = read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
     let evidence_record = read_text_lossy(Path::new("crates/ripr/src/output/evidence_record.rs"))?;
     let mutation_calibration =
         read_text_lossy(Path::new("crates/ripr/src/output/mutation_calibration.rs"))?;

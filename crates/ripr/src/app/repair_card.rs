@@ -83,7 +83,8 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
     if let (Some(subject_gap), Some(readiness_gap)) = (
         &input.subject.canonical_gap_id,
         &input.readiness.canonical_gap_id,
-    ) && subject_gap != readiness_gap {
+    ) && subject_gap != readiness_gap
+    {
         return Err("subject gap and readiness gap do not identify one repair".to_string());
     }
     if input.selected_basis.is_some() && selected_target.is_none() {
