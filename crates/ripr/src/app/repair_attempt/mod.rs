@@ -19,9 +19,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const REPAIR_ATTEMPT_DIRECTORY: &str = "target/ripr/repair-attempts";
@@ -175,6 +174,30 @@ fn open_attempt(
     Ok((store, path, manifest))
 }
 
+/// Resolves the retained packet an attempt-bound receipt must bind against.
+/// The public `agent receipt --attempt <id>` route reads this attempt's
+/// retained packet — the same authority the after phase consumes — instead
+/// of the repository-global compatibility packet, which a later attempt for
+/// any seam silently replaces (#4332).
+pub(crate) fn retained_attempt_packet_path(
+    root: &Path,
+    seam_id: &str,
+    attempt_id: &str,
+) -> Result<PathBuf, String> {
+    let store = resolve_store(root, None, RepairAttemptStoreAccess::Open)?;
+    let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+    let (_, manifest) = load_repair_attempt_by_id(&store, &attempt_id)?;
+    if manifest.seam_id != seam_id {
+        return Err(format!(
+            "repair attempt {} belongs to seam `{}`, not `{seam_id}`",
+            attempt_id.as_str(),
+            manifest.seam_id
+        ));
+    }
+    let packet = find_manifest_artifact(&manifest, "agent_packet")?;
+    Ok(store.canonical_root().join(&packet.path))
+}
+
 /// The only attempt state that may authorize a receipt. This is deliberately
 /// derived from the durable manifest and its immutable before artifacts rather
 /// than from the workflow filenames, which are compatibility outputs.
@@ -185,6 +208,10 @@ pub(crate) fn receipt_binding_from(
     packet_path: &Path,
     attempt_id: Option<&str>,
 ) -> Result<serde_json::Value, String> {
+    // Refusals name the root the caller typed, not the canonicalized verbatim
+    // path the store resolver hands back below (#4332); the resolver owns the
+    // store identity and its canonicalization (#4797).
+    let root_display = display_path(root);
     let store = resolve_store(root, store, RepairAttemptStoreAccess::Open)?;
     let root = store.canonical_root().to_path_buf();
     let packet = std::fs::read(packet_path).map_err(|error| {
@@ -229,9 +256,31 @@ pub(crate) fn receipt_binding_from(
             }
         }
         if matches.len() != 1 {
+            // #4332: the message names the working next action in both
+            // directions. Found zero: there is nothing to pick, so it names
+            // the start command. Found many: it names the ids so the agent
+            // can select one with the receipt's own `--attempt` flag instead
+            // of rerunning to discover them.
+            let restart = format!(
+                "ripr agent repair --root {} --seam-id {} --phase before",
+                shell_arg(&root_display),
+                shell_arg(seam_id)
+            );
+            let ids = matches
+                .iter()
+                .map(|(_, manifest)| manifest.repair_attempt_id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let detail = if matches.is_empty() {
+                format!("no repair attempt exists for seam `{seam_id}`; start one with `{restart}`")
+            } else {
+                format!(
+                    "found {}: {ids}; pass --attempt <id> to select the attempt the receipt binds to exactly",
+                    matches.len()
+                )
+            };
             return Err(format!(
-                "receipt requires exactly one repair attempt for seam `{seam_id}`, found {}",
-                matches.len()
+                "receipt requires exactly one repair attempt for seam `{seam_id}`: {detail}"
             ));
         }
         matches.pop().ok_or_else(|| "missing attempt".to_string())?
@@ -244,12 +293,22 @@ pub(crate) fn receipt_binding_from(
         || !after.current
         || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
     {
+        // #4332: the refusal uses the vocabulary the serialized manifest and
+        // the cage verdict use (`ready_to_finish`, `compliant`), not Debug
+        // spellings the agent just read differently, and glosses `current`
+        // because a bare `current false` does not say what moved.
+        let current_gloss = if after.current {
+            String::new()
+        } else {
+            " (repository HEAD moved since the after phase recorded its verdict; `ripr agent status` reads which head)".to_string()
+        };
         return Err(format!(
-            "repair attempt {} is not receipt-ready: state {:?}, current {}, verdict {:?}",
+            "repair attempt {} is not receipt-ready: state `{}`, current {}{}, verdict `{}`",
             manifest.repair_attempt_id.as_str(),
-            manifest.state,
+            repair_attempt_state_label(&manifest.state),
             after.current,
-            after.verdict.status
+            current_gloss,
+            after.verdict.status.as_label(),
         ));
     }
     // The receipt names the after head the finish recorded. That head is the
@@ -423,8 +482,70 @@ pub(crate) struct BeginRepairAttemptOptions<'a> {
     pub(crate) store: Option<&'a Path>,
 }
 
+/// Private before-phase identity, allocated before the packet is rendered.
+/// Allocation publishes nothing; the original transaction still owns
+/// reservation, artifact commitments and final HEAD admission.
+pub(crate) struct BeforeRepairAttemptIdentity {
+    canonical_root: PathBuf,
+    seam_id: String,
+    repository_head: String,
+    created_unix_ms: u64,
+    repair_attempt_id: RepairAttemptId,
+}
+
+impl BeforeRepairAttemptIdentity {
+    pub(crate) fn prepare(root: &Path, seam_id: &str) -> Result<Self, String> {
+        if seam_id.trim().is_empty() {
+            return Err("repair attempt requires a non-empty seam ID".to_string());
+        }
+        let canonical_root = root
+            .canonicalize()
+            .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+        let repository_head =
+            crate::agent::artifact::current_git_head(&canonical_root).map_err(|error| {
+                format!("repair attempt requires a concrete repository HEAD: {error}")
+            })?;
+        let created_unix_ms = current_unix_ms()?;
+        let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
+        let repair_attempt_id = repair_attempt_id_from_parts(
+            &display_path(&canonical_root),
+            seam_id,
+            &repository_head,
+            created_unix_ms,
+            std::process::id(),
+            nonce,
+        )?;
+        Ok(Self {
+            canonical_root,
+            seam_id: seam_id.to_owned(),
+            repository_head,
+            created_unix_ms,
+            repair_attempt_id,
+        })
+    }
+
+    pub(crate) fn attempt_id(&self) -> &str {
+        self.repair_attempt_id.as_str()
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn begin_repair_attempt_with(
     options: BeginRepairAttemptOptions<'_>,
+) -> Result<BeginRepairAttemptResult, String> {
+    if options.seam_id.trim().is_empty() {
+        return Err("repair attempt requires a non-empty seam ID".to_string());
+    }
+    if options.sources.is_empty() {
+        return Err("repair attempt requires at least one before-phase artifact".to_string());
+    }
+    let identity = BeforeRepairAttemptIdentity::prepare(options.root, options.seam_id)?;
+    begin_repair_attempt_with_identity(options, &identity)
+}
+
+pub(crate) fn begin_repair_attempt_with_identity(
+    options: BeginRepairAttemptOptions<'_>,
+    identity: &BeforeRepairAttemptIdentity,
 ) -> Result<BeginRepairAttemptResult, String> {
     let BeginRepairAttemptOptions {
         root,
@@ -444,6 +565,11 @@ pub(crate) fn begin_repair_attempt_with(
 
     let store = resolve_store(root, store, RepairAttemptStoreAccess::Prepare)?;
     let canonical_root = store.canonical_root();
+    if canonical_root != identity.canonical_root.as_path() || seam_id != identity.seam_id {
+        return Err(
+            "prepared repair attempt identity does not match its root and seam".to_string(),
+        );
+    }
     let repository_head = crate::agent::artifact::current_git_head(canonical_root)
         .map_err(|error| format!("repair attempt requires a concrete repository HEAD: {error}"))?;
     // Pre-publication head gate: compare the caller's verified pin against
@@ -456,16 +582,14 @@ pub(crate) fn begin_repair_attempt_with(
             "python repair-trust binding head moved during attempt publication; the binding pins head `{expected}` but the repository HEAD is now `{repository_head}`; re-run the before phase to prepare a fresh binding"
         ));
     }
-    let created_unix_ms = current_unix_ms()?;
-    let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
-    let repair_attempt_id = repair_attempt_id_from_parts(
-        &display_path(canonical_root),
-        seam_id,
-        &repository_head,
-        created_unix_ms,
-        std::process::id(),
-        nonce,
-    )?;
+    if repository_head != identity.repository_head {
+        return Err(format!(
+            "repository HEAD moved after repair attempt identity preparation; the packet pins head `{}` but the repository HEAD is now `{repository_head}`; re-run the before phase to prepare a fresh attempt",
+            identity.repository_head,
+        ));
+    }
+    let created_unix_ms = identity.created_unix_ms;
+    let repair_attempt_id = identity.repair_attempt_id.clone();
     let attempt_directory = reserve_attempt_directory(&store, &repair_attempt_id)?;
     complete_repair_attempt(
         &store,
@@ -1444,7 +1568,9 @@ pub(crate) fn resolve_awaiting_repair_attempt_from(
             let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
             load_repair_attempt_by_id(&store, &attempt_id)?
         }
-        (None, Some(seam_id)) => select_awaiting_repair_attempt_by_seam(&store, seam_id)?,
+        (None, Some(seam_id)) => {
+            select_awaiting_repair_attempt_by_seam(&store, &display_path(root_argument), seam_id)?
+        }
         (Some(_), Some(_)) => {
             return Err(
                 "repair after selection accepts either attempt ID or seam ID, not both".to_string(),
@@ -1894,7 +2020,7 @@ fn after_phase_not_awaiting_error(root_display: &str, manifest: &RepairAttemptMa
         });
     match manifest.state {
         RepairAttemptState::ReadyToFinish => format!(
-            "repair attempt {attempt_id} (seam `{seam_id}`) already finished: its after phase ran at HEAD {after_head} and the edit cage admitted the edit (state `ready_to_finish`), so there is no after phase left to run. Its retained receipt stays under `{REPAIR_ATTEMPT_DIRECTORY}/{attempt_id}/`; `{receipt}` is only a compatibility projection of the latest finish. Next: `{status}` reads the attempt's outcome; if the receipt leaves the gap open, start a new attempt with `{restart}`",
+            "repair attempt {attempt_id} (seam `{seam_id}`) already finished: its after phase ran at HEAD {after_head} and the edit cage admitted the edit (state `ready_to_finish`), so there is no after phase left to run. Its retained receipt stays under `{REPAIR_ATTEMPT_DIRECTORY}/{attempt_id}/`; `{receipt}` is only a compatibility projection of the latest finish — the workflow keeps one receipt file, and a later attempt's after phase replaces it, so verify the file's `repair_attempt.attempt_id` names this attempt before relying on it. Next: `{status}` reads the attempt's outcome; if the receipt leaves the gap open, start a new attempt with `{restart}`",
             receipt = crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         ),
         RepairAttemptState::Stale
@@ -1966,6 +2092,7 @@ fn is_analysis_input_path(path: &str) -> bool {
 
 fn select_awaiting_repair_attempt_by_seam(
     store: &RepairAttemptStoreRef,
+    root_display: &str,
     seam_id: &str,
 ) -> Result<(PathBuf, RepairAttemptManifest), String> {
     if seam_id.trim().is_empty() {
@@ -1973,10 +2100,27 @@ fn select_awaiting_repair_attempt_by_seam(
     }
     let manifests_root = store.resolved_path();
     let mut matches = Vec::new();
-    for entry in std::fs::read_dir(manifests_root)
-        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
-    {
-        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+    // A fresh workspace has no attempts directory at all: that is zero
+    // matches, not an operational error (#4332), so the refusal still names
+    // the start command.
+    let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(&manifests_root) {
+        Ok(entries) => {
+            // A failed directory entry is an operational error, not a silent
+            // skip: a partial listing must never masquerade as a complete one
+            // and misselect the sole awaiting attempt or advise a false
+            // found-zero start (review finding on #4332).
+            let mut collected = Vec::new();
+            for entry in entries {
+                collected.push(entry.map_err(|error| {
+                    format!("read {} failed: {error}", manifests_root.display())
+                })?);
+            }
+            collected
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("read {} failed: {error}", manifests_root.display())),
+    };
+    for entry in entries {
         let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
         if !path.is_file() {
             continue;
@@ -1987,9 +2131,31 @@ fn select_awaiting_repair_attempt_by_seam(
         }
     }
     if matches.len() != 1 {
+        // #4332: found zero has no id to pass — the working action is the
+        // start command; found many names the ids so the agent can pick one
+        // with `--attempt` without rerunning to discover them.
+        let restart = format!(
+            "ripr agent repair --root {} --seam-id {} --phase before",
+            shell_arg(root_display),
+            shell_arg(seam_id)
+        );
+        let ids = matches
+            .iter()
+            .map(|(_, manifest)| manifest.repair_attempt_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let detail = if matches.is_empty() {
+            format!(
+                "no awaiting repair attempt exists for seam `{seam_id}`; start one with `{restart}`"
+            )
+        } else {
+            format!(
+                "found {}: {ids}; pass --attempt <id> to select the prepared work exactly",
+                matches.len()
+            )
+        };
         return Err(format!(
-            "expected exactly one awaiting repair attempt for seam `{seam_id}`, found {}; pass --attempt <id> to select the prepared work exactly",
-            matches.len()
+            "expected exactly one awaiting repair attempt for seam `{seam_id}`: {detail}"
         ));
     }
     matches.pop().ok_or_else(|| "missing attempt".to_string())
@@ -2382,17 +2548,32 @@ fn validate_trusted_head_surface(
     Ok(())
 }
 
+/// Cooperative deadline for the trusted-surface git inventory (#2303, #4363).
+/// Receipt admission is a bounded repair flow: a hung git must not block it
+/// past the deadline. `diff --name-only` and `ls-files` are near-instant on
+/// any real repository; one minute matches the `GIT_DEADLINE` family used by
+/// the other bounded git consumers.
+const GIT_PATHS_DEADLINE: Duration = Duration::from_mins(1);
+
 fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    git_paths_with_deadline(root, args, Some(GIT_PATHS_DEADLINE))
+}
+
+/// The one-parameter production wrapper binds the fixed one-minute ceiling;
+/// tests inject a deadline through `git_paths_with_deadline` to prove the
+/// caller-supplied bound is plumbed into the shared authority rather than
+/// dropped on the way (#4363 review).
+fn git_paths_with_deadline(
+    root: &Path,
+    args: &[&str],
+    deadline: Option<Duration>,
+) -> Result<Vec<String>, String> {
     // Callers pass `-z` output, which is never C-quoted; decoding rules
     // come from the shared NUL path-record authority (#4006). Strict:
     // non-UTF-8 or empty records fail loudly instead of collapsing through
     // lossy conversion, which refuses admission in the trusted-surface
     // validator rather than admitting a rewritten path.
-    let output = Command::new("git")
-        .current_dir(root)
-        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
-        .args(args)
-        .output()
+    let output = crate::git::run_git_output_with_deadline(root, args, deadline)
         .map_err(|error| format!("run git {} failed: {error}", args.join(" ")))?;
     if !output.status.success() {
         return Err(format!(
@@ -3508,6 +3689,99 @@ mod tests {
         })();
         let _ = std::fs::remove_dir_all(&root);
         result
+    }
+
+    #[test]
+    fn git_paths_spawns_through_the_shared_git_authority() -> Result<(), String> {
+        // #4363: the trusted-surface inventory must spawn through the shared
+        // `crate::git` deadline/process-owner authority, not a direct git
+        // process construction. A missing root fails the spawn inside the
+        // shared collector, and the collector's describe text (`git -C <root>
+        // ...`) is produced only on that shared path — a direct spawn can
+        // never emit it, so its presence discriminates the routing. The
+        // caller's own `run git ... failed` wrapper must survive so the
+        // fail-closed admission error family is unchanged. The deadline
+        // plumbing is established adapter-level by
+        // `git_paths_supplies_the_promised_bounded_deadline`; the
+        // terminate-and-reap behavior with a named timeout error is owned
+        // by `git.rs`'s re-exec harness tests.
+        let missing = Path::new("definitely-missing-git-root-for-4363");
+        let Err(error) = git_paths(
+            missing,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+        ) else {
+            return Err(
+                "an inventory against a missing root must fail closed, not succeed".to_string(),
+            );
+        };
+        if !error.starts_with("run git ") {
+            return Err(format!(
+                "expected the caller wrapper to survive, got: {error}"
+            ));
+        }
+        if !error.contains("git -C") {
+            return Err(format!(
+                "expected the shared authority's describe text (git -C), got: {error}"
+            ));
+        }
+        if !error.contains("failed to run") {
+            return Err(format!(
+                "expected the shared spawn-failure family text, got: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn git_paths_supplies_the_promised_bounded_deadline() -> Result<(), String> {
+        // #4363 review: the routing witness above proves git_paths spawns
+        // through the shared authority, but not that it supplies a bounded
+        // deadline — a `None` (unbounded) argument would pass it. A zero
+        // injected deadline through the same production wrapper path is
+        // rejected by the shared authority BEFORE any spawn with the named
+        // timeout-family error, so this case fails deterministically (no
+        // git execution, no hung fixture) unless the deadline reaches the
+        // shared authority. The production wrapper binds the fixed
+        // `GIT_PATHS_DEADLINE` ceiling by construction; this test pins the
+        // ceiling as nonzero and proves the plumbing honors a supplied
+        // bound.
+        if GIT_PATHS_DEADLINE.is_zero() {
+            return Err("the trusted-surface deadline must be positive".to_string());
+        }
+        let plain_dir = std::env::temp_dir().join(format!(
+            "ripr-git-paths-deadline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&plain_dir).map_err(|err| format!("create plain root: {err}"))?;
+        let result = git_paths_with_deadline(
+            &plain_dir,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+            Some(Duration::ZERO),
+        );
+        std::fs::remove_dir_all(&plain_dir).map_err(|err| format!("remove plain root: {err}"))?;
+        let Err(error) = result else {
+            return Err("a zero injected deadline must fail closed, not succeed".to_string());
+        };
+        if !error.starts_with("run git ") {
+            return Err(format!(
+                "expected the caller wrapper to survive, got: {error}"
+            ));
+        }
+        if !error.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) {
+            return Err(format!(
+                "expected the shared timeout family for the injected deadline, got: {error}"
+            ));
+        }
+        if !error.contains("zero deadline") {
+            return Err(format!(
+                "expected the shared zero-deadline rejection (no spawn), got: {error}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]

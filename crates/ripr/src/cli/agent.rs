@@ -77,6 +77,11 @@ pub(super) struct AgentReceiptOptions {
     pub(super) root: PathBuf,
     pub(super) verify_json: PathBuf,
     pub(super) seam_id: String,
+    /// Selects one repair attempt by id when several exist for the seam
+    /// (#4332). Mirrors `agent repair --attempt`: the binding scan demands
+    /// exactly one match across all states, so a failed attempt followed by
+    /// a fresh one is otherwise permanently ambiguous.
+    pub(super) attempt_id: Option<String>,
     pub(super) test_changed: Option<String>,
     pub(super) commands_run: Vec<String>,
     pub(super) json: bool,
@@ -124,6 +129,10 @@ pub(super) struct AgentRepairOptions {
     /// `None` is the repository-local default and keeps next-command bytes
     /// compatible.
     pub(super) store: Option<PathBuf>,
+    /// Print the phase's JSON document on stdout. Without it stdout carries
+    /// a short human summary and the documents stay in their artifact files,
+    /// the same split `ripr agent status` uses.
+    pub(super) json: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -250,9 +259,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut verify_authority: Option<String> = None;
     let mut verify_rollback = false;
     let mut store: Option<PathBuf> = None;
+    let mut json = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--json" => json = true,
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -514,6 +525,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         verify_authorization,
         verify_rollback,
         store,
+        json,
     }))
 }
 
@@ -826,6 +838,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
     let mut root = PathBuf::from(".");
     let mut verify_json: Option<PathBuf> = None;
     let mut seam_id: Option<String> = None;
+    let mut attempt_id: Option<String> = None;
     let mut test_changed: Option<String> = None;
     let mut commands_run = Vec::new();
     let mut json = false;
@@ -849,6 +862,14 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                     return Err("agent receipt --seam-id requires a non-empty ID".to_string());
                 }
                 seam_id = Some(value.to_string());
+            }
+            "--attempt" => {
+                i += 1;
+                let value = expect_value(args, i, "--attempt")?;
+                if value.trim().is_empty() {
+                    return Err("agent receipt --attempt requires a non-empty ID".to_string());
+                }
+                attempt_id = Some(value.to_string());
             }
             "--test" => {
                 i += 1;
@@ -889,6 +910,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
         root,
         verify_json,
         seam_id,
+        attempt_id,
         test_changed,
         commands_run,
         json,
@@ -1129,6 +1151,20 @@ mod tests {
     }
 
     #[test]
+    fn agent_repair_json_flag_selects_the_stdout_document() {
+        let parse = |extra: &[&str]| {
+            let mut values = vec!["repair", "--seam-id", "seam:sample", "--phase", "before"];
+            values.extend_from_slice(extra);
+            match parse_agent_args(&args(&values)) {
+                Ok(AgentCommand::Repair(options)) => Some(options.json),
+                _ => None,
+            }
+        };
+        assert_eq!(parse(&[]), Some(false));
+        assert_eq!(parse(&["--json"]), Some(true));
+    }
+
+    #[test]
     fn agent_repair_parses_before_and_exact_after() {
         assert_eq!(
             parse_agent_args(&args(&[
@@ -1158,6 +1194,7 @@ mod tests {
                     },
                 verify_rollback: false,
                 store: None,
+                json: false,
             }))
         );
         assert_eq!(
@@ -1188,6 +1225,7 @@ mod tests {
                     },
                 verify_rollback: false,
                 store: None,
+                json: false,
             }))
         );
     }
@@ -1357,6 +1395,7 @@ mod tests {
                 },
                 verify_rollback: false,
                 store: None,
+                json: false,
             }))
         );
     }
@@ -1960,6 +1999,7 @@ mod tests {
                 root: PathBuf::from("repo"),
                 verify_json: PathBuf::from("target/ripr/workflow/agent-verify.json"),
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
+                attempt_id: None,
                 test_changed: Some("pricing_boundary".to_string()),
                 commands_run: vec![
                     "cargo test pricing_boundary".to_string(),
@@ -1968,6 +2008,47 @@ mod tests {
                 json: true,
                 out: Some(PathBuf::from("target/ripr/reports/agent-receipt.json")),
             })
+        );
+    }
+
+    #[test]
+    fn agent_receipt_parses_attempt_selection() {
+        assert_eq!(
+            parse_agent_receipt_options(&args(&[
+                "--verify-json",
+                "target/ripr/workflow/agent-verify.json",
+                "--seam-id",
+                "f3c9e4d21a0b7c88",
+                "--attempt",
+                "repair-attempt-f3c9e4d21a0b7c88",
+                "--json",
+            ])),
+            Ok(AgentReceiptOptions {
+                root: PathBuf::from("."),
+                verify_json: PathBuf::from("target/ripr/workflow/agent-verify.json"),
+                seam_id: "f3c9e4d21a0b7c88".to_string(),
+                attempt_id: Some("repair-attempt-f3c9e4d21a0b7c88".to_string()),
+                test_changed: None,
+                commands_run: Vec::new(),
+                json: true,
+                out: None,
+            })
+        );
+    }
+
+    #[test]
+    fn agent_receipt_rejects_a_blank_attempt_id() {
+        assert_eq!(
+            parse_agent_receipt_options(&args(&[
+                "--verify-json",
+                "v.json",
+                "--seam-id",
+                "s",
+                "--attempt",
+                "  ",
+                "--json",
+            ])),
+            Err("agent receipt --attempt requires a non-empty ID".to_string())
         );
     }
 
