@@ -2733,6 +2733,10 @@ fn absent_delimiter_boundary_returns_head() {
 
     #[test]
     fn diff_index_file_limit_defaults_when_unset() {
+        // Independent decision pin: the guard-raise set the measured default
+        // to 1200 (repo growth evidence); a revert of the constant must fail
+        // here rather than silently re-hide under the 800 default.
+        assert_eq!(DIFF_INDEX_FILE_LIMIT, 1200);
         assert_eq!(
             diff_index_file_limit_from_env(Err(VarError::NotPresent)),
             Ok(DIFF_INDEX_FILE_LIMIT)
@@ -3340,6 +3344,9 @@ fn absent_delimiter_boundary_returns_head() {
     fn repo_index_file_limit_env_parsing() -> Result<(), String> {
         // Default applies when unset; valid override wins; invalid fails
         // closed (#2109).
+        // Independent decision pin for the guard-raise default; see the diff
+        // guard test for the rationale.
+        assert_eq!(REPO_INDEX_FILE_LIMIT, 1200);
         let unset = repo_index_file_limit_from_env(Err(std::env::VarError::NotPresent))
             .map_err(|err| format!("default should parse: {err}"))?;
         assert_eq!(
