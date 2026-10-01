@@ -1021,6 +1021,13 @@ pub(super) struct DocumentState {
     pub(super) analyzed_saved_digest: Option<String>,
     /// Input identity of the snapshot that last analyzed this document.
     pub(super) analyzed_input_identity: Option<String>,
+    /// True while the retained buffer is not a synchronization authority:
+    /// a rejected incremental change left the retained text out of step with
+    /// the client's document (#1746). While set, the fail-closed quarantine
+    /// cannot be lifted by the ordinary staleness recomputation and the
+    /// buffer never supplies a save identity; only a range-less full
+    /// replacement or client-provided save text re-establishes authority.
+    pub(super) buffer_authority_unknown: bool,
     pub(super) quarantine: Option<DocumentQuarantine>,
 }
 
@@ -1040,6 +1047,7 @@ impl DocumentState {
             saved_digest,
             analyzed_saved_digest: None,
             analyzed_input_identity: None,
+            buffer_authority_unknown: false,
             quarantine: None,
         }
     }
@@ -1072,8 +1080,28 @@ impl DocumentState {
 
     /// Recompute the quarantine state from the current buffer and the
     /// analyzed/saved content identities. A document is quarantined while
-    /// its buffer digest differs from the analyzed saved digest.
+    /// its buffer digest differs from the analyzed saved digest. While the
+    /// buffer is not a synchronization authority (`buffer_authority_unknown`,
+    /// #1746), the invalid-change quarantine is pinned: the ordinary
+    /// recomputation must not silently lift the fail-closed state that only a
+    /// full replacement or client-provided save text may end.
     pub(super) fn refresh_quarantine(&mut self) -> QuarantineTransition {
+        if self.buffer_authority_unknown {
+            let was_quarantined = self.quarantine.is_some();
+            let was_disclosed = self
+                .quarantine
+                .as_ref()
+                .is_some_and(|quarantine| quarantine.withdrawal_disclosed);
+            self.quarantine = Some(DocumentQuarantine {
+                reason: DocumentStalenessReason::InvalidIncrementalChange,
+                withdrawal_disclosed: was_disclosed,
+            });
+            return if was_quarantined {
+                QuarantineTransition::Unchanged
+            } else {
+                QuarantineTransition::Entered
+            };
+        }
         let mut next = self
             .staleness_for_analyzed(self.analyzed_saved_digest.as_ref())
             .map(|reason| DocumentQuarantine {
@@ -1223,6 +1251,10 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
         .quarantine
         .as_ref()
         .is_some_and(|quarantine| quarantine.withdrawal_disclosed);
+    // The retained buffer is no longer a synchronization authority (#1746):
+    // later saves and refresh commits must not silently lift this quarantine
+    // through the ordinary staleness recomputation.
+    state.buffer_authority_unknown = true;
     state.quarantine = Some(DocumentQuarantine {
         reason: DocumentStalenessReason::InvalidIncrementalChange,
         withdrawal_disclosed: was_disclosed,
@@ -1292,6 +1324,11 @@ impl DocumentStore {
                     return QuarantineTransition::Unchanged;
                 }
                 state.text = recovered;
+                // The range-less replacement re-established the complete
+                // buffer, so the retained text is a synchronization
+                // authority again and the ordinary staleness recomputation
+                // applies (#1746).
+                state.buffer_authority_unknown = false;
                 return state.refresh_quarantine();
             }
 
@@ -1344,7 +1381,12 @@ impl DocumentStore {
     /// Record a save: the didSave digest is the new saved-content identity
     /// (#2129), and the buffer now holds the persisted text when the client
     /// included it. The quarantine recomputation may lift the withdrawal
-    /// when the buffer matches the analyzed saved content again.
+    /// when the buffer matches the analyzed saved content again. While the
+    /// buffer is not a synchronization authority (#1746), a save without
+    /// client text observes nothing: the caller could only offer a digest of
+    /// the same disowned buffer, so neither identity is adopted and the
+    /// fail-closed quarantine holds. Client-provided save text is itself the
+    /// authoritative document content and restores authority.
     pub(super) fn save(
         &mut self,
         uri: &Uri,
@@ -1354,6 +1396,12 @@ impl DocumentStore {
         let Some(state) = self.documents.get_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
+        if state.buffer_authority_unknown {
+            if text.is_none() {
+                return state.refresh_quarantine();
+            }
+            state.buffer_authority_unknown = false;
+        }
         if let Some(digest) = saved_digest {
             state.saved_digest = Some(digest);
         }
@@ -1530,6 +1578,7 @@ mod tests {
             saved_digest: Some(digest_of(saved_text)),
             analyzed_saved_digest: Some(digest_of(saved_text)),
             analyzed_input_identity: Some("input:test".to_string()),
+            buffer_authority_unknown: false,
             quarantine: None,
         }
     }
@@ -2141,6 +2190,99 @@ mod tests {
             return Err(
                 "recovery inside one quarantine episode must retain disclosure state".into(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn save_without_client_text_during_unknown_buffer_authority_refuses_identity()
+    -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        state.quarantine = Some(DocumentQuarantine {
+            reason: DocumentStalenessReason::InvalidIncrementalChange,
+            withdrawal_disclosed: true,
+        });
+        state.buffer_authority_unknown = true;
+        store.documents.insert(uri.clone(), state);
+
+        // includeText: false: the caller can only offer a digest of the same
+        // disowned buffer. The store must adopt neither identity and must not
+        // let the recomputation lift the fail-closed quarantine (#1746).
+        let transition = store.save(&uri, Some(digest_of("fn fabricated() {}")), None);
+        if transition != QuarantineTransition::Unchanged {
+            return Err("an unobserved save must not move the quarantine edges".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if state.saved_digest.as_deref() != Some(digest_of("fn saved() {}").as_str()) {
+            return Err("an unobserved save must not adopt a fabricated digest".to_string());
+        }
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("unknown buffer authority must hold the quarantine".to_string());
+        }
+
+        // Client-provided save text is itself the authoritative document
+        // content: it restores ordinary staleness semantics.
+        let transition = store.save(
+            &uri,
+            Some(digest_of("fn saved() {}")),
+            Some("fn saved() {}".to_string()),
+        );
+        if transition
+            != (QuarantineTransition::Exited {
+                was_disclosed: true,
+            })
+        {
+            return Err("client save text must restore authority and end the episode".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_commit_cannot_lift_unknown_buffer_authority_quarantine() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        state.quarantine = Some(DocumentQuarantine {
+            reason: DocumentStalenessReason::InvalidIncrementalChange,
+            withdrawal_disclosed: true,
+        });
+        state.buffer_authority_unknown = true;
+        store.documents.insert(uri.clone(), state);
+
+        // The committed snapshot analyzed exactly the frozen buffer's bytes;
+        // the ordinary recomputation would read that as clean and lift the
+        // quarantine even though no full replacement ever re-established
+        // buffer authority (#1746).
+        let analyzed = store
+            .documents
+            .iter()
+            .map(|(uri, state)| (uri.clone(), state.saved_digest.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let edges = store.note_refresh_analyzed(Some("input:43".to_string()), &analyzed, &[]);
+        if !edges.entered.is_empty() || !edges.exited.is_empty() {
+            return Err(format!(
+                "unknown buffer authority must hold the quarantine across a refresh commit: {edges:?}"
+            ));
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document state".to_string());
+        };
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("refresh commit must keep the invalid-change quarantine".to_string());
         }
         Ok(())
     }

@@ -17547,6 +17547,97 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
 }
 
 #[tokio::test]
+async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarantine()
+-> Result<(), String> {
+    let fixture = quarantine_fixture("did-save-disowned")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    // The loopback client channel is bounded and nothing drains it in an
+    // in-process test, so client sends would block once it fills. Dropping
+    // the socket makes the server-to-client sends fail fast; the quarantine
+    // bookkeeping under test runs before and after each send regardless.
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture)?;
+
+    // A rejected incremental change (position past the line end) disowns the
+    // retained buffer and enters the fail-closed quarantine.
+    backend
+        .did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(fixture.uri_a.clone(), 2),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position {
+                        line: 0,
+                        character: 500,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 501,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+        })
+        .await;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason)
+        != Some(crate::lsp::state::DocumentStalenessReason::InvalidIncrementalChange)
+    {
+        return Err("expected the invalid-change quarantine".to_string());
+    }
+
+    // includeText: false: didSave carries no text, so the server cannot
+    // observe the persisted bytes. It must adopt no save identity from the
+    // disowned buffer and hold the quarantine across both the save and the
+    // refresh commit the save schedules (#1746).
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier {
+                uri: fixture.uri_a.clone(),
+            },
+            text: None,
+        })
+        .await;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason)
+        != Some(crate::lsp::state::DocumentStalenessReason::InvalidIncrementalChange)
+    {
+        return Err("an unobserved save must keep the fail-closed quarantine".to_string());
+    }
+    if state.saved_digest.as_deref() != Some(content_digest(QUARANTINE_TEXT_A.as_bytes()).as_str())
+    {
+        return Err("saved identity must stay the persisted bytes".to_string());
+    }
+    commit_quarantine_snapshot(backend, &fixture)?;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason)
+        != Some(crate::lsp::state::DocumentStalenessReason::InvalidIncrementalChange)
+    {
+        return Err("refresh commit must not lift unknown buffer authority".to_string());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn save_with_unchanged_content_dedups_and_keeps_lifted_quarantine() -> Result<(), String> {
     let fixture = quarantine_fixture("save-unchanged-dedup")?;
     let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));

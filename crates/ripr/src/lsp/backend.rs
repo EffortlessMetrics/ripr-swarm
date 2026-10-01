@@ -2481,6 +2481,21 @@ impl Backend {
             .map(|state| state.text.clone())
     }
 
+    /// Whether the document's retained buffer lost synchronization authority
+    /// (#1746): after a rejected incremental change the retained text is not
+    /// the client's document and must never supply a save identity.
+    fn document_buffer_authority_unknown(&self, uri: &tower_lsp_server::ls_types::Uri) -> bool {
+        self.documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .state_for_uri(uri)
+                    .map(|state| state.buffer_authority_unknown)
+            })
+            .unwrap_or(false)
+    }
+
     /// The hover for a position with no evidence to show. A generic editor
     /// has no other place that says why ripr is quiet, so name a blocked
     /// root or an unsaved buffer before falling back to the CLI pointer.
@@ -2503,6 +2518,9 @@ impl Backend {
             let route = match reason {
                 DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
                     "ripr analyzes saved files; save the file to refresh its evidence."
+                }
+                DocumentStalenessReason::InvalidIncrementalChange => {
+                    "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
@@ -4444,7 +4462,17 @@ impl LanguageServer for Backend {
         // analysis input, so it neither advances the workspace revision nor
         // schedules a refresh. The save event is still disclosed.
         let uri = params.text_document.uri;
-        let text = params.text.or_else(|| self.document_text(&uri));
+        // With includeText: false the save identity would come from the
+        // retained buffer — but only while that buffer is still a
+        // synchronization authority. After a rejected incremental change
+        // (#1746) the client's persisted document may diverge from the frozen
+        // buffer, so the save carries no observable identity: adopt none
+        // rather than invent one from text the server cannot trust.
+        let text = if self.document_buffer_authority_unknown(&uri) {
+            params.text.clone()
+        } else {
+            params.text.clone().or_else(|| self.document_text(&uri))
+        };
         let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
         // Update the per-document saved-content identity and quarantine
         // state first (#1970): the dedup decision below gates the refresh,
