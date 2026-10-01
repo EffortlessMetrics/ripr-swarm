@@ -10259,10 +10259,10 @@ id = "RIPR-SPEC-0191"
 name = "repair card v1 projected from shared repair authorities"
 spec = "docs/specs/RIPR-SPEC-0191-repair-card-v1.md"
 tests = [
-  "crates/ripr/src/domain/repair_card.rs::tests::digest_is_stable_across_presentation_only_changes",
-  "crates/ripr/src/domain/repair_card.rs::tests::every_load_bearing_field_move_remiints_the_digest",
-  "crates/ripr/src/domain/repair_card.rs::tests::proposed_and_existing_targets_stay_distinct",
-  "crates/ripr/src/domain/repair_card.rs::tests::done_when_keeps_all_five_axes_separate",
+  "crates/ripr/src/repair_card_digest.rs::tests::digest_is_stable_across_presentation_only_changes",
+  "crates/ripr/src/repair_card_digest.rs::tests::every_load_bearing_field_move_remiints_the_digest",
+  "crates/ripr/src/repair_card_digest.rs::tests::proposed_and_existing_targets_stay_distinct",
+  "crates/ripr/src/repair_card_digest.rs::tests::done_when_keeps_all_five_axes_separate",
   "crates/ripr/src/domain/repair_card.rs::tests::route_exposure_follows_instruction_and_readiness_together",
   "crates/ripr/src/domain/repair_card.rs::tests::fixture_shapes_cover_all_instruction_states",
   "crates/ripr/src/app/repair_card.rs::tests::ready_card_projects_authority_facts_verbatim",
@@ -10279,6 +10279,7 @@ tests = [
 fixtures = []
 code = [
   "crates/ripr/src/domain/repair_card.rs",
+  "crates/ripr/src/repair_card_digest.rs",
   "crates/ripr/src/app/repair_card.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
 ]

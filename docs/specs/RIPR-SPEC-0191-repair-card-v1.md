@@ -41,10 +41,13 @@ fields name the authority they were copied from.
 
 `crates/ripr/src/domain/repair_card.rs` defines the versioned
 `RepairCardV1` DTO, its sub-types, the `REPAIR_CARD_SCHEMA_VERSION`
-(`repair_card.v1`) constant, the claim-boundary statement, the semantic
-digest and the single route-exposure gate. `crates/ripr/src/app/repair_card.rs`
-defines the one builder, `build_repair_card(&RepairCardInput)`, a pure
-projection of the existing authorities:
+(`repair_card.v1`) constant, the claim-boundary statement and the single
+route-exposure gate. `crates/ripr/src/repair_card_digest.rs` owns the
+semantic digest at the crate root — domain must not know JSON rendering,
+so the digest logic follows the `command_spec_digest.rs` split. And
+`crates/ripr/src/app/repair_card.rs` defines the one builder,
+`build_repair_card(&RepairCardInput)`, a pure projection of the existing
+authorities:
 
 - `FixInstructionSummary` is embedded verbatim; no instruction meaning is
   re-derived.
@@ -150,10 +153,11 @@ strengthens any readiness, command or attempt claim.
 
 ## Test Mapping
 
-- `crates/ripr/src/domain/repair_card.rs` unit tests cover digest scope and
+- `crates/ripr/src/repair_card_digest.rs` unit tests cover digest scope and
   stability, the load-bearing field mutation matrix, target-variant
-  distinctness, the five `done_when` axes, the route gate across all five
-  instruction states, and instruction-state shape coverage.
+  distinctness, and the five `done_when` axes.
+- `crates/ripr/src/domain/repair_card.rs` unit tests cover the route gate
+  across all five instruction states and instruction-state shape coverage.
 - `crates/ripr/src/app/repair_card.rs` unit tests cover the ready shape
   field-by-field, stale/limited/unavailable cards without routes,
   fail-closed route and boundary gates, proposed and missing targets,
@@ -164,7 +168,8 @@ strengthens any readiness, command or attempt claim.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/domain/repair_card.rs` | versioned DTO, sub-types, claim boundary, schema/boundary constants, semantic digest, route gate, tests |
+| `crates/ripr/src/domain/repair_card.rs` | versioned DTO, sub-types, claim boundary, schema/boundary constants, route gate, tests |
+| `crates/ripr/src/repair_card_digest.rs` | scoped digest input, sha256 semantic digest, digest and axis tests |
 | `crates/ripr/src/app/repair_card.rs` | `RepairCardInput`, `build_repair_card` projection, fail-closed gates, tests |
 | `crates/ripr/src/analysis/test_grip_evidence.rs` | `TestTargetEvidence` projection accessors consumed by the builder |
 | `policy/public_api.txt` | public API allowlist entries for the new domain surface |

@@ -83,7 +83,6 @@ pub use repair_card::{
     RepairCardProposedTestKind, RepairCardReadinessFacts, RepairCardRejectedAlternative,
     RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardTarget,
     RepairCardTestKind, RepairCardV1, StaticMovementGoal, repair_card_route_exposable,
-    repair_card_semantic_digest,
 };
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.

@@ -15,8 +15,8 @@ use crate::domain::{
     RepairCardDoneWhen, RepairCardProposedTestKind, RepairCardReadinessFacts,
     RepairCardRejectedAlternative, RepairCardSnapshot, RepairCardSubject, RepairCardTarget,
     RepairCardTestKind, RepairCardV1, StaticMovementGoal, repair_card_route_exposable,
-    repair_card_semantic_digest,
 };
+use crate::repair_card_digest::repair_card_semantic_digest;
 
 /// Bounded input selected by the caller (CLI projection wiring lands in #4667,
 /// agent ratification in #4669); the builder itself stays pure and performs no

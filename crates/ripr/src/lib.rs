@@ -82,6 +82,7 @@ mod edit_cage;
         reason = "staged internal contract; #2657 connects the first producer before public projection"
     )
 )]
+mod repair_card_digest;
 mod repair_guidance;
 // Test-only shared helpers (#3742); never part of the library surface.
 #[cfg(test)]
