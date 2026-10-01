@@ -21,11 +21,13 @@
 //! `static_unknown`), so no reverse lookup is offered and surfaces must not
 //! invent one.
 
-/// The canonical sentence every consumer-facing surface quotes for the
-/// shared missing-discriminator state. `ripr check` renders it as the
-/// `WeaklyExposed` classification hint; the pilot/agent surfaces compose it
-/// when they describe the same state, so an agent matching on phrases sees
-/// one sentence, not a per-surface variant.
+/// The canonical sentence consumer-facing surfaces quote when they describe
+/// the shared missing-discriminator *state*. `ripr check` renders it as the
+/// `WeaklyExposed` classification hint and `first_useful_action` quotes it in
+/// the repair-start rationale, so an agent matching on phrases sees one
+/// sentence, not a per-surface variant. Surfaces that name the specific
+/// missing value (for example the pilot `why` line) use
+/// [`MISSING_DISCRIMINATOR_LABEL`] instead; they do not rephrase the state.
 pub(crate) const MISSING_DISCRIMINATOR_SENTENCE: &str =
     "a related test reaches this change but does not observe the exact changed value";
 
@@ -261,9 +263,15 @@ mod tests {
         Ok(())
     }
 
-    /// A translation fork is a match arm that maps one published token onto
-    /// the other vocabulary's token. Ranking tables (`"weakly_gripped" => 5`)
-    /// and grip-domain data are not forks and stay outside the audit.
+    /// A translation fork is source that maps one published grip token onto
+    /// the other vocabulary's exposure token: a match arm (`"weakly_gripped"
+    /// => "weakly_exposed"`), a pair-table entry (`("weakly_gripped",
+    /// "weakly_exposed")`), or an if-chain guard (`== "weakly_gripped"`).
+    /// Ranking tables (`"weakly_gripped" => 5`) and grip-domain data are not
+    /// forks and stay outside the audit. The guard is intentionally literal:
+    /// it pins the fork shapes that existed or plausibly recur; an exotic
+    /// encoding (a constructed table built token-by-token) is review
+    /// responsibility, not something a substring audit can prove absent.
     fn has_translation_fork(source: &str) -> bool {
         [
             "\"weakly_gripped\" => \"",
@@ -272,6 +280,10 @@ mod tests {
             "\"strongly_gripped\" => Some(\"",
             "\"weakly_gripped\" | \"weakly_exposed\" =>",
             "\"strongly_gripped\" | \"exposed\" =>",
+            "(\"weakly_gripped\", \"",
+            "(\"strongly_gripped\", \"",
+            "== \"weakly_gripped\"",
+            "== \"strongly_gripped\"",
         ]
         .iter()
         .any(|pattern| source.contains(pattern))
