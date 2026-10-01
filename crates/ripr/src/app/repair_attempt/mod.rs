@@ -2103,7 +2103,7 @@ fn select_awaiting_repair_attempt_by_seam(
     // A fresh workspace has no attempts directory at all: that is zero
     // matches, not an operational error (#4332), so the refusal still names
     // the start command.
-    let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(&manifests_root) {
+    let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(manifests_root) {
         Ok(entries) => {
             // A failed directory entry is an operational error, not a silent
             // skip: a partial listing must never masquerade as a complete one
