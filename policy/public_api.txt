@@ -244,6 +244,7 @@ pub use ripr::domain::CancellationPolicy
 pub use ripr::domain::CandidateRelation
 pub use ripr::domain::CanonicalDelta
 pub use ripr::domain::CanonicalEvidenceState
+pub use ripr::domain::CardCurrentnessGoal
 pub use ripr::domain::CommandAuthorityBoundary
 pub use ripr::domain::CommandCostClass
 pub use ripr::domain::CommandExecutionMode
@@ -261,6 +262,7 @@ pub use ripr::domain::DiagnosticFixSite
 pub use ripr::domain::DiagnosticSourceLocation
 pub use ripr::domain::DiagnosticWitness
 pub use ripr::domain::DiagnosticWitnessLimitation
+pub use ripr::domain::EditCageGoal
 pub use ripr::domain::EnvironmentAssignment
 pub use ripr::domain::EnvironmentPolicy
 pub use ripr::domain::ExpectedResultParser
@@ -271,6 +273,7 @@ pub use ripr::domain::FixInstructionState
 pub use ripr::domain::FixInstructionSummary
 pub use ripr::domain::FlowSinkFact
 pub use ripr::domain::FlowSinkKind
+pub use ripr::domain::FocusedExecutionGoal
 pub use ripr::domain::GOVERNED_IDENTITY_SURFACES
 pub use ripr::domain::GapState
 pub use ripr::domain::GitCandidateBase
@@ -287,6 +290,7 @@ pub use ripr::domain::LanguageId
 pub use ripr::domain::LanguageStatus
 pub use ripr::domain::MAX_REPAIR_CARD_REJECTED_ALTERNATIVES
 pub use ripr::domain::MissingDiscriminatorFact
+pub use ripr::domain::MutationConfirmationGoal
 pub use ripr::domain::NetworkPolicy
 pub use ripr::domain::ORACLE_ALIGNMENT_VALUES
 pub use ripr::domain::OracleKind
@@ -323,6 +327,7 @@ pub use ripr::domain::SourceLocation
 pub use ripr::domain::StageEvidence
 pub use ripr::domain::StageState
 pub use ripr::domain::StaticLimitKind
+pub use ripr::domain::StaticMovementGoal
 pub use ripr::domain::StdinPolicy
 pub use ripr::domain::StopReason
 pub use ripr::domain::Summary
