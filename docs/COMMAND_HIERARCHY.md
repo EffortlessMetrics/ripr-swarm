@@ -91,8 +91,9 @@ do not copy them into every introduction. The typed command-identity catalog liv
 `crates/ripr/src/cli/command_catalog.rs` ([RIPR-SPEC-0184](specs/RIPR-SPEC-0184-public-command-catalog.md),
 [#4822](https://github.com/EffortlessMetrics/ripr-swarm/issues/4822)).
 The richer discovery surfaces this guide once deferred are now shipped and
-serve as its validation authority: rich command metadata is projected into the
-human help and inventories
+serve as its validation authority: the typed command metadata table validates
+the human help and hierarchy documentation, and `help --all` exposes the
+advanced and compatibility class markers
 ([RIPR-SPEC-0187](specs/RIPR-SPEC-0187-command-metadata-human-projection.md)),
 `ripr help workflow` lists the bounded task workflows
 ([RIPR-SPEC-0189](specs/RIPR-SPEC-0189-workflow-catalog-help-workflow.md)), and
