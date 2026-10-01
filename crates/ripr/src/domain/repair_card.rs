@@ -83,7 +83,9 @@ impl RepairCardBudget {
 /// One load-bearing evidence family the compact card routes to instead of
 /// embedding. The families name the authorities #4666 keeps explicitly
 /// reachable from a finite card.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RepairCardDetailFamily {
     /// The full fix-instruction detail behind the embedded summary.
@@ -108,7 +110,9 @@ pub enum RepairCardDetailFamily {
 
 /// Producer-reported state of referenced evidence. The card projects the state
 /// visibly and never upgrades it: stale evidence stays stale on the card.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RepairCardDetailState {
     Current,
@@ -120,7 +124,9 @@ pub enum RepairCardDetailState {
 }
 
 /// Why a family rides outside the wire card.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RepairCardOmissionClass {
     /// The authority never embeds this family (the canonical packet).

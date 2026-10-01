@@ -157,7 +157,10 @@ pub(crate) fn apply_repair_card_budget(
 fn enforce_inline_budget(card: &RepairCardV1, budget: &RepairCardBudget) -> Result<(), String> {
     let fields: Vec<(&str, String)> = vec![
         ("changed_behavior", card.changed_behavior.clone()),
-        ("exact_blocker", card.exact_blocker.clone().unwrap_or_default()),
+        (
+            "exact_blocker",
+            card.exact_blocker.clone().unwrap_or_default(),
+        ),
         (
             "assertion_goal_detail",
             card.assertion_goal_detail.clone().unwrap_or_default(),
@@ -280,10 +283,7 @@ fn normalize_source(source: &RepairCardDetailSource) -> Result<(String, usize), 
 /// equivalent roots mint different references, so the engine refuses to carry
 /// one. A producer that observes a wrong-root route reports that state
 /// instead; the card shows it visibly and never repairs it silently.
-fn reject_root_specific_route(
-    family: RepairCardDetailFamily,
-    route: &str,
-) -> Result<(), String> {
+fn reject_root_specific_route(family: RepairCardDetailFamily, route: &str) -> Result<(), String> {
     let root_specific = route.starts_with('/')
         || route
             .as_bytes()
@@ -354,7 +354,6 @@ impl SortByFamily for [RepairCardDetailSource] {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,8 +361,7 @@ mod tests {
         CardCurrentnessGoal, EditCageGoal, FixInstructionState, FixInstructionSummary,
         FocusedExecutionGoal, MutationConfirmationGoal, REPAIR_CARD_CLAIM_BOUNDARY,
         REPAIR_CARD_SCHEMA_VERSION, RepairCardDoneWhen, RepairCardReadinessFacts,
-        RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject,
-        StaticMovementGoal,
+        RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, StaticMovementGoal,
     };
 
     fn minimal_card() -> RepairCardV1 {
@@ -744,7 +742,11 @@ mod tests {
     #[test]
     fn stale_malformed_wrongroot_missing_states_stay_visible() -> Result<(), String> {
         let mut card = minimal_card();
-        apply_repair_card_budget(&mut card, &all_family_sources(), &RepairCardBudget::default())?;
+        apply_repair_card_budget(
+            &mut card,
+            &all_family_sources(),
+            &RepairCardBudget::default(),
+        )?;
         let state_of = |family: RepairCardDetailFamily| {
             card.detail_references
                 .iter()
@@ -901,7 +903,10 @@ mod tests {
                 "related_test_candidates",
                 RepairCardDetailFamily::RelatedTestCandidates,
             ),
-            ("limitation_detail", RepairCardDetailFamily::LimitationDetail),
+            (
+                "limitation_detail",
+                RepairCardDetailFamily::LimitationDetail,
+            ),
             ("canonical_packet", RepairCardDetailFamily::CanonicalPacket),
             (
                 "repair_attempt_status",

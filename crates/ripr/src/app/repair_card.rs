@@ -762,7 +762,9 @@ mod tests {
             return Err("unavailable family lost its reference".to_string());
         }
         if card.detail_summary.referenced_items != 1 || card.detail_summary.unavailable_items != 1 {
-            return Err("detail accounting did not count referenced/unavailable families".to_string());
+            return Err(
+                "detail accounting did not count referenced/unavailable families".to_string(),
+            );
         }
         if card.complete_evidence_digest.is_empty() {
             return Err("complete evidence identity was not minted".to_string());
