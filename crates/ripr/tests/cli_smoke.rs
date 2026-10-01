@@ -1419,14 +1419,14 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         let after_b = snapshot_tree(&root_b)?;
         if after_a != before_a {
             return Err(format!(
-                "help --json changed workspace A:\n{}",
+                "help --json changed workspace A; diff follows\n{}",
                 snapshot_diff(&before_a, &after_a)
             )
             .into());
         }
         if after_b != before_b {
             return Err(format!(
-                "help --json changed workspace B:\n{}",
+                "help --json changed workspace B; diff follows\n{}",
                 snapshot_diff(&before_b, &after_b)
             )
             .into());
