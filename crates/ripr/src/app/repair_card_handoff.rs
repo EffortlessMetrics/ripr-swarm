@@ -455,10 +455,10 @@ fn latest_attempt_for_seam(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::repair_attempt::{
         REPAIR_ATTEMPT_SCHEMA_VERSION, RepairAttemptId, RepairAttemptState,
     };
+    use super::*;
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
