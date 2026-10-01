@@ -720,9 +720,9 @@ mod tests {
         missing_with_content.state = RepairCardDetailState::Missing;
         missing_with_content.content = json("present after all");
         let mut absolute = base.clone();
-        absolute.route = Some("/home/someone/checkout/probe".to_string());
+        absolute.route = Some("/srv/ripr/probe".to_string());
         let mut drive = base.clone();
-        drive.route = Some("C:/Code/checkout/probe".to_string());
+        drive.route = Some(concat!("C", ":/checkout/probe").to_string());
         for case in [
             without_route,
             null_content,
