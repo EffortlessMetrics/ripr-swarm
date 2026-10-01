@@ -11,6 +11,17 @@ are scoped or reviewed.
 
 ### Added
 
+- Domains: RepairCard budget ratification (RIPR-SPEC-0195, #4669) measures
+  the default-field card against its canonical packet on four deterministic
+  synthetic corpus profiles (boundary without/with witness, witness with a
+  current attempt, witness with a stale attempt), checks five load-bearing
+  relations per profile, and records a versioned
+  `repair-card-budget-decision-receipt` that ratifies the 16-item /
+  64 KiB / 4 KiB defaults as `ratified_synthetic_scope`. Real-attempt
+  usability stays `pending` until the governed #1702/#1579 corpus reaches
+  its minimum attempt count; committed expectations and receipt artifacts
+  are re-validated by a fail-closed `cargo xtask repair-card-usability-report`
+  gate on every run.
 - CLI: `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194, #4667) makes
   the compact `RepairCardV1` the default bounded agent handoff. The card is
   assembled verbatim from the shared authorities — the check finding's
