@@ -8761,6 +8761,11 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::receipt_status_discloses_bounded_client_feature_profile",
   "crates/ripr/src/lsp/tests.rs::malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsupported",
   "crates/ripr/src/lsp/tests.rs::initialize_surfaces_poisoned_client_features_store_as_a_session_failure",
+  "crates/ripr/src/lsp/client_features.rs::tests::watched_files_relative_pattern_support_is_parsed_and_fails_closed",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_anchor_diagnostics_inputs_at_the_root",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_skip_absolute_diagnostics_globs_for_metacharacter_roots",
+  "crates/ripr/src/lsp/tests.rs::watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire",
+  "crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_root_switch_reanchors_diagnostics_input_watchers",
 ]
 fixtures = []
 code = [
@@ -10256,8 +10261,108 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0191"
+name = "Portable native RIPR consumer packet"
+spec = "docs/specs/RIPR-SPEC-0191-portable-native-consumer-packet.md"
+tests = [
+  "xtask/src/portable_consumer.rs::tests::run_py_compiles_with_stdlib_python",
+  "xtask/src/portable_consumer.rs::tests::consumer_source_does_not_search_path_or_open_a_network_client",
+  "xtask/src/portable_consumer.rs::tests::product_json_classes_are_discriminated_without_launch",
+  "xtask/src/portable_consumer.rs::tests::complete_stub_packet_runs_the_packet_payload_not_a_path_decoy",
+  "xtask/src/portable_consumer.rs::tests::foreign_cwd_still_passes_the_explicit_subject_root",
+  "xtask/src/portable_consumer.rs::tests::digest_mismatch_fails_closed_before_launch",
+  "xtask/src/portable_consumer.rs::tests::consumer_script_digest_mismatch_fails_closed_before_launch",
+  "xtask/src/portable_consumer.rs::tests::packet_digest_field_mismatch_fails_closed_before_launch",
+  "xtask/src/portable_consumer.rs::tests::missing_executable_fails_closed",
+  "xtask/src/portable_consumer.rs::tests::missing_manifest_is_incompatible_payload",
+  "xtask/src/portable_consumer.rs::tests::platform_mismatch_fails_closed_before_launch",
+  "xtask/src/portable_consumer.rs::tests::relative_path_escape_fails_closed_before_launch",
+  "xtask/src/portable_consumer.rs::tests::malformed_product_json_fails_closed",
+  "xtask/src/portable_consumer.rs::tests::empty_stdout_is_partial_product_output",
+  "xtask/src/portable_consumer.rs::tests::typed_product_limitation_is_not_complete",
+  "xtask/src/portable_consumer.rs::tests::incomplete_analysis_outcome_is_partial_product_output",
+  "xtask/src/portable_consumer.rs::tests::zero_subjects_fail_closed_when_required",
+  "xtask/src/portable_consumer.rs::tests::zero_subjects_are_complete_when_not_required",
+  "xtask/src/portable_consumer.rs::tests::payload_timeout_is_classified_not_as_a_semantic_failure",
+  "xtask/src/portable_consumer.rs::tests::nonzero_payload_exit_is_execution_failure",
+  "xtask/src/portable_consumer.rs::tests::unknown_operation_fails_closed",
+  "xtask/src/portable_consumer.rs::tests::unwritable_output_fails_closed",
+  "xtask/src/portable_consumer.rs::tests::subject_digest_drift_fails_closed",
+  "xtask/src/portable_consumer.rs::tests::arm64_machine_names_match_rust_aarch64",
+  "xtask/src/portable_consumer.rs::tests::pilot_reads_the_summary_artifact_not_terminal_stdout",
+  "xtask/src/portable_consumer.rs::tests::missing_pilot_summary_is_partial_product_output",
+  "xtask/src/portable_consumer.rs::tests::stale_pilot_summary_is_not_classified_as_complete",
+  "xtask/src/portable_consumer.rs::tests::argv_template_must_start_with_the_allowlisted_operation",
+  "xtask/src/portable_consumer.rs::tests::pilot_rejects_diff_before_launch",
+  "xtask/src/portable_consumer.rs::tests::subject_file_cap_is_environment_unavailable_not_drift",
+  "xtask/src/portable_consumer.rs::tests::subject_digest_is_rechecked_after_launch",
+  "xtask/src/portable_consumer.rs::tests::existing_output_symlink_is_unwritable",
+  "xtask/src/portable_consumer.rs::tests::write_probe_symlink_is_unwritable",
+  "xtask/src/portable_consumer.rs::tests::packet_digest_matches_the_producer_formula",
+  "crates/ripr/tests/portable_consumer_packet.rs::native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
+  "crates/ripr/tests/portable_consumer_packet.rs::native_packet_pilot_consumes_the_summary_artifact",
+]
+fixtures = [
+  "fixtures/boundary_gap/input",
+]
+code = [
+  "tools/python/portable-ripr-consumer/run.py",
+  "xtask/src/portable_consumer.rs",
+  "crates/ripr/tests/portable_consumer_packet.rs",
+]
+outputs = [
+  "tools/python/portable-ripr-consumer/README.md",
+]
+metrics = [
+  "portable_consumer_complete",
+  "portable_consumer_fail_closed",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0192"
+name = "repair card v1 projected from shared repair authorities"
+spec = "docs/specs/RIPR-SPEC-0192-repair-card-v1.md"
+tests = [
+  "crates/ripr/src/repair_card_digest.rs::tests::digest_is_stable_across_presentation_only_changes",
+  "crates/ripr/src/repair_card_digest.rs::tests::every_load_bearing_field_move_remints_the_digest",
+  "crates/ripr/src/repair_card_digest.rs::tests::proposed_and_existing_targets_stay_distinct",
+  "crates/ripr/src/repair_card_digest.rs::tests::done_when_keeps_all_five_axes_separate",
+  "crates/ripr/src/domain/repair_card.rs::tests::route_exposure_follows_instruction_and_readiness_together",
+  "crates/ripr/src/app/repair_card.rs::tests::ready_card_projects_authority_facts_verbatim",
+  "crates/ripr/src/app/repair_card.rs::tests::stale_card_omits_route_and_keeps_instruction",
+  "crates/ripr/src/app/repair_card.rs::tests::not_ready_with_command_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::limited_card_surfaces_producer_blocker_and_missing_evidence",
+  "crates/ripr/src/app/repair_card.rs::tests::unavailable_card_has_no_target_and_no_action",
+  "crates/ripr/src/app/repair_card.rs::tests::ineligible_packet_with_command_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::mismatched_seam_identity_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::mismatched_gap_identity_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::basis_without_target_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::suggested_assertion_without_text_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::inspect_only_card_is_advisory_only",
+  "crates/ripr/src/app/repair_card.rs::tests::proposed_target_stays_proposed",
+  "crates/ripr/src/app/repair_card.rs::tests::over_boundary_rejected_alternatives_fail_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::wrong_owner_shape_records_basis_and_rejections",
+  "crates/ripr/src/app/repair_card.rs::tests::effect_observer_shape_projects_observer_goal_and_improved_axis",
+  "crates/ripr/src/app/repair_card.rs::tests::attempt_state_copies_without_upgrade",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/domain/repair_card.rs",
+  "crates/ripr/src/repair_card_digest.rs",
+  "crates/ripr/src/app/repair_card.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0192-repair-card-v1.md",
+]
+metrics = [
+  "repair_card_schema_version",
+  "repair_card_violations",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0193"
 name = "Repair-attempt store identity and resolver"
-spec = "docs/specs/RIPR-SPEC-0191-repair-attempt-store-identity.md"
+spec = "docs/specs/RIPR-SPEC-0193-repair-attempt-store-identity.md"
 tests = [
   "crates/ripr/src/app/repair_attempt/store.rs::tests::default_store_is_the_repository_local_directory",
   "crates/ripr/src/app/repair_attempt/store.rs::tests::equivalent_default_spellings_share_one_identity",

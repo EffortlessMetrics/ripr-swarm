@@ -332,7 +332,7 @@ attempt back into the manual snapshot loop, sent a fresh workspace to a Bash
 redirect into `target/ripr/workflow/` before that directory existed, and sent
 a failed attempt to `ripr agent receipt`. `ripr agent status` now also reads
 the selected repair-attempt store (default `target/ripr/repair-attempts/`,
-or `--store`; RIPR-SPEC-0191) through the attempt authority
+or `--store`; RIPR-SPEC-0193) through the attempt authority
 (`app::repair_attempt::inventory_repair_attempts`, the same validation the
 after phase applies) and selects `next_command` in this order:
 
