@@ -2705,7 +2705,7 @@ mod python_eval_sweep_refresh {
     /// probe `read_dir` before treating the subtree as unreadable.
     #[cfg(windows)]
     fn icacls(sealed: &Path, args: &[&str], context: &str) -> Result<(), String> {
-        let mut owned = vec![sealed.to_string_lossy().to_string()];
+        let mut owned = vec![sealed.to_string_lossy().into_owned()];
         owned.extend(args.iter().map(|argument| (*argument).to_string()));
         let output =
             capture_output_with_timeout("icacls", &owned, &[], Duration::from_secs(30), context)?;
@@ -3347,7 +3347,9 @@ mod python_eval_sweep_refresh {
     /// On Windows, also retain a real filesystem control for permission-denied
     /// directory enumeration. `icacls` succeeding is not the denial (#3878);
     /// this test lists the subtree first and reports the unavailable
-    /// precondition explicitly rather than asserting incompleteness.
+    /// precondition explicitly rather than asserting incompleteness. A failed
+    /// ACL restoration fails the test instead of leaving denied residue at the
+    /// reusable temp path.
     #[cfg(windows)]
     #[test]
     fn real_unreadable_subtree_marks_corpus_selection_incomplete() -> Result<(), String> {
@@ -3369,12 +3371,19 @@ mod python_eval_sweep_refresh {
         } else {
             None
         };
-        let _ = icacls(
+        let restore = icacls(
             &sealed,
             &["/remove:d", "*S-1-1-0"],
             "python_eval_sweep_refresh test icacls restore",
         );
         super::discard_partial_dir(&dir);
+        restore.map_err(|error| format!("restore the sealed subtree ACL: {error}"))?;
+        if dir.exists() {
+            return Err(format!(
+                "NOT_ESTABLISHED: the sealed test tree at {} could not be removed; a denied subtree must not remain at the PID/thread-derived temp path for a later run",
+                dir.display()
+            ));
+        }
 
         let counts = counts.ok_or_else(|| {
             "NOT_ESTABLISHED: this process can still list a directory after icacls /deny *S-1-1-0:(OI)(CI)(RD)"
@@ -3386,6 +3395,37 @@ mod python_eval_sweep_refresh {
                 .limitation
                 .as_deref()
                 .is_some_and(|s| s.contains("sealed"))
+        );
+        Ok(())
+    }
+
+    /// A failed `icacls` invocation maps to `Err`. The restore propagation in
+    /// `real_unreadable_subtree_marks_corpus_selection_incomplete` relies on
+    /// that mapping: a failed `/remove:d` must fail the test, not silently
+    /// leave a denied subtree at the reusable temp path.
+    #[cfg(windows)]
+    #[test]
+    fn icacls_failure_maps_to_err() -> Result<(), String> {
+        let missing = std::env::temp_dir().join(format!(
+            "ripr-evalsweep-refresh-missing-icacls-probe-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let error = match icacls(
+            &missing,
+            &["/deny", "*S-1-1-0:(OI)(CI)(RD)"],
+            "python_eval_sweep_refresh test icacls failure probe",
+        ) {
+            Ok(()) => {
+                return Err(
+                    "expected the icacls failure probe to fail against a missing path".to_string(),
+                );
+            }
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("icacls failure probe failed"),
+            "the error names the failed context: {error}"
         );
         Ok(())
     }
