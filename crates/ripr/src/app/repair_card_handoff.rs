@@ -14,10 +14,10 @@ use std::path::Path;
 
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
+use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::{
     RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
 };
-use crate::analysis::ClassifiedSeam;
 use crate::config::RiprConfig;
 use crate::domain::{
     CardCurrentnessGoal, CommandSpec, DiagnosticWitness, EditCageGoal, FixInstructionSummary,
@@ -69,8 +69,11 @@ pub(crate) fn repair_card_for_entry(
     config: &RiprConfig,
 ) -> Result<RepairCardV1, String> {
     let eligibility = repair_packet_eligibility(entry);
-    let witness_pack =
-        witness_for_seam(root, config, eligibility.readiness.canonical_gap_id.as_deref())?;
+    let witness_pack = witness_for_seam(
+        root,
+        config,
+        eligibility.readiness.canonical_gap_id.as_deref(),
+    )?;
     let (finding_id, witness) = match witness_pack {
         Some((id, witness)) => (Some(id), Some(witness)),
         None => (None, None),
@@ -243,9 +246,10 @@ fn detail_sources_for(
     packet_route: &str,
     done_when: &RepairCardDoneWhen,
 ) -> Result<Vec<RepairCardDetailSource>, String> {
-    let packet_content: serde_json::Value = serde_json::from_str(facts.packet_json).map_err(
-        |error| format!("agent card could not bind the canonical packet content: {error}"),
-    )?;
+    let packet_content: serde_json::Value =
+        serde_json::from_str(facts.packet_json).map_err(|error| {
+            format!("agent card could not bind the canonical packet content: {error}")
+        })?;
     let mut sources = vec![RepairCardDetailSource::current(
         RepairCardDetailFamily::CanonicalPacket,
         packet_route,
@@ -263,16 +267,15 @@ fn detail_sources_for(
             sources.push(RepairCardDetailSource::current(
                 RepairCardDetailFamily::WitnessStageEvidence,
                 "ripr check --json",
-                serde_json::to_value(&facts.entry.evidence).map_err(
-                    |error| format!("agent card stage-evidence content failed: {error}"),
-                )?,
+                serde_json::to_value(&facts.entry.evidence).map_err(|error| {
+                    format!("agent card stage-evidence content failed: {error}")
+                })?,
             ));
             sources.push(RepairCardDetailSource::current(
                 RepairCardDetailFamily::LimitationDetail,
                 &explain_route,
-                serde_json::to_value(&witness.limitations).map_err(
-                    |error| format!("agent card limitation content failed: {error}"),
-                )?,
+                serde_json::to_value(&witness.limitations)
+                    .map_err(|error| format!("agent card limitation content failed: {error}"))?,
             ));
         }
         _ => {
@@ -294,9 +297,8 @@ fn detail_sources_for(
     sources.push(RepairCardDetailSource::current(
         RepairCardDetailFamily::RelatedTestCandidates,
         packet_route,
-        serde_json::to_value(&facts.entry.evidence.related_tests).map_err(
-            |error| format!("agent card related-test content failed: {error}"),
-        )?,
+        serde_json::to_value(&facts.entry.evidence.related_tests)
+            .map_err(|error| format!("agent card related-test content failed: {error}"))?,
     ));
     sources.push(RepairCardDetailSource::current(
         RepairCardDetailFamily::StaticMovement,
@@ -512,7 +514,9 @@ mod tests {
                     .as_deref()
                     .is_none_or(str::is_empty)
             {
-                return Err(format!("{family:?} must record an exact unavailable reason"));
+                return Err(format!(
+                    "{family:?} must record an exact unavailable reason"
+                ));
             }
         }
         Ok(())

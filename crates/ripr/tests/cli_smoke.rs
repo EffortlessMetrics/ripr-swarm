@@ -3690,7 +3690,10 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "  next action:",
         "  full packet: ripr agent packet --seam-id 67fc764ba37d77bd --json",
     ] {
-        assert!(human_stdout.contains(needle), "missing {needle:?}:\n{human_stdout}");
+        assert!(
+            human_stdout.contains(needle),
+            "missing {needle:?}:\n{human_stdout}"
+        );
     }
 
     // A cold agent's `probe:...` finding ID is refused with the same seam-ID

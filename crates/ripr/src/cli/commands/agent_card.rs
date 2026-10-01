@@ -139,7 +139,10 @@ fn agent_card_prose_lines(card: &RepairCardV1) -> Vec<String> {
             None => lines.push(format!(
                 "  detail [{:?}]: unavailable ({})",
                 reference.family,
-                reference.unavailable_reason.as_deref().unwrap_or("no reason recorded")
+                reference
+                    .unavailable_reason
+                    .as_deref()
+                    .unwrap_or("no reason recorded")
             )),
         }
     }
@@ -160,9 +163,5 @@ fn agent_card_prose_lines(card: &RepairCardV1) -> Vec<String> {
 }
 
 fn yes_no(value: bool) -> &'static str {
-    if value {
-        "yes"
-    } else {
-        "no"
-    }
+    if value { "yes" } else { "no" }
 }

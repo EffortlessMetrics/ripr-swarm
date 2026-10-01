@@ -757,7 +757,11 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
 
     let seam_id = seam_id.ok_or_else(|| "agent card requires --seam-id".to_string())?;
 
-    Ok(AgentCardOptions { root, seam_id, json })
+    Ok(AgentCardOptions {
+        root,
+        seam_id,
+        json,
+    })
 }
 
 pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyOptions, String> {
