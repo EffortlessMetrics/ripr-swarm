@@ -229,7 +229,7 @@ analysis. Repo-mode analysis differs per adapter:
 
 - **Python** no longer returns an empty `LanguageRepoResult`: `analyze_repo`
   runs a bounded native evidence pass (#3554). It selects a role-partitioned
-  working set under the shared repo working-set cap (#2109; default 1024,
+  working set under the shared repo working-set cap (#2109; default 800,
   override with `RIPR_MAX_REPO_INDEX_FILES`), builds native Python behavior,
   owner, relation, and oracle evidence over the selected files, and returns
   findings with the same shape as diff-mode Python findings — preview-tier,
@@ -261,7 +261,7 @@ findings, per-language file counts, and `language_runs` partial-run
 disclosure — no seam renderer reconstructs Python semantics.
 
 Diff mode bounds the Python workspace walk the same way the TypeScript
-adapter does: at most 1024 discovered `.py` files
+adapter does: at most 800 discovered `.py` files
 (`RIPR_PYTHON_MAX_WORKSPACE_FILES`, aligned with the repo-mode
 `RIPR_MAX_REPO_INDEX_FILES` default), a 16 MiB per-file read cap
 (`RIPR_PYTHON_MAX_FILE_READ_BYTES`), and a 64 MiB per-run workspace read

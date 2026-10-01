@@ -8,7 +8,7 @@
 //!
 //! - a cap on the number of discovered `.py` files
 //!   ([`DEFAULT_PYTHON_MAX_WORKSPACE_FILES`], env
-//!   `RIPR_PYTHON_MAX_WORKSPACE_FILES`), defaulting to 1024 to align with the
+//!   `RIPR_PYTHON_MAX_WORKSPACE_FILES`), defaulting to 800 to align with the
 //!   repo-mode working-set default (`RIPR_MAX_REPO_INDEX_FILES`,
 //!   `repo/discovery.rs`): one default bounds Python analysis the same way in
 //!   both modes instead of inventing a second, divergent ceiling;
@@ -34,8 +34,8 @@ use std::path::Path;
 pub(crate) const PYTHON_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_PYTHON_MAX_WORKSPACE_FILES";
 /// Default cap on discovered `.py` files for one diff-mode walk, aligned with
 /// the repo-mode working-set default (`repo/discovery.rs`,
-/// `RIPR_MAX_REPO_INDEX_FILES`, default 1024).
-pub(crate) const DEFAULT_PYTHON_MAX_WORKSPACE_FILES: usize = 1024;
+/// `RIPR_MAX_REPO_INDEX_FILES`, default 800).
+pub(crate) const DEFAULT_PYTHON_MAX_WORKSPACE_FILES: usize = 800;
 /// Env override for [`DEFAULT_PYTHON_MAX_FILE_READ_BYTES`].
 pub(crate) const PYTHON_MAX_FILE_READ_BYTES_ENV: &str = "RIPR_PYTHON_MAX_FILE_READ_BYTES";
 /// Per-file read cap, mirroring `typescript/bounded_read.rs`
@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(
             python_workspace_file_limit_from_env(Err(std::env::VarError::NotPresent)),
             Ok(DEFAULT_PYTHON_MAX_WORKSPACE_FILES),
-            "default must align with the repo-mode 1024-file working-set default"
+            "default must align with the repo-mode 800-file working-set default"
         );
         assert_eq!(
             python_workspace_file_limit_from_env(Ok(" 1200 ".to_string())),

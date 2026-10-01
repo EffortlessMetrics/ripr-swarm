@@ -23,8 +23,7 @@ use std::path::{Path, PathBuf};
 /// Same bound family as the Rust repo guard (`REPO_INDEX_FILE_LIMIT`,
 /// #2109): repo-scoped analysis over a working set at this scale is the
 /// protected envelope; larger workspaces must raise the limit explicitly.
-/// Raised 800 -> 1024 in step with the Rust family (#4967).
-pub(in crate::analysis::language::python) const PYTHON_REPO_FILE_LIMIT: usize = 1024;
+pub(in crate::analysis::language::python) const PYTHON_REPO_FILE_LIMIT: usize = 800;
 
 /// Shared repo working-set override (see #2109). One operator knob governs
 /// the repo working-set bound across language producers.

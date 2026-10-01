@@ -59,18 +59,6 @@ are scoped or reviewed.
   the command actually succeeds. Unknown totals stay unknown; `--quiet`
   suppresses the stream. This does not make analysis faster (#4810).
 
-### Changed
-
-- CLI: the analysis-cost index guards now default to 1024 files instead of
-  800 — `RIPR_MAX_DIFF_INDEX_FILES` (diff-scoped `diff_scope_oversized`),
-  `RIPR_MAX_REPO_INDEX_FILES` (repo-scoped `repo_scope_oversized`, including
-  the Python repo working set), and the aligned
-  `RIPR_PYTHON_MAX_WORKSPACE_FILES` default. Ordinary module splits pushed
-  this repository to 802 indexable Rust files, tripping the guard on the
-  repo's own test-suite subject runs; the raise keeps module-split growth
-  inside the default envelope while the guards still fail closed with the
-  same named errors and repair routes (#4389, #4967).
-
 ### Fixed
 
 - CLI: `ripr progress:` heartbeats no longer stop partway through a long

@@ -170,7 +170,7 @@ mod tests {
 
     fn default_limit() -> RepoWorkingSetLimit {
         RepoWorkingSetLimit {
-            limit: 1024,
+            limit: 800,
             source: RepoWorkingSetCapSource::Default,
         }
     }
