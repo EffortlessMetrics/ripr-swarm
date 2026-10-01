@@ -38,6 +38,12 @@ pub(crate) struct RepairCardInput<'a> {
     pub(crate) assertion_goal_detail: Option<String>,
     /// Producer-owned candidate input/value when the route supplies one.
     pub(crate) candidate_value: Option<String>,
+    /// Producer-owned repair-packet eligibility flip
+    /// (`RepairPacketEligibility::eligible()`): the packet authority's
+    /// fail-closed decision that this seam is safe for a targeted-test repair
+    /// route. A card must not present a runnable route the packet authority
+    /// would not expose.
+    pub(crate) packet_eligible: bool,
     pub(crate) next_command: Option<&'a CommandSpec>,
     pub(crate) allowed_files: Vec<String>,
     pub(crate) forbidden_files: Vec<String>,
@@ -53,21 +59,41 @@ pub(crate) struct RepairCardInput<'a> {
 
 /// Project the shared repair authorities into a versioned repair card.
 pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCardV1, String> {
+    let selected_target = project_target(&input.readiness.target_selection);
     if input.next_command.is_some()
-        && !repair_card_route_exposable(input.instruction.state, input.readiness.is_repair_ready())
+        && !(input.packet_eligible
+            && repair_card_route_exposable(
+                input.instruction.state,
+                input.readiness.is_repair_ready(),
+            ))
     {
         return Err(
             "repair card route gate is closed; the card must not present a runnable route"
                 .to_string(),
         );
     }
+    if input.instruction.has_suggested_assertion && input.assertion_goal_detail.is_none() {
+        return Err(
+            "producer claims a suggested assertion but supplied no assertion text".to_string(),
+        );
+    }
+    if input.subject.seam_id != input.readiness.seam_id {
+        return Err("subject seam and readiness seam do not identify one repair".to_string());
+    }
+    if let (Some(subject_gap), Some(readiness_gap)) = (
+        &input.subject.canonical_gap_id,
+        &input.readiness.canonical_gap_id,
+    ) && subject_gap != readiness_gap {
+        return Err("subject gap and readiness gap do not identify one repair".to_string());
+    }
+    if input.selected_basis.is_some() && selected_target.is_none() {
+        return Err("selected basis without a selected target".to_string());
+    }
     if input.rejected_alternatives.len() > crate::domain::MAX_REPAIR_CARD_REJECTED_ALTERNATIVES {
         return Err(
             "repair card rejected_alternatives exceed the compact-card boundary".to_string(),
         );
     }
-
-    let selected_target = project_target(&input.readiness.target_selection);
     let selected_basis = input
         .selected_basis
         .clone()
@@ -309,6 +335,7 @@ mod tests {
             has_observer_setup: false,
             assertion_goal_detail: Some("assert_eq!(price(0), 0)".to_string()),
             candidate_value: None,
+            packet_eligible: true,
             next_command: None,
             allowed_files: vec!["tests/demo.rs".to_string()],
             forbidden_files: vec!["src/lib.rs".to_string()],
@@ -441,6 +468,85 @@ mod tests {
         }
         if card.exact_blocker.as_deref() != Some("no live coverage authority") {
             return Err("producer blocker was not copied verbatim".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ineligible_packet_with_command_fails_closed() {
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let readiness = ready_readiness();
+        let command = verify_command();
+        let mut input = base_input(&instruction, &readiness);
+        input.packet_eligible = false;
+        input.next_command = Some(&command);
+
+        assert!(build_repair_card(&input).is_err());
+    }
+
+    #[test]
+    fn mismatched_seam_identity_fails_closed() {
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let readiness = ready_readiness();
+        let mut input = base_input(&instruction, &readiness);
+        input.subject.seam_id = "seam:other".to_string();
+
+        assert!(build_repair_card(&input).is_err());
+    }
+
+    #[test]
+    fn mismatched_gap_identity_fails_closed() {
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let readiness = ready_readiness();
+        let mut input = base_input(&instruction, &readiness);
+        input.subject.canonical_gap_id = Some("gap:other".to_string());
+
+        assert!(build_repair_card(&input).is_err());
+    }
+
+    #[test]
+    fn basis_without_target_fails_closed() {
+        let instruction = instruction(FixInstructionState::InspectOnly);
+        let readiness = readiness(
+            RepairRouteState::PolicyExcluded,
+            RepairTargetSelection::Missing,
+        );
+        let mut input = base_input(&instruction, &readiness);
+        input.selected_basis = Some("RIPR-0001 observed".to_string());
+
+        assert!(build_repair_card(&input).is_err());
+    }
+
+    #[test]
+    fn suggested_assertion_without_text_fails_closed() {
+        let instruction = instruction(FixInstructionState::FixSiteReady);
+        let readiness = ready_readiness();
+        let mut input = base_input(&instruction, &readiness);
+        input.assertion_goal_detail = None;
+
+        assert!(build_repair_card(&input).is_err());
+    }
+
+    #[test]
+    fn inspect_only_card_is_advisory_only() -> Result<(), String> {
+        let mut instruction = instruction(FixInstructionState::InspectOnly);
+        instruction.has_suggested_assertion = false;
+        let readiness = readiness(
+            RepairRouteState::PolicyExcluded,
+            RepairTargetSelection::Missing,
+        );
+        let input = base_input(&instruction, &readiness);
+
+        let card = build_repair_card(&input)?;
+        if card.instruction.state != FixInstructionState::InspectOnly {
+            return Err("inspect-only state was not copied".to_string());
+        }
+        if card.selected_target.is_some()
+            || card.next_action.is_some()
+            || card.selected_basis.is_some()
+            || card.assertion_goal.is_some()
+        {
+            return Err("inspect-only card carried an actionable surface".to_string());
         }
         Ok(())
     }

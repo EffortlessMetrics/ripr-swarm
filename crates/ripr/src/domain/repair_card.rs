@@ -262,20 +262,4 @@ mod tests {
             false
         ));
     }
-
-    #[test]
-    fn fixture_shapes_cover_all_instruction_states() {
-        // The required shapes exist as distinct typed states the builder
-        // must handle: ready, limited, stale, unavailable, proposed-target,
-        // missing-route, wrong-owner and effect/observer.
-        let states = [
-            FixInstructionState::FixSiteReady,
-            FixInstructionState::StaticLimitation,
-            FixInstructionState::Stale,
-            FixInstructionState::InspectOnly,
-            FixInstructionState::Unavailable,
-        ];
-        let unique = states.iter().collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(unique.len(), states.len());
-    }
 }

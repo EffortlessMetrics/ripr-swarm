@@ -82,24 +82,32 @@ Authority:
 
 1. Route exposure is fail-closed and owned by one gate:
    `repair_card_route_exposable` requires the `FixSiteReady` instruction
-   state and the readiness authority's own `is_repair_ready()` flip. A
-   builder input that carries a `next_command` while the gate is closed
+   state and the readiness authority's own `is_repair_ready()` flip, and
+   the builder additionally requires the producer-owned
+   `RepairPacketEligibility` flip so a cross-language or otherwise
+   ineligible seam never receives an actionable route either. A builder
+   input that carries a `next_command` while any of those gates is closed
    returns `Err`; stale, limited and unavailable cards can never present a
    current edit or execution route.
 2. Over-boundary `rejected_alternatives` returns `Err`; the card never
    silently truncates load-bearing rejection evidence.
-3. Semantic identity is a sha256 hex digest over the scoped card surface
+3. The card orders exactly one repair: the subject seam (and canonical gap,
+   when both producers name one) must match the readiness authority's own
+   identities, and a producer `selected_basis` without a selected target is
+   refused; either inconsistency returns `Err` instead of building a card
+   that attributes one seam's route to another repair.
+4. Semantic identity is a sha256 hex digest over the scoped card surface
    (every load-bearing field except the digest itself). Command `display`
    strings are presentation-only and never enter the digest; the card id
    never feeds its own digest. No timestamp, absolute checkout spelling, or
    rendered prose field exists on the DTO.
-4. Field-for-field projections are documented at each site; the builder owns
+5. Field-for-field projections are documented at each site; the builder owns
    all derivation and renderers consume the card without re-implementing
    any gate or join.
-5. The card describes the work order and never marks itself complete:
+6. The card describes the work order and never marks itself complete:
    observed completion lives in the RepairAttempt/receipt authorities, and
    the claim boundary says exactly that.
-6. The eight required shapes (ready, limited, stale, unavailable,
+7. The eight required shapes (ready, limited, stale, unavailable,
    proposed-target, missing-route, wrong-owner, effect/observer) exist as
    typed builder-test fixtures in the app and domain test modules, matching
    the `fix_instruction` house style; a manifest-only corpus under
@@ -157,12 +165,14 @@ strengthens any readiness, command or attempt claim.
   stability, the load-bearing field mutation matrix, target-variant
   distinctness, and the five `done_when` axes.
 - `crates/ripr/src/domain/repair_card.rs` unit tests cover the route gate
-  across all five instruction states and instruction-state shape coverage.
+  across all five instruction states.
 - `crates/ripr/src/app/repair_card.rs` unit tests cover the ready shape
-  field-by-field, stale/limited/unavailable cards without routes,
-  fail-closed route and boundary gates, proposed and missing targets,
-  wrong-owner basis plus rejections, the effect/observer shape, and attempt
-  state copying.
+  field-by-field; stale, limited, unavailable and inspect-only cards
+  without routes; fail-closed gates for a closed route, an ineligible
+  packet, over-boundary rejections, a basis without a target, a suggested
+  assertion without text, and mismatched seam/gap identity; proposed and
+  missing targets; wrong-owner basis plus rejections; the effect/observer
+  shape; and attempt state copying.
 
 ## Implementation Mapping
 

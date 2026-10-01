@@ -281,6 +281,61 @@ mod tests {
         if repair_card_semantic_digest(&moved)? == base_digest {
             return Err("snapshot currentness is not load-bearing".to_string());
         }
+
+        let mut moved = base.clone();
+        moved.snapshot.workspace_identity = "workspace:other".to_string();
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("snapshot workspace identity is not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.exact_blocker = Some("blocker".to_string());
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("exact blocker is not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.assertion_goal = None;
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("assertion goal is not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.assertion_goal_detail = Some("other assertion".to_string());
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("assertion goal detail is not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.forbidden_files = vec!["src/other.rs".to_string()];
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("forbidden files are not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.stop_conditions = vec!["other_stop".to_string()];
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("stop conditions are not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.selected_basis = Some("other basis".to_string());
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("selected basis is not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.limitations = vec!["limitation".to_string()];
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("limitations are not load-bearing".to_string());
+        }
+
+        let mut moved = base.clone();
+        moved.done_when.focused_test_execution =
+            crate::domain::FocusedExecutionGoal::ExplicitlyNotRun;
+        if repair_card_semantic_digest(&moved)? == base_digest {
+            return Err("done_when focused execution axis is not load-bearing".to_string());
+        }
         Ok(())
     }
 
