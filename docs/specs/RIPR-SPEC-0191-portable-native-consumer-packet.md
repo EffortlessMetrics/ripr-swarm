@@ -92,7 +92,9 @@ A packet directory contains `manifest.json`, the native payload
   analysis outcome, zero subjects (required vs allowed), timeout,
   nonzero payload exit, unknown operation, unwritable output, subject-tree
   drift, argv-template verb mismatch, pilot `--diff` rejection, post-launch
-  subject digest, subject-file cap, and output-artifact symlink.
+  subject digest, subject-file cap, output-artifact symlink, write-probe
+  symlink, leftover `pilot-summary.json`, and a digest-mismatch receipt that
+  records the observed payload hash rather than the expected manifest digest.
 - Classification matrix imports `classify_product_json` so product-class
   edges are discriminated without a payload launch. The matrix includes the
   producer kinds `partial_with_limitations`, `unsupported_input`, and
@@ -149,11 +151,13 @@ A packet directory contains `manifest.json`, the native payload
 - `xtask/src/portable_consumer.rs::tests::arm64_machine_names_match_rust_aarch64`
 - `xtask/src/portable_consumer.rs::tests::pilot_reads_the_summary_artifact_not_terminal_stdout`
 - `xtask/src/portable_consumer.rs::tests::missing_pilot_summary_is_partial_product_output`
+- `xtask/src/portable_consumer.rs::tests::stale_pilot_summary_is_not_classified_as_complete`
 - `xtask/src/portable_consumer.rs::tests::argv_template_must_start_with_the_allowlisted_operation`
 - `xtask/src/portable_consumer.rs::tests::pilot_rejects_diff_before_launch`
 - `xtask/src/portable_consumer.rs::tests::subject_file_cap_is_environment_unavailable_not_drift`
 - `xtask/src/portable_consumer.rs::tests::subject_digest_is_rechecked_after_launch`
 - `xtask/src/portable_consumer.rs::tests::existing_output_symlink_is_unwritable`
+- `xtask/src/portable_consumer.rs::tests::write_probe_symlink_is_unwritable`
 - `xtask/src/portable_consumer.rs::tests::packet_digest_matches_the_producer_formula`
 - `crates/ripr/tests/portable_consumer_packet.rs::native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback`
 - `crates/ripr/tests/portable_consumer_packet.rs::native_packet_pilot_consumes_the_summary_artifact`

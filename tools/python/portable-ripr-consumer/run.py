@@ -95,6 +95,7 @@ class ConsumerError(Exception):
         argv: list[str] | None = None,
         selected: int | None = None,
         limitations: list[str] | None = None,
+        identities: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.classification = classification
@@ -106,6 +107,7 @@ class ConsumerError(Exception):
         self.argv = argv
         self.selected = selected
         self.limitations = list(limitations or [])
+        self.identities = identities
 
 
 @dataclass
@@ -140,6 +142,8 @@ class Attempt:
             self.selected = error.selected
         if error.limitations:
             self.limitations.extend(error.limitations)
+        if error.identities:
+            self.identities = error.identities
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -288,17 +292,37 @@ def verify_integrity(packet_root: Path, manifest: Mapping[str, Any]) -> dict[str
 
     actual_binary = sha256_file(binary)
     actual_script = sha256_file(script)
+    identities = {
+        "binary": str(binary),
+        "script": str(script),
+        "relative_binary": relative_binary,
+        "observed_binary_sha256": actual_binary,
+        "observed_script_sha256": actual_script,
+    }
     if actual_binary != expected_binary:
-        raise ConsumerError(CLASS_DIGEST_MISMATCH, "native payload digest does not match the manifest")
+        raise ConsumerError(
+            CLASS_DIGEST_MISMATCH,
+            "native payload digest does not match the manifest",
+            identities=identities,
+        )
     if actual_script != expected_script:
-        raise ConsumerError(CLASS_DIGEST_MISMATCH, "consumer script digest does not match the manifest")
+        raise ConsumerError(
+            CLASS_DIGEST_MISMATCH,
+            "consumer script digest does not match the manifest",
+            identities=identities,
+        )
 
     expected_packet = manifest.get("packet_digest")
     actual_packet = packet_digest_from_files(
         {relative_binary: actual_binary, relative_script: actual_script}
     )
+    identities["observed_packet_digest"] = actual_packet
     if not isinstance(expected_packet, str) or actual_packet != expected_packet:
-        raise ConsumerError(CLASS_DIGEST_MISMATCH, "packet digest does not match the listed files")
+        raise ConsumerError(
+            CLASS_DIGEST_MISMATCH,
+            "packet digest does not match the listed files",
+            identities=identities,
+        )
 
     expected_platform = payload.get("platform")
     if isinstance(expected_platform, str) and expected_platform and expected_platform != host_platform():
@@ -306,7 +330,7 @@ def verify_integrity(packet_root: Path, manifest: Mapping[str, Any]) -> dict[str
             CLASS_INCOMPATIBLE_PAYLOAD,
             f"payload platform {expected_platform} does not match host {host_platform()}",
         )
-    return {"binary": str(binary), "script": str(script), "relative_binary": relative_binary}
+    return identities
 
 
 def render_argv(template: list[Any], mapping: Mapping[str, str]) -> list[str]:
@@ -370,8 +394,13 @@ def ensure_out_dir(out_dir: Path) -> None:
         raise ConsumerError(CLASS_UNWRITABLE_OUTPUT, f"output path {out_dir} is not a directory")
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-        probe = out_dir / ".portable-consumer-write-probe"
-        probe.write_text("ok\n", encoding="utf-8")
+    except OSError as exc:
+        raise ConsumerError(CLASS_UNWRITABLE_OUTPUT, f"output directory is not writable: {exc}") from exc
+    probe = out_dir / ".portable-consumer-write-probe"
+    if probe.is_symlink():
+        raise ConsumerError(CLASS_UNWRITABLE_OUTPUT, "output write probe is a symlink")
+    write_bytes_unfollowed(probe, b"ok\n")
+    try:
         probe.unlink()
     except OSError as exc:
         raise ConsumerError(CLASS_UNWRITABLE_OUTPUT, f"output directory is not writable: {exc}") from exc
@@ -382,6 +411,23 @@ def ensure_out_dir(out_dir: Path) -> None:
                 CLASS_UNWRITABLE_OUTPUT,
                 f"output artifact {name} is a symlink",
             )
+
+
+def clear_stale_pilot_summary(out_dir: Path, operation: str) -> None:
+    if operation != "pilot":
+        return
+    summary = out_dir / PILOT_SUMMARY_NAME
+    if summary.is_symlink():
+        raise ConsumerError(CLASS_UNWRITABLE_OUTPUT, f"output artifact {PILOT_SUMMARY_NAME} is a symlink")
+    if not summary.exists():
+        return
+    try:
+        summary.unlink()
+    except OSError as exc:
+        raise ConsumerError(
+            CLASS_UNWRITABLE_OUTPUT,
+            f"cannot clear stale {PILOT_SUMMARY_NAME}: {exc}",
+        ) from exc
 
 
 def terminate_payload(proc: Any) -> None:
@@ -579,6 +625,9 @@ def receipt_body(
 ) -> dict[str, Any]:
     payload = manifest.get("native_payload") if isinstance(manifest, dict) else {}
     consumer = manifest.get("consumer") if isinstance(manifest, dict) else {}
+    observed_binary = identities.get("observed_binary_sha256") if identities else None
+    observed_script = identities.get("observed_script_sha256") if identities else None
+    observed_packet = identities.get("observed_packet_digest") if identities else None
     return {
         "schema": RECEIPT_SCHEMA,
         "classification": classification,
@@ -586,17 +635,17 @@ def receipt_body(
         "packet": {
             "root": str(packet_root),
             "schema": manifest.get("schema") if isinstance(manifest, dict) else None,
-            "packet_digest": manifest.get("packet_digest") if isinstance(manifest, dict) else None,
+            "packet_digest": observed_packet,
         },
         "consumer": {
             "script": consumer.get("script") if isinstance(consumer, dict) else "run.py",
-            "sha256": consumer.get("sha256") if isinstance(consumer, dict) else None,
+            "sha256": observed_script,
             "python": sys.version.split()[0],
         },
         "binary": {
             "path": identities.get("binary") if identities else None,
             "relative_path": identities.get("relative_binary") if identities else None,
-            "sha256": payload.get("sha256") if isinstance(payload, dict) else None,
+            "sha256": observed_binary,
             "version": payload.get("version") if isinstance(payload, dict) else None,
             "build_identity": payload.get("build_identity") if isinstance(payload, dict) else None,
             "source_route": payload.get("source_route") if isinstance(payload, dict) else None,
@@ -663,6 +712,7 @@ def run_attempt(
     if not subject_root.is_dir():
         raise ConsumerError(CLASS_INCOMPATIBLE_PAYLOAD, f"subject root {subject_root} is not a directory")
     ensure_out_dir(out_dir)
+    clear_stale_pilot_summary(out_dir, args.operation)
     attempt.manifest = load_manifest(packet_root)
     attempt.identities = verify_integrity(packet_root, attempt.manifest)
     if args.subject_digest:

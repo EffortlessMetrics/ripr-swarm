@@ -282,9 +282,9 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::run::capture_output_with_timeout;
-    use serde_json::Value;
     #[cfg(unix)]
     use serde_json::json;
+    use serde_json::Value;
 
     #[cfg(unix)]
     struct Consumption {
@@ -753,12 +753,29 @@ print(json.dumps(results))
         let packet = &staged.packet;
         let subject = &staged.subject;
         let out = &staged.out;
+        let expected = load_manifest(packet)?["native_payload"]["sha256"]
+            .as_str()
+            .ok_or("missing expected payload sha")?
+            .to_string();
         fs::write(packet.join("ripr"), b"tampered\n")
             .map_err(|error| format!("tamper payload: {error}"))?;
         make_executable(&packet.join("ripr"))?;
+        let observed = format!("{:x}", Sha256::digest(b"tampered\n"));
         let (status, receipt) = consume(packet, subject, out, &[], None)?;
         expect_class(status, &receipt, "digest_mismatch", false)?;
-        require_no_launch(&receipt)
+        require_no_launch(&receipt)?;
+        if receipt["binary"]["sha256"] != observed {
+            return Err(format!(
+                "receipt omitted the observed payload digest: {receipt}"
+            ));
+        }
+        if receipt["binary"]["sha256"] == expected {
+            return Err(
+                "receipt recorded the expected digest instead of the observed payload hash"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -790,7 +807,23 @@ print(json.dumps(results))
         write_manifest(packet, &manifest)?;
         let (status, receipt) = consume(packet, subject, out, &[], None)?;
         expect_class(status, &receipt, "digest_mismatch", false)?;
-        require_no_launch(&receipt)
+        require_no_launch(&receipt)?;
+        if receipt["packet"]["packet_digest"] == "deadbeef" {
+            return Err(
+                "receipt recorded the expected packet digest instead of the observed listing hash"
+                    .to_string(),
+            );
+        }
+        if receipt["packet"]["packet_digest"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty()
+        {
+            return Err(format!(
+                "receipt omitted the observed packet digest: {receipt}"
+            ));
+        }
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -1124,6 +1157,27 @@ print(json.dumps({
 
     #[cfg(unix)]
     #[test]
+    fn stale_pilot_summary_is_not_classified_as_complete() -> Result<(), String> {
+        let staged = staged_stub("pilot-stale", PILOT_TERMINAL_ONLY_STUB)?;
+        let packet = &staged.packet;
+        let subject = &staged.subject;
+        let out = &staged.out;
+        fs::create_dir_all(out).map_err(|error| format!("out dir: {error}"))?;
+        fs::write(
+            out.join("pilot-summary.json"),
+            br#"{"schema_version":"0.2","tool":"stale","findings":[{"id":"leftover"}]}"#,
+        )
+        .map_err(|error| format!("stale summary: {error}"))?;
+        let (status, receipt) = consume(packet, subject, out, &["--operation", "pilot"], None)?;
+        expect_class(status, &receipt, "partial_product_output", false)?;
+        if out.join("pilot-summary.json").is_file() {
+            return Err("stale pilot-summary.json was classified instead of cleared".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn missing_pilot_summary_is_partial_product_output() -> Result<(), String> {
         let staged = staged_stub("pilot-missing", PILOT_TERMINAL_ONLY_STUB)?;
         let packet = &staged.packet;
@@ -1246,6 +1300,39 @@ print(json.dumps({
             fs::read_to_string(&escaped).map_err(|error| format!("read escaped: {error}"))?;
         if retained != "keep\n" {
             return Err(format!("symlink write escaped the out dir: {retained}"));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_probe_symlink_is_unwritable() -> Result<(), String> {
+        let staged = staged_stub("probe-symlink", COMPLETE_STUB)?;
+        let packet = &staged.packet;
+        let subject = &staged.subject;
+        let out = &staged.out;
+        fs::create_dir_all(out).map_err(|error| format!("out dir: {error}"))?;
+        let escaped = packet
+            .parent()
+            .ok_or_else(|| "packet directory has no parent".to_string())?
+            .join("escaped-probe.txt");
+        fs::write(&escaped, b"keep-probe\n").map_err(|error| format!("escaped: {error}"))?;
+        std::os::unix::fs::symlink(&escaped, out.join(".portable-consumer-write-probe"))
+            .map_err(|error| format!("symlink probe: {error}"))?;
+        let consumption = invoke(packet, subject, out, &[], None)?;
+        if consumption.status == 0 {
+            return Err("write-probe symlink was accepted".to_string());
+        }
+        if !consumption.stderr.contains("unwritable_output") {
+            return Err(format!(
+                "expected unwritable_output, got {}",
+                consumption.stderr
+            ));
+        }
+        let retained =
+            fs::read_to_string(&escaped).map_err(|error| format!("read escaped: {error}"))?;
+        if retained != "keep-probe\n" {
+            return Err(format!("probe write escaped the out dir: {retained}"));
         }
         Ok(())
     }
