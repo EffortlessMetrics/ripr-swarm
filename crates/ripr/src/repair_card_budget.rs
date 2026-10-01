@@ -341,7 +341,7 @@ trait SortByFamily {
 impl SortByFamily for [RepairCardDetailSource] {
     fn to_vec_sorted_by_family(&self) -> Result<Vec<RepairCardDetailSource>, String> {
         let mut ordered = self.to_vec();
-        ordered.sort_by(|left, right| family_key(left.family).cmp(&family_key(right.family)));
+        ordered.sort_by_key(|source| family_key(source.family));
         for window in ordered.windows(2) {
             if window[0].family == window[1].family {
                 return Err(format!(
