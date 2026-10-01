@@ -266,15 +266,18 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
             })
         })
         .transpose()?;
+    let card_bytes = normalized_bytes(&card_wire);
+    let packet_bytes = normalized_bytes(&packet_json);
+    let packet_over_card_percent = if card_bytes == 0 {
+        Value::Null
+    } else {
+        json!(packet_bytes * 100 / card_bytes)
+    };
     Ok(json!({
         "profile": profile.id,
-        "card_bytes": normalized_bytes(&card_wire),
-        "packet_bytes": normalized_bytes(&packet_json),
-        "packet_over_card_percent": {
-            let card_bytes = normalized_bytes(&card_wire);
-            let packet_bytes = normalized_bytes(&packet_json);
-            if card_bytes == 0 { Value::Null } else { json!(packet_bytes * 100 / card_bytes) }
-        },
+        "card_bytes": card_bytes,
+        "packet_bytes": packet_bytes,
+        "packet_over_card_percent": packet_over_card_percent,
         "detail_items": card.detail_references.len(),
         "card_within_default_item_bound":
             card.detail_references.len() <= DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
