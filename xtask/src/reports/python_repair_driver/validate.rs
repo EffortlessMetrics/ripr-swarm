@@ -642,8 +642,7 @@ pub(crate) fn validate_binding_record(
         }
     }
 
-    let record_value = Value::Object(top.clone());
-    reject_secret_tokens(&record_value, display, "binding record")?;
+    reject_secret_tokens(record, display, "binding record")?;
 
     Ok(DriverBindingRecord {
         display: display.to_string(),
