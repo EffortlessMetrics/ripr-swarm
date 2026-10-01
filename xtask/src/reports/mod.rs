@@ -39,8 +39,8 @@ mod release_denominator;
 mod release_negative;
 mod release_scope;
 pub(crate) mod release_server;
-mod repo;
 mod repair_card_usability;
+mod repo;
 #[cfg(test)]
 mod reverse_authorization;
 mod review_comments;
@@ -131,13 +131,13 @@ pub(crate) use release_control::release_control;
 pub(crate) use release_denominator::release_denominator;
 pub(crate) use release_negative::release_negative_corpus;
 pub(crate) use release_scope::release_scope;
+pub(crate) use repair_card_usability::repair_card_usability_report;
 pub(crate) use repo::{
     actionable_gap_outcomes_report, agent_seam_packets_report, evidence_health_report,
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,
     repo_exposure_latency_report, repo_exposure_report, repo_exposure_summary_report,
     repo_seam_inventory,
 };
-pub(crate) use repair_card_usability::repair_card_usability_report;
 pub(crate) use review_comments::ripr_review_comments;
 pub(crate) use rust_repair_trust::{rust_repair_trust_report, rust_repair_trust_report_value_at};
 pub(crate) use sarif::sarif_policy;

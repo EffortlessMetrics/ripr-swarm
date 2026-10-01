@@ -32,9 +32,9 @@ use crate::analysis::seams::{
 use crate::analysis::test_grip_evidence::TestGripEvidence;
 use crate::cli::commands::agent_card::agent_card_prose_lines;
 use crate::domain::{
-    Confidence, DiagnosticConfidence, DiagnosticFixSite, DiagnosticWitness,
-    DiagnosticWitnessLimitation, MissingDiscriminatorFact, StageEvidence, StageState,
-    DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
+    Confidence, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
+    DiagnosticConfidence, DiagnosticFixSite, DiagnosticWitness, DiagnosticWitnessLimitation,
+    MissingDiscriminatorFact, StageEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     PacketCommandContext, render_agent_seam_packet_json_with_context,
@@ -127,8 +127,7 @@ fn measurement_witness() -> DiagnosticWitness {
             oracle_location: None,
         }),
         suggested_assertion: Some(
-            "assert_eq!(discounted_total(100, 100), 90) pins the threshold boundary"
-                .to_string(),
+            "assert_eq!(discounted_total(100, 100), 90) pins the threshold boundary".to_string(),
         ),
         explain_command: "ripr explain probe:src_pricing.rs:predicate:demo".to_string(),
         confidence: DiagnosticConfidence {
@@ -234,8 +233,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
         workspace_identity: "workspace:measurement",
         next_command: Some(next_command),
     })?;
-    let card_wire =
-        render_pretty_with_newline(&card, "repair card usability measurement")?;
+    let card_wire = render_pretty_with_newline(&card, "repair card usability measurement")?;
     let human_lines = agent_card_prose_lines(&card);
     let human_rendered = format!("{}\n", human_lines.join("\n"));
     let packet_surfaces_seam = {
@@ -245,11 +243,9 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
             .get("packets")
             .and_then(Value::as_array)
             .is_some_and(|packets| {
-                packets
-                    .iter()
-                    .any(|packet| {
-                        packet.get("seam_id").and_then(Value::as_str) == Some(seam_id.as_str())
-                    })
+                packets.iter().any(|packet| {
+                    packet.get("seam_id").and_then(Value::as_str) == Some(seam_id.as_str())
+                })
             })
     };
     let canonical_packet_state = card
@@ -460,9 +456,7 @@ mod tests {
         if real.get("attempt_cases").and_then(Value::as_u64) != Some(0) {
             return Err("the synthetic corpus carries no attempt cases".to_string());
         }
-        if real.get("card_measurement_state").and_then(Value::as_str)
-            != Some("not_measurable")
-        {
+        if real.get("card_measurement_state").and_then(Value::as_str) != Some("not_measurable") {
             return Err("zero attempt cases must keep real measurement not_measurable".to_string());
         }
         if real.get("exclusions").and_then(Value::as_u64) != Some(1)

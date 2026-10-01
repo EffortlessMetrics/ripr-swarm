@@ -72,9 +72,7 @@ fn profile_ids(profiles: &[Value]) -> Result<Vec<String>, String> {
 /// ratification depends on; the live measurement must satisfy every relation
 /// on every pinned profile.
 fn validate_expectations(report: &Value, expectations: &Value) -> Result<(), String> {
-    if expectations
-        .get("kind")
-        .and_then(Value::as_str)
+    if expectations.get("kind").and_then(Value::as_str)
         != Some("repair_card_synthetic_ratified_expectations")
     {
         return Err("ratified expectations carry an unexpected kind".to_string());
@@ -120,7 +118,11 @@ fn validate_expectations(report: &Value, expectations: &Value) -> Result<(), Str
     let defaults = report
         .get("ratified_defaults")
         .ok_or_else(|| "report must carry ratified_defaults".to_string())?;
-    for key in ["max_detail_items", "max_serialized_bytes", "max_inline_detail_bytes"] {
+    for key in [
+        "max_detail_items",
+        "max_serialized_bytes",
+        "max_inline_detail_bytes",
+    ] {
         if bounds.get(key) != defaults.get(key) {
             return Err(format!(
                 "default bound {key} drifted between the committed expectations and the domain \
@@ -135,9 +137,7 @@ fn validate_expectations(report: &Value, expectations: &Value) -> Result<(), Str
 /// with the live measurement and carry explicit limitations and not-exercised
 /// combinations.
 fn validate_receipt(report: &Value, receipt: &Value) -> Result<(), String> {
-    if receipt.get("kind").and_then(Value::as_str)
-        != Some("repair_card_budget_decision_receipt")
-    {
+    if receipt.get("kind").and_then(Value::as_str) != Some("repair_card_budget_decision_receipt") {
         return Err("decision receipt carries an unexpected kind".to_string());
     }
     if receipt.get("status").and_then(Value::as_str) != Some("ratified_synthetic_scope") {
@@ -241,17 +241,24 @@ fn markdown_report(report: &Value) -> String {
         for profile in profiles {
             body.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} | {} |\n",
-                profile.get("profile").and_then(Value::as_str).map_or("unknown", |value| value),
-                profile.get("card_bytes")
+                profile
+                    .get("profile")
+                    .and_then(Value::as_str)
+                    .map_or("unknown", |value| value),
+                profile
+                    .get("card_bytes")
                     .and_then(Value::as_u64)
                     .map_or(0, |count| count),
-                profile.get("packet_bytes")
+                profile
+                    .get("packet_bytes")
                     .and_then(Value::as_u64)
                     .map_or(0, |count| count),
-                profile.get("packet_over_card_percent")
+                profile
+                    .get("packet_over_card_percent")
                     .and_then(Value::as_u64)
                     .map_or(0, |count| count),
-                profile.get("detail_items")
+                profile
+                    .get("detail_items")
                     .and_then(Value::as_u64)
                     .map_or(0, |count| count),
                 profile
@@ -325,11 +332,9 @@ mod tests {
     }
 
     #[test]
-    fn committed_evidence_files_validate_against_the_live_measurement(
-    ) -> Result<(), String> {
+    fn committed_evidence_files_validate_against_the_live_measurement() -> Result<(), String> {
         let corpus = read_json(Path::new(CORPUS_PATH), "governed corpus")?;
-        let report =
-            ripr::app::repair_card_usability::repair_card_usability_report(&corpus)?;
+        let report = ripr::app::repair_card_usability::repair_card_usability_report(&corpus)?;
         let expectations = read_json(Path::new(EXPECTATIONS_PATH), "ratified expectations")?;
         let receipt = read_json(Path::new(RECEIPT_PATH), "decision receipt")?;
         validate_expectations(&report, &expectations)?;
@@ -363,14 +368,12 @@ mod tests {
     #[test]
     fn pending_ratification_with_attempt_cases_is_rejected() -> Result<(), String> {
         let corpus = serde_json::json!({"cases": [1], "exclusions": [], "observations": []});
-        let report =
-            ripr::app::repair_card_usability::repair_card_usability_report(&corpus)?;
+        let report = ripr::app::repair_card_usability::repair_card_usability_report(&corpus)?;
         let receipt = matching_receipt();
         match validate_receipt(&report, &receipt) {
             Err(_message) => Ok(()),
             Ok(()) => Err(
-                "a pending real ratification must be rejected once attempt cases exist"
-                    .to_string(),
+                "a pending real ratification must be rejected once attempt cases exist".to_string(),
             ),
         }
     }
