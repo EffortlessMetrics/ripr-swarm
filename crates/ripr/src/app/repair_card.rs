@@ -9,12 +9,11 @@
 
 use crate::analysis::repair_route::{RepairRouteReadiness, RepairTargetSelection};
 use crate::domain::{
-    CardCurrentnessGoal, CommandSpec, EditCageGoal, FixInstructionState, FixInstructionSummary,
-    FocusedExecutionGoal, MutationConfirmationGoal, REPAIR_CARD_CLAIM_BOUNDARY,
-    REPAIR_CARD_SCHEMA_VERSION, RepairCardAssertionGoal, RepairCardAttempt, RepairCardCommandRef,
-    RepairCardDoneWhen, RepairCardProposedTestKind, RepairCardReadinessFacts,
-    RepairCardRejectedAlternative, RepairCardSnapshot, RepairCardSubject, RepairCardTarget,
-    RepairCardTestKind, RepairCardV1, StaticMovementGoal, repair_card_route_exposable,
+    CommandSpec, FixInstructionSummary, REPAIR_CARD_CLAIM_BOUNDARY, REPAIR_CARD_SCHEMA_VERSION,
+    RepairCardAssertionGoal, RepairCardAttempt, RepairCardCommandRef, RepairCardDoneWhen,
+    RepairCardProposedTestKind, RepairCardReadinessFacts, RepairCardRejectedAlternative,
+    RepairCardSnapshot, RepairCardSubject, RepairCardTarget, RepairCardTestKind, RepairCardV1,
+    repair_card_route_exposable,
 };
 use crate::repair_card_digest::repair_card_semantic_digest;
 
@@ -229,6 +228,10 @@ mod tests {
     use crate::analysis::test_grip_evidence::TestTargetEvidence;
     use crate::app::repair_attempt::{RepairAttemptId, RepairAttemptManifest, RepairAttemptState};
     use crate::domain::CommandRole;
+    use crate::domain::{
+        CardCurrentnessGoal, EditCageGoal, FixInstructionState, FocusedExecutionGoal,
+        MutationConfirmationGoal, StaticMovementGoal,
+    };
     use std::path::{Path, PathBuf};
 
     fn snapshot() -> RepairCardSnapshot {
