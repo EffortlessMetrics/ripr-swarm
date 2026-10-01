@@ -1368,6 +1368,14 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         ];
         for env in env_cases {
             let output = run_command_with_env(bin, &root_a, &["help", "--json"], env)?;
+            if !output.status.success() {
+                return Err(format!(
+                    "ripr help --json failed under env {env:?}: status={:?}, stderr={}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                )
+                .into());
+            }
             if output.stdout != baseline_stdout {
                 return Err(format!("help --json bytes moved under env {env:?}").into());
             }
@@ -1382,6 +1390,28 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         let rejected = run_command(bin, Some(&root_a), &["help", "--json", "--quiet"])?;
         if rejected.status.success() {
             return Err("help --json --quiet must fail closed, not silently merge flags".into());
+        }
+        // The global verbosity flag is extracted before dispatch; combined
+        // with the machine route it must fail closed with the same usage
+        // family instead of emitting a document plus a stderr diagnostic.
+        for verbose_args in [
+            &["help", "--json", "--verbose"][..],
+            &["--verbose", "help", "--json"][..],
+            &["help", "--json", "-v"][..],
+        ] {
+            let rejected = run_command(bin, Some(&root_a), verbose_args)?;
+            if rejected.status.success() {
+                return Err(format!(
+                    "ripr {verbose_args:?} must fail closed, not bypass the machine grammar"
+                )
+                .into());
+            }
+            if String::from_utf8_lossy(&rejected.stderr).contains("verbose mode enabled") {
+                return Err(format!(
+                    "ripr {verbose_args:?} leaked the verbose diagnostic on the machine route"
+                )
+                .into());
+            }
         }
 
         // Versioned-shape contract: schema_version 1, nonempty sections, and a
@@ -1403,6 +1433,15 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
             .ok_or("help --json workflows missing")?;
         if commands.is_empty() || workflows.is_empty() {
             return Err("help --json emitted an empty section".into());
+        }
+        for row in commands {
+            if row.get("relation").is_none() || row.get("discovery").is_none() {
+                return Err(format!(
+                    "help --json command row {} lost its relation/discovery projection",
+                    row["id"]
+                )
+                .into());
+            }
         }
         let digest = value["catalog_digest"]
             .as_str()

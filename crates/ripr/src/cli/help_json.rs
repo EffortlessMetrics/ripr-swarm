@@ -12,8 +12,10 @@
 //! widths, color settings, locales, map order, and wall-clock time. Rows and
 //! every string list are sorted by identity, the document carries no absolute
 //! paths, PIDs, timestamps, or environment observations, and the catalog
-//! digest is computed from the normalized semantic DTO — never from rendered
-//! whitespace, human help constants, or the current binary path.
+//! digest is computed from the scoped catalog surface — commands, workflows,
+//! and the catalog contract version — never from the product version,
+//! document copy, rendered whitespace, human help constants, or the current
+//! binary path.
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -35,7 +37,7 @@ pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = 1;
 /// and what a consumer must not infer from it.
 const DOCUMENT_LIMITATIONS: &[&str] = &[
     "ordering is explicit: commands and workflows sort by identity key, and every embedded string list is sorted",
-    "the catalog digest covers the governed catalog fields only; human help wording and renderer layout are excluded",
+    "the catalog digest covers the sorted command rows, workflow rows, and catalog contract version only; product version, human help wording, and renderer layout are excluded",
     "the document is advisory discovery data; it does not prove command outcomes or workflow success",
 ];
 
@@ -66,6 +68,8 @@ struct CommandJsonRow {
     id: &'static str,
     path: &'static str,
     class: &'static str,
+    discovery: &'static str,
+    relation: RelationJson,
     aliases: Vec<&'static str>,
     summary: &'static str,
     task: &'static str,
@@ -82,6 +86,17 @@ struct CommandJsonRow {
     stop_states: Vec<&'static str>,
     limitations: &'static str,
     not_applicable_reason: Option<&'static str>,
+}
+
+/// C1 replacement/retirement relation, projected so machine consumers can
+/// resolve a compatibility spelling to its canonical command and spot retired
+/// rows without scraping human help.
+#[derive(Serialize, Debug)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RelationJson {
+    Canonical,
+    AliasOf { target: &'static str },
+    Retired { replacement: Option<&'static str> },
 }
 
 #[derive(Serialize)]
@@ -194,6 +209,16 @@ fn command_row(entry: &CommandCatalogEntry, metadata_row: &CommandMetadata) -> C
         id: entry.id,
         path: entry.path,
         class: entry.class.as_str(),
+        discovery: entry.discovery.as_str(),
+        relation: match entry.relation {
+            crate::cli::command_catalog::CommandRelation::Canonical => RelationJson::Canonical,
+            crate::cli::command_catalog::CommandRelation::AliasOf(target) => {
+                RelationJson::AliasOf { target }
+            }
+            crate::cli::command_catalog::CommandRelation::Retired { replacement } => {
+                RelationJson::Retired { replacement }
+            }
+        },
         aliases: sorted_strings(entry.aliases),
         summary: metadata_row.summary,
         task: metadata_row.task,
@@ -223,51 +248,46 @@ fn command_row(entry: &CommandCatalogEntry, metadata_row: &CommandMetadata) -> C
     }
 }
 
-fn step_json(workflow_step: &crate::cli::workflow_catalog::WorkflowStep) -> WorkflowStepJson {
-    WorkflowStepJson {
+fn step_json(
+    workflow_step: &crate::cli::workflow_catalog::WorkflowStep,
+    command_rows: &[CommandMetadata],
+) -> Result<WorkflowStepJson, String> {
+    // The step's narrowable flags come from the workflow row itself; the
+    // remaining flags come from the supplied C2 metadata row of the step's
+    // command (the C3 mirror validator already proved the narrowable flags
+    // agree). Reading the supplied table — never the production global —
+    // keeps synthetic documents self-consistent.
+    let Some(command_row) = command_rows
+        .iter()
+        .find(|row| row.id == workflow_step.command)
+    else {
+        return Err(format!(
+            "help --json lost step command row {:?}",
+            workflow_step.command
+        ));
+    };
+    Ok(WorkflowStepJson {
         command: workflow_step.command,
         role: workflow_step.role,
         cost: workflow_step.cost.as_str(),
         operation: workflow_step.operation.as_str(),
-        effects: step_effects(workflow_step),
-        writes: sorted_strings(workflow_step.writes),
-    }
-}
-
-/// Step side effects are projected from the governed C2 row of the step's
-/// command, the same authority the C3 mirror validator checks against.
-/// `WorkflowStep` stores only the three flags a workflow may narrow; the
-/// remaining flags still belong to the step's command and must not be
-/// silently projected as false.
-fn step_effects(workflow_step: &crate::cli::workflow_catalog::WorkflowStep) -> EffectsJson {
-    let Some(command_row) = metadata()
-        .iter()
-        .find(|row| row.id == workflow_step.command)
-    else {
-        // `document_violations` fails closed before any projection when a step
-        // command has no metadata row; this fallback only keeps the projector
-        // total for synthetic tables that never reach `render_help_json`.
-        return EffectsJson {
-            may_run_analysis: false,
+        effects: EffectsJson {
+            may_run_analysis: command_row.effects.may_run_analysis,
             may_compile: workflow_step.may_compile,
             may_run_tests: workflow_step.may_run_tests,
-            may_run_mutation: false,
-            may_use_network: false,
+            may_run_mutation: command_row.effects.may_run_mutation,
+            may_use_network: command_row.effects.may_use_network,
             may_start_child_process: workflow_step.may_start_child_process,
-        };
-    };
-    EffectsJson {
-        may_run_analysis: command_row.effects.may_run_analysis,
-        may_compile: command_row.effects.may_compile,
-        may_run_tests: command_row.effects.may_run_tests,
-        may_run_mutation: command_row.effects.may_run_mutation,
-        may_use_network: command_row.effects.may_use_network,
-        may_start_child_process: command_row.effects.may_start_child_process,
-    }
+        },
+        writes: sorted_strings(workflow_step.writes),
+    })
 }
 
-fn workflow_row(row: &WorkflowCatalogEntry) -> WorkflowJsonRow {
-    WorkflowJsonRow {
+fn workflow_row(
+    row: &WorkflowCatalogEntry,
+    command_rows: &[CommandMetadata],
+) -> Result<WorkflowJsonRow, String> {
+    Ok(WorkflowJsonRow {
         id: row.id,
         aliases: sorted_strings(row.aliases),
         command_tag: row.command_tag,
@@ -275,8 +295,16 @@ fn workflow_row(row: &WorkflowCatalogEntry) -> WorkflowJsonRow {
         applicability: row.applicability,
         prerequisites: sorted_strings(row.prerequisites),
         first_command: row.first_command,
-        steps: row.steps.iter().map(step_json).collect(),
-        optional_steps: row.optional_steps.iter().map(step_json).collect(),
+        steps: row
+            .steps
+            .iter()
+            .map(|step| step_json(step, command_rows))
+            .collect::<Result<Vec<_>, String>>()?,
+        optional_steps: row
+            .optional_steps
+            .iter()
+            .map(|step| step_json(step, command_rows))
+            .collect::<Result<Vec<_>, String>>()?,
         result_families: row
             .result_families
             .iter()
@@ -305,7 +333,7 @@ fn workflow_row(row: &WorkflowCatalogEntry) -> WorkflowJsonRow {
         stop_conditions: sorted_strings(row.stop_conditions),
         advanced_alternatives: sorted_strings(row.advanced_alternatives),
         limitations: row.limitations,
-    }
+    })
 }
 
 fn build_document(
@@ -334,7 +362,10 @@ fn build_document(
         .collect::<Result<Vec<_>, String>>()?;
     commands.sort_by(|left, right| left.id.cmp(right.id));
 
-    let mut workflow_rows: Vec<WorkflowJsonRow> = workflows.iter().map(workflow_row).collect();
+    let mut workflow_rows: Vec<WorkflowJsonRow> = workflows
+        .iter()
+        .map(|row| workflow_row(row, command_rows))
+        .collect::<Result<Vec<_>, String>>()?;
     workflow_rows.sort_by(|left, right| left.id.cmp(right.id));
 
     let mut document = HelpJsonDocument {
@@ -348,22 +379,44 @@ fn build_document(
         non_claims: DOCUMENT_NON_CLAIMS,
     };
 
-    // The digest covers the normalized semantic DTO with the digest field
-    // empty; it never reads rendered whitespace, human help constants, or the
-    // current binary path (issue #4825 determinism and identity law).
-    let without_digest = serde_json::to_string(&document)
-        .map_err(|error| format!("help --json serialization failed: {error}"))?;
-    document.catalog_digest = sha256_hex(without_digest.as_bytes());
+    // The digest is catalog identity: it covers the sorted command and
+    // workflow rows plus the catalog contract version, and never reads the
+    // product version, schema version, document copy, rendered whitespace,
+    // human help constants, or the current binary path (issue #4825
+    // determinism and identity law). A package release therefore remints
+    // `product_version` without moving the catalog digest.
+    document.catalog_digest = catalog_digest(&document)?;
     Ok(document)
 }
 
+/// The scoped digest input: exactly the governed catalog surface, serialized
+/// with the same deterministic field order as the document itself.
+#[derive(Serialize)]
+struct CatalogDigestInput<'a> {
+    catalog_contract_version: &'static str,
+    commands: &'a [CommandJsonRow],
+    workflows: &'a [WorkflowJsonRow],
+}
+
+fn catalog_digest(document: &HelpJsonDocument) -> Result<String, String> {
+    let input = CatalogDigestInput {
+        catalog_contract_version: document.catalog_contract_version,
+        commands: &document.commands,
+        workflows: &document.workflows,
+    };
+    let serialized = serde_json::to_string(&input)
+        .map_err(|error| format!("help --json digest serialization failed: {error}"))?;
+    Ok(sha256_hex(serialized.as_bytes()))
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let digest = hasher.finalize();
     let mut hex = String::with_capacity(digest.len() * 2);
     for byte in digest {
-        use std::fmt::Write as _;
         let _ = write!(hex, "{byte:02x}");
     }
     hex
@@ -655,6 +708,92 @@ mod tests {
         }
         if compatibility == 0 || advanced == 0 {
             return Err("compatibility and advanced classifications must both project".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compatibility_relation_projects_the_canonical_target() -> Result<(), String> {
+        let document = production_document()?;
+        let Some(row) = document
+            .commands
+            .iter()
+            .find(|row| row.id == "cmd:compat.start-here")
+        else {
+            return Err("cmd:compat.start-here row missing".to_string());
+        };
+        // A machine consumer must resolve the compatibility spelling to its
+        // canonical command without scraping human help (C1 relation).
+        match &row.relation {
+            super::RelationJson::AliasOf { target } if *target == "first-pr" => {}
+            other => {
+                return Err(format!("start-here relation misprojected: {other:?}").to_string());
+            }
+        }
+        if row.discovery != "compatibility_alias" {
+            return Err(format!(
+                "start-here discovery posture misprojected: {}",
+                row.discovery
+            ));
+        }
+        Ok(())
+    }
+
+    const MUTATED_LIMITATIONS: &[&str] = &["mutated document copy pin"];
+
+    #[test]
+    fn catalog_digest_ignores_product_version_and_document_copy() -> Result<(), String> {
+        let mut document = production_document()?;
+        let original_digest = document.catalog_digest.clone();
+        // A package release or a wording edit of the boundary statements
+        // remints neither the catalog nor its digest.
+        document.product_version = "0.0.0-mutation-pin";
+        document.limitations = MUTATED_LIMITATIONS;
+        document.non_claims = MUTATED_LIMITATIONS;
+        let reminted = super::catalog_digest(&document)?;
+        if reminted != original_digest {
+            return Err(
+                "catalog digest moved under a product-version or document-copy-only change"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn step_effects_follow_the_supplied_metadata_table() -> Result<(), String> {
+        let mut rows = metadata().to_vec();
+        let Some(check) = rows.iter_mut().find(|row| row.id == "cmd:check") else {
+            return Err("cmd:check metadata missing".to_string());
+        };
+        // An unmirrored flag: valid to differ in a supplied table, and the
+        // workflow step projection must follow the same table the command
+        // rows project from — never the production global.
+        check.effects.may_use_network = true;
+        let document = build_document(catalog(), &rows, workflow_catalog())
+            .map_err(|error| error.to_string())?;
+        let Some(workflow) = document
+            .workflows
+            .iter()
+            .find(|row| row.id == "inspect-change")
+        else {
+            return Err("inspect-change missing".to_string());
+        };
+        let Some(step) = workflow
+            .steps
+            .iter()
+            .find(|step| step.command == "cmd:check")
+        else {
+            return Err("cmd:check step missing".to_string());
+        };
+        if !step.effects.may_use_network {
+            return Err("step effects ignored the supplied metadata table".to_string());
+        }
+        let Some(command) = document.commands.iter().find(|row| row.id == "cmd:check") else {
+            return Err("cmd:check command row missing".to_string());
+        };
+        if command.effects.may_use_network != step.effects.may_use_network {
+            return Err("command and step projections disagree".to_string());
         }
         Ok(())
     }

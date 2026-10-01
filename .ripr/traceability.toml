@@ -10214,6 +10214,9 @@ tests = [
   "crates/ripr/src/cli/help_json.rs::tests::single_workflow_transition_change_updates_row_and_digest",
   "crates/ripr/src/cli/help_json.rs::tests::human_help_wording_is_outside_the_identity_surface",
   "crates/ripr/src/cli/help_json.rs::tests::classifications_and_aliases_are_projected",
+  "crates/ripr/src/cli/help_json.rs::tests::compatibility_relation_projects_the_canonical_target",
+  "crates/ripr/src/cli/help_json.rs::tests::catalog_digest_ignores_product_version_and_document_copy",
+  "crates/ripr/src/cli/help_json.rs::tests::step_effects_follow_the_supplied_metadata_table",
   "crates/ripr/src/cli/command.rs::tests::help_json_parses_the_machine_discovery_route",
   "crates/ripr/tests/cli_smoke.rs::help_json_is_deterministic_across_roots_env_and_side_effect_free",
 ]
@@ -10222,6 +10225,7 @@ code = [
   "crates/ripr/src/cli/help_json.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/execute.rs",
+  "crates/ripr/src/cli/mod.rs",
   "crates/ripr/src/cli/command_catalog.rs",
   "crates/ripr/src/cli/command_metadata.rs",
 ]

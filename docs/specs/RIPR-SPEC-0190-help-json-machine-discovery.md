@@ -47,7 +47,9 @@ document carries:
   change, pinned by tests, and registered in `docs/OUTPUT_SCHEMA.md`),
   `product_version`, and `catalog_contract_version`;
 - `commands`: one row per C1 catalog entry joined to its C2 metadata row on
-  the catalog identity — id, path, class, aliases, summary, task label,
+  the catalog identity — id, path, class, discovery posture, replacement or
+  retirement relation (canonical, `alias_of` with its canonical target, or
+  `retired` with an optional replacement), aliases, summary, task label,
   workflow tags, operation, cost, all six side-effect flags, primary inputs,
   output roles, state target, JSON support, example, next routes, stop
   states, limitations, and the not-applicable reason;
@@ -57,9 +59,12 @@ document carries:
   the C2 row), result families with a tagged `next` route (`command`,
   `stop`, or `limitation`), artifacts, recovery routes, stop conditions,
   advanced alternatives, and limitations;
-- `catalog_digest`: a sha256 hex digest over the normalized semantic DTO
-  with the digest field empty — never over rendered whitespace, human help
-  constants, or the binary path;
+- `catalog_digest`: a sha256 hex digest over the scoped catalog surface —
+  the sorted command rows, the sorted workflow rows, and the catalog
+  contract version — never over the product version, schema version,
+  document copy, rendered whitespace, human help constants, or the binary
+  path; a package release therefore remints `product_version` without
+  moving the catalog digest;
 - `limitations` and `non_claims`: explicit identity-surface and boundary
   statements a consumer can render without inferring them.
 
@@ -72,7 +77,10 @@ Authority:
    locale, and verbosity flags cannot move the document. The grammar is
    strict — `ripr help --json` accepts exactly one flag, so `help --json
    --quiet` and every other extra-argument shape is a usage error, not a
-   silently re-shaped document.
+   silently re-shaped document. The global `--verbose`/`-v` extraction
+   cannot bypass this: combined with the machine route, in either position,
+   it fails closed with the same usage error instead of emitting a document
+   plus a stderr diagnostic.
 3. Order independence: commands sort by identity key, workflows sort by
    identity key, and every embedded string list sorts its entries, so
    reordering rows in any source table normalizes to the same bytes and the
@@ -91,9 +99,11 @@ Authority:
    remints the digest and changes exactly the one projected workflow row.
 8. Human help wording is outside the identity surface: renderer headers and
    help-screen copy never enter the document or the digest.
-9. Step side effects are projected from the governed C2 row of the step's
-   command; flags the workflow table does not mirror are never silently
-   projected as false.
+9. Step side effects are projected from the supplied C2 metadata row of the
+   step's command for the flags a workflow does not mirror, and from the
+   workflow step row itself for the three narrowable flags the C3 mirror
+   validator cross-checks; flags are never silently projected as false, and
+   a synthetic document can never disagree with itself about one command.
 10. The document is advisory discovery data. It does not execute commands or
     workflows, does not run analysis, compilation, tests, or mutation, does
     not spawn child processes or open the network, does not read git state
@@ -125,6 +135,14 @@ command or workflow claim.
 - Row-isolation fixtures: a single metadata-field edit changes exactly one
   command row and the digest; a single workflow transition edit changes
   exactly one workflow row and the digest.
+- Digest-scope fixture: a product-version or document-copy-only change
+  remints neither the catalog nor its digest.
+- Relation fixture: the compatibility spelling `start-here` projects its
+  `alias_of` relation naming `first-pr` and its compatibility discovery
+  posture.
+- Supplied-table fixture: an unmirrored side-effect flag changed in a
+  supplied metadata table projects identically onto the command row and
+  every workflow step of that command.
 - Human-wording fixture: known human help headers and copy strings are
   absent from the document.
 - Classification fixture: compatibility and advanced classes both project,
@@ -154,8 +172,10 @@ command or workflow claim.
    --json --all` exit nonzero with the same usage line.
 3. The same binary run in two different fresh git repositories produces
    byte-identical stdout.
-4. Removing one workflow row from the source table fails the document build
-   before any bytes reach stdout.
+4. Removing every workflow row from the source table fails the help --json
+   zero-row gate before any bytes reach stdout; removing one row fails the
+   C3 governed-denominator check (RIPR-SPEC-0189), which owns the workflow
+   identity surface — this slice adds no second identity authority.
 
 ## Test Mapping
 
@@ -163,15 +183,20 @@ command or workflow claim.
   validity, byte stability and explicit ordering, source-reorder
   normalization, duplicate-identity and zero-row fail-closed behavior,
   workflow reference resolution, command row isolation, workflow row
-  isolation, human-wording exclusion, and classification/alias projection.
+  isolation, human-wording exclusion, classification/alias projection,
+  compatibility relation projection, digest scope, and supplied-table step
+  effect consistency.
 - `crates/ripr/src/cli/command.rs` unit tests pin the strict `help --json`
   parser grammar, including the usage-error family for extra arguments and
   the precedence of the `--json` intercept over the `help <command>`
   rewrite.
 - `crates/ripr/tests/cli_smoke.rs` proves cross-root determinism,
-  environment invariance, the versioned shape, the strict-grammar rejection,
-  host-path freedom, and byte-identical repository state against the built
-  binary.
+  environment invariance, the versioned shape, the strict-grammar rejection
+  (including the global verbosity flag in both positions), host-path
+  freedom, and byte-identical repository state against the built binary.
+- `crates/ripr/src/cli/mod.rs` rejects the global verbosity flag combined
+  with the machine route before the verbose extraction can bypass the
+  strict grammar.
 
 ## Implementation Mapping
 
@@ -180,6 +205,7 @@ command or workflow claim.
 | `crates/ripr/src/cli/help_json.rs` | versioned DTO, catalog projection, digest, fail-closed document validation, render/print entry points, tests |
 | `crates/ripr/src/cli/command.rs` | `CliCommand::HelpJson` variant and the strict `help --json` parser route |
 | `crates/ripr/src/cli/execute.rs` | dispatch of `HelpJson` to the document printer |
+| `crates/ripr/src/cli/mod.rs` | rejection of the global verbosity flag combined with the machine route |
 | `crates/ripr/src/cli/command_catalog.rs` | `CATALOG_CONTRACT_VERSION` constant naming the catalog contract generation |
 | `crates/ripr/src/cli/command_metadata.rs` | `as_str()` projections of the cost/operation enums consumed by the DTO |
 | `crates/ripr/src/cli/workflow_catalog.rs` | unchanged C3 table consumed by the projection (RIPR-SPEC-0189) |
