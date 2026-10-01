@@ -24,8 +24,7 @@ pub const MAX_REPAIR_CARD_REJECTED_ALTERNATIVES: usize = 3;
 
 /// What may be claimed from a card. Completion, correctness and
 /// mutation-confirmation claims stay with the attempt/receipt authorities.
-pub const REPAIR_CARD_CLAIM_BOUNDARY: &str =
-    "Static repair work order for one governed repair, projected from current product authorities; it does not establish completion, correctness, runtime behavior, or mutation confirmation.";
+pub const REPAIR_CARD_CLAIM_BOUNDARY: &str = "Static repair work order for one governed repair, projected from current product authorities; it does not establish completion, correctness, runtime behavior, or mutation confirmation.";
 
 /// Portable snapshot identity. `workspace_identity` is producer-supplied and
 /// portable (never an absolute checkout spelling); absolute paths, timestamps
@@ -284,10 +283,13 @@ pub fn repair_card_semantic_digest(card: &RepairCardV1) -> Result<String, String
         forbidden_files: &card.forbidden_files,
         done_when: &card.done_when,
         stop_conditions: &card.stop_conditions,
-        next_action: card.next_action.as_ref().map(|command| RepairCardDigestCommandRef {
-            command_id: &command.command_id,
-            role: &command.role,
-        }),
+        next_action: card
+            .next_action
+            .as_ref()
+            .map(|command| RepairCardDigestCommandRef {
+                command_id: &command.command_id,
+                role: &command.role,
+            }),
         selected_basis: &card.selected_basis,
         rejected_alternatives: &card.rejected_alternatives,
         attempt: &card.attempt,
@@ -315,10 +317,7 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
 /// authority's own flip both allow it. The builder consults this; no
 /// renderer re-implements it.
 pub fn repair_card_route_exposable(instruction: FixInstructionState, repair_ready: bool) -> bool {
-    matches!(
-        instruction,
-        FixInstructionState::FixSiteReady
-    ) && repair_ready
+    matches!(instruction, FixInstructionState::FixSiteReady) && repair_ready
 }
 
 #[cfg(test)]
@@ -525,10 +524,14 @@ mod tests {
         let existing_json = serde_json::to_string(&existing).map_err(|error| error.to_string())?;
         let proposed_json = serde_json::to_string(&proposed).map_err(|error| error.to_string())?;
         if !existing_json.contains("\"kind\":\"existing\"") {
-            return Err(format!("existing target lost its kind tag: {existing_json}"));
+            return Err(format!(
+                "existing target lost its kind tag: {existing_json}"
+            ));
         }
         if !proposed_json.contains("\"kind\":\"proposed\"") {
-            return Err(format!("proposed target lost its kind tag: {proposed_json}"));
+            return Err(format!(
+                "proposed target lost its kind tag: {proposed_json}"
+            ));
         }
         Ok(())
     }
@@ -558,7 +561,10 @@ mod tests {
 
     #[test]
     fn route_exposure_follows_instruction_and_readiness_together() {
-        assert!(repair_card_route_exposable(FixInstructionState::FixSiteReady, true));
+        assert!(repair_card_route_exposable(
+            FixInstructionState::FixSiteReady,
+            true
+        ));
         for instruction in [
             FixInstructionState::Stale,
             FixInstructionState::StaticLimitation,
@@ -567,7 +573,10 @@ mod tests {
         ] {
             assert!(!repair_card_route_exposable(instruction, true));
         }
-        assert!(!repair_card_route_exposable(FixInstructionState::FixSiteReady, false));
+        assert!(!repair_card_route_exposable(
+            FixInstructionState::FixSiteReady,
+            false
+        ));
     }
 
     #[test]

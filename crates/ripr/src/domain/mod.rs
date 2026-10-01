@@ -61,15 +61,6 @@ pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
 };
-pub use repair_card::{
-    CardCurrentnessGoal, EditCageGoal, FocusedExecutionGoal, MAX_REPAIR_CARD_REJECTED_ALTERNATIVES,
-    MutationConfirmationGoal, REPAIR_CARD_CLAIM_BOUNDARY, REPAIR_CARD_SCHEMA_VERSION,
-    RepairCardAssertionGoal,
-    RepairCardAttempt, RepairCardCommandRef, RepairCardDoneWhen, RepairCardProposedTestKind,
-    RepairCardReadinessFacts, RepairCardRejectedAlternative, RepairCardSnapshot,
-    RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardTarget, RepairCardTestKind,
-    RepairCardV1, StaticMovementGoal, repair_card_route_exposable, repair_card_semantic_digest,
-};
 pub use identity::{
     GOVERNED_IDENTITY_SURFACES, IDENTITY_REGISTRY_JSON_PATH, IDENTITY_REGISTRY_MARKDOWN_PATH,
     REQUIRED_TAXONOMY_KINDS, identity_field_disposition, identity_registry_canonical_json,
@@ -84,6 +75,15 @@ pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
+};
+pub use repair_card::{
+    CardCurrentnessGoal, EditCageGoal, FocusedExecutionGoal, MAX_REPAIR_CARD_REJECTED_ALTERNATIVES,
+    MutationConfirmationGoal, REPAIR_CARD_CLAIM_BOUNDARY, REPAIR_CARD_SCHEMA_VERSION,
+    RepairCardAssertionGoal, RepairCardAttempt, RepairCardCommandRef, RepairCardDoneWhen,
+    RepairCardProposedTestKind, RepairCardReadinessFacts, RepairCardRejectedAlternative,
+    RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardTarget,
+    RepairCardTestKind, RepairCardV1, StaticMovementGoal, repair_card_route_exposable,
+    repair_card_semantic_digest,
 };
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.

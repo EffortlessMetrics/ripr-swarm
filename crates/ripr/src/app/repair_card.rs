@@ -200,9 +200,7 @@ mod tests {
         RepairRouteReadiness, RepairRouteState, RepairTargetSelection,
     };
     use crate::analysis::test_grip_evidence::TestTargetEvidence;
-    use crate::app::repair_attempt::{
-        RepairAttemptId, RepairAttemptManifest, RepairAttemptState,
-    };
+    use crate::app::repair_attempt::{RepairAttemptId, RepairAttemptManifest, RepairAttemptState};
     use crate::domain::CommandRole;
     use std::path::{Path, PathBuf};
 
@@ -333,7 +331,10 @@ mod tests {
 
         let card = build_repair_card(&input)?;
         if card.schema_version != REPAIR_CARD_SCHEMA_VERSION {
-            return Err(format!("unexpected schema version: {}", card.schema_version));
+            return Err(format!(
+                "unexpected schema version: {}",
+                card.schema_version
+            ));
         }
         if card.repair_card_id.is_empty() {
             return Err("card id was not minted".to_string());
