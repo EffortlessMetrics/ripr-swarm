@@ -259,11 +259,13 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
             reference.family == crate::domain::RepairCardDetailFamily::CanonicalPacket
         })
         .map(|reference| {
-            serde_json::to_value(reference.state).map(|value| {
-                value
-                    .as_str()
-                    .map_or_else(|| "unknown".to_string(), str::to_string)
-            })
+            serde_json::to_value(reference.state)
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map_or_else(|| "unknown".to_string(), str::to_string)
+                })
+                .map_err(|error| format!("canonical packet state did not serialize: {error}"))
         })
         .transpose()?;
     let card_bytes = normalized_bytes(&card_wire);
