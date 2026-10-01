@@ -2,12 +2,13 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/guarded_result_match_fail_closed/input
 
-Summary: 2 probe(s), 0 exposed, 2 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) shown
 
-Analysis outcome: complete_with_findings (analysis complete).
+Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
 WARNING fixtures/guarded_result_match_fail_closed/input/src/lib.rs:62
+  id: probe:src_lib.rs:error_path:09b3885a
 
 Changed
   before: Ok(build_response(id, method)?)
@@ -39,6 +40,7 @@ Evidence
   - observed assertion argument value "42" at line 28
   - observed function argument value "42" at line 36
   - observed assertion argument value "42" at line 37
+  - observed values (showing 8 of 14; full list in --format json)
 
 Weakness
   - No exact error variant discriminator was detected
@@ -50,6 +52,7 @@ Drill in:
   ripr context --root fixtures/guarded_result_match_fail_closed/input --diff fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
 
 WARNING fixtures/guarded_result_match_fail_closed/input/src/lib.rs:62
+  id: probe:src_lib.rs:return_value:4a5bf6b6
 
 Changed
   before: Ok(build_response(id, method)?)
@@ -75,6 +78,7 @@ Evidence
   - related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses strong exact value oracle: assert_eq!(response.id, "42");
   - related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses strong exact value oracle: assert_eq!(response.id, "42")
   - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses strong exact value oracle: assert_eq!(response.id, "42")
+  - related tests (showing 5 of 7; more in --format json)
   - observed function argument value "42" at line 5
   - observed function argument value "42|workspace/refresh" at line 5
   - observed assertion argument value "42" at line 6
@@ -83,6 +87,7 @@ Evidence
   - observed assertion argument value "42" at line 28
   - observed function argument value "42" at line 36
   - observed assertion argument value "42" at line 37
+  - observed values (showing 8 of 14; full list in --format json)
 
 Weakness
   - No strong discriminator was detected
