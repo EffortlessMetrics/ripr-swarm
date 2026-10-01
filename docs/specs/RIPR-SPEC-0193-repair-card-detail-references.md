@@ -87,10 +87,13 @@ minting `repair_card_id`:
   roots) are refused at build time so equivalent roots keep one identity.
 - Accounting is measured, never estimated: `selected_bytes` is the
   normalized serialized size of the final wire card (taken with the summary's
-  self-reference zeroed, so the measurement is deterministic), `omitted_bytes`
-  is the sum of the routed families' normalized bytes, and `complete_bytes`
-  is their sum. `complete_evidence_digest` is a sha256 over the sorted
-  `family=detail_digest` pairs: the identity of the complete evidence.
+  self-reference zeroed and the finalized `repair_card_id` in place, so the
+  measurement is deterministic and the byte bound covers the real id),
+  `omitted_bytes` is the sum of the routed families' normalized bytes, and
+  `complete_bytes` is their sum. `complete_evidence_digest` is a sha256 over
+  the semantic card id joined with the sorted `family=detail_digest` pairs:
+  the identity of the complete evidence, binding the card's repair facts to
+  its routed content.
 - Item and byte bounds are enforced on the result: a card that would exceed
   either fails closed.
 

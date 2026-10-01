@@ -446,21 +446,31 @@ mod tests {
 
     #[test]
     fn budget_validate_rejects_zero_limits() {
-        for budget in [
-            RepairCardBudget {
-                max_detail_items: 0,
-                ..RepairCardBudget::default()
-            },
-            RepairCardBudget {
-                max_serialized_bytes: 0,
-                ..RepairCardBudget::default()
-            },
-            RepairCardBudget {
-                max_inline_detail_bytes: 0,
-                ..RepairCardBudget::default()
-            },
-        ] {
-            assert!(matches!(budget.validate(), Err(_message)));
+        let cases = [
+            (
+                RepairCardBudget {
+                    max_detail_items: 0,
+                    ..RepairCardBudget::default()
+                },
+                "max_detail_items must be greater than zero",
+            ),
+            (
+                RepairCardBudget {
+                    max_serialized_bytes: 0,
+                    ..RepairCardBudget::default()
+                },
+                "max_serialized_bytes must be greater than zero",
+            ),
+            (
+                RepairCardBudget {
+                    max_inline_detail_bytes: 0,
+                    ..RepairCardBudget::default()
+                },
+                "max_inline_detail_bytes must be greater than zero",
+            ),
+        ];
+        for (budget, expected) in cases {
+            assert_eq!(budget.validate().err().as_deref(), Some(expected));
         }
         assert!(matches!(RepairCardBudget::default().validate(), Ok(())));
     }

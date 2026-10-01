@@ -73,8 +73,10 @@ impl RepairCardDetailSource {
 
 /// Apply the versioned item/byte budget to a freshly built card, attaching
 /// detail references, measured accounting, and the complete-evidence digest.
-/// The builder mints `repair_card_id` afterwards, so the semantic digest
-/// covers the attached references.
+/// The semantic id is minted here over the attached references for measurement
+/// and evidence binding; the builder re-mints `repair_card_id` afterwards and
+/// recomputes the identical value (the digest input excludes the id field,
+/// the summary, and the complete-evidence digest).
 pub(crate) fn apply_repair_card_budget(
     card: &mut RepairCardV1,
     sources: &[RepairCardDetailSource],
@@ -123,8 +125,6 @@ pub(crate) fn apply_repair_card_budget(
     omission_classes.sort();
     omission_classes.dedup();
 
-    let complete_evidence_digest = complete_digest(&identity_pairs);
-
     // Attach references with a zeroed summary first so the measured
     // `selected_bytes` is deterministic (the card serialized with a zeroed
     // self-reference), then record the real accounting.
@@ -138,8 +138,22 @@ pub(crate) fn apply_repair_card_budget(
         omission_classes,
         ..RepairCardDetailSummary::default()
     };
-    card.complete_evidence_digest = complete_evidence_digest;
-    let selected_bytes = normalized_len(card)?;
+
+    // Mint the semantic id over the attached references before measuring or
+    // binding the complete evidence. The digest input excludes
+    // `repair_card_id`, `detail_summary`, and `complete_evidence_digest`, so
+    // the builder's later mint recomputes this identical id: the complete
+    // digest binds card identity to evidence identity without a cycle.
+    let semantic_id = crate::repair_card_digest::repair_card_semantic_digest(card)?;
+    card.complete_evidence_digest = complete_digest(&semantic_id, &identity_pairs);
+
+    // Measure the wire bound against the finalized card. The semantic id is
+    // part of the serialized card and is not the summary self-reference the
+    // spec zeroes, so the measured copy carries the real id with the summary
+    // counts still zeroed.
+    let mut measured = card.clone();
+    measured.repair_card_id = semantic_id;
+    let selected_bytes = normalized_len(&measured)?;
     if selected_bytes > budget.max_serialized_bytes {
         return Err(format!(
             "wire card needs {selected_bytes} normalized bytes, exceeding the reviewed byte bound {}",
@@ -153,21 +167,26 @@ pub(crate) fn apply_repair_card_budget(
 
 /// Fail closed when a compact prose field exceeds the inline budget: the full
 /// content must live behind the owning family's detail reference instead of
-/// being silently truncated or serialized unbounded.
+/// being silently truncated or serialized unbounded. Fields are measured as
+/// serialized JSON so escaping cannot smuggle extra wire bytes past the bound.
 fn enforce_inline_budget(card: &RepairCardV1, budget: &RepairCardBudget) -> Result<(), String> {
     let fields: Vec<(&str, String)> = vec![
-        ("changed_behavior", card.changed_behavior.clone()),
+        (
+            "changed_behavior",
+            serde_json::to_string(&card.changed_behavior).map_err(|error| error.to_string())?,
+        ),
         (
             "exact_blocker",
-            card.exact_blocker.clone().unwrap_or_default(),
+            serde_json::to_string(&card.exact_blocker).map_err(|error| error.to_string())?,
         ),
         (
             "assertion_goal_detail",
-            card.assertion_goal_detail.clone().unwrap_or_default(),
+            serde_json::to_string(&card.assertion_goal_detail)
+                .map_err(|error| error.to_string())?,
         ),
         (
             "candidate_value",
-            card.candidate_value.clone().unwrap_or_default(),
+            serde_json::to_string(&card.candidate_value).map_err(|error| error.to_string())?,
         ),
         (
             "limitations",
@@ -300,21 +319,38 @@ fn reject_root_specific_route(family: RepairCardDetailFamily, route: &str) -> Re
     Ok(())
 }
 
-/// Deterministic family ordering key (the serde snake_case spelling).
-fn family_key(family: RepairCardDetailFamily) -> String {
-    // The family vocabulary is a plain enum; its serde spelling is stable and
-    // total, so it doubles as the deterministic ordering key.
-    serde_json::to_string(&family).unwrap_or_else(|_| format!("{family:?}"))
+/// Deterministic family ordering key. The spelling is pinned against the
+/// serde snake_case wire name by the `detail_vocabulary_round_trips_snake_case`
+/// round-trip test, so the static table cannot drift from the wire spelling.
+fn family_key(family: RepairCardDetailFamily) -> &'static str {
+    match family {
+        RepairCardDetailFamily::FixInstruction => "fix_instruction",
+        RepairCardDetailFamily::WitnessStageEvidence => "witness_stage_evidence",
+        RepairCardDetailFamily::RelatedTestCandidates => "related_test_candidates",
+        RepairCardDetailFamily::LimitationDetail => "limitation_detail",
+        RepairCardDetailFamily::CanonicalPacket => "canonical_packet",
+        RepairCardDetailFamily::RepairAttemptStatus => "repair_attempt_status",
+        RepairCardDetailFamily::FocusedProofReceipt => "focused_proof_receipt",
+        RepairCardDetailFamily::StaticMovement => "static_movement",
+        RepairCardDetailFamily::MutationCalibration => "mutation_calibration",
+    }
 }
 
-/// The identity of the complete evidence: every routed family's content
-/// digest in deterministic family order. Budget-independent.
-fn complete_digest(identity_pairs: &[(String, String)]) -> String {
-    let joined = identity_pairs
-        .iter()
-        .map(|(family, digest)| format!("{family}={digest}"))
-        .collect::<Vec<_>>()
-        .join(",");
+/// The identity of the complete evidence: the semantic card id joined with
+/// every routed family's content digest in deterministic family order, so the
+/// digest binds the card's repair facts to its routed evidence. Budget-independent.
+fn complete_digest(semantic_id: &str, identity_pairs: &[(&str, String)]) -> String {
+    let mut joined = String::with_capacity(semantic_id.len() + identity_pairs.len() * 80 + 1);
+    joined.push_str(semantic_id);
+    joined.push('|');
+    for (index, (family, digest)) in identity_pairs.iter().enumerate() {
+        if index > 0 {
+            joined.push(',');
+        }
+        joined.push_str(family);
+        joined.push('=');
+        joined.push_str(digest);
+    }
     sha256_hex(joined.as_bytes())
 }
 
@@ -325,13 +361,14 @@ fn normalized_len(card: &RepairCardV1) -> Result<usize, String> {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest as _;
+    use std::fmt::Write as _;
     let mut hasher = sha2::Sha256::new();
     hasher.update(bytes);
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    let mut hex = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
 }
 
 trait SortByFamily {
@@ -889,6 +926,73 @@ mod tests {
             return Err("empty projection identity is unstable".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn complete_digest_binds_card_identity_to_evidence() -> Result<(), String> {
+        let sources = [RepairCardDetailSource::current(
+            RepairCardDetailFamily::WitnessStageEvidence,
+            "workspace:demo/probe/witness",
+            json("witness"),
+        )];
+        let mut first = minimal_card();
+        apply_repair_card_budget(&mut first, &sources, &RepairCardBudget::default())?;
+        let mut different_facts = minimal_card();
+        different_facts.changed_behavior = "other changed behavior".to_string();
+        apply_repair_card_budget(&mut different_facts, &sources, &RepairCardBudget::default())?;
+        if first.complete_evidence_digest == different_facts.complete_evidence_digest {
+            return Err("complete digest ignored the card identity".to_string());
+        }
+        let mut equivalent = minimal_card();
+        apply_repair_card_budget(&mut equivalent, &sources, &RepairCardBudget::default())?;
+        if first.complete_evidence_digest != equivalent.complete_evidence_digest {
+            return Err("equivalent cards minted different complete digests".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn wire_bound_is_measured_with_the_finalized_card_id() -> Result<(), String> {
+        let mut measured = minimal_card();
+        apply_repair_card_budget(&mut measured, &[], &RepairCardBudget::default())?;
+        let selected = measured.detail_summary.selected_bytes;
+        let mut exact = minimal_card();
+        apply_repair_card_budget(
+            &mut exact,
+            &[],
+            &RepairCardBudget {
+                max_serialized_bytes: selected,
+                ..RepairCardBudget::default()
+            },
+        )?;
+        let mut one_under = minimal_card();
+        let Err(_message) = apply_repair_card_budget(
+            &mut one_under,
+            &[],
+            &RepairCardBudget {
+                max_serialized_bytes: selected - 1,
+                ..RepairCardBudget::default()
+            },
+        ) else {
+            return Err("wire bound ignored the finalized card size".to_string());
+        };
+        Ok(())
+    }
+
+    #[test]
+    fn escapes_count_toward_the_inline_budget() {
+        let mut escaped = minimal_card();
+        escaped.changed_behavior = "\n".repeat(3000);
+        assert!(matches!(
+            apply_repair_card_budget(&mut escaped, &[], &RepairCardBudget::default()),
+            Err(_message)
+        ));
+        let mut plain = minimal_card();
+        plain.changed_behavior = "x".repeat(3000);
+        assert!(matches!(
+            apply_repair_card_budget(&mut plain, &[], &RepairCardBudget::default()),
+            Ok(())
+        ));
     }
 
     #[test]

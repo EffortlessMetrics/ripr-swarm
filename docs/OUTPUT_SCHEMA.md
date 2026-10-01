@@ -121,7 +121,8 @@ omitted bytes instead of embedding in the card. The card carries
 `detail_references` (deterministic family-sorted order), a measured
 `detail_summary` (selected/omitted/complete bytes, referenced and
 unavailable item counts, sorted omission classes), and a
-`complete_evidence_digest` over the routed families' content digests.
+`complete_evidence_digest` binding the semantic card id with the routed
+families' content digests.
 Stale, malformed, wrong-root, missing and unavailable evidence states stay
 visible on the references; the card never upgrades them and never lets
 budgeting change readiness, target selection or actionability. The
