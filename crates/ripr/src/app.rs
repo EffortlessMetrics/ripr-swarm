@@ -25,6 +25,7 @@ pub(crate) mod python_repair_binding;
 pub(crate) mod python_repair_verification;
 pub(crate) mod receipt;
 pub(crate) mod repair_attempt;
+pub(crate) mod repair_card;
 pub(crate) mod ripr_plus;
 mod selector;
 pub(crate) mod temp_diff;

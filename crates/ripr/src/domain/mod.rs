@@ -14,6 +14,7 @@ mod git_candidate;
 mod identity;
 mod language;
 mod probe;
+mod repair_card;
 mod summary;
 mod support;
 mod test_evidence_identity;
@@ -59,6 +60,15 @@ pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
+};
+pub use repair_card::{
+    CardCurrentnessGoal, EditCageGoal, FocusedExecutionGoal, MAX_REPAIR_CARD_REJECTED_ALTERNATIVES,
+    MutationConfirmationGoal, REPAIR_CARD_CLAIM_BOUNDARY, REPAIR_CARD_SCHEMA_VERSION,
+    RepairCardAssertionGoal,
+    RepairCardAttempt, RepairCardCommandRef, RepairCardDoneWhen, RepairCardProposedTestKind,
+    RepairCardReadinessFacts, RepairCardRejectedAlternative, RepairCardSnapshot,
+    RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardTarget, RepairCardTestKind,
+    RepairCardV1, StaticMovementGoal, repair_card_route_exposable, repair_card_semantic_digest,
 };
 pub use identity::{
     GOVERNED_IDENTITY_SURFACES, IDENTITY_REGISTRY_JSON_PATH, IDENTITY_REGISTRY_MARKDOWN_PATH,

@@ -13854,6 +13854,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/evidence.rs",
         "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/probe.rs",
+        "crates/ripr/src/domain/repair_card.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
     ] {
@@ -13918,6 +13919,22 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
                 validate_evidence_record_contract_schema_version(value, &mut violations)?;
+            }
+            "repair_card_schema_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
             }
             "context_version" => {
                 require_contract_value(
