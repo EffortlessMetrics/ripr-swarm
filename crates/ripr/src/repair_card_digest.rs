@@ -305,10 +305,14 @@ mod tests {
         let existing_json = serde_json::to_string(&existing).map_err(|error| error.to_string())?;
         let proposed_json = serde_json::to_string(&proposed).map_err(|error| error.to_string())?;
         if !existing_json.contains("\"kind\":\"existing\"") {
-            return Err(format!("existing target lost its kind tag: {existing_json}"));
+            return Err(format!(
+                "existing target lost its kind tag: {existing_json}"
+            ));
         }
         if !proposed_json.contains("\"kind\":\"proposed\"") {
-            return Err(format!("proposed target lost its kind tag: {proposed_json}"));
+            return Err(format!(
+                "proposed target lost its kind tag: {proposed_json}"
+            ));
         }
         Ok(())
     }
@@ -316,8 +320,7 @@ mod tests {
     #[test]
     fn done_when_keeps_all_five_axes_separate() -> Result<(), String> {
         let card = card_fixture();
-        let json =
-            serde_json::to_string(&card.done_when).map_err(|error| error.to_string())?;
+        let json = serde_json::to_string(&card.done_when).map_err(|error| error.to_string())?;
         for axis in [
             "static_movement",
             "focused_test_execution",
