@@ -13,7 +13,7 @@ use crate::app::agent_brief::AgentBriefPolicy;
 use crate::cli::agent::AgentCardOptions;
 use crate::cli::commands_context::ensure_command_root;
 use crate::config::load_for_root;
-use crate::domain::RepairCardV1;
+use crate::domain::{RepairCardTarget, RepairCardV1};
 use crate::output;
 
 use super::agent::unknown_seam_id_hint;
@@ -106,6 +106,26 @@ fn agent_card_prose_lines(card: &RepairCardV1) -> Vec<String> {
             card.assertion_goal_detail.as_deref().unwrap_or("-")
         ));
     }
+    if let Some(target) = &card.selected_target {
+        let rendered = match target {
+            RepairCardTarget::Existing {
+                symbol_id,
+                file,
+                line,
+                test_kind,
+                relation,
+                workspace_identity: _,
+            } => format!(
+                "  selected target: existing {symbol_id} {file}:{line} ({test_kind:?}, relation {relation})"
+            ),
+            RepairCardTarget::Proposed {
+                file,
+                owner,
+                proposal_kind,
+            } => format!("  selected target: proposed {owner} in {file} ({proposal_kind:?})"),
+        };
+        lines.push(rendered);
+    }
     match &card.next_action {
         Some(action) => {
             lines.push(format!("  next action: {} ({})", action.display, action.command_id));
@@ -155,10 +175,18 @@ fn agent_card_prose_lines(card: &RepairCardV1) -> Vec<String> {
             attempt.attempt_id, attempt.state
         ));
     }
-    lines.push(format!(
-        "  full packet: ripr agent packet --seam-id {} --json",
-        card.subject.seam_id
-    ));
+    // The packet command is presented the way the card actually exposes it:
+    // when the typed next action is open, its display already binds the
+    // portable root and is directly executable; without a next action the
+    // packet family is a route reference and stays rootless like every other
+    // detail route (#4666 portability contract).
+    match &card.next_action {
+        Some(action) => lines.push(format!("  full packet: {}", action.display)),
+        None => lines.push(format!(
+            "  full packet: ripr agent packet --seam-id {} --json",
+            card.subject.seam_id
+        )),
+    }
     lines
 }
 

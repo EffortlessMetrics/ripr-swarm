@@ -20,10 +20,11 @@ use crate::analysis::repair_route::{
 };
 use crate::config::RiprConfig;
 use crate::domain::{
-    CardCurrentnessGoal, CommandSpec, DiagnosticWitness, EditCageGoal, FixInstructionSummary,
-    FocusedExecutionGoal, MutationConfirmationGoal, RepairCardBudget, RepairCardDetailFamily,
-    RepairCardDoneWhen, RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject,
-    RepairCardV1, StaticMovementGoal, repair_card_route_exposable,
+    CardCurrentnessGoal, CommandSpec, DiagnosticWitness, EditCageGoal, FindingCanonicalGap,
+    FixInstructionSummary, FocusedExecutionGoal, MutationConfirmationGoal, RepairCardBudget,
+    RepairCardDetailFamily, RepairCardDetailState, RepairCardDoneWhen, RepairCardSnapshot,
+    RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardV1, StaticMovementGoal,
+    repair_card_route_exposable,
 };
 use crate::output::agent_seam_packets::{
     EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING, PacketCommandContext,
@@ -72,6 +73,7 @@ pub(crate) fn repair_card_for_entry(
     let witness_pack = witness_for_seam(
         root,
         config,
+        entry,
         eligibility.readiness.canonical_gap_id.as_deref(),
     )?;
     let (finding_id, witness) = match witness_pack {
@@ -134,7 +136,7 @@ pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCa
     };
     let forbidden_files: Vec<String> = if allowed_files
         .first()
-        .is_some_and(|allowed| *allowed == production_file)
+        .is_some_and(|allowed| allowed == &production_file)
     {
         Vec::new()
     } else {
@@ -236,6 +238,20 @@ pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCa
     })
 }
 
+/// Whether the rendered packet envelope actually surfaces this seam. The
+/// envelope's `packets` array honors the shared queue policy; an entry whose
+/// `seam_id` names this seam is the only current-surface proof.
+fn packet_surfaces_seam(packet_content: &serde_json::Value, seam_id: &str) -> bool {
+    packet_content
+        .get("packets")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|packets| {
+            packets.iter().any(|packet| {
+                packet.get("seam_id").and_then(serde_json::Value::as_str) == Some(seam_id)
+            })
+        })
+}
+
 /// Every load-bearing evidence family rides behind a typed reference. The
 /// canonical packet and the static-movement axis name the packet route; the
 /// witness-derived families name the `ripr explain` route for the same
@@ -250,11 +266,24 @@ fn detail_sources_for(
         serde_json::from_str(facts.packet_json).map_err(|error| {
             format!("agent card could not bind the canonical packet content: {error}")
         })?;
-    let mut sources = vec![RepairCardDetailSource::current(
-        RepairCardDetailFamily::CanonicalPacket,
-        packet_route,
-        packet_content,
-    )];
+    // The packet envelope honors the shared queue policy: a seam the queue
+    // does not surface renders with no matching entry in `packets`. Crediting
+    // the card with a current packet route for a seam the packet itself omits
+    // would overstate the evidence, so the family records an exact unavailable
+    // reason instead (fail-closed, like every other omitted family).
+    let mut sources = Vec::new();
+    if packet_surfaces_seam(&packet_content, facts.entry.seam.id().as_str()) {
+        sources.push(RepairCardDetailSource::current(
+            RepairCardDetailFamily::CanonicalPacket,
+            packet_route,
+            packet_content,
+        ));
+    } else {
+        sources.push(RepairCardDetailSource::unavailable(
+            RepairCardDetailFamily::CanonicalPacket,
+            "the canonical packet does not surface this seam under the current packet queue policy",
+        ));
+    }
     match (facts.witness, facts.finding_id) {
         (Some(witness), Some(finding_id)) => {
             let explain_route = format!("ripr explain {finding_id}");
@@ -307,12 +336,21 @@ fn detail_sources_for(
             .map_err(|error| format!("agent card done-when content failed: {error}"))?,
     ));
     match facts.attempt {
-        Some(manifest) => sources.push(RepairCardDetailSource::current(
-            RepairCardDetailFamily::RepairAttemptStatus,
-            "ripr agent status --json",
-            serde_json::to_value(manifest)
-                .map_err(|error| format!("agent card attempt content failed: {error}"))?,
-        )),
+        Some(manifest) => {
+            // The attempt manifest is bound to the repository head it was
+            // recorded at; an attempt recorded against another head is stale
+            // evidence for this snapshot, not current status.
+            let mut source = RepairCardDetailSource::current(
+                RepairCardDetailFamily::RepairAttemptStatus,
+                "ripr agent status --json",
+                serde_json::to_value(manifest)
+                    .map_err(|error| format!("agent card attempt content failed: {error}"))?,
+            );
+            if manifest.repository_head != facts.repository_head {
+                source.state = RepairCardDetailState::Stale;
+            }
+            sources.push(source);
+        }
         None => sources.push(RepairCardDetailSource::unavailable(
             RepairCardDetailFamily::RepairAttemptStatus,
             "no repair attempt is recorded for this seam",
@@ -336,6 +374,7 @@ fn detail_sources_for(
 fn witness_for_seam(
     root: &Path,
     config: &RiprConfig,
+    entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
 ) -> Result<Option<(String, DiagnosticWitness)>, String> {
     let Some(gap_id) = canonical_gap_id else {
@@ -344,6 +383,7 @@ fn witness_for_seam(
     let output = check_workspace_with_config(
         CheckInput {
             root: root.to_path_buf(),
+            git_timeout: Some(super::default_cli_git_timeout()),
             ..Default::default()
         },
         config,
@@ -356,11 +396,19 @@ fn witness_for_seam(
             finding
                 .canonical_gap
                 .as_ref()
-                .is_some_and(|gap| gap.id == gap_id)
+                .is_some_and(|gap| gap_names_seam(gap, gap_id, entry.seam.owner()))
         })
         .and_then(|finding| {
             DiagnosticWitness::from_finding(finding).map(|witness| (finding.id.clone(), witness))
         }))
+}
+
+/// A canonical gap id is content-derived and excludes the source location, so
+/// sibling seams can share one id; the id match alone would credit this seam
+/// with another seam's witness. The owner is the discriminating identity and
+/// must match this seam's owner.
+fn gap_names_seam(gap: &FindingCanonicalGap, gap_id: &str, owner: &str) -> bool {
+    gap.id == gap_id && gap.owner == owner
 }
 
 /// The portable workspace identity is producer-owned through the admitted
@@ -408,6 +456,9 @@ fn latest_attempt_for_seam(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::repair_attempt::{
+        REPAIR_ATTEMPT_SCHEMA_VERSION, RepairAttemptId, RepairAttemptState,
+    };
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
@@ -454,15 +505,22 @@ mod tests {
         }
     }
 
-    const PACKET: &str = r#"{"schema_version":"0.5","packets":[]}"#;
+    /// The rendered packet envelope for this seam: `packets` names the seam,
+    /// so the canonical packet family projects as current.
+    fn packet_for(entry: &ClassifiedSeam) -> String {
+        format!(
+            r#"{{"schema_version":"0.5","packets":[{{"seam_id":"{}"}}]}}"#,
+            entry.seam.id().as_str()
+        )
+    }
 
-    fn facts_for<'a>(entry: &'a ClassifiedSeam) -> SeamCardFacts<'a> {
+    fn facts_for<'a>(entry: &'a ClassifiedSeam, packet_json: &'a str) -> SeamCardFacts<'a> {
         SeamCardFacts {
             entry,
             witness: None,
             finding_id: None,
             attempt: None,
-            packet_json: PACKET,
+            packet_json,
             repository_head: "abc123",
             workspace_identity: "workspace:demo",
             next_command: None,
@@ -472,7 +530,8 @@ mod tests {
     #[test]
     fn repair_card_assembly_projects_every_family_with_packet_route() -> Result<(), String> {
         let entry = weakly_gripped_entry();
-        let card = assemble_repair_card(&facts_for(&entry))?;
+        let packet = packet_for(&entry);
+        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
         if card.schema_version != crate::domain::REPAIR_CARD_SCHEMA_VERSION {
             return Err("card does not name the repair card schema".to_string());
         }
@@ -530,7 +589,8 @@ mod tests {
             "src",
             entry.seam.id().as_str(),
         );
-        let mut facts = facts_for(&entry);
+        let packet = packet_for(&entry);
+        let mut facts = facts_for(&entry, &packet);
         facts.next_command = Some(command);
         let card = assemble_repair_card(&facts)?;
         if card.next_action.is_some() {
@@ -547,7 +607,8 @@ mod tests {
     #[test]
     fn repair_card_assembly_stays_within_the_default_bounds() -> Result<(), String> {
         let entry = weakly_gripped_entry();
-        let card = assemble_repair_card(&facts_for(&entry))?;
+        let packet = packet_for(&entry);
+        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
         if card.detail_references.len() > crate::domain::DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS {
             return Err("card exceeded the default item bound".to_string());
         }
@@ -555,6 +616,98 @@ mod tests {
             > crate::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES
         {
             return Err("card exceeded the default byte bound".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gap_names_seam_requires_owner_match() -> Result<(), String> {
+        let gap = FindingCanonicalGap {
+            id: "gap-1".to_string(),
+            language: "rust".to_string(),
+            file: "src/pricing.rs".to_string(),
+            owner: "pricing::discounted_total".to_string(),
+            behavior_kind: "predicate_boundary".to_string(),
+            probe_kind: "predicate_boundary".to_string(),
+            normalized_discriminator: "amount >= discount_threshold".to_string(),
+        };
+        if !gap_names_seam(&gap, "gap-1", "pricing::discounted_total") {
+            return Err("the seam's own owner must name the seam".to_string());
+        }
+        if gap_names_seam(&gap, "gap-1", "pricing::other_total") {
+            return Err("a gap id shared with another owner must not name the seam".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packet_queue_omission_marks_canonical_packet_unavailable() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let empty_packet = r#"{"schema_version":"0.5","packets":[]}"#;
+        let card = assemble_repair_card(&facts_for(&entry, empty_packet))?;
+        let reference = card
+            .detail_references
+            .iter()
+            .find(|reference| reference.family == RepairCardDetailFamily::CanonicalPacket)
+            .ok_or_else(|| "canonical packet reference missing".to_string())?;
+        if reference.state != RepairCardDetailState::Unavailable {
+            return Err(
+                "a seam the packet queue omits must not project a current canonical packet"
+                    .to_string(),
+            );
+        }
+        if reference
+            .unavailable_reason
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            return Err("the omitted packet must record an exact unavailable reason".to_string());
+        }
+        Ok(())
+    }
+
+    fn attempt_at(repository_head: &str, seam_id: &str) -> Result<RepairAttemptManifest, String> {
+        Ok(RepairAttemptManifest {
+            schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
+            kind: "repair_attempt".to_string(),
+            repair_attempt_id: RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")
+                .map_err(|error| format!("test attempt id: {error}"))?,
+            state: RepairAttemptState::AwaitingEdit,
+            root: ".".to_string(),
+            repository_head: repository_head.to_string(),
+            producer_version: "test".to_string(),
+            seam_id: seam_id.to_string(),
+            created_unix_ms: 0,
+            artifacts: Vec::new(),
+            next_command: "ripr agent repair --root . --seam-id seam-a --phase after".to_string(),
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+            after: None,
+            last_after_refusal: None,
+            terminal_artifacts: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn attempt_recorded_at_another_head_is_stale_not_current() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let attempt = attempt_at("deadbeef", entry.seam.id().as_str())?;
+        let packet = packet_for(&entry);
+        let mut facts = facts_for(&entry, &packet);
+        facts.attempt = Some(&attempt);
+        let card = assemble_repair_card(&facts)?;
+        let reference = card
+            .detail_references
+            .iter()
+            .find(|reference| reference.family == RepairCardDetailFamily::RepairAttemptStatus)
+            .ok_or_else(|| "repair attempt reference missing".to_string())?;
+        if reference.state != RepairCardDetailState::Stale {
+            return Err(
+                "an attempt recorded at another head must project stale, not current".to_string(),
+            );
+        }
+        if reference.route.as_deref().is_none() {
+            return Err("a stale attempt keeps its typed status route".to_string());
         }
         Ok(())
     }

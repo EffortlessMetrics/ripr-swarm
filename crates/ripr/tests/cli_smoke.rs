@@ -3688,7 +3688,8 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "Repair card ",
         "  seam: 67fc764ba37d77bd",
         "  next action:",
-        "  full packet: ripr agent packet --seam-id 67fc764ba37d77bd --json",
+        "  full packet: ripr agent packet ",
+        "--seam-id 67fc764ba37d77bd --json",
     ] {
         assert!(
             human_stdout.contains(needle),

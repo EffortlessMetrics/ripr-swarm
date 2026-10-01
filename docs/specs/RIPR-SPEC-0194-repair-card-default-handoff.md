@@ -53,10 +53,14 @@ check), then assembles one `RepairCardV1`:
 - `crates/ripr/src/app/repair_card_handoff.rs` gathers the producer facts:
   the packet eligibility/readiness authority
   (`analysis::repair_route::repair_packet_eligibility`), the witness of the
-  check finding that names the seam's canonical gap (one `ripr check` pass;
-  the witness is the single instruction authority through
-  `FixInstructionSummary::from_witness`, with `unavailable()` when no finding
-  names the gap), the repository head (`git rev-parse HEAD`), the portable
+  check finding that names the seam's canonical gap (one `ripr check` pass
+  with the default cooperative git deadline; the witness is the single
+  instruction authority through `FixInstructionSummary::from_witness`, with
+  `unavailable()` when no finding names the gap). Because the canonical gap
+  id is content-derived and excludes the source location, sibling seams can
+  share one id: the finding match requires the gap owner to equal the seam
+  owner, so another seam's witness is never credited to this card. The
+  repository head (`git rev-parse HEAD`), the portable
   workspace identity, the seam's most recent repair-attempt manifest by
   `created_unix_ms`, the rendered canonical packet behind
   `PacketCommandContext::Standalone`, and the typed packet inspection
@@ -95,20 +99,30 @@ check), then assembles one `RepairCardV1`:
   rejects a next command the gate would not expose.
 - All nine detail families from RIPR-SPEC-0193 are populated: the canonical
   packet, related-test candidates, and static movement name the packet
-  route; with a witness, fix instruction, witness stage evidence, and
+  route — the canonical packet is `current` only when the rendered envelope
+  actually surfaces this seam in its `packets` array; a seam the packet
+  queue omits records the exact unavailable reason `the canonical packet
+  does not surface this seam under the current packet queue policy` instead
+  of claiming a route the packet would not answer. With a witness, fix
+  instruction, witness stage evidence, and
   limitation detail name the `ripr explain <finding_id>` route (stage
   evidence naming `ripr check --json`); without one all three record the
   exact unavailable reason `no witness-producing finding names this seam in
   the current analysis`. Repair-attempt status names
-  `ripr agent status --json` when an attempt exists and records an exact
+  `ripr agent status --json` when an attempt exists — `current` at the
+  snapshot's head, `stale` when the manifest was recorded against another
+  repository head — and records an exact
   unavailable reason otherwise. Focused-proof receipt and mutation
   calibration are always unavailable with their precise reasons. The default
   versioned budget applies unmodified (#4669 ratifies the numbers).
 - `--json` emits the versioned `repair_card.v1` document (pretty JSON with a
   trailing newline). Without it, the same typed fields render as a compact
   human summary in card order: the renderer presents values verbatim, never
-  re-derives, reorders, or enhances them, and ends with the explicit full
-  packet route line.
+  re-derives, reorders, or enhances them, names the selected target
+  (existing or proposed) when the card carries one, and ends with the
+  explicit full packet line — the typed next action's display, which binds
+  the portable root and is directly executable, when the route gate is open,
+  else the rootless packet route exactly as the detail references name it.
 
 `ripr agent packet` is unchanged and remains the compatibility path: same
 envelope, same schema, same bytes. Shared field names keep one meaning
@@ -175,8 +189,10 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
 
 - `crates/ripr/src/app/repair_card_handoff.rs` unit tests cover the pure
   assembly over producer-owned facts: the nine-family projection with the
-  packet route, the closed-gate omission of the next action, and the default
-  budget bounds.
+  packet route, the closed-gate omission of the next action, the default
+  budget bounds, the owner-discriminated gap match, the packet-queue
+  omission failing closed on the canonical packet family, and the
+  foreign-head attempt projecting `stale`.
 - `crates/ripr/src/cli/agent.rs` unit tests cover option parsing and the
   updated unknown-subcommand listing.
 - `crates/ripr/tests/cli_smoke.rs` `agent_card_hands_off_one_seam_as_the_default_repair_card`
