@@ -443,7 +443,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.next_command = Some(&command);
 
-        assert!(build_repair_card(&input).is_err());
+        assert!(matches!(build_repair_card(&input), Err(_)));
     }
 
     #[test]
@@ -485,7 +485,7 @@ mod tests {
         input.packet_eligible = false;
         input.next_command = Some(&command);
 
-        assert!(build_repair_card(&input).is_err());
+        assert!(matches!(build_repair_card(&input), Err(_)));
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.subject.seam_id = "seam:other".to_string();
 
-        assert!(build_repair_card(&input).is_err());
+        assert!(matches!(build_repair_card(&input), Err(_)));
     }
 
     #[test]
@@ -505,7 +505,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.subject.canonical_gap_id = Some("gap:other".to_string());
 
-        assert!(build_repair_card(&input).is_err());
+        assert!(matches!(build_repair_card(&input), Err(_)));
     }
 
     #[test]
@@ -518,7 +518,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.selected_basis = Some("RIPR-0001 observed".to_string());
 
-        assert!(build_repair_card(&input).is_err());
+        assert!(matches!(build_repair_card(&input), Err(_)));
     }
 
     #[test]
@@ -528,7 +528,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.assertion_goal_detail = None;
 
-        assert!(build_repair_card(&input).is_err());
+        assert!(matches!(build_repair_card(&input), Err(_)));
     }
 
     #[test]
@@ -625,7 +625,7 @@ mod tests {
             })
             .collect();
 
-        assert!(build_repair_card(&input).is_err());
+        assert!(matches!(build_repair_card(&input), Err(_)));
     }
 
     #[test]

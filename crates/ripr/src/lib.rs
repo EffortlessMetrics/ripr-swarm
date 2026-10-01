@@ -72,6 +72,7 @@ mod build_identity;
     )
 )]
 mod edit_cage;
+mod repair_card_digest;
 // Shared internal repair-guidance availability vocabulary for the agent packet
 // children under #2830. The public Rust API remains unchanged until those
 // consumers adopt and deliberately expose the contract.
@@ -82,7 +83,6 @@ mod edit_cage;
         reason = "staged internal contract; #2657 connects the first producer before public projection"
     )
 )]
-mod repair_card_digest;
 mod repair_guidance;
 // Test-only shared helpers (#3742); never part of the library surface.
 #[cfg(test)]

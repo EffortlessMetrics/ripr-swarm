@@ -160,10 +160,6 @@ impl TestTargetEvidence {
         &self.workspace_identity
     }
 
-    pub(crate) fn currentness(&self) -> TestTargetCurrentness {
-        self.currentness
-    }
-
     pub(crate) fn file(&self) -> &Path {
         &self.file
     }
@@ -196,6 +192,10 @@ impl TestTargetEvidence {
 
     pub(crate) fn provenance(&self) -> TestTargetProvenance {
         self.provenance
+    }
+
+    pub(crate) fn currentness(&self) -> TestTargetCurrentness {
+        self.currentness
     }
 }
 
