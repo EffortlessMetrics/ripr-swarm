@@ -83,8 +83,10 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 The before phase writes the before snapshot, brief, packet, and workflow files
 and prints the exact `--attempt` command for the after phase. The after phase
-writes the after snapshot, analysis outcome, verify JSON, and receipt. Its
-stdout is exactly one JSON document — the versioned `repair_after_result`
+writes the after snapshot, analysis outcome, verify JSON, and receipt. Both
+phases print a short human summary on stdout by default that names the next
+command and where the JSON files were written; pass `--json` for the machine documents. With `--json` the after
+phase's stdout is exactly one JSON document — the versioned `repair_after_result`
 envelope (`schema_version` `0.1`) carrying the verify 0.3 document unchanged
 under `verify` with the status report embedded beside it under
 `agent_status` — so an orchestrator can `JSON.parse` stdout once and every
@@ -132,17 +134,32 @@ command and a warning that lists the choices. It never picks the newest attempt.
 The full selection order is in RIPR-SPEC-0011 (amendment #3906).
 
 The numbered steps below are the manual path. If no before snapshot exists yet,
-create one:
+create one. First create the workflow directory in the shell that runs the
+snapshots — the redirect fails in a fresh workspace because every shell opens
+the redirect before `ripr` runs:
 
 ```bash
 mkdir -p target/ripr/workflow
+```
+
+```cmd
+mkdir target\ripr\workflow
+```
+
+```powershell
+New-Item -ItemType Directory -Force -Path target/ripr/workflow | Out-Null
+```
+
+Then capture the before snapshot:
+
+```bash
 ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json
 ```
 
-If you already ran `ripr pilot`, you can reuse its snapshot:
+If you already ran `ripr pilot`, you can reuse its snapshot (after creating
+the workflow directory as above):
 
 ```bash
-mkdir -p target/ripr/workflow
 cp target/ripr/pilot/repo-exposure.json target/ripr/workflow/before.repo-exposure.json
 cp target/ripr/pilot/agent-seam-packets.json target/ripr/workflow/agent-seam-packets.json
 ```

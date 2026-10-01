@@ -5,9 +5,10 @@ use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
+use crate::analysis::facts::FunctionImplContext;
 use crate::analysis::seam_cache::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
-use crate::domain::{Probe, RelationReason};
+use crate::domain::{Probe, RelationConfidence, RelationReason};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -57,6 +58,8 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     /// Run-scoped reveal memo filled lazily from the same index; valid for
     /// exactly as long as the candidate lists above are.
     file_use_statements: super::FileUseStatements,
+    /// Run-scoped activation memo, keyed by slots of the same index.
+    test_value_facts: super::TestValueFacts,
 }
 
 impl RelatedTestCandidateIndex {
@@ -121,6 +124,12 @@ impl RelatedTestCandidateIndex {
     /// against this index.
     pub(in crate::analysis) fn file_use_statements(&self) -> &super::FileUseStatements {
         &self.file_use_statements
+    }
+
+    /// The run-scoped per-(test, owner) value facts shared by every probe
+    /// classified against this index.
+    pub(in crate::analysis) fn test_value_facts(&self) -> &super::TestValueFacts {
+        &self.test_value_facts
     }
 
     fn candidate_indices(
@@ -564,9 +573,13 @@ fn find_related_tests_with_candidates<'a>(
     let mut same_name_function_count = 0usize;
     let mut same_name_definition_manifests: BTreeSet<String> = BTreeSet::new();
     let mut same_name_unattributed_definition = false;
+    // #4558: the definitions themselves, so a type-path call `T::name(` can
+    // set aside those defined outside any impl of `T`.
+    let mut same_name_definitions: Vec<&FunctionSummary> = Vec::new();
     if workspace_complete && !owner_name.is_empty() {
-        let mut record_same_name = |function: &FunctionSummary| {
+        let mut record_same_name = |function: &'a FunctionSummary| {
             same_name_function_count += 1;
+            same_name_definitions.push(function);
             match dependency_edges.and_then(|context| {
                 nearest_manifest_identity(context.manifest_dir_prefixes, &function.file)
             }) {
@@ -660,6 +673,11 @@ fn find_related_tests_with_candidates<'a>(
     // `no_static_path`, while these proximity-only tests keep reach `Weak`
     // for an owner that may be reached unseen (trait method, named caller).
     let mut substring_only_fallback = Vec::new();
+    let owner_name_lc = owner_name.to_ascii_lowercase();
+    let test_name_words: Vec<String> = probe_tokens
+        .iter()
+        .filter_map(|token| test_name_word_token(token, common_words))
+        .collect();
     for test_index in candidate_indices {
         let test = &index.tests[test_index];
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -776,11 +794,13 @@ fn find_related_tests_with_candidates<'a>(
                     dependency_edges.is_some_and(|context| {
                         dependency_edge_admits_owner_call(
                             context,
-                            owner_name,
-                            &owner.file,
+                            owner,
                             test,
-                            &same_name_definition_manifests,
-                            same_name_unattributed_definition,
+                            &SameNameDefinitions {
+                                manifests: &same_name_definition_manifests,
+                                unattributed: same_name_unattributed_definition,
+                                definitions: &same_name_definitions,
+                            },
                         )
                     })
                 }))
@@ -819,7 +839,6 @@ fn find_related_tests_with_candidates<'a>(
             });
 
         let test_name = test.name.to_ascii_lowercase();
-        let owner_name_lc = owner_name.to_ascii_lowercase();
         let same_test_file = same_test_file(&probe.location.file, &test.file);
         // Keep the broad path-token association available to callers, but do
         // not publish it as file identity.  A short source stem such as
@@ -827,9 +846,9 @@ fn find_related_tests_with_candidates<'a>(
         // `reconfigure.rs`).
         let file_path_token_matches = test_path_names_probe_stem(&test.file, &file_name);
         let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
-        let token_in_test_name = probe_tokens
+        let token_in_test_name = test_name_words
             .iter()
-            .any(|token| test_name_names_probe_token(&test_name, token, common_words));
+            .any(|word| test_name_has_word(&test_name, word));
         let same_file_or_named =
             same_test_file || file_path_token_matches || owner_name_in_test || token_in_test_name;
 
@@ -902,9 +921,43 @@ fn find_related_tests_with_candidates<'a>(
         related = substring_only_fallback;
     }
 
-    related.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name).then_with(|| a.file.cmp(&b.file)));
-    related.dedup_by(|(a, _), (b, _)| a.name == b.name && a.file == b.file);
+    // Tests that call the owner come first: consumers quote the leading
+    // entries ("Related tests appear to reach ...", the human "Related test"
+    // line), and a name-sorted list let a `weak_token_substring` neighbour
+    // (`bytes_mut_unsplit_empty_self` for bytes' `try_get_int`) stand in
+    // front of the `direct_owner_call` test that pins the returned value.
+    // Within one confidence tier the order stays name, then file.
+    related.sort_by(|(a, a_reason), (b, b_reason)| {
+        relation_rank(*b_reason)
+            .cmp(&relation_rank(*a_reason))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.file.cmp(&b.file))
+    });
+    // A test related through two reasons is no longer adjacent to itself
+    // once confidence leads the sort; keep its first (strongest) entry.
+    let mut seen = BTreeSet::new();
+    related.retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone())));
     related
+}
+
+/// Sort rank of a relation: higher confidence ranks first.
+fn relation_rank(reason: RelationReason) -> u8 {
+    match reason.confidence() {
+        RelationConfidence::High => 3,
+        RelationConfidence::Medium => 2,
+        RelationConfidence::Low => 1,
+        RelationConfidence::Opaque => 0,
+    }
+}
+
+/// Every same-named definition the ambiguity scan found (#2972, #4558).
+struct SameNameDefinitions<'s> {
+    /// Nearest-manifest identities of the attributable definitions.
+    manifests: &'s BTreeSet<String>,
+    /// A definition no discovered manifest covers.
+    unattributed: bool,
+    /// The definitions themselves, owner included.
+    definitions: &'s [&'s FunctionSummary],
 }
 
 /// #2972: whether one captured, callable path-dependency declaration lets
@@ -945,20 +998,16 @@ fn find_related_tests_with_candidates<'a>(
 ///   lists). Aliased (`as`) and glob (`*`) imports prove nothing and are
 ///   refused; another dependency supplying the same name defeats the
 ///   admit (#2972 review round 3).
+/// - a type-path call `T::name(` (#4558) is admitted before the shadow
+///   checks when `T` is the owner's impl self type and is imported from
+///   the owner's crate: see `type_path_call_admits_owner`.
 fn dependency_edge_admits_owner_call(
     context: &DependencyEdgeContext<'_>,
-    owner_name: &str,
-    owner_file: &Path,
+    owner: &FunctionSummary,
     test: &TestSummary,
-    same_name_definition_manifests: &BTreeSet<String>,
-    same_name_unattributed_definition: bool,
+    same_name: &SameNameDefinitions<'_>,
 ) -> bool {
-    if body_binds_owner_name(&test.body, owner_name) {
-        return false;
-    }
-    if same_name_unattributed_definition {
-        return false;
-    }
+    let owner_name = owner.name.as_str();
     if context.adjacency.status() != PathDependencyGraphStatus::Complete {
         return false;
     }
@@ -966,30 +1015,20 @@ fn dependency_edge_admits_owner_call(
     else {
         return false;
     };
-    let Some(owner_manifest) = nearest_manifest_identity(context.manifest_dir_prefixes, owner_file)
+    let Some(owner_manifest) =
+        nearest_manifest_identity(context.manifest_dir_prefixes, &owner.file)
     else {
         return false;
     };
-    if same_name_definition_manifests.contains(&test_manifest) {
-        // Local shadow: the calling test's own package defines the name.
-        return false;
-    }
-    if same_name_definition_manifests.iter().any(|manifest| {
-        manifest != &owner_manifest
-            && has_callable_forward_dependency(context.adjacency, &test_manifest, manifest)
-    }) {
-        // A second same-named definition the test's package can also call
-        // through a captured callable edge: the bare call is ambiguous
-        // between them.
-        return false;
-    }
     let Some(declarations) = context
         .adjacency
         .forward_dependency_declarations(&test_manifest, &owner_manifest)
     else {
         return false;
     };
-    let callable_dependency_names: BTreeSet<&str> = declarations
+    // The declared name is the Cargo.toml key; paths spell it with `-`
+    // folded to `_` (`tracing-core` is `use tracing_core::...`, #4558).
+    let callable_dependency_names: BTreeSet<String> = declarations
         .iter()
         .filter(|(section, _)| {
             matches!(
@@ -997,19 +1036,11 @@ fn dependency_edge_admits_owner_call(
                 PathDependencySection::Dependencies | PathDependencySection::DevDependencies
             )
         })
-        .map(|(_, name)| name.as_str())
+        .map(|(_, name)| name.replace('-', "_"))
         .collect();
     if callable_dependency_names.is_empty() {
         return false;
     }
-    // Call identity is parser-backed (a bare direct call of the owner name
-    // among the captured calls) except for one spelling read from the
-    // comment-and-string-stripped source: a qualified call through the
-    // dependency's declared name, which is unambiguous by construction.
-    let bare_call_captured = test.calls.iter().any(|call| {
-        call.name == owner_name
-            && super::helper_transfer::is_direct_call_site(&call.text, owner_name)
-    });
     let stripped_body = strip_comments_and_strings(&test.body);
     // Imports are module-scoped and visible file-wide: scan the test's
     // stripped file source, not the function body, so a file-level `use` is
@@ -1023,6 +1054,46 @@ fn dependency_edge_admits_owner_call(
         .map(|facts| strip_comments_and_strings(&facts.source))
         .unwrap_or_else(|| stripped_body.clone());
     let file_level_imports = file_level_use_text(&stripped_file);
+    // A `let` binding of the owner name cannot shadow `T::name(`, so the
+    // type-path rule runs before the bare-call binding guard (#4558 review).
+    if type_path_call_admits_owner(
+        context,
+        &owner_manifest,
+        owner,
+        test,
+        &callable_dependency_names,
+        &file_level_imports,
+        same_name.definitions,
+    ) {
+        return true;
+    }
+    if body_binds_owner_name(&test.body, owner_name) {
+        return false;
+    }
+    if same_name.unattributed {
+        return false;
+    }
+    if same_name.manifests.contains(&test_manifest) {
+        // Local shadow: the calling test's own package defines the name.
+        return false;
+    }
+    if same_name.manifests.iter().any(|manifest| {
+        manifest != &owner_manifest
+            && has_callable_forward_dependency(context.adjacency, &test_manifest, manifest)
+    }) {
+        // A second same-named definition the test's package can also call
+        // through a captured callable edge: the bare call is ambiguous
+        // between them.
+        return false;
+    }
+    // Call identity is parser-backed (a bare direct call of the owner name
+    // among the captured calls) except for one spelling read from the
+    // comment-and-string-stripped source: a qualified call through the
+    // dependency's declared name, which is unambiguous by construction.
+    let bare_call_captured = test.calls.iter().any(|call| {
+        call.name == owner_name
+            && super::helper_transfer::is_direct_call_site(&call.text, owner_name)
+    });
     callable_dependency_names.iter().any(|dependency_name| {
         let qualified = format!("{dependency_name}::{owner_name}");
         let qualified_call = test
@@ -1037,6 +1108,174 @@ fn dependency_edge_admits_owner_call(
         }
         bare_call_captured
             && imports_owner_from_dependency(&file_level_imports, dependency_name, owner_name)
+    })
+}
+
+/// #4558: a captured call spelled `T::name(` where `T` is the owner's impl
+/// self type, imported at file level from a dependency declared on the
+/// owner's package (`use dep::...::T;`), or spelled `dep::T::name(`.
+///
+/// Such a call can only reach a definition inside an impl of a type named
+/// `T` or one whose context is not established (a trait default method, a
+/// blanket impl, a lexical-fallback file), so only those compete with the
+/// owner; free functions and methods of other types sharing the name do
+/// not. Any competitor refuses, wherever it lives: this rule does not
+/// resolve which `T` the import names, it only rules out definitions no
+/// `T::name` call could reach. Renamed (`as`) and glob imports never
+/// count, and neither does a type alias spelling.
+fn type_path_call_admits_owner(
+    context: &DependencyEdgeContext<'_>,
+    owner_manifest: &str,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    callable_dependency_names: &BTreeSet<String>,
+    file_level_imports: &str,
+    same_name_definitions: &[&FunctionSummary],
+) -> bool {
+    let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
+        return false;
+    };
+    let owner_name = owner.name.as_str();
+    let competitor = same_name_definitions.iter().any(|definition| {
+        definition.id != owner.id
+            && definition
+                .impl_context
+                .may_be_target_of_type_path(self_type)
+    });
+    if competitor {
+        return false;
+    }
+    let type_path = format!("{self_type}::{owner_name}");
+    // The captured call's text is the raw source line: mask comments and
+    // strings so a quoted `T::name()` beside a real `other.name()` call on
+    // the same line is not read as the call (#4558 review).
+    let captured = |path: &str| {
+        test.calls.iter().any(|call| {
+            call.name == owner_name
+                && super::helper_transfer::is_direct_call_site(
+                    &mask_comments_and_strings(&call.text),
+                    path,
+                )
+        })
+    };
+    let imported_type_call = captured(&type_path);
+    let spelled_through_dependency = callable_dependency_names.iter().any(|dependency_name| {
+        captured(&format!("{dependency_name}::{type_path}"))
+            || (imported_type_call
+                && imports_owner_from_dependency(file_level_imports, dependency_name, self_type))
+    });
+    spelled_through_dependency
+        && !owner_crate_imports_type_name(context, owner_manifest, &owner.file, self_type)
+}
+
+/// Whether any library source of the owner's crate brings a type named
+/// `self_type` in from another crate, or glob-imports another crate: then
+/// `dep::...::T` may name that type rather than the owner's, and nothing
+/// here resolves which (#4558 review). `crate::`, `self::` and `super::`
+/// paths stay inside the crate and never count. Library source is the
+/// crate's `src/` tree when the owner lives there, else every file of the
+/// crate. Over-refusal (an unrelated glob) only withholds the relation.
+fn owner_crate_imports_type_name(
+    context: &DependencyEdgeContext<'_>,
+    owner_manifest: &str,
+    owner_file: &Path,
+    self_type: &str,
+) -> bool {
+    let crate_dir = owner_manifest.strip_suffix("Cargo.toml").unwrap_or("");
+    let src_dir = format!("{crate_dir}src/");
+    let owner_in_src = normalize_path(owner_file).starts_with(&src_dir);
+    context.index.files.iter().any(|(file, facts)| {
+        let normalized = normalize_path(file);
+        let in_owner_crate = nearest_manifest_identity(context.manifest_dir_prefixes, file)
+            .as_deref()
+            == Some(owner_manifest);
+        in_owner_crate
+            && (!owner_in_src || normalized.starts_with(&src_dir))
+            && imports_type_name_from_another_crate(
+                &strip_comments_and_strings(&facts.source),
+                self_type,
+            )
+    })
+}
+
+/// Whether a `use` statement in `stripped` source could bring a type named
+/// `type_name` in from another crate: a statement not rooted at `crate`,
+/// `self` or `super` that names the type as a whole word, or a glob whose
+/// root is not local. A glob root is local when it is `std`, `core` or
+/// `alloc`, a `mod` declared in the same file, or a name this file imports
+/// through a local or standard-library path (`use core::num;` then
+/// `use num::*;` in tracing-core, #4558 re-walk). A local module's own file
+/// is scanned separately, so its re-exports are still seen.
+fn imports_type_name_from_another_crate(stripped: &str, type_name: &str) -> bool {
+    let statements = use_statement_paths(stripped);
+    let is_local_root =
+        |root: &str| matches!(root, "crate" | "self" | "super" | "std" | "core" | "alloc");
+    let root_is_local = |root: &str| {
+        is_local_root(root)
+            || declares_module(stripped, root)
+            || statements.iter().any(|path| {
+                is_local_root(path_root(path))
+                    && path
+                        .split(|character: char| !is_ident_char(character))
+                        .any(|word| word == root)
+            })
+    };
+    statements.iter().any(|path| {
+        if matches!(path_root(path), "crate" | "self" | "super") {
+            return false;
+        }
+        let names_type = path
+            .split(|character: char| !is_ident_char(character))
+            .any(|word| word == type_name);
+        names_type || (path.contains('*') && !root_is_local(path_root(path)))
+    })
+}
+
+fn is_ident_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
+/// The trimmed path of every `use` statement in `stripped` source, from the
+/// keyword to the terminating `;`.
+fn use_statement_paths(stripped: &str) -> Vec<&str> {
+    let bytes = stripped.as_bytes();
+    let mut paths = Vec::new();
+    let mut search_from = 0usize;
+    while let Some(relative) = stripped[search_from..].find("use ") {
+        let at = search_from + relative;
+        search_from = at + 4;
+        if at > 0
+            && bytes
+                .get(at - 1)
+                .is_some_and(|byte| is_ident_char(char::from(*byte)))
+        {
+            continue;
+        }
+        let rest = &stripped[at + 4..];
+        paths.push(rest.split(';').next().unwrap_or(rest).trim());
+    }
+    paths
+}
+
+/// The first path segment of a `use` path, without a leading `::`.
+fn path_root(path: &str) -> &str {
+    let path = path.strip_prefix("::").unwrap_or(path).trim_start();
+    let end = path
+        .find(|character: char| !is_ident_char(character))
+        .unwrap_or(path.len());
+    &path[..end]
+}
+
+/// Whether `stripped` source declares `mod name` (inline or out-of-line).
+fn declares_module(stripped: &str, name: &str) -> bool {
+    let mut words = stripped
+        .split(|character: char| !is_ident_char(character))
+        .filter(|word| !word.is_empty());
+    let mut previous_is_mod = false;
+    words.any(|word| {
+        let found = previous_is_mod && word == name;
+        previous_is_mod = word == "mod";
+        found
     })
 }
 
@@ -1411,19 +1650,42 @@ fn normalize_path(path: &Path) -> String {
 /// changed code, and its strong assertion then read as the discriminator
 /// once another test supplied reach, so a mutation no test catches read
 /// `exposed`.
+#[cfg(test)]
 fn test_name_names_probe_token(
     test_name: &str,
     token: &str,
     common_words: &BTreeSet<String>,
 ) -> bool {
+    test_name_word_token(token, common_words)
+        .is_some_and(|word| test_name_has_word(test_name, &word))
+}
+
+/// The lowercased form of `token` that `test_name_names_probe_token` looks
+/// for, or `None` when the token is too short, generic, or common. It
+/// depends only on the probe, so the test loop computes it once per probe.
+fn test_name_word_token(token: &str, common_words: &BTreeSet<String>) -> Option<String> {
     if token.len() < 3 || GENERIC_PROBE_TOKENS.contains(&token) {
-        return false;
+        return None;
     }
     let lowered = token.to_ascii_lowercase();
-    if common_words.contains(&lowered) {
-        return false;
+    (!common_words.contains(&lowered)).then_some(lowered)
+}
+
+/// `format!("_{test_name}_").contains(&format!("_{word}_"))` without the two
+/// allocations per (test, token) pair: some occurrence of `word`, overlapping
+/// ones included, is bounded by `_` or the name's ends on both sides.
+fn test_name_has_word(test_name: &str, word: &str) -> bool {
+    let bytes = test_name.as_bytes();
+    let mut from = 0;
+    while let Some(found) = test_name.get(from..).and_then(|rest| rest.find(word)) {
+        let start = from + found;
+        let end = start + word.len();
+        if (start == 0 || bytes[start - 1] == b'_') && (end == bytes.len() || bytes[end] == b'_') {
+            return true;
+        }
+        from = start + test_name[start..].chars().next().map_or(1, char::len_utf8);
     }
-    format!("_{test_name}_").contains(&format!("_{lowered}_"))
+    false
 }
 
 /// Tokens so widespread across a package's tests that sharing one ties no
@@ -3444,6 +3706,41 @@ fn crate_c_score_test() {
         ));
     }
 
+    /// The allocation-free word search agrees with the padded-substring
+    /// rule it replaces on every short name over `_`, ASCII, and multi-byte
+    /// characters, overlapping and repeated occurrences included.
+    #[test]
+    fn test_name_has_word_matches_the_padded_substring_rule() {
+        let alphabet = ["a", "b", "_", "é"];
+        let mut strings = vec![String::new()];
+        let mut level = vec![String::new()];
+        // Six characters reach `ba_a_a` / `a_a`: the only whole-word match
+        // overlaps a rejected one, which a non-overlapping search misses.
+        for _ in 0..6 {
+            level = level
+                .iter()
+                .flat_map(|text| alphabet.iter().map(move |letter| format!("{text}{letter}")))
+                .collect();
+            strings.extend(level.iter().cloned());
+        }
+        let words: Vec<&String> = strings
+            .iter()
+            .filter(|word| (1..=3).contains(&word.chars().count()))
+            .collect();
+        let mut checked = 0usize;
+        for name in &strings {
+            for word in &words {
+                assert_eq!(
+                    super::test_name_has_word(name, word),
+                    format!("_{name}_").contains(&format!("_{word}_")),
+                    "{name:?} / {word:?}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 300_000, "only {checked} pairs checked");
+    }
+
     #[test]
     fn test_name_token_match_needs_whole_words_and_a_specific_token() {
         let none = BTreeSet::new();
@@ -3634,6 +3931,242 @@ fn crate_c_score_test() {
         assert_eq!(normalized, "crates/ripr/src/lib.rs");
     }
 
+    // --- #4558: type-path calls `T::name(` across crates ---
+
+    /// A method of `impl <self_type>` in `file`, with a parser-style id.
+    fn impl_method(file: &str, self_type: &str, name: &str) -> FunctionSummary {
+        let mut method = function(file, name);
+        method.id = SymbolId(format!("{file}::impl {self_type}::{name}"));
+        method.impl_context = FunctionImplContext::Impl {
+            self_type: self_type.to_string(),
+        };
+        method
+    }
+
+    fn free_function(file: &str, name: &str) -> FunctionSummary {
+        let mut free = function(file, name);
+        free.impl_context = FunctionImplContext::Free;
+        free
+    }
+
+    /// tracing's shape: `crate_a` (declared `crate-a`, like `tracing-core`)
+    /// owns `impl LevelFilter { fn current() }`; the calling test's crate
+    /// `crate_c` defines its own free `current` and a `SpanStack::current`,
+    /// and `crate_b`, which `crate_c` also depends on, has `Span::current`.
+    fn level_filter_index(test_body: &str, extra: Vec<FunctionSummary>) -> RustIndex {
+        let mut functions = vec![
+            impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current"),
+            free_function("crates/crate_c/src/lib.rs", "current"),
+            impl_method("crates/crate_c/src/stack.rs", "SpanStack", "current"),
+            impl_method("crates/crate_b/src/span.rs", "Span", "current"),
+        ];
+        functions.extend(extra);
+        RustIndex {
+            functions,
+            tests: vec![test_with_call(
+                "crates/crate_c/tests/max_level.rs",
+                "max_level_hint",
+                test_body,
+                "current",
+            )],
+            ..RustIndex::default()
+        }
+    }
+
+    fn level_filter_related(index: &RustIndex, owner: &FunctionSummary) -> Vec<RelationReason> {
+        let adjacency = adjacency_with(
+            "complete",
+            &[
+                (
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_a",
+                    PathDependencySection::Dependencies,
+                    "crate-a",
+                ),
+                (
+                    "crates/crate_c/Cargo.toml",
+                    "crates/crate_b",
+                    PathDependencySection::Dependencies,
+                    "crate-b",
+                ),
+            ],
+            false,
+        );
+        let prefixes = crate_abc_prefixes();
+        let context = edge_context(&adjacency, &prefixes, index);
+        let probe = probe("crates/crate_a/src/metadata.rs", "Self::WARN");
+        find_related_tests(&probe, Some(owner), index, true, None, Some(&context))
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    /// #4558 positive control: the type-path call names the owner's impl
+    /// type, imported from the owner's crate through its declared name
+    /// (hyphen folded), so the free `current` and the other types'
+    /// `current` methods cannot be its target.
+    #[test]
+    fn type_path_call_imported_from_owner_crate_admits_across_crates() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        let body =
+            "use crate_a::LevelFilter; assert_eq!(LevelFilter::current(), LevelFilter::DEBUG)";
+        let index = level_filter_index(body, Vec::new());
+        assert_eq!(
+            level_filter_related(&index, &owner),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // The fully qualified spelling needs no import.
+        let index = level_filter_index("crate_a::LevelFilter::current()", Vec::new());
+        assert_eq!(
+            level_filter_related(&index, &owner),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // A `let current` binding cannot shadow `LevelFilter::current()`.
+        let index = level_filter_index(
+            "use crate_a::LevelFilter; let current = LevelFilter::current(); assert_eq!(current, LevelFilter::DEBUG)",
+            Vec::new(),
+        );
+        assert_eq!(
+            level_filter_related(&index, &owner),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        // The owner's crate re-exporting its own type through `self::` keeps
+        // the identity.
+        let mut index = level_filter_index(body, Vec::new());
+        with_source(
+            &mut index,
+            "crates/crate_a/src/lib.rs",
+            "pub use self::metadata::{Level, LevelFilter};\nuse crate::metadata::*;\n",
+        );
+        assert_eq!(
+            level_filter_related(&index, &owner),
+            vec![RelationReason::DirectOwnerCall]
+        );
+    }
+
+    /// #4558 re-walk: globs rooted at the standard library, a module the
+    /// file declares, or a name imported through a local or standard path
+    /// cannot bring in another crate's type (tracing-core's
+    /// `use core::{num}` then `use num::*;`).
+    #[test]
+    fn type_path_call_admits_past_local_and_standard_globs() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        let body = "use crate_a::LevelFilter; LevelFilter::current()";
+        for source in [
+            "use core::{\n    fmt,\n    num,\n};\nfn f() { use num::*; }\n",
+            "mod inner;\nuse inner::*;\n",
+            "use std::collections::*;\n",
+        ] {
+            let mut index = level_filter_index(body, Vec::new());
+            with_source(&mut index, "crates/crate_a/src/field.rs", source);
+            assert_eq!(
+                level_filter_related(&index, &owner),
+                vec![RelationReason::DirectOwnerCall],
+                "{source}: must relate"
+            );
+        }
+    }
+
+    fn with_source(index: &mut RustIndex, file: &str, source: &str) {
+        index.files.insert(
+            PathBuf::from(file),
+            FileFacts {
+                source: source.to_string(),
+                ..FileFacts::default()
+            },
+        );
+    }
+
+    /// #4558 review: the owner's crate brings a same-named type in from
+    /// another crate (or globs one in), so `crate_a::...::LevelFilter` may
+    /// not be the owner's type; and a quoted type path beside a real
+    /// same-named call is not the call.
+    #[test]
+    fn type_path_call_refuses_foreign_type_names_and_quoted_paths() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        let body = "use crate_a::other::LevelFilter; LevelFilter::current()";
+        for source in [
+            "pub use external::LevelFilter;\n",
+            "pub use external::filter::{Directive, LevelFilter as LevelFilter};\n",
+            "pub use external::*;\n",
+            "use ::external::*;\n",
+            "use external::num;\nuse num::*;\n",
+        ] {
+            let mut index = level_filter_index(body, Vec::new());
+            with_source(&mut index, "crates/crate_a/src/other.rs", source);
+            assert!(
+                level_filter_related(&index, &owner).is_empty(),
+                "{source}: must not relate"
+            );
+        }
+        let quoted =
+            "use crate_a::LevelFilter; assert_eq!(other.current(), \"LevelFilter::current()\")";
+        let index = level_filter_index(quoted, Vec::new());
+        assert!(level_filter_related(&index, &owner).is_empty());
+    }
+
+    /// #4558 fail-closed rows: each keeps the call from reaching the owner.
+    #[test]
+    fn type_path_call_fails_closed_without_owner_identity() {
+        let owner = impl_method("crates/crate_a/src/metadata.rs", "LevelFilter", "current");
+        let imported = "use crate_a::LevelFilter; LevelFilter::current()";
+        let rows: Vec<(&str, &str, Vec<FunctionSummary>)> = vec![
+            (
+                "no import of the type",
+                "LevelFilter::current()",
+                Vec::new(),
+            ),
+            (
+                "renamed import",
+                "use crate_a::Other as LevelFilter; LevelFilter::current()",
+                Vec::new(),
+            ),
+            (
+                "glob import",
+                "use crate_a::*; LevelFilter::current()",
+                Vec::new(),
+            ),
+            (
+                "type imported from an unrelated crate",
+                "use crate_b::LevelFilter; LevelFilter::current()",
+                Vec::new(),
+            ),
+            (
+                "another impl of a type with the same name",
+                imported,
+                vec![impl_method(
+                    "crates/crate_c/src/filter.rs",
+                    "LevelFilter",
+                    "current",
+                )],
+            ),
+            (
+                "a definition whose context is unknown (trait default, lexical)",
+                imported,
+                vec![function("crates/crate_b/src/traits.rs", "current")],
+            ),
+            (
+                "a call on another type",
+                "use crate_a::LevelFilter; SpanStack::current()",
+                Vec::new(),
+            ),
+        ];
+        for (label, body, extra) in rows {
+            let index = level_filter_index(body, extra);
+            assert!(
+                level_filter_related(&index, &owner).is_empty(),
+                "{label}: must not relate"
+            );
+        }
+        // An owner whose impl context is unknown never takes the type-path
+        // admit, even with the import.
+        let mut unknown_owner = owner.clone();
+        unknown_owner.impl_context = FunctionImplContext::Unknown;
+        let mut index = level_filter_index(imported, Vec::new());
+        index.functions[0] = unknown_owner.clone();
+        assert!(level_filter_related(&index, &unknown_owner).is_empty());
+    }
+
     fn function(file: &str, name: &str) -> FunctionSummary {
         FunctionSummary {
             id: SymbolId(format!("{file}::{name}")),
@@ -3647,8 +4180,10 @@ fn crate_c_score_test() {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         }
     }
 

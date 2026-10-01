@@ -1,7 +1,7 @@
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextSize,
-    ast::{self, HasAttrs, HasName},
+    ast::{self, HasAttrs, HasGenericParams, HasName},
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,7 @@ use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
 use super::super::facts::FileFacts;
+use super::super::facts::FunctionImplContext;
 use super::super::facts::FunctionSourceRole;
 use super::super::facts::LetBindingFact;
 use super::super::facts::ModuleDeclarationFact;
@@ -129,7 +130,7 @@ pub(crate) fn parser_oracles_for_function(
     Some(oracles)
 }
 
-fn include_literal_path(expression: &str) -> Option<PathBuf> {
+pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
     let (_, arguments) = expression.split_once('!')?;
     let arguments = arguments.trim();
     let arguments = arguments.strip_suffix(';').unwrap_or(arguments).trim();
@@ -265,8 +266,10 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             literals: literals.clone(),
             source_role,
             attrs: attrs.clone(),
+            impl_attrs: collect_impl_attr_syntax(&function),
             nested_fn_names: nested_fn_names.clone(),
             let_bindings: let_bindings.clone(),
+            impl_context: function_impl_context(&function),
         };
 
         if has_test_attribute {
@@ -490,7 +493,7 @@ pub(crate) fn shadow_facts_for_body_text(body: &str) -> (Vec<String>, Vec<LetBin
 /// statically resolvable. Returning `Default` here would resolve the default
 /// file that Rust does not compile under the conditional configuration and
 /// could hand its functions an evidence role they did not earn.
-fn path_target_from_attributes(attributes: &[String]) -> ModulePathTarget {
+pub(super) fn path_target_from_attributes(attributes: &[String]) -> ModulePathTarget {
     if cfg_predicates::attributes_conditionally_introduce_path(
         attributes.iter().map(String::as_str),
     ) {
@@ -570,6 +573,54 @@ fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
     SymbolId(segments.join("::"))
 }
 
+/// The item a type-path call `T::name(` would find this `fn` in (#4558).
+/// The nearest enclosing `fn`, `impl` or `trait` decides; modules and the
+/// file root make it a free function.
+fn function_impl_context(function: &ast::Fn) -> FunctionImplContext {
+    for ancestor in function.syntax().ancestors().skip(1) {
+        if ast::Fn::can_cast(ancestor.kind())
+            || ast::BlockExpr::can_cast(ancestor.kind())
+            || ast::Const::can_cast(ancestor.kind())
+            || ast::Static::can_cast(ancestor.kind())
+        {
+            // A `fn` item local to a function, block, const or static
+            // initializer is not nameable through a type.
+            return FunctionImplContext::Free;
+        }
+        if ast::Trait::can_cast(ancestor.kind()) {
+            return FunctionImplContext::Unknown;
+        }
+        if let Some(impl_block) = ast::Impl::cast(ancestor) {
+            return impl_self_type_name(&impl_block)
+                .map_or(FunctionImplContext::Unknown, |self_type| {
+                    FunctionImplContext::Impl { self_type }
+                });
+        }
+    }
+    FunctionImplContext::Free
+}
+
+/// Last segment of an impl's self type when it is a plain named path that
+/// is not one of the impl's own generic parameters (`impl<T> Trait for T`
+/// reaches every type).
+fn impl_self_type_name(impl_block: &ast::Impl) -> Option<String> {
+    let ast::Type::PathType(path_type) = impl_block.self_ty()? else {
+        return None;
+    };
+    let segment = path_type.path()?.segment()?;
+    let name = segment.name_ref()?.text().to_string();
+    let is_generic_parameter = impl_block.generic_param_list().is_some_and(|params| {
+        params.type_or_const_params().any(|param| {
+            param
+                .syntax()
+                .children()
+                .filter_map(ast::Name::cast)
+                .any(|param_name| param_name.text() == name.as_str())
+        })
+    });
+    (!is_generic_parameter).then_some(name)
+}
+
 fn impl_owner_segment(impl_block: &ast::Impl) -> String {
     let self_ty = match impl_block.self_ty() {
         Some(ty) => compact_syntax_text(ty.syntax().text().to_string()),
@@ -635,11 +686,146 @@ fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
         .syntax()
         .ancestors()
         .filter_map(ast::Module::cast)
-        .any(|module| {
-            cfg_predicates::attributes_require_test(
-                module.attrs().map(|attr| attr.syntax().text().to_string()),
-            )
-        })
+        .any(|module| module_attributes_require_test(&module))
+}
+
+/// One parser-backed inline or out-of-line module whose attributes structurally
+/// require a test build. Nested modules inside an already test-gated module
+/// are omitted so they cannot compete as insertion anchors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GovernedCfgTestModule {
+    pub(crate) name: String,
+    pub(crate) parent_modules: Vec<String>,
+    pub(crate) item_start: usize,
+    pub(crate) body_start: Option<usize>,
+    pub(crate) close_brace_start: Option<usize>,
+    pub(crate) is_inline: bool,
+}
+
+/// Parser-owned inventory of governed `cfg(test)` modules in one source file.
+///
+/// Uses the same `cfg_predicates` authority as cfg-test membership. `None`
+/// means the file was not parser-valid; callers stay Missing rather than
+/// guessing from line text.
+pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgTestModule>> {
+    let parse = parse_clean_source_file(source)?;
+    let file = parse.tree();
+    let mut modules = Vec::new();
+    for module in file.syntax().descendants().filter_map(ast::Module::cast) {
+        if module
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .any(|node| ast::Fn::can_cast(node.kind()))
+        {
+            continue;
+        }
+        if !module_attributes_require_test(&module) {
+            continue;
+        }
+        if ancestor_module_requires_test(&module) {
+            continue;
+        }
+        let Some(name) = module.name() else {
+            continue;
+        };
+        let parent_modules = ancestor_module_names(&module);
+        let item_start = usize::from(module.syntax().text_range().start());
+        match module.item_list() {
+            Some(items) => {
+                let Some(open) = items.l_curly_token() else {
+                    continue;
+                };
+                let Some(close) = items.r_curly_token() else {
+                    continue;
+                };
+                modules.push(GovernedCfgTestModule {
+                    name: name.text().to_string(),
+                    parent_modules,
+                    item_start,
+                    body_start: Some(usize::from(open.text_range().end())),
+                    close_brace_start: Some(usize::from(close.text_range().start())),
+                    is_inline: true,
+                });
+            }
+            None => modules.push(GovernedCfgTestModule {
+                name: name.text().to_string(),
+                parent_modules,
+                item_start,
+                body_start: None,
+                close_brace_start: None,
+                is_inline: false,
+            }),
+        }
+    }
+    modules.sort_by(|left, right| {
+        left.parent_modules
+            .cmp(&right.parent_modules)
+            .then(left.name.cmp(&right.name))
+            .then(left.item_start.cmp(&right.item_start))
+    });
+    Some(modules)
+}
+
+/// Enclosing module names of the production function on `start_line`, excluding
+/// cfg-test modules. `None` when the file does not parse or the function is
+/// missing.
+pub(crate) fn production_owner_module_path(source: &str, start_line: usize) -> Option<Vec<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let line_index = LineIndex::new(source);
+    parse.tree().syntax().descendants().find_map(|node| {
+        let function = ast::Fn::cast(node)?;
+        let line = function
+            .fn_token()
+            .map(|token| line_index.line(token.text_range().start()))
+            .unwrap_or_else(|| line_index.line(function.syntax().text_range().start()));
+        if line != start_line {
+            return None;
+        }
+        let mut modules = Vec::new();
+        for module in function
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .filter_map(ast::Module::cast)
+        {
+            if module_attributes_require_test(&module) {
+                continue;
+            }
+            if let Some(name) = module.name() {
+                modules.push(name.text().to_string());
+            }
+        }
+        modules.reverse();
+        Some(modules)
+    })
+}
+
+fn module_attributes_require_test(module: &ast::Module) -> bool {
+    cfg_predicates::attributes_require_test(
+        module.attrs().map(|attr| attr.syntax().text().to_string()),
+    )
+}
+
+fn ancestor_module_requires_test(module: &ast::Module) -> bool {
+    module
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::Module::cast)
+        .any(|ancestor| module_attributes_require_test(&ancestor))
+}
+
+fn ancestor_module_names(module: &ast::Module) -> Vec<String> {
+    let mut names = module
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .filter_map(ast::Module::cast)
+        .filter_map(|ancestor| ancestor.name().map(|name| name.text().to_string()))
+        .collect::<Vec<_>>();
+    names.reverse();
+    names
 }
 
 fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
@@ -647,6 +833,22 @@ fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
         .attrs()
         .map(|attr| attr.syntax().text().to_string())
         .collect()
+}
+
+/// Attributes on the `impl` block directly enclosing `function`, empty for a
+/// free function or a trait body.
+fn collect_impl_attr_syntax(function: &ast::Fn) -> Vec<String> {
+    function
+        .syntax()
+        .parent()
+        .and_then(|list| list.parent())
+        .and_then(ast::Impl::cast)
+        .map(|item| {
+            item.attrs()
+                .map(|attr| attr.syntax().text().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn extract_parser_probe_shapes(
@@ -1370,6 +1572,78 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    /// #4558: where each `fn` sits, as a type-path call `T::name(` sees it.
+    #[test]
+    fn impl_context_names_the_self_type_only_for_plain_named_impls() -> Result<(), Box<dyn Error>> {
+        let source = concat!(
+            "pub fn current() {}\n",
+            "pub struct LevelFilter;\n",
+            "impl LevelFilter { pub fn inherent() { fn local() {} } }\n",
+            "impl core::fmt::Display for crate::metadata::LevelFilter { fn fmt_like() {} }\n",
+            "impl<T> Wrapper<T> { fn generic_args() {} }\n",
+            "impl<T: Tr> Tr2 for T { fn blanket() {} }\n",
+            "impl Tr for &LevelFilter { fn by_ref() {} }\n",
+            "trait Tr { fn defaulted() {} }\n",
+            "mod nested { pub fn in_module() {} }\n",
+            "impl LevelFilter { const C: () = { fn in_const() {} }; }\n",
+        );
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let context = |name: &str| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .map(|function| function.impl_context.clone())
+        };
+        let named = |self_type: &str| {
+            Some(FunctionImplContext::Impl {
+                self_type: self_type.to_string(),
+            })
+        };
+        assert_eq!(context("current"), Some(FunctionImplContext::Free));
+        assert_eq!(context("in_module"), Some(FunctionImplContext::Free));
+        assert_eq!(context("local"), Some(FunctionImplContext::Free));
+        assert_eq!(context("in_const"), Some(FunctionImplContext::Free));
+        assert_eq!(context("inherent"), named("LevelFilter"));
+        assert_eq!(context("fmt_like"), named("LevelFilter"));
+        assert_eq!(context("generic_args"), named("Wrapper"));
+        assert_eq!(context("blanket"), Some(FunctionImplContext::Unknown));
+        assert_eq!(context("by_ref"), Some(FunctionImplContext::Unknown));
+        assert_eq!(context("defaulted"), Some(FunctionImplContext::Unknown));
+        Ok(())
+    }
+
+    #[test]
+    fn impl_block_attrs_are_kept_apart_from_the_method_attrs() -> Result<(), String> {
+        let source = r#"
+#[pymethods]
+impl Ledger {
+    #[getter]
+    pub fn charge(&self) -> u64 { 1 }
+}
+
+#[pyfunction]
+pub fn fee() -> u64 { 5 }
+"#;
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let function = |name: &str| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+        };
+        let charge = function("charge").ok_or("charge not summarized")?;
+        assert_eq!(charge.attrs, vec!["#[getter]".to_string()]);
+        assert_eq!(charge.impl_attrs, vec!["#[pymethods]".to_string()]);
+        let fee = function("fee").ok_or("fee not summarized")?;
+        assert_eq!(fee.attrs, vec!["#[pyfunction]".to_string()]);
+        assert!(
+            fee.impl_attrs.is_empty(),
+            "a free function has no impl attributes"
+        );
+        Ok(())
+    }
+
     #[test]
     #[cfg(unix)]
     fn parser_symbol_id_keeps_raw_byte_files_distinct() -> Result<(), Box<dyn Error>> {
@@ -1591,6 +1865,72 @@ pub fn validate(value: i32) -> Result<i32, String> {
                 .iter()
                 .any(|p| p.kind == PROBE_SHAPE_ERROR_PATH),
             "Should extract error_path probe shapes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn predicate_start_byte_skips_a_string_decoy_on_the_same_line() -> Result<(), Box<dyn Error>> {
+        let source = concat!(
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {\n",
+            "    let decoy = \"montant_é > discount_threshold { false } else { true }\"; if montant_é > discount_threshold { false } else { true }\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let predicates: Vec<_> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .collect();
+        assert!(
+            !predicates.is_empty(),
+            "expected predicate shapes, got {:?}",
+            facts.probe_shapes
+        );
+        let decoy = source
+            .find("montant_é > discount_threshold")
+            .ok_or("decoy missing")?;
+        let rest = source
+            .get(decoy.saturating_add(1)..)
+            .ok_or("slice after decoy is not a scalar boundary")?;
+        let producer = rest
+            .find("montant_é > discount_threshold")
+            .map(|offset| decoy.saturating_add(1).saturating_add(offset))
+            .ok_or("producer missing")?;
+        assert!(
+            predicates.iter().any(|shape| shape.start_byte == producer),
+            "if-condition start_byte missing: decoy={decoy} producer={producer} shapes={predicates:?}"
+        );
+        assert!(
+            predicates.iter().all(|shape| shape.start_byte != decoy),
+            "string decoy was credited as a predicate origin: {predicates:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn predicate_start_byte_survives_tab_cjk_astral_and_combining_prefix()
+    -> Result<(), Box<dyn Error>> {
+        let prefix = "\tlet 日本語 = \"🎉e\u{0301}\"; if ";
+        let source = format!(
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {{\n{prefix}montant_é > discount_threshold {{ false }} else {{ true }}\n}}\n"
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        assert!(
+            !facts.used_lexical_fallback,
+            "parser should own this unicode prefix"
+        );
+        let predicates: Vec<_> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .collect();
+        let producer = source
+            .find("montant_é > discount_threshold")
+            .ok_or("predicate missing")?;
+        assert!(
+            predicates.iter().any(|shape| shape.start_byte == producer),
+            "producer={producer} shapes={predicates:?}"
         );
         Ok(())
     }

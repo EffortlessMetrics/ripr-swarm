@@ -3,6 +3,7 @@ mod crate_targets;
 mod npm_launcher;
 mod targets;
 mod version;
+pub(crate) mod wheelhouse;
 mod workflow;
 
 use std::fs;
