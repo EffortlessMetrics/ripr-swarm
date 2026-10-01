@@ -282,9 +282,9 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::run::capture_output_with_timeout;
+    use serde_json::Value;
     #[cfg(unix)]
     use serde_json::json;
-    use serde_json::Value;
 
     #[cfg(unix)]
     struct Consumption {
