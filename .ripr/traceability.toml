@@ -10408,7 +10408,7 @@ metrics = [
 [[behavior]]
 id = "RIPR-SPEC-0194"
 name = "Repair-attempt store identity and resolver"
-spec = "docs/specs/RIPR-SPEC-0193-repair-attempt-store-identity.md"
+spec = "docs/specs/RIPR-SPEC-0194-repair-attempt-store-identity.md"
 tests = [
   "crates/ripr/src/app/repair_attempt/store.rs::tests::default_store_is_the_repository_local_directory",
   "crates/ripr/src/app/repair_attempt/store.rs::tests::equivalent_default_spellings_share_one_identity",
