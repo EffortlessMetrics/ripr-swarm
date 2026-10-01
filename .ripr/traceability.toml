@@ -10404,3 +10404,29 @@ metrics = [
   "repair_card_budget_version",
   "repair_card_violations",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0194"
+name = "repair card default cli handoff"
+spec = "docs/specs/RIPR-SPEC-0194-repair-card-default-handoff.md"
+tests = [
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_projects_every_family_with_packet_route",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_omits_next_action_when_route_gate_is_closed",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_stays_within_the_default_bounds",
+  "crates/ripr/src/cli/agent.rs::tests::agent_card_parses_seam_id_request",
+  "crates/ripr/src/cli/agent.rs::tests::agent_card_requires_seam_id_and_rejects_unknown_arguments",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/app/repair_card_handoff.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/cli/agent.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0194-repair-card-default-handoff.md",
+]
+metrics = [
+  "repair_card_schema_version",
+  "repair_card_budget_version",
+  "repair_card_violations",
+]
