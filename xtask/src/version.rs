@@ -684,17 +684,58 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
 
-            let mut read_only = fs::metadata(&launcher_path)
-                .map_err(|error| error.to_string())?
-                .permissions();
-            read_only.set_readonly(true);
-            fs::set_permissions(&launcher_path, read_only).map_err(|error| error.to_string())?;
+            // Inject the fourth-write failure through a read-only launcher
+            // manifest; the hosted runner user is unprivileged, so both
+            // platforms honor the mode and every earlier write must roll
+            // back byte-for-byte.
+            #[cfg(windows)]
+            {
+                let mut permissions = fs::metadata(&launcher_path)
+                    .map_err(|error| error.to_string())?
+                    .permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&launcher_path, permissions)
+                    .map_err(|error| error.to_string())?;
+            }
+            #[cfg(not(windows))]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut permissions = fs::metadata(&launcher_path)
+                    .map_err(|error| error.to_string())?
+                    .permissions();
+                permissions.set_mode(0o444);
+                fs::set_permissions(&launcher_path, permissions)
+                    .map_err(|error| error.to_string())?;
+            }
             let bump_result = bump_version(&["0.11.0".to_string()]);
-            let mut writable = fs::metadata(&launcher_path)
-                .map_err(|error| error.to_string())?
-                .permissions();
-            writable.set_readonly(false);
-            fs::set_permissions(&launcher_path, writable).map_err(|error| error.to_string())?;
+            #[cfg(windows)]
+            {
+                // Clearing FILE_ATTRIBUTE_READONLY is the only way to undo
+                // the injected failure on Windows; the Unix-mode lint does
+                // not apply to this cfg-gated branch.
+                #[expect(
+                    clippy::permissions_set_readonly_false,
+                    reason = "restoring the Windows file attribute after the injected write failure"
+                )]
+                {
+                    let mut permissions = fs::metadata(&launcher_path)
+                        .map_err(|error| error.to_string())?
+                        .permissions();
+                    permissions.set_readonly(false);
+                    fs::set_permissions(&launcher_path, permissions)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut permissions = fs::metadata(&launcher_path)
+                    .map_err(|error| error.to_string())?
+                    .permissions();
+                permissions.set_mode(0o644);
+                fs::set_permissions(&launcher_path, permissions)
+                    .map_err(|error| error.to_string())?;
+            }
 
             let error = bump_result.err().ok_or_else(|| {
                 "a read-only launcher manifest did not fail the write".to_string()
