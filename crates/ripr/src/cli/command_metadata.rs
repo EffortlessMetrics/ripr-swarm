@@ -1509,8 +1509,8 @@ const METADATA: &[CommandMetadata] = &[
         effects: ANALYSIS_RUNNER,
         primary_inputs: &["--seam-id"],
         outputs: CommandOutputs {
-            default: Some("compact human repair-card summary"),
-            optional: &["repair_card.v1 JSON via --json"],
+            default: None,
+            optional: &[],
         },
         state_target: None,
         json_support: true,

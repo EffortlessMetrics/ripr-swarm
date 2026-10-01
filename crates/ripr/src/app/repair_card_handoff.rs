@@ -76,7 +76,9 @@ pub(crate) fn repair_card_for_entry(
         None => (None, None),
     };
     let repository_head = git_output(root, &["rev-parse", "HEAD"])
-        .map_err(|error| format!("agent card could not resolve the repository head: {error}"))?;
+        .map_err(|error| format!("agent card could not resolve the repository head: {error}"))?
+        .trim()
+        .to_string();
     let workspace_identity = workspace_identity_for(entry, &eligibility.readiness)?;
     let seam_id = entry.seam.id().as_str().to_string();
     let attempt = latest_attempt_for_seam(root, &seam_id)?;
