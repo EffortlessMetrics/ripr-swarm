@@ -10,6 +10,7 @@ Linked issues:
 
 - #1216
 - #4404
+- #4486
 
 Linked PRs:
 
@@ -106,7 +107,8 @@ families are unchanged: only a `token_match` clears them.
 ## Non-Goals
 
 - Running mutations or dynamic analysis.
-- Changing behavior for Predicate or ErrorPath probes.
+- Changing token confirmation for Predicate or ErrorPath probes. The
+  name-only relation rule below is family-independent and does apply to them.
 - Bumping the JSON schema version.
 - Changing the oracle-strength → discriminate-state mapping. A Medium effect
   observer (bare `MockExpectation`) remains `weakly_exposed` via the existing
@@ -210,11 +212,74 @@ Proof: `strongest_oracle_cannot_borrow_weaker_assertion_confirmation`,
 `equally_strong_confirmed_oracle_preserves_discrimination_in_either_order`,
 and the `oracle_confirmation_mixed` fixture registered in the honesty corpus.
 
+## Direct collection StateWrite observer (#4575)
+
+One effect family is admitted through the existing `PropagationWitnessV1`
+direct-sink authority: a bare-identifier collection mutation such as
+`items.push(5)` whose receiver is a passed mutable collection.
+
+Confirmation for that family requires the assertion's **primary observed
+subject** to be that same receiver:
+
+- `assert_eq!(items, expected)` observes `items` and retains useful evidence.
+- `assert_eq!(items.len(), 1)` observes a read of `items`.
+- `assert_eq!(other, expected)` and `assert_eq!(other, items)` observe
+  `other` and stay `observation_unverified`.
+- `assert_eq!(items.clear(), ())` and `assert_eq!(items.push(1), ())` observe
+  the mutating call's return, not the collection, and stay unverified.
+- A quoted `assert_eq!(items, …)` inside another assertion does not confirm
+  the collection sink.
+- A return-value assertion, a string containing the callee name, or an
+  unrelated mock does not confirm the collection sink.
+
+`self.field.push`, `cache.insert`, `items.insert`, helper/dynamic receivers,
+and other effect families keep the existing Part C path. This does not absorb
+oracle-pooling (#4404) or rewrite the shared witness type (#3160). The first
+admitted method is `push` only; `insert` is a later sibling because it collides
+with delivered CallDeletion goldens.
+
+Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
+`asserting_affected_collection_retains_confirmation_in_either_order`,
+`direct_collection_push_completes_effect_target_and_rejects_wrong_observer`,
+`direct_collection_state_write_requires_complete_witness`,
+`cache_insert_call_deletion_keeps_legacy_syntax_propagation`, and
+`direct_collection_mutation_discriminates_actual_observer_not_sibling_collection`.
+
+## Name-only relations cannot supply the oracle (#4486)
+
+A related test whose only tie to the owner is its name has no evidence of
+running the changed code. The ties that count as name-only are
+`weak_token_substring` (the name shares a changed token) and
+`owner_named_test` (the name contains the owner's name, with no captured
+call, helper chain or assertion affinity). When another related test reaches
+the owner, a name-only test's assertions stay listed but cannot supply the
+credited oracle strength, its confirmation, or clear `observation_unverified`.
+Reach-bearing relations are the direct and helper owner calls, assertion
+target affinity, and seam callee calls.
+
+Same-file and same-module relations are neither reach-bearing nor name-only:
+`reach.rs` already treats them as proximity without reach, so they do not
+switch this rule on, and they keep crediting their own assertions because
+they commonly exercise a private helper through the module's own entry point.
+When no related test is reach-bearing, reach itself is `no` or `weak`, so the
+finding cannot read `exposed`, and name-only assertions keep their previous
+reading.
+
+The rule is family-independent because it concerns which test supplies the
+oracle, not how an assertion confirms the changed expression.
+
+Proof: `name_only_test_cannot_supply_the_oracle_for_reach_from_another_test`
+and the `proximity_name_oracle_not_credited` fixture, registered in the
+honesty corpus.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.
 - Strongest-oracle confirmation: the two fallible classifier tests named above
   and `fixtures/oracle_confirmation_mixed`, registered in the honesty corpus.
+- Name-only relations: `name_only_test_cannot_supply_the_oracle_for_reach_from_another_test`
+  and `fixtures/proximity_name_oracle_not_credited`, registered in the honesty
+  corpus.
 - 9 new golden fixtures (see traceability.toml for the full list).
 - `crates/ripr/src/analysis/classifier.rs` — 2 existing tests updated.
 
@@ -229,7 +294,9 @@ and the `oracle_confirmation_mixed` fixture registered in the honesty corpus.
   - `RevealAssertionAnalysis.strongest_observation_confirmed` keeps confirmation
     on the assertion supplying the selected strength and kind.
   - `analyze_related_assertions` computes `observation_confirmed =
-    has_token_match || (is_effect_family && effect_observer_confirms)`.
+    has_token_match || (is_effect_family && effect_observer_confirms)`, except
+    the direct collection StateWrite family (#4575) which requires the
+    assertion's primary observed subject to be the mutated receiver.
   - `assertion_matches_probe_detail` receives `match_arm_variants` param.
   - `build_discriminate_evidence` updated message.
 

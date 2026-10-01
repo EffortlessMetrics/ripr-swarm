@@ -35,6 +35,7 @@ fn write_pilot_repo_exposure_json(
     config: &RiprConfig,
     classified: &[analysis::ClassifiedSeam],
     limit_info: Option<&analysis::SeamLimitInfo>,
+    generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     pilot_budget_truncated: bool,
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
@@ -42,16 +43,16 @@ fn write_pilot_repo_exposure_json(
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, classified);
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
     if pilot_budget_truncated {
-        return std::fs::write(
+        return write_pilot_file(
             path,
-            output::repo_exposure::render_repo_exposure_json(
+            output::repo_exposure::render_repo_exposure_json_with_generated_skip(
                 classified,
                 limit_info,
                 ts_guidance.as_ref(),
                 python_guidance.as_ref(),
+                generated_skip,
             ),
-        )
-        .map_err(|err| write_failed(err.to_string()));
+        );
     }
     // Base `None`: pilot's printed after-snapshot command passes no `--base`
     // or `--diff`, so both snapshots intentionally carry no base under
@@ -63,18 +64,24 @@ fn write_pilot_repo_exposure_json(
         None,
         config,
     )?;
-    let file = std::fs::File::create(path).map_err(|err| write_failed(err.to_string()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    output::repo_exposure::write_repo_exposure_json_with_context(
-        classified,
-        limit_info,
-        ts_guidance.as_ref(),
-        python_guidance.as_ref(),
-        &context,
-        &mut writer,
-    )
-    .map_err(write_failed)?;
-    std::io::Write::flush(&mut writer).map_err(|err| write_failed(err.to_string()))
+    let mut render_error = None;
+    output::file_write::write_with(path, |file| {
+        let mut writer = std::io::BufWriter::new(file);
+        if let Err(err) = output::repo_exposure::write_repo_exposure_json_with_context(
+            classified,
+            limit_info,
+            ts_guidance.as_ref(),
+            python_guidance.as_ref(),
+            generated_skip,
+            &context,
+            &mut writer,
+        ) {
+            render_error = Some(err);
+            return Err(std::io::Error::other("repo exposure rendering failed"));
+        }
+        std::io::Write::flush(&mut writer)
+    })
+    .map_err(|err| write_failed(render_error.take().unwrap_or_else(|| err.to_string())))
 }
 
 pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
@@ -100,15 +107,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     apply_to_check_input(&mut input, &config, options.explicit);
 
     let artifacts = pilot_artifacts(&options.out_dir);
-    std::fs::create_dir_all(&options.out_dir)
-        .map_err(|err| format!("create {} failed: {err}", options.out_dir.display()))?;
+    output::file_write::create_output_dir(&options.out_dir, "--out")?;
 
     let analysis_root = input.root.clone();
     let analysis_config = config.clone();
     let mut analysis_result = run_pilot_analysis_with_timeout(options.timeout_ms, {
         let root = analysis_root.clone();
         let cfg = analysis_config.clone();
-        move || analysis::inventory_classified_seams_at_with_config(&root, &cfg)
+        move || analysis::inventory_classified_seams_report_at_with_config(&root, &cfg)
     })?;
 
     // Auto-retry at a higher budget when the default timeout fires and the
@@ -126,14 +132,13 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         analysis_result = run_pilot_analysis_with_timeout(PILOT_RETRY_TIMEOUT_MS, {
             let root = analysis_root.clone();
             let cfg = analysis_config.clone();
-            move || analysis::inventory_classified_seams_at_with_config(&root, &cfg)
+            move || analysis::inventory_classified_seams_report_at_with_config(&root, &cfg)
         })?;
         // Update timeout_ms so the retry hint (if it times out again) uses the
         // retry budget, not the original default.
         // (context struct reads options.timeout_ms for the hint)
     }
-    let PilotAnalysisResult::Complete((mut classified, inventory_limit_info)) = analysis_result
-    else {
+    let PilotAnalysisResult::Complete(report) = analysis_result else {
         let context = output::pilot::PilotSummaryContext {
             root: &input.root,
             mode: &input.mode,
@@ -144,26 +149,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             python_first_use: None,
             language_routes: None,
         };
-        std::fs::write(
+        write_pilot_file(
             &artifacts.pilot_summary_json,
             output::pilot::render_pilot_timeout_summary_json(context),
-        )
-        .map_err(|err| {
-            format!(
-                "write {} failed: {err}",
-                artifacts.pilot_summary_json.display()
-            )
-        })?;
-        std::fs::write(
+        )?;
+        write_pilot_file(
             &artifacts.pilot_summary_md,
             output::pilot::render_pilot_timeout_summary_md(context),
-        )
-        .map_err(|err| {
-            format!(
-                "write {} failed: {err}",
-                artifacts.pilot_summary_md.display()
-            )
-        })?;
+        )?;
         print!("{}", output::pilot::render_pilot_timeout_terminal(context));
         return Ok(());
     };
@@ -173,6 +166,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // classified slice for the two pilot artifacts so they stay under a
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
+    let mut classified = report.classified;
+    let inventory_limit_info = report.limit_info;
+    let generated_skip =
+        output::repo_exposure::GeneratedRustSkip::from_paths(report.skipped_generated);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified);
     let pilot_budget_truncated = pilot_budget_info.is_some();
     let limit_info = pilot_budget_info.or(inventory_limit_info);
@@ -190,6 +187,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         !classified.is_empty(),
         config.languages().enabled(),
         &analysis::workspace_preview_language_files(&input.root),
+    )
+    .with_unanalyzed(
+        analysis::workspace_unanalyzed_source_languages(&input.root),
+        !analysis::workspace_rust_files(&input.root).is_empty(),
     );
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
@@ -211,58 +212,36 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &config,
         &classified,
         limit_info.as_ref(),
+        generated_skip.as_ref(),
         pilot_budget_truncated,
     )?;
-    std::fs::write(
+    write_pilot_file(
         &artifacts.repo_exposure_md,
-        output::repo_exposure::render_repo_exposure_md(
+        output::repo_exposure::render_repo_exposure_md_with_generated_skip(
             &classified,
             limit_info.as_ref(),
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
+            generated_skip.as_ref(),
         ),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.repo_exposure_md.display()
-        )
-    })?;
-    std::fs::write(
+    )?;
+    write_pilot_file(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_with_causal(
             &classified,
             limit_info.as_ref(),
             causal_projection.as_ref(),
         ),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.agent_seam_packets_json.display()
-        )
-    })?;
+    )?;
 
-    std::fs::write(
+    write_pilot_file(
         &artifacts.pilot_summary_json,
         output::pilot::render_pilot_summary_json(&classified, context),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.pilot_summary_json.display()
-        )
-    })?;
-    std::fs::write(
+    )?;
+    write_pilot_file(
         &artifacts.pilot_summary_md,
         output::pilot::render_pilot_summary_md(&classified, context),
-    )
-    .map_err(|err| {
-        format!(
-            "write {} failed: {err}",
-            artifacts.pilot_summary_md.display()
-        )
-    })?;
+    )?;
 
     print!(
         "{}",
@@ -336,12 +315,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
 }
 
 enum PilotAnalysisResult {
-    Complete(
-        (
-            Vec<analysis::ClassifiedSeam>,
-            Option<analysis::SeamLimitInfo>,
-        ),
-    ),
+    Complete(analysis::ClassifiedSeamsReport),
     TimedOut,
 }
 
@@ -350,14 +324,7 @@ fn run_pilot_analysis_with_timeout<F>(
     runner: F,
 ) -> Result<PilotAnalysisResult, String>
 where
-    F: FnOnce() -> Result<
-            (
-                Vec<analysis::ClassifiedSeam>,
-                Option<analysis::SeamLimitInfo>,
-            ),
-            String,
-        > + Send
-        + 'static,
+    F: FnOnce() -> Result<analysis::ClassifiedSeamsReport, String> + Send + 'static,
 {
     let cancellation_token = crate::analysis::cancellation::AnalysisCancellationToken::new();
     let worker_token = cancellation_token.clone();
@@ -388,6 +355,13 @@ fn pilot_artifacts(out_dir: &Path) -> output::pilot::PilotArtifacts {
         pilot_summary_json: out_dir.join("pilot-summary.json"),
         pilot_summary_md: out_dir.join("pilot-summary.md"),
     }
+}
+
+/// Pilot artifacts default under the analyzed repository, which may commit a
+/// symlink at an artifact path; never write through it.
+fn write_pilot_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
+    output::file_write::write(path, contents.as_ref())
+        .map_err(|err| format!("write output {} failed: {err}", path.display()))
 }
 
 #[cfg(test)]
@@ -434,7 +408,7 @@ mod tests {
     fn pilot_rejects_non_positive_max_seams() {
         assert_eq!(
             parse_pilot_options(&args(&["--max-seams", "0"])),
-            Err("invalid --max-seams: expected a positive integer".to_string())
+            Err("--max-seams requires a positive integer; got \"0\"".to_string())
         );
     }
 
@@ -442,7 +416,7 @@ mod tests {
     fn pilot_rejects_non_positive_timeout() {
         assert_eq!(
             parse_pilot_options(&args(&["--timeout-ms", "0"])),
-            Err("invalid --timeout-ms: expected a positive integer".to_string())
+            Err("--timeout-ms requires a positive integer; got \"0\"".to_string())
         );
     }
 
@@ -492,5 +466,48 @@ mod tests {
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
         assert_eq!(cancelled_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unwritable_out_dir_names_out_not_out_dir() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::unwritable("pilot-ro", "pilot")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match pilot(&args(&["--root", root, "--out", out])) {
+            Err(error) => error,
+            Ok(()) => return Err("unwritable --out must fail before analysis".to_string()),
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            error.contains("write elsewhere with --out PATH"),
+            "pilot must name --out PATH, got {error}"
+        );
+        assert!(
+            !error.contains("--out-dir"),
+            "pilot must not name first-pr's flag, got {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn occupying_file_out_dir_does_not_name_the_relocate_flag() -> Result<(), String> {
+        use crate::testing::unwritable_output::OutputDirFixture;
+
+        let env = OutputDirFixture::occupying_file("pilot-file", "pilot")?;
+        let root = OutputDirFixture::path_arg(&env.root)?;
+        let out = OutputDirFixture::path_arg(&env.target)?;
+        let error = match pilot(&args(&["--root", root, "--out", out])) {
+            Err(error) => error,
+            Ok(()) => return Err("file occupying --out must fail".to_string()),
+        };
+        assert!(error.contains(&format!("create {out} failed:")), "{error}");
+        assert!(
+            !error.contains("write elsewhere"),
+            "a file occupying --out is not a not-writable tree: {error}"
+        );
+        Ok(())
     }
 }

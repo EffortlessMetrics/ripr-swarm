@@ -17,6 +17,7 @@
 //! Both contracts are pinned by tests in this file.
 
 use super::classify::exact_error_variant;
+use super::generated_rust_corpus::{AnalyzableRustCorpus, discover_analyzable_rust_corpus};
 use super::rust_index::{
     self, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,
     PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE, PROBE_SHAPE_RETURN_VALUE,
@@ -71,7 +72,7 @@ pub(crate) fn inventory_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<Vec<RepoSeam>, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     // Producer-owned source role (#3283).
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
@@ -157,19 +158,36 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
 /// failures never fail the analysis.
 #[cfg(test)]
 pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<ClassifiedSeam>, String> {
-    inventory_classified_seams_at_with_config(root, &RiprConfig::default())
-        .map(|(classified, _)| classified)
+    inventory_classified_seams_report_at_with_config(root, &RiprConfig::default())
+        .map(|report| report.classified)
+}
+
+/// Classified inventory plus the generated-Rust files this run skipped so
+/// repo-exposure can disclose them without a second corpus walk.
+#[derive(Clone, Debug)]
+pub(crate) struct ClassifiedSeamsReport {
+    pub(crate) classified: Vec<ClassifiedSeam>,
+    pub(crate) limit_info: Option<SeamLimitInfo>,
+    pub(crate) skipped_generated: Vec<PathBuf>,
 }
 
 pub(crate) fn inventory_classified_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Option<SeamLimitInfo>), String> {
+    let report = inventory_classified_seams_report_at_with_config(root, config)?;
+    Ok((report.classified, report.limit_info))
+}
+
+pub(crate) fn inventory_classified_seams_report_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<ClassifiedSeamsReport, String> {
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
     let store_limit = classified_seam_cache_store_limit()?;
     let collect_started = Instant::now();
-    let (rust_files, fingerprint) = match scan_corpus_fingerprint(root) {
+    let corpus = match scan_corpus_fingerprint(root, config) {
         Ok(scan) => scan,
         Err(err) => {
             trace_latency_phase(
@@ -181,6 +199,9 @@ pub(crate) fn inventory_classified_seams_at_with_config(
             return Err(err);
         }
     };
+    let rust_files = corpus.analyzable;
+    let fingerprint = corpus.fingerprint;
+    let skipped_generated = corpus.skipped_generated;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
@@ -207,8 +228,13 @@ pub(crate) fn inventory_classified_seams_at_with_config(
                 }
                 // Preserve the run_status from the original run: a capped run
                 // stored its SeamLimitInfo in the envelope; a complete run
-                // stored None.
-                return Ok((cached, cached_limit_info.map(SeamLimitInfo::from)));
+                // stored None. Skipped generated paths come from this walk so
+                // a warm hit still discloses files added after the cache write.
+                return Ok(ClassifiedSeamsReport {
+                    classified: cached,
+                    limit_info: cached_limit_info.map(SeamLimitInfo::from),
+                    skipped_generated,
+                });
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
@@ -259,7 +285,11 @@ pub(crate) fn inventory_classified_seams_at_with_config(
             }
             // Preserve the run_status from the original run: a capped run stored
             // its SeamLimitInfo in the envelope; a complete run stored None.
-            return Ok((cached, cached_limit_info.map(SeamLimitInfo::from)));
+            return Ok(ClassifiedSeamsReport {
+                classified: cached,
+                limit_info: cached_limit_info.map(SeamLimitInfo::from),
+                skipped_generated,
+            });
         }
         CacheLoad::Miss => {
             trace_latency_phase("cache_load", "miss", cache_started.elapsed());
@@ -314,7 +344,11 @@ pub(crate) fn inventory_classified_seams_at_with_config(
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
     trace_latency_phase("total", "computed", total_started.elapsed());
-    Ok((classified, limit_info))
+    Ok(ClassifiedSeamsReport {
+        classified,
+        limit_info,
+        skipped_generated,
+    })
 }
 
 /// Return the workspace cache identity used by the full classified inventory.
@@ -326,16 +360,18 @@ pub(crate) fn workspace_cache_key_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<super::seam_cache::RepoSeamCacheKey, String> {
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
+    let corpus = scan_corpus_fingerprint(root, config)?;
     let inputs = workspace_key_inputs(root, config);
     // Fingerprint fast path (issue #2108): a stored mapping yields the
     // byte-identical key without reading any file contents.
-    if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
+    if let Some(key) =
+        fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
+    {
         return Ok(key);
     }
-    let state = collect_workspace_state_from_files(root, config, rust_files)?;
+    let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
-    store_corpus_fingerprint_mapping(&state, fingerprint, &key);
+    store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }
 
@@ -430,10 +466,10 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     config: &RiprConfig,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let discover_started = Instant::now();
-    let rust_files = match workspace::discover_rust_files(root) {
-        Ok(files) => {
+    let rust_files = match discover_analyzable_rust_corpus(root, config) {
+        Ok(corpus) => {
             trace_latency_phase("discover_rust_files", "ok", discover_started.elapsed());
-            files
+            corpus.analyzable
         }
         Err(err) => {
             trace_latency_phase("discover_rust_files", "error", discover_started.elapsed());
@@ -519,7 +555,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
     let total_started = Instant::now();
     let store_limit = compact_classified_seam_cache_store_limit()?;
     let cache = RepoSeamFactCache::at_compact_classified(root);
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
+    let corpus = scan_corpus_fingerprint(root, config)?;
+    let rust_files = corpus.analyzable;
+    let fingerprint = corpus.fingerprint;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): rebuild the byte-identical cache
@@ -617,7 +655,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     // Producer-owned source role (#3283).
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
@@ -789,12 +827,55 @@ pub(crate) struct TargetedTestClassifiedSeamInventory {
     pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
 }
 
+/// Why a `--changed-test` selector could not name the seams to recompute.
+/// The selector failures are named limitations for the rerun report
+/// (RIPR-SPEC-0123); `Analysis` is a workspace failure the caller reports as
+/// an error.
+#[derive(Debug)]
+pub(crate) enum TargetedTestInventoryError {
+    Selector {
+        kind: &'static str,
+        message: String,
+        selected_test_count: usize,
+        /// The index was already built when the selector failed, so the
+        /// report still discloses the cache work that ran.
+        cache: Box<TargetedSelectorCacheEvidence>,
+    },
+    Analysis(String),
+}
+
+/// File-fact cache work completed before a changed-test selector failed.
+#[derive(Clone, Debug)]
+pub(crate) struct TargetedSelectorCacheEvidence {
+    pub(crate) file_fact_cache: FileFactCacheStats,
+    pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
+}
+
+impl From<String> for TargetedTestInventoryError {
+    fn from(message: String) -> Self {
+        Self::Analysis(message)
+    }
+}
+
+impl From<TargetedTestInventoryError> for String {
+    fn from(error: TargetedTestInventoryError) -> Self {
+        match error {
+            TargetedTestInventoryError::Selector { message, .. }
+            | TargetedTestInventoryError::Analysis(message) => message,
+        }
+    }
+}
+
+pub(crate) const CHANGED_TEST_UNRESOLVED: &str = "changed_test_unresolved";
+pub(crate) const CHANGED_TEST_OWNER_UNRESOLVED: &str = "changed_test_owner_unresolved";
+pub(crate) const CHANGED_TEST_OWNER_AMBIGUOUS: &str = "changed_test_owner_ambiguous";
+
 pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     root: &Path,
     config: &RiprConfig,
     changed_test: &Path,
     test_node: Option<&str>,
-) -> Result<TargetedTestClassifiedSeamInventory, String> {
+) -> Result<TargetedTestClassifiedSeamInventory, TargetedTestInventoryError> {
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
     let changed_test = normalized_inventory_path(changed_test);
@@ -804,6 +885,16 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         harness_registrations(config),
     )?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
+    let selector_limitation =
+        |kind, message, selected_test_count| TargetedTestInventoryError::Selector {
+            kind,
+            message,
+            selected_test_count,
+            cache: Box::new(TargetedSelectorCacheEvidence {
+                file_fact_cache: cached.file_fact_cache.clone(),
+                workspace_cache_key: workspace_cache_key.clone(),
+            }),
+        };
 
     let selected_tests = cached
         .index
@@ -813,10 +904,14 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .filter(|test| test_node.is_none_or(|node| test.name == node))
         .collect::<Vec<_>>();
     if selected_tests.is_empty() {
-        return Err(format!(
-            "targeted rerun changed test `{}`{} did not resolve to a parsed test",
-            changed_test,
-            test_node.map_or(String::new(), |node| format!("::{node}"))
+        return Err(selector_limitation(
+            CHANGED_TEST_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{}{}` did not resolve to a parsed test",
+                changed_test,
+                test_node.map_or(String::new(), |node| format!("::{node}"))
+            ),
+            0,
         ));
     }
 
@@ -832,8 +927,12 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
     if direct_call_names.is_empty() {
-        return Err(format!(
-            "targeted rerun changed test `{changed_test}` has no direct owner-call selector"
+        return Err(selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{changed_test}` has no direct owner-call selector"
+            ),
+            selected_tests.len(),
         ));
     }
 
@@ -850,8 +949,12 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .map(|function| function.name.clone())
         .collect::<BTreeSet<_>>();
     if matched_call_names.is_empty() {
-        return Err(format!(
-            "targeted rerun changed test `{changed_test}` did not resolve a direct production owner"
+        return Err(selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{changed_test}` did not resolve a direct production owner"
+            ),
+            selected_tests.len(),
         ));
     }
     for call_name in &matched_call_names {
@@ -860,8 +963,12 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
             .filter(|function| function.name == *call_name)
             .count();
         if matching_owners > 1 {
-            return Err(format!(
-                "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{call_name}`"
+            return Err(selector_limitation(
+                CHANGED_TEST_OWNER_AMBIGUOUS,
+                format!(
+                    "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{call_name}`"
+                ),
+                selected_tests.len(),
             ));
         }
     }
@@ -972,8 +1079,9 @@ fn try_no_impact_fast_path(
     // Discovery walks directories and stats files; it reads no file
     // contents. A discovery failure matches the full path's failure,
     // so propagate it rather than declining into an identical error.
-    let (rust_files, fingerprint) = scan_corpus_fingerprint(root)?;
-    let Some(fingerprint) = fingerprint else {
+    let corpus = scan_corpus_fingerprint(root, config)?;
+    let rust_files = corpus.analyzable;
+    let Some(fingerprint) = corpus.fingerprint else {
         // No stat field on this platform witnesses every content write
         // (issue #3848), so no signature is reusable evidence here.
         return Ok(NoImpactOutcome::Declined(
@@ -1649,16 +1757,18 @@ where
 /// bytes when building cached file facts so file discovery and file
 /// reads are not repeated after a classified-seam cache miss.
 ///
-/// Hashes the **same Rust file set fed to `build_index`** — production
-/// seam sources *and* test evidence sources. `ClassifiedSeam` carries
-/// `TestGripEvidence` derived from test files, so a test-only edit must
-/// invalidate the cache; filtering to production-only here would let
-/// stale grip evidence survive a test rewrite.
+/// Hashes the **same analyzable Rust file set fed to `build_index`** —
+/// production seam sources *and* test evidence sources, after the generated
+/// skip `ripr check` uses. `ClassifiedSeam` carries `TestGripEvidence`
+/// derived from test files, so a test-only edit must invalidate the cache;
+/// filtering to production-only here would let stale grip evidence survive a
+/// test rewrite. Generated files are excluded from this hash so an edit there
+/// does not bust the inventory cache.
 fn collect_workspace_state(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<OwnedWorkspaceState, String> {
-    let rust_files = workspace::discover_rust_files(root)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
     collect_workspace_state_from_files(root, config, rust_files)
 }
 
@@ -1686,16 +1796,19 @@ fn collect_workspace_state_from_files(
     })
 }
 
-/// Discover the corpus and compute its stat-only fingerprint in one pass
-/// (issue #2108). The fingerprint is `None` when any file cannot be
-/// stat'd, and on any platform where [`corpus_fingerprint`] refuses to
-/// sign because no field of the stat tuple is a content-change witness
-/// (issue #3848); callers then fall back to the always-correct content
-/// read.
-fn scan_corpus_fingerprint(root: &Path) -> Result<(Vec<PathBuf>, Option<String>), String> {
-    let rust_files = workspace::discover_rust_files(root)?;
-    let fingerprint = corpus_fingerprint(root, &rust_files);
-    Ok((rust_files, fingerprint))
+/// Discover the analyzable corpus and compute its stat-only fingerprint
+/// in one pass (issue #2108, #4788). Generated Rust that `ripr check`
+/// skips is excluded from both the file set and the fingerprint so the
+/// exclusion policy is part of cache identity. The fingerprint is `None`
+/// when any file cannot be stat'd, and on any platform where
+/// [`corpus_fingerprint`] refuses to sign because no field of the stat
+/// tuple is a content-change witness (issue #3848); callers then fall
+/// back to the always-correct content read.
+fn scan_corpus_fingerprint(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<AnalyzableRustCorpus, String> {
+    discover_analyzable_rust_corpus(root, config)
 }
 
 /// Cache-key inputs other than the corpus content hash, in owned form so
@@ -2805,8 +2918,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
         index.functions.push(owner.clone());
@@ -2854,8 +2969,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             literals: Vec::new(),
             source_role: FunctionSourceRole::TestAttribute,
             attrs: vec!["#[test]".to_string()],
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
         index.functions.push(test_owner.clone());
@@ -3047,16 +3164,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse compact cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode compact cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at_compact_classified(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         let warm =
             inventory_compact_classified_seams_at_with_config(&root, &RiprConfig::default())?;
@@ -3124,6 +3237,68 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     #[test]
+    fn integrity_invalid_classified_payload_recomputes_full_and_compact_consumers()
+    -> Result<(), String> {
+        for compact in [false, true] {
+            let root = make_tempdir("integrity-consumer")?;
+            write_file(
+                &root.join("src/foo.rs"),
+                "pub fn discount(amount: i32) -> bool { amount >= 5 }\n",
+            )?;
+            let read = || {
+                if compact {
+                    inventory_compact_classified_seams_at_with_config(&root, &RiprConfig::default())
+                } else {
+                    inventory_classified_seams_at(&root)
+                }
+            };
+            let cold = read()?;
+            if cold.is_empty() {
+                return Err("consumer fixture must contain classified seams".to_owned());
+            }
+            let entries = if compact {
+                list_compact_cache_entries(&root)?
+            } else {
+                list_cache_entries(&root)?
+            };
+            if entries.len() != 1 {
+                return Err("expected one actual writer entry".to_owned());
+            }
+            let path = entries.first().ok_or("missing seeded entry")?;
+            let original = std::fs::read(path).map_err(|err| err.to_string())?;
+            let mut edited: serde_json::Value =
+                serde_json::from_slice(&original).map_err(|err| err.to_string())?;
+            let seams = edited
+                .get_mut("classified_seams")
+                .and_then(|value| value.as_array_mut())
+                .ok_or("missing seams")?;
+            let summary = seams
+                .first_mut()
+                .and_then(|seam| seam.get_mut("evidence"))
+                .and_then(|evidence| evidence.get_mut("reach"))
+                .and_then(|reach| reach.get_mut("summary"))
+                .ok_or("missing observed summary")?;
+            *summary = serde_json::Value::String("fabricated evidence".to_owned());
+            std::fs::write(
+                path,
+                serde_json::to_vec(&edited).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            let recovered = read()?;
+            let expected = serde_json::to_vec(&cold).map_err(|err| err.to_string())?;
+            if serde_json::to_vec(&recovered).map_err(|err| err.to_string())? != expected {
+                return Err("integrity recovery must preserve every cold evidence field".to_owned());
+            }
+            let warm = read()?;
+            if serde_json::to_vec(&warm).map_err(|err| err.to_string())? != expected {
+                return Err("corrected entry must warm-hit original evidence".to_owned());
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn given_cached_classified_seams_when_inventory_runs_then_cached_seams_are_returned()
     -> Result<(), String> {
         let root = make_tempdir("warm-hit")?;
@@ -3149,16 +3324,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         let warm = inventory_classified_seams_at(&root)?;
         if !warm.is_empty() {
@@ -3216,16 +3387,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Swap the bytes for same-length different content and restore the
         // original mtime, keeping the (path, mtime, size) signature intact.
@@ -3297,16 +3464,12 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Same-size rewrite with the mtime explicitly restored — what
         // `rsync -a` / `cp --preserve=timestamps` do. On unix the ctime
@@ -3602,7 +3765,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         config: &RiprConfig,
         changed: &[&str],
     ) -> Result<Option<NoImpactFallbackReason>, String> {
-        let (rust_files, _) = scan_corpus_fingerprint(root)?;
+        let rust_files = scan_corpus_fingerprint(root, config)?.analyzable;
         let context =
             production_role_context(root, config, rust_files.iter().map(PathBuf::as_path));
         let changed_files: Vec<PathBuf> = changed.iter().map(PathBuf::from).collect();
@@ -4003,6 +4166,117 @@ marker = "libtest_mimic::Trial"
 
     #[cfg(unix)]
     #[test]
+    fn same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth() -> Result<(), String>
+    {
+        let root = std::env::temp_dir().join(format!("ripr-inv-integrity-{}", unique_suffix()));
+        std::fs::create_dir(&root).map_err(|err| err.to_string())?;
+        struct OwnedRoot(PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _owned = OwnedRoot(root.clone());
+        no_impact_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = vec![PathBuf::from("docs/notes.md")];
+        let cold = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            false,
+            None,
+        )?;
+        if cold.total_rust_files == 0 || cold.total_production_files == 0 {
+            return Err(
+                "fingerprint consumer fixture must contain production Rust source".to_owned(),
+            );
+        }
+        // Scoped cold inventory does not write fingerprint mappings; seed its actual producer.
+        let produced_key = workspace_cache_key_at_with_config(&root, &config)?;
+        if produced_key != cold.workspace_cache_key {
+            return Err("actual fingerprint producer must match cold source identity".to_owned());
+        }
+        if !matches!(
+            try_no_impact_fast_path(&root, &config, &changed, &[])?,
+            NoImpactOutcome::Fast(_)
+        ) {
+            return Err(
+                "actual-writer mapping must yield a warm canonical hit before tamper".to_owned(),
+            );
+        }
+        let entries = no_impact_fingerprint_entries(&root)?;
+        if entries.len() != 1 {
+            return Err("expected one actual-writer fingerprint entry".to_owned());
+        }
+        let entry = entries.first().ok_or("missing mapping")?;
+        let mut edited: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(entry).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        let original = edited.clone();
+        *edited
+            .get_mut("files_content_hash")
+            .ok_or("missing aggregate hash")? =
+            serde_json::Value::String("fabricated-content-hash".to_owned());
+        for (key, value) in original.as_object().ok_or("mapping must be object")? {
+            if key != "files_content_hash" && edited.get(key) != Some(value) {
+                return Err("must preserve mapping identity/digest".to_owned());
+            }
+        }
+        std::fs::write(
+            entry,
+            serde_json::to_vec(&edited).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        if !matches!(
+            try_no_impact_fast_path(&root, &config, &changed, &[])?,
+            NoImpactOutcome::Declined(NoImpactFallbackReason::CorruptMetadata)
+        ) {
+            return Err(
+                "valid-JSON mapping corruption must decline canonical fast path".to_owned(),
+            );
+        }
+        let recovered = inventory_diff_scoped_classified_seams_inner(
+            &root,
+            &config,
+            &changed,
+            &[],
+            true,
+            None,
+        )?;
+        if recovered.workspace_cache_key != cold.workspace_cache_key
+            || recovered.total_rust_files != cold.total_rust_files
+            || recovered.total_production_files != cold.total_production_files
+            || serde_json::to_vec(&recovered.classified).map_err(|err| err.to_string())?
+                != serde_json::to_vec(&cold.classified).map_err(|err| err.to_string())?
+        {
+            return Err(
+                "fallback must rehash actual source and preserve complete cold evidence".to_owned(),
+            );
+        }
+        let repaired_key = workspace_cache_key_at_with_config(&root, &config)?;
+        if repaired_key != cold.workspace_cache_key
+            || !matches!(
+                try_no_impact_fast_path(&root, &config, &changed, &[])?,
+                NoImpactOutcome::Fast(_)
+            )
+        {
+            return Err(
+                "actual producer must repair the mapping for a subsequent warm hit".to_owned(),
+            );
+        }
+        eprintln!(
+            "fingerprint consumer stimulus: rust_files={} production_files={} mappings={}",
+            cold.total_rust_files,
+            cold.total_production_files,
+            entries.len()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn no_impact_foreign_root_mapping_falls_back_incompatible() -> Result<(), String> {
         let root = make_tempdir("no-impact-foreign")?;
         no_impact_layout(&root)?;
@@ -4147,16 +4421,12 @@ marker = "libtest_mimic::Trial"
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        // Seed a valid alternate payload through the actual writer. Integrity is not authenticity:
+        // an authorized writer can recompute a checksum; this remains an observable cache-hit control.
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        let cache = RepoSeamFactCache::at(&root);
+        cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Change the content and force a distinct mtime so the new
         // signature cannot collide with the old one through mtime
@@ -4264,7 +4534,9 @@ marker = "libtest_mimic::Trial"
             &root.join("src/foo.rs"),
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
         )?;
-        let (rust_files, pre_fingerprint) = scan_corpus_fingerprint(&root)?;
+        let corpus = scan_corpus_fingerprint(&root, &RiprConfig::default())?;
+        let rust_files = corpus.analyzable;
+        let pre_fingerprint = corpus.fingerprint;
         let state = collect_workspace_state_from_files(&root, &RiprConfig::default(), rust_files)?;
         let key = state.cache_key();
 
@@ -4423,16 +4695,9 @@ marker = "libtest_mimic::Trial"
                 entries.len()
             ));
         }
-        let cache_file = &entries[0];
-        let bytes = std::fs::read(cache_file)
-            .map_err(|err| format!("read {}: {err}", cache_file.display()))?;
-        let mut envelope: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|err| format!("parse cache: {err}"))?;
-        envelope["classified_seams"] = serde_json::Value::Array(Vec::new());
-        let rewritten =
-            serde_json::to_vec(&envelope).map_err(|err| format!("encode cache: {err}"))?;
-        std::fs::write(cache_file, rewritten)
-            .map_err(|err| format!("rewrite {}: {err}", cache_file.display()))?;
+        let state = collect_workspace_state(&root, &RiprConfig::default())?;
+        let key = state.cache_key();
+        RepoSeamFactCache::at(&root).store_classified_seams_with_limit(&key, &[], None, 10)?;
 
         // Edit only the test file — production untouched, no .ripr/*
         // files involved. This must change the cache key so the
@@ -4779,6 +5044,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }
@@ -4846,6 +5112,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
             }
@@ -4989,8 +5256,17 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
         );
         let _ = std::fs::remove_dir_all(&root);
         match result {
-            Err(message) if message.contains("::missing_case") => Ok(()),
-            Err(message) => Err(format!("unexpected missing-node diagnostic: {message}")),
+            Err(TargetedTestInventoryError::Selector {
+                kind: CHANGED_TEST_UNRESOLVED,
+                message,
+                ..
+            }) if message.contains("::missing_case") => Ok(()),
+            Err(TargetedTestInventoryError::Selector { kind, message, .. }) => Err(format!(
+                "unexpected missing-node limitation {kind}: {message}"
+            )),
+            Err(TargetedTestInventoryError::Analysis(message)) => {
+                Err(format!("unexpected missing-node diagnostic: {message}"))
+            }
             Ok(_) => Err("unknown test node must fail closed".to_string()),
         }
     }
@@ -5019,11 +5295,336 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
         );
         let _ = std::fs::remove_dir_all(&root);
         match result {
-            Err(message) if message.contains("ambiguous direct production owner `same_name`") => {
-                Ok(())
+            Err(TargetedTestInventoryError::Selector {
+                kind: CHANGED_TEST_OWNER_AMBIGUOUS,
+                message,
+                selected_test_count: 1,
+                ..
+            }) if message.contains("ambiguous direct production owner `same_name`") => Ok(()),
+            Err(TargetedTestInventoryError::Selector { kind, message, .. }) => {
+                Err(format!("unexpected ambiguity limitation {kind}: {message}"))
             }
-            Err(message) => Err(format!("unexpected ambiguity diagnostic: {message}")),
+            Err(TargetedTestInventoryError::Analysis(message)) => {
+                Err(format!("unexpected ambiguity diagnostic: {message}"))
+            }
             Ok(_) => Err("ambiguous direct owner must fail closed".to_string()),
         }
+    }
+
+    const GENERATED_SKIP_PREDICATE: &str = concat!(
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+        "    if amount >= threshold { amount - 10 } else { amount }\n",
+        "}\n",
+    );
+
+    fn write_predicate_file(root: &Path, relative: &str) -> Result<(), String> {
+        write_file(&root.join(relative), GENERATED_SKIP_PREDICATE)
+    }
+
+    fn inventoried_files(seams: &[RepoSeam]) -> BTreeSet<String> {
+        seams
+            .iter()
+            .map(|seam| seam.file().to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    fn classified_files(classified: &[ClassifiedSeam]) -> BTreeSet<String> {
+        classified
+            .iter()
+            .map(|entry| entry.seam.file().to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    fn require_hand_written_and_no_generated(
+        files: &BTreeSet<String>,
+        hand_written: &str,
+        generated: &[&str],
+    ) -> Result<(), String> {
+        if !files.contains(hand_written) {
+            return Err(format!(
+                "hand-written {hand_written} must still produce seams, got {files:?}"
+            ));
+        }
+        let leaked: Vec<&str> = generated
+            .iter()
+            .copied()
+            .filter(|path| files.contains(*path))
+            .collect();
+        if !leaked.is_empty() {
+            return Err(format!(
+                "generated Rust skipped by `ripr check` must not become seams, leaked {leaked:?} from {files:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_generated_rust_conventions_when_repo_inventory_runs_then_those_files_are_not_seams()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-conventions")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bindings.rs")?;
+        write_predicate_file(&root, "src/schema.rs")?;
+        write_predicate_file(&root, "src/generated.rs")?;
+        write_predicate_file(&root, "src/model.gen.rs")?;
+        write_predicate_file(&root, "src/model_generated.rs")?;
+        write_predicate_file(&root, "src/generated_model.rs")?;
+        write_predicate_file(&root, "src/gen/model.rs")?;
+        write_predicate_file(&root, "src/generated/model.rs")?;
+        write_predicate_file(&root, "src/out/model.rs")?;
+
+        let seams = inventory_seams_at_with_config(&root, &RiprConfig::default())?;
+        let files = inventoried_files(&seams);
+        require_hand_written_and_no_generated(
+            &files,
+            "src/lib.rs",
+            &[
+                "src/bindings.rs",
+                "src/schema.rs",
+                "src/generated.rs",
+                "src/model.gen.rs",
+                "src/model_generated.rs",
+                "src/generated_model.rs",
+                "src/gen/model.rs",
+                "src/generated/model.rs",
+                "src/out/model.rs",
+            ],
+        )?;
+
+        let report =
+            inventory_classified_seams_report_at_with_config(&root, &RiprConfig::default())?;
+        if report.classified.is_empty() {
+            return Err("classified inventory must still see src/lib.rs".into());
+        }
+        require_hand_written_and_no_generated(
+            &classified_files(&report.classified),
+            "src/lib.rs",
+            &[
+                "src/bindings.rs",
+                "src/schema.rs",
+                "src/generated.rs",
+                "src/model.gen.rs",
+                "src/model_generated.rs",
+                "src/generated_model.rs",
+                "src/gen/model.rs",
+                "src/generated/model.rs",
+                "src/out/model.rs",
+            ],
+        )?;
+        let skipped: BTreeSet<String> = report
+            .skipped_generated
+            .iter()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        for expected in [
+            "src/bindings.rs",
+            "src/schema.rs",
+            "src/generated.rs",
+            "src/model.gen.rs",
+            "src/model_generated.rs",
+            "src/generated_model.rs",
+            "src/gen/model.rs",
+            "src/generated/model.rs",
+            "src/out/model.rs",
+        ] {
+            if !skipped.contains(expected) {
+                return Err(format!(
+                    "classified report must thread skipped generated path {expected}, got {skipped:?}"
+                ));
+            }
+        }
+        if skipped.contains("src/lib.rs") {
+            return Err(format!(
+                "hand-written src/lib.rs must not be listed as skipped, got {skipped:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_near_miss_rust_names_when_repo_inventory_runs_then_hand_written_files_stay_seams()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-near-miss")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bind.rs")?;
+        write_predicate_file(&root, "src/engine.rs")?;
+        write_predicate_file(&root, "src/ffi.rs")?;
+        write_predicate_file(&root, "src/out_of_band.rs")?;
+
+        let files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        for expected in [
+            "src/lib.rs",
+            "src/bind.rs",
+            "src/engine.rs",
+            "src/ffi.rs",
+            "src/out_of_band.rs",
+        ] {
+            if !files.contains(expected) {
+                return Err(format!(
+                    "near-miss {expected} is not a generated convention and must stay a seam, got {files:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_generator_header_only_ffi_when_repo_inventory_runs_then_file_stays_a_seam()
+    -> Result<(), String> {
+        // #4756's header/vendor predicate is not on this main. Aligning with
+        // `ripr check` must not invent that skip here.
+        let root = make_tempdir("generated-header-not-absorbed")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_file(
+            &root.join("src/ffi.rs"),
+            concat!(
+                "// @generated by bindgen\n",
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 10 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        if !files.contains("src/ffi.rs") {
+            return Err(format!(
+                "header-only src/ffi.rs must stay inventoried until #4756 lands, got {files:?}"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_configured_generated_pattern_when_repo_inventory_runs_then_matching_file_is_not_a_seam()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-configured-pattern")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/ffi.rs")?;
+        let config = crate::config::tests_only_parse(
+            "[languages.rust]\ngenerated_file_patterns = [\"src/ffi.rs\"]\n",
+        )
+        .map_err(|error| format!("fixture config parses: {error}"))?;
+
+        let default_files = inventoried_files(&inventory_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+        )?);
+        if !default_files.contains("src/ffi.rs") {
+            return Err(format!(
+                "src/ffi.rs must remain a seam without a matching pattern, got {default_files:?}"
+            ));
+        }
+
+        let configured_files = inventoried_files(&inventory_seams_at_with_config(&root, &config)?);
+        require_hand_written_and_no_generated(&configured_files, "src/lib.rs", &["src/ffi.rs"])?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_only_generated_file_bytes_change_when_cache_key_is_rebuilt_then_identity_is_stable()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-cache-identity")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_predicate_file(&root, "src/bindings.rs")?;
+        let before = collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
+
+        write_file(
+            &root.join("src/bindings.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 11 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let after_generated = collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
+        if after_generated.files_content_hash != before.files_content_hash {
+            return Err(
+                "editing a generated Rust file that check skips must not change the inventory cache identity"
+                    .into(),
+            );
+        }
+
+        write_file(
+            &root.join("src/lib.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 12 } else { amount }\n",
+                "}\n",
+            ),
+        )?;
+        let after_hand_written =
+            collect_workspace_state(&root, &RiprConfig::default())?.cache_key();
+        if after_hand_written.files_content_hash == before.files_content_hash {
+            return Err(
+                "editing a hand-written production file must still change the inventory cache identity"
+                    .into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn given_generated_bindings_with_inline_test_when_classified_inventory_runs_then_grip_does_not_credit_them()
+    -> Result<(), String> {
+        let root = make_tempdir("generated-no-false-grip")?;
+        write_predicate_file(&root, "src/lib.rs")?;
+        write_file(
+            &root.join("src/bindings.rs"),
+            concat!(
+                "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n",
+                "    if amount >= threshold { amount - 10 } else { amount }\n",
+                "}\n",
+                "#[cfg(test)]\n",
+                "mod tests {\n",
+                "    #[test]\n",
+                "    fn discounted_total_boundary() {\n",
+                "        assert_eq!(super::discounted_total(100, 100), 90);\n",
+                "    }\n",
+                "}\n",
+            ),
+        )?;
+        write_file(
+            &root.join("tests/pricing.rs"),
+            concat!(
+                "#[test]\n",
+                "fn discounted_total_runs() {\n",
+                "    let _ = discounted_total(1, 1);\n",
+                "}\n",
+            ),
+        )?;
+
+        let classified = inventory_classified_seams_at(&root)?;
+        require_hand_written_and_no_generated(
+            &classified_files(&classified),
+            "src/lib.rs",
+            &["src/bindings.rs"],
+        )?;
+        let credited_generated = classified.iter().any(|entry| {
+            entry.evidence.related_tests.iter().any(|related| {
+                related
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .ends_with("bindings.rs")
+                    || related.test_name.contains("discounted_total_boundary")
+            })
+        });
+        if credited_generated {
+            return Err(
+                "generated src/bindings.rs must not supply related-test grip after the skip".into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }

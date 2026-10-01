@@ -22,7 +22,8 @@ use crate::app::pr_evidence::PR_EVIDENCE_HELP;
 use crate::app::pr_summary::PR_SUMMARY_HELP;
 use crate::app::ripr_plus::PLUS_HELP;
 use crate::cli::commands::{
-    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
+    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP,
+    RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
 };
 use crate::output::first_pr::FIRST_PR_HELP;
 
@@ -63,6 +64,8 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "doctor",
     "evidence-health",
     "explain",
+    "feedback export",
+    "feedback record",
     "first-action",
     "first-pr",
     "gate",
@@ -129,6 +132,8 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "doctor" => DOCTOR_HELP,
         "evidence-health" => EVIDENCE_HEALTH_HELP,
         "explain" => EXPLAIN_HELP,
+        "feedback export" => FEEDBACK_EXPORT_HELP,
+        "feedback record" => FEEDBACK_RECORD_HELP,
         "first-action" => FIRST_ACTION_HELP,
         "first-pr" => FIRST_PR_HELP,
         "gate" => GATE_HELP,
@@ -179,6 +184,19 @@ pub(super) fn print_help() {
 
 pub(super) fn print_help_all() {
     println!("{HELP_ALL}");
+}
+
+/// `ripr help workflow [name]`: bounded, non-executing workflow guidance
+/// (RIPR-SPEC-0189). The render is pure static text from the typed workflow
+/// catalog; it performs no repository discovery, analysis, compilation, test,
+/// child-process, network, mutation, or product-artifact work.
+pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
+    let rendered = match name {
+        Some(name) => crate::cli::workflow_catalog::render_workflow(name)?,
+        None => crate::cli::workflow_catalog::render_workflow_listing(),
+    };
+    println!("{rendered}");
+    Ok(())
 }
 
 pub(super) fn print_check_help() {
@@ -333,6 +351,13 @@ pub(super) fn print_rerun_help() {
     println!("{RERUN_HELP}");
 }
 
+/// Test-only access to the two rendered human discovery surfaces, for the
+/// projection-agreement checks in `command_metadata` (issue #4823).
+#[cfg(test)]
+pub(crate) fn discovery_surfaces() -> (&'static str, &'static str) {
+    (overview::HELP, overview::HELP_ALL)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -355,23 +380,24 @@ mod tests {
         AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
         ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
         CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
-        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP,
-        GATE_HELP, HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP,
-        PILOT_HELP, PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP,
-        PR_REVIEW_HELP, PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP,
-        SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
-        print_agent_help, print_agent_packet_help, print_agent_receipt_help,
-        print_agent_repair_help, print_agent_review_summary_help, print_agent_start_help,
-        print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
-        print_baseline_help, print_calibrate_help, print_check_help, print_config_help,
-        print_context_help, print_coverage_grip_help, print_diff_help, print_doctor_help,
-        print_evidence_health_help, print_explain_help, print_first_action_help, print_gate_help,
-        print_help, print_help_all, print_init_help, print_lsp_help, print_outcome_help,
-        print_pilot_help, print_policy_help, print_pr_comments_help, print_pr_ledger_help,
-        print_pr_review_help, print_reports_help, print_rerun_help, print_review_comments_help,
-        print_swarm_help, print_swarm_ingest_help, print_swarm_queue_help, print_zero_help,
+        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FEEDBACK_EXPORT_HELP,
+        FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP, HELP, HELP_ALL,
+        IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, PLUS_HELP,
+        POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
+        PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
+        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help, print_agent_help,
+        print_agent_packet_help, print_agent_receipt_help, print_agent_repair_help,
+        print_agent_review_summary_help, print_agent_start_help, print_agent_status_help,
+        print_agent_verify_help, print_assistant_loop_help, print_baseline_help,
+        print_calibrate_help, print_check_help, print_config_help, print_context_help,
+        print_coverage_grip_help, print_diff_help, print_doctor_help, print_evidence_health_help,
+        print_explain_help, print_first_action_help, print_gate_help, print_help, print_help_all,
+        print_init_help, print_lsp_help, print_outcome_help, print_pilot_help, print_policy_help,
+        print_pr_comments_help, print_pr_ledger_help, print_pr_review_help, print_reports_help,
+        print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
+        print_swarm_queue_help, print_zero_help,
     };
-    use crate::cli::command::KNOWN_COMMANDS;
+    use crate::cli::command::known_commands;
 
     /// The exhaustive reference owns the full inventory. This assertion used to
     /// target the default screen, which is why that screen had grown to 91
@@ -410,6 +436,8 @@ mod tests {
         assert!(HELP_ALL.contains("ripr calibrate"));
         assert!(HELP_ALL.contains("ripr receipt write"));
         assert!(HELP_ALL.contains("ripr receipt check"));
+        assert!(HELP_ALL.contains("ripr feedback record"));
+        assert!(HELP_ALL.contains("ripr feedback export"));
         assert!(HELP_ALL.contains("ripr agent start"));
         assert!(HELP_ALL.contains("ripr agent brief"));
         assert!(HELP_ALL.contains("ripr agent packet"));
@@ -482,16 +510,15 @@ mod tests {
         // `help` documents itself in the header and `More:` lines rather than as
         // a catalog entry.
         let documented_elsewhere = ["help"];
-        let missing: Vec<&str> = KNOWN_COMMANDS
-            .iter()
-            .copied()
+        let missing: Vec<&str> = known_commands()
+            .into_iter()
             .filter(|command| !documented_elsewhere.contains(command))
             .filter(|command| !HELP_ALL.contains(&format!("ripr {command}")))
             .collect();
         assert!(
             missing.is_empty(),
             "ripr help --all omits reachable command(s): {missing:?}; \
-             every KNOWN_COMMANDS entry must appear in the full reference"
+             every catalog-derived known command must appear in the full reference"
         );
     }
 
@@ -511,8 +538,28 @@ mod tests {
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));
+        assert!(CHECK_HELP.contains("--quiet"));
+        assert!(CHECK_HELP.contains("ripr progress:"));
+        assert!(CHECK_HELP.contains("percentage or ETA"));
+        assert!(CHECK_HELP.contains("does not mean analysis is faster"));
+        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
+    }
+
+    #[test]
+    fn check_help_names_the_latency_trace_env_and_mode_cost_class() {
+        // #4946(d): every repo-exposure env var a check user can set is
+        // documented on the same "Environment variables:" surface; this one
+        // was the last omission.
+        assert!(CHECK_HELP.contains("RIPR_REPO_EXPOSURE_LATENCY_TRACE"));
+        assert!(CHECK_HELP.contains("emits diagnostic phase/cache"));
+        assert!(CHECK_HELP.contains("Presence enables tracing"));
+        // #4946(c): the --mode entry orients on the cost class, not only the
+        // index scope, so a caller can predict the wall-clock difference.
+        assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
+        assert!(CHECK_HELP.contains("order of magnitude longer"));
     }
 
     #[test]
@@ -597,6 +644,8 @@ mod tests {
         assert!(PR_LEDGER_HELP.contains("Usage: ripr pr-ledger record"));
         assert!(PR_LEDGER_HELP.contains("pr-evidence-ledger.json"));
         assert!(PR_LEDGER_HELP.contains("read-only advisory history"));
+        assert!(PR_LEDGER_HELP.contains("--out-jsonl"));
+        assert!(POLICY_HELP.contains("--out-jsonl"));
         assert!(PR_COMMENTS_HELP.starts_with("Plan or publish bounded inline PR comments"));
         assert!(PR_COMMENTS_HELP.contains("Usage: ripr pr-comments plan"));
         assert!(PR_COMMENTS_HELP.contains("comment-publish-plan.json"));
@@ -729,6 +778,14 @@ mod tests {
             Some(IMPACTED_EVIDENCE_HELP)
         );
         assert_eq!(super::help_text_for("plus"), Some(PLUS_HELP));
+        assert_eq!(
+            super::help_text_for("feedback record"),
+            Some(FEEDBACK_RECORD_HELP)
+        );
+        assert_eq!(
+            super::help_text_for("feedback export"),
+            Some(FEEDBACK_EXPORT_HELP)
+        );
         for (name, help_text, flag) in [
             ("first-pr", FIRST_PR_HELP, "--gap-ledger"),
             ("pr-summary", PR_SUMMARY_HELP, "--baseline"),
@@ -742,6 +799,36 @@ mod tests {
                     .lines()
                     .any(|line| line.trim_start().starts_with(flag)),
                 "{name} help must document {flag} on an option-list line: {help_text}"
+            );
+        }
+    }
+
+    /// The Usage synopsis names every Record option, so a flag the parser
+    /// accepts is never documented only below the fold (#4391).
+    #[test]
+    fn pr_ledger_usage_names_every_record_option() {
+        let usage = PR_LEDGER_HELP
+            .lines()
+            .find(|line| line.starts_with("Usage: ripr pr-ledger record"))
+            .unwrap_or_default();
+        let options: Vec<&str> = PR_LEDGER_HELP
+            .split("Record options:")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.trim().is_empty())
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|flag| flag.starts_with("--"))
+            .collect();
+        assert!(
+            !options.is_empty(),
+            "Record options section must list flags"
+        );
+        for flag in options {
+            assert!(
+                usage.contains(&format!("{flag} ")) || usage.ends_with(flag),
+                "Usage line omits {flag}: {usage}"
             );
         }
     }
@@ -801,6 +888,7 @@ mod tests {
     const AGENT_PARSER_RS: &str = include_str!("agent.rs");
     const CLI_COMMANDS_RS: &str = include_str!("commands.rs");
     const CHECK_PARSER_RS: &str = include_str!("commands/check.rs");
+    const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
     const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
@@ -810,6 +898,7 @@ mod tests {
     const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
     const RECEIPT_PARSER_RS: &str = include_str!("commands/receipt.rs");
+    const FEEDBACK_PARSER_RS: &str = include_str!("commands/feedback.rs");
     const POLICY_PARSE_RS: &str = include_str!("commands/policy/parse.rs");
     const SWARM_QUEUE_PARSER_RS: &str = include_str!("commands/swarm/queue.rs");
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
@@ -938,6 +1027,16 @@ mod tests {
         ),
         ("explain", CLI_COMMANDS_RS, &["explain"]),
         (
+            "feedback export",
+            FEEDBACK_PARSER_RS,
+            &["parse_export_options"],
+        ),
+        (
+            "feedback record",
+            FEEDBACK_PARSER_RS,
+            &["parse_record_options"],
+        ),
+        (
             "first-action",
             CLI_COMMANDS_RS,
             &["parse_first_action_options"],
@@ -1052,7 +1151,7 @@ mod tests {
         ("rerun", RERUN_PARSER_RS, &["parse_options"]),
         (
             "review-comments",
-            CLI_COMMANDS_RS,
+            REVIEW_COMMENTS_PARSER_RS,
             &["parse_review_comments_options"],
         ),
         ("swarm ingest", SWARM_INGEST_PARSER_RS, &["parse_options"]),
@@ -1325,7 +1424,8 @@ mod tests {
     /// `*_requires_values_for_value_flags`, `*_rejects_unknown_argument`, and
     /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
     /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
-    /// `commands/config.rs`, `commands/receipt.rs`, `commands.rs`, and
+    /// `commands/config.rs`, `commands/receipt.rs`, `commands/review_comments.rs`,
+    /// `commands.rs`, and
     /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
     /// those flags belong to which sibling of a shared help body. Tightening
     /// this scanner to scrutinee position without a real Rust parser would
@@ -1506,7 +1606,7 @@ mod tests {
             (
                 "check",
                 CHECK_HELP,
-                &["--base", "--diff", "--mode", "--json"],
+                &["--base", "--diff", "--mode", "--json", "--quiet"],
             ),
             (
                 "explain",

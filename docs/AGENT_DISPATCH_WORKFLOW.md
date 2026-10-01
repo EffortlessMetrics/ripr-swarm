@@ -319,9 +319,11 @@ bound receipt is produced end to end.
 
 The lower-level commands stay available as the explicit-control fallback
 (they are the plumbing the repair transaction drives, and they remain useful
-for debugging):
+for debugging). A complete receipt also reads the analysis outcome beside the
+verify artifact, so write it first:
 
 ```bash
+cargo run -p ripr -- check --root . --mode ready --format json > target/ripr/workflow/analysis-outcome.json
 cargo run -p ripr -- agent verify \
   --root . \
   --before target/ripr/workflow/before.repo-exposure.json \
@@ -441,7 +443,7 @@ reads exactly one family, so point commands at the right one:
 | Receipt family | Written by | Default path | Read by |
 |---|---|---|---|
 | Gap receipt (RIPR-SPEC-0079) | `ripr receipt write` | `target/ripr/receipts/<sanitized canonical_gap_id>.json` — one file per gap; the filename percent-encodes characters that are unsafe in paths | `ripr receipt check`, which resolves this same default when you pass `--gap <canonical_gap_id>` without `--path` |
-| Agent-loop receipt | `ripr agent repair --phase after`, or the lower-level `ripr agent receipt --out target/ripr/reports/agent-receipt.json` | `target/ripr/reports/agent-receipt.json` — one file; each after phase replaces it | `ripr agent status` and `ripr agent review-summary` |
+| Agent-loop receipt | `ripr agent repair --phase after`, or the lower-level `ripr agent receipt --verify-json PATH --seam-id ID --json --out target/ripr/reports/agent-receipt.json` | `target/ripr/reports/agent-receipt.json` — one file; each after phase replaces it | `ripr agent status` and `ripr agent review-summary` |
 
 Notes:
 

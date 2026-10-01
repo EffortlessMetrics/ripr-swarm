@@ -71,20 +71,33 @@ view:
 Header
 Summary counts
 Start here:
-  State: top_gap | no_actionable_gap | preview_limited | static_limited | missing_scope
+  State: <plain words> (top_gap | no_actionable_gap | preview_limited | static_limited | missing_scope)
   One selected finding or safe next action
 Hidden:                                    (only when N > 0)
-  N lower-priority finding(s) omitted from default human output.
+  N lower-priority finding(s) omitted from default human output [(language identity)].
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 ```
+
+Human lines lead with plain words and keep the stable id in parentheses, so a
+reader does not need the internal vocabulary and a script can still match the
+id: `State: a test gap to inspect or repair (top_gap)`, `Analysis outcome:
+findings below (analysis complete; complete_with_findings).` and `Static exposure: weak
+(weakly_exposed, warning, confidence 0.92)`. The ids and their meanings are
+unchanged.
 
 The trailing block is state-dependent, because a `Hidden:` heading over a
 literal `0 lower-priority finding(s) omitted` line claims a suppressed
 remainder that does not exist:
 
 - `N > 0` — the heading is `Hidden:` and the count line is rendered. The
-  omission is the reason the section exists.
+  omission is the reason the section exists. When any omitted finding carries
+  preview `language_status` or a non-Rust `language`, the count line appends
+  a parenthetical identity breakdown from those fields (`Python preview: 1`).
+  Unlabeled preview remainder uses `preview-language: N` rather than inventing
+  a language name. Rust-only remainder stays the count line with no breakdown.
+  This reads finding identity already on the omitted records; it is not the
+  language-availability projection owned by #2615.
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -96,6 +109,28 @@ When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
 short evidence summary.
+
+The evidence summary leads with one compact line naming all five stage states,
+because evidence ordering is pipeline-ordered (reach, infection, propagation,
+observation, discriminator) and a purely positional detail window hides the
+decisive stages behind a remainder count (#4324):
+
+```text
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+```
+
+Every stage always carries an evidence line, so the compact line names all
+five stages for every finding and never silently drops one. The discriminator
+token keeps the full evidence line's semantic: the `discriminate` stage grades
+the strongest related oracle, so on a non-`exposed` finding a `yes` grade
+renders as `missing` (a named missing discriminating input exists) or
+`not established` rather than claiming a discriminator the digest
+simultaneously reports missing. The per-stage prose detail stays in the
+bounded window beneath it: the first two detail lines render verbatim, and
+when detail remains the line
+`- N more detail line(s) in --format human-full` discloses the count and names
+the recovery format. `--format human-full` still renders every evidence line,
+and no machine format reads the compact line.
 
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
@@ -147,6 +182,10 @@ selector is deterministic:
    carry generic next-step text.
 4. Class, gap metadata, related tests, missing evidence, confidence, path, and
    line provide stable tie-breakers.
+
+The selected finding's `Next step` is never truncated, because the guidance
+ends with its remedy (#4323). Text within the digest line budget stays on one
+line; longer guidance wraps onto four-space continuation lines.
 
 ### Triage states
 
@@ -310,6 +349,16 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_suggests_rooted_out_dir`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_discloses_related_tests_cap`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_discloses_observed_values_cap`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_observed_values_pointer_names_json_cap_beyond_it`
+- `crates/ripr/src/output/human.rs::tests::digest_related_test_line_carries_the_total`
+- `crates/ripr/src/output/human.rs::tests::digest_missing_discriminator_discloses_one_of_n_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_lists_omitted_findings_by_file_line_and_class`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_all_base_side_run_names_base_side_evidence`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping
@@ -379,4 +428,6 @@ suggested write cannot fail on the same missing base.
    two format pointers and no `Hidden:` heading and no
    `0 lower-priority finding(s) omitted` line.
 10. A run that omitted at least one finding renders `Hidden:` with the non-zero
-    count line above the same two format pointers.
+    count line above the same two format pointers. When the omitted set includes
+    preview-language or non-Rust identity, that line names the per-language
+    counts; a Rust-only remainder stays the count line alone.

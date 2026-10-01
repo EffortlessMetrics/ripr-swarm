@@ -15,7 +15,11 @@
 //! 8. stdin EOF / malformed frames do not hang the server;
 //! 9. transport/typed-payload bounds stay bounded under adversarial input
 //!    (issue #2034);
-//! 10. the compatibility-command journey (`initialize` → server-executed
+//! 10. `ripr.collectContext` / `ripr.collectEvidenceContext` with a missing
+//!     or non-object first argument return JSON-RPC `-32602` InvalidParams
+//!     naming the accepted object shape, never silent `result: null`
+//!     (issue #4358);
+//! 11. the compatibility-command journey (`initialize` → server-executed
 //!     collect commands → `shutdown`/`exit`) runs over the real wire and
 //!     emits a bounded receipt (issue #1930).
 //!
@@ -368,6 +372,34 @@ fn expect_error(response: &serde_json::Value, method: &str, code: i64) -> Result
     ))
 }
 
+/// JSON-RPC 2.0 error object: `error` present, `result` absent. A silent
+/// `result: null` success (the #4358 hole) fails this check even when the
+/// body otherwise looks empty.
+fn expect_typed_invalid_params_naming(
+    response: &serde_json::Value,
+    case: &str,
+    expected_fragments: &[&str],
+) -> Result<(), String> {
+    if response.get("result").is_some() {
+        return Err(format!(
+            "{case}: must be a JSON-RPC error without `result` (not silent null): {response}"
+        ));
+    }
+    expect_error(response, case, INVALID_PARAMS)?;
+    let message = response
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{case}: InvalidParams must carry a message: {response}"))?;
+    for fragment in expected_fragments {
+        if !message.contains(fragment) {
+            return Err(format!(
+                "{case}: error message must contain `{fragment}`: {message}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Full handshake: `initialize` request + `initialized` notification.
 fn handshake(session: &mut LspSession) -> Result<(), String> {
     let response = session.request("initialize", initialize_params())?;
@@ -534,6 +566,27 @@ fn normal_request_after_initialize_returns_result() -> Result<(), String> {
     if !text.contains("ripr") {
         return Err(format!("hover contents should describe ripr, got: {text}"));
     }
+    exit_and_wait(&mut session)
+}
+
+/// LSP 3.17 "$ Notifications and Requests": a `$/` notification may be
+/// ignored, but a `$/` request must be answered with `MethodNotFound`
+/// (#4456). tower-lsp-server drops both unless ripr's layer answers.
+#[test]
+fn dollar_request_is_answered_method_not_found() -> Result<(), String> {
+    let mut session = LspSession::spawn()?;
+    handshake(&mut session)?;
+    session.notify("$/ripr-unknown", Some(serde_json::json!({})))?;
+    let response = session.request("$/ripr-unknown", serde_json::json!({}))?;
+    expect_error(&response, "$/ripr-unknown", -32601)?;
+    let data = response.pointer("/error/data");
+    if data != Some(&serde_json::json!("$/ripr-unknown")) {
+        return Err(format!(
+            "`$/` MethodNotFound should name the method like other unknown methods: {response}"
+        ));
+    }
+    let hover = session.request("textDocument/hover", hover_params())?;
+    expect_result(&hover, "textDocument/hover")?;
     exit_and_wait(&mut session)
 }
 
@@ -924,6 +977,78 @@ fn oversized_execute_command_arguments_are_rejected() -> Result<(), String> {
     )?;
     expect_bounded_invalid_params(&mut session, id, "too many executeCommand arguments", "")?;
     // A legitimate command still runs; rejection did not poison the session.
+    let status = session.request(
+        "workspace/executeCommand",
+        serde_json::json!({"command": "ripr.collectWorkspaceStatus", "arguments": []}),
+    )?;
+    expect_result(&status, "ripr.collectWorkspaceStatus")?;
+    exit_and_wait(&mut session)
+}
+
+#[test]
+fn collect_context_commands_reject_missing_or_malformed_first_argument_on_the_wire()
+-> Result<(), String> {
+    // #4358: a missing or non-object first argument is a typed bad request,
+    // not a successful null that a generic client cannot distinguish from
+    // "no evidence found". In-process handler tests are not this oracle —
+    // they never serialize the JSON-RPC envelope.
+    let mut session = LspSession::spawn()?;
+    handshake(&mut session)?;
+    let cases: [(&str, serde_json::Value); 8] = [
+        (
+            "ripr.collectContext omitted arguments",
+            serde_json::json!({"command": "ripr.collectContext"}),
+        ),
+        (
+            "ripr.collectContext empty arguments",
+            serde_json::json!({"command": "ripr.collectContext", "arguments": []}),
+        ),
+        (
+            "ripr.collectContext string first argument",
+            serde_json::json!({
+                "command": "ripr.collectContext",
+                "arguments": ["not-an-object"]
+            }),
+        ),
+        (
+            "ripr.collectContext null first argument",
+            serde_json::json!({
+                "command": "ripr.collectContext",
+                "arguments": [null]
+            }),
+        ),
+        (
+            "ripr.collectEvidenceContext omitted arguments",
+            serde_json::json!({"command": "ripr.collectEvidenceContext"}),
+        ),
+        (
+            "ripr.collectEvidenceContext empty arguments",
+            serde_json::json!({"command": "ripr.collectEvidenceContext", "arguments": []}),
+        ),
+        (
+            "ripr.collectEvidenceContext string first argument",
+            serde_json::json!({
+                "command": "ripr.collectEvidenceContext",
+                "arguments": ["not-an-object"]
+            }),
+        ),
+        (
+            "ripr.collectEvidenceContext null first argument",
+            serde_json::json!({
+                "command": "ripr.collectEvidenceContext",
+                "arguments": [null]
+            }),
+        ),
+    ];
+    for (case, params) in cases {
+        let command = params
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("{case}: fixture must name a command"))?
+            .to_string();
+        let response = session.request("workspace/executeCommand", params)?;
+        expect_typed_invalid_params_naming(&response, case, &[&command, "expects one object"])?;
+    }
     let status = session.request(
         "workspace/executeCommand",
         serde_json::json!({"command": "ripr.collectWorkspaceStatus", "arguments": []}),

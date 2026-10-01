@@ -34,10 +34,23 @@ const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 /// a committed limited snapshot instead of a dropped refresh.
 pub(crate) const GIT_INVOCATION_TIMEOUT_PREFIX: &str = "git_invocation_timeout";
 
+/// Cause and repair when the git program itself is missing (#4735).
+///
+/// Shared by the git spawn authority, `ripr check`, and the doctor `tool_git`
+/// line so a gitless environment is not handed the raw argv and then told to
+/// run a command that also needs git.
+pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
+    "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
+
 /// True when `error` is the named git invocation timeout error (#2303).
 /// Matchable in the style of `analysis::cancellation::is_cancellation_error`.
 pub(crate) fn is_git_invocation_timeout(error: &str) -> bool {
     error.starts_with(GIT_INVOCATION_TIMEOUT_PREFIX)
+}
+
+/// True when `error` is the named missing-git spawn failure (#4735).
+pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
+    error == GIT_NOT_FOUND_ON_PATH_MESSAGE
 }
 
 /// Poll interval for the deadline/cancellation wait loop.
@@ -166,16 +179,43 @@ impl SpawnSite {
         let path_limit_error = err
             .raw_os_error()
             .is_some_and(|code| WINDOWS_PATH_LIMIT_ERRORS.contains(&code));
-        match self
+        if let Some(units) = self
             .working_directory
             .as_deref()
             .filter(|_| path_limit_error)
             .and_then(|dir| windows_overlong_working_directory(is_windows, dir))
         {
-            Some(units) => windows_path_limit_message(&self.program, units, err, describe),
-            None => format!("failed to run {describe}: {err}"),
+            return windows_path_limit_message(&self.program, units, err, describe);
         }
+        if git_spawn_failed_because_missing_on_path(
+            &self.program,
+            self.working_directory.as_deref(),
+            err,
+        ) {
+            return GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string();
+        }
+        format!("failed to run {describe}: {err}")
     }
+}
+
+/// `NotFound` is also what a missing working directory produces, so only a
+/// missing git program with a usable cwd becomes the PATH diagnosis. A
+/// non-git program (the doctor Perl-exporter probe) keeps its own spawn text.
+fn git_spawn_failed_because_missing_on_path(
+    program: &str,
+    working_directory: Option<&Path>,
+    err: &std::io::Error,
+) -> bool {
+    program_is_git(program)
+        && err.kind() == std::io::ErrorKind::NotFound
+        && working_directory.is_none_or(Path::exists)
+}
+
+fn program_is_git(program: &str) -> bool {
+    program
+        .rsplit(['/', '\\'])
+        .next()
+        .is_some_and(|name| name == "git" || name == "git.exe")
 }
 
 /// The remedy leads so it survives the LSP's 240-character client bound
@@ -211,9 +251,18 @@ fn windows_overlong_working_directory(is_windows: bool, dir: &Path) -> Option<us
     (units > WINDOWS_MAX_WORKING_DIRECTORY_UNITS).then_some(units)
 }
 
+/// Config every ripr git invocation carries. A repository's own
+/// `core.fsmonitor` names a program git runs on index refresh (`status`,
+/// worktree `diff`); a clone cannot ship `.git/config`, but an extracted
+/// archive or a planted nested repository can.
+pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
 fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
-    command.current_dir(root).args(args);
+    command
+        .current_dir(root)
+        .args(UNTRUSTED_REPOSITORY_CONFIG)
+        .args(args);
     command
 }
 
@@ -574,7 +623,12 @@ pub(crate) fn poll_child(
                         describe,
                         "timeout",
                         ChildWait::TimedOut(format!(
-                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
+                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the \
+                             {timeout_ms}ms deadline (process terminated). Repair route: \
+                             raise or disable the git deadline (0 disables it) — \
+                             --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI \
+                             runs, the gitTimeoutMs initialization option for editor \
+                             sessions — then re-run."
                         )),
                         || child.terminate_tree(),
                     );
@@ -683,6 +737,49 @@ mod tests {
     fn windows_dir_of_units(units: usize) -> String {
         let prefix = format!(r"{DRIVE}\a\");
         format!("{prefix}{}", "x".repeat(units - prefix.len()))
+    }
+
+    /// A repository's `core.fsmonitor` names a program git runs on index
+    /// refresh. ripr's git calls must not run it.
+    #[cfg(unix)]
+    #[test]
+    fn repository_fsmonitor_program_does_not_run() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("ripr-git-fsmonitor-{}-{stamp}", std::process::id()));
+        let marker = root.join("fsmonitor-ran");
+        let result = (|| {
+            std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+            let hook = format!("touch '{}'", marker.display());
+            for args in [
+                vec!["init", "-q"],
+                vec!["config", "core.fsmonitor", hook.as_str()],
+            ] {
+                let output = Command::new("git")
+                    .args(&args)
+                    .current_dir(&root)
+                    .env_remove("GIT_DIR")
+                    .env_remove("GIT_WORK_TREE")
+                    .output()
+                    .map_err(|err| format!("git {args:?}: {err}"))?;
+                if !output.status.success() {
+                    return Err(format!("git {args:?} failed: {output:?}"));
+                }
+            }
+            std::fs::write(root.join("lib.rs"), "fn a() {}\n")
+                .map_err(|err| format!("write: {err}"))?;
+            run_git(&root, &["add", "lib.rs"])?;
+            run_git(&root, &["status", "--porcelain"])?;
+            Ok(marker.exists())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        if result? {
+            return Err("git ran the repository's core.fsmonitor program".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -858,6 +955,106 @@ mod tests {
             unset.failure_message_on(true, &describe, &err),
             format!("failed to run {describe}: {err}")
         );
+    }
+
+    #[test]
+    fn spawn_failure_names_missing_git_on_path_without_dumping_argv() {
+        let root = std::env::temp_dir();
+        assert!(
+            root.exists(),
+            "the process temp dir must exist so NotFound is the program, not the cwd"
+        );
+        let site = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(root.clone()),
+        };
+        let err = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let describe = format!(
+            "git -C {} [\"-c\", \"core.quotePath=true\", \"diff\", \"main...HEAD\"]",
+            root.display()
+        );
+        let message = site.failure_message_on(false, &describe, &err);
+        assert_eq!(message, GIT_NOT_FOUND_ON_PATH_MESSAGE);
+        assert!(is_git_not_found_on_path(&message));
+        assert!(
+            !message.contains("core.quotePath") && !message.contains('['),
+            "the git argv must not reach the user: {message}"
+        );
+
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            site.failure_message_on(false, &describe, &denied),
+            format!("failed to run {describe}: {denied}"),
+            "a denied git is not a missing-PATH diagnosis"
+        );
+
+        let missing_root = SpawnSite {
+            program: "git".to_string(),
+            working_directory: Some(root.join(format!(
+                "ripr-missing-git-cwd-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_nanos())
+                    .unwrap_or(0)
+            ))),
+        };
+        assert_eq!(
+            missing_root.failure_message_on(false, &describe, &err),
+            format!("failed to run {describe}: {err}"),
+            "a missing working directory is not a missing-PATH diagnosis"
+        );
+
+        let perl = SpawnSite {
+            program: "perl-ripr-facts".to_string(),
+            working_directory: Some(std::env::temp_dir()),
+        };
+        assert_eq!(
+            perl.failure_message_on(false, "perl-ripr-facts --version", &err),
+            format!("failed to run perl-ripr-facts --version: {err}"),
+            "a missing non-git program must not steal the git PATH diagnosis"
+        );
+        assert!(program_is_git("git"));
+        assert!(program_is_git("git.exe"));
+        assert!(program_is_git(&format!(r"{DRIVE}\tools\git.exe")));
+        assert!(!program_is_git("git-lfs") && !program_is_git("perl-ripr-facts"));
+    }
+
+    /// Native control for #4735: spawning `git` with an empty PATH must name
+    /// the missing binary and the `--diff` route, not dump `core.quotePath`.
+    #[test]
+    fn native_git_spawn_with_empty_path_names_the_missing_binary() -> Result<(), String> {
+        let empty_path = std::env::temp_dir().join(format!(
+            "ripr-4735-empty-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&empty_path).map_err(|err| format!("create empty PATH: {err}"))?;
+        let mut command = git_command(&empty_path, &["--version"]);
+        command.env("PATH", &empty_path);
+        let result = collect_output_with_deadline(command, None, "git --version");
+        let _ = std::fs::remove_dir_all(&empty_path);
+        match result {
+            Err(message) => {
+                if message != GIT_NOT_FOUND_ON_PATH_MESSAGE {
+                    return Err(format!(
+                        "empty PATH must name the missing git binary, got: {message}"
+                    ));
+                }
+                if message.contains("core.quotePath") || message.contains('[') {
+                    return Err(format!("git argv leaked: {message}"));
+                }
+                Ok(())
+            }
+            Ok(output) => Err(format!(
+                "git spawned with PATH restricted to {empty_path:?} ({:?}); the \
+                 missing-binary premise of #4735 no longer holds on this host",
+                output.status
+            )),
+        }
     }
 
     /// Env flag that makes the re-executed test binary hang instead of
@@ -1096,6 +1293,27 @@ mod tests {
         if !err.contains("exceeded the 50ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
+            ));
+        }
+        // #4946(b): the timeout message names both deadline knobs and the
+        // 0-disables escape, matching diff_scope_oversized's in-message
+        // repair-route pattern — the error alone must be repairable. The
+        // same shared wait also serves the editor sidecar, whose deadline is
+        // configured by `gitTimeoutMs`, so the route names that knob too
+        // (#4946 review).
+        if !err.contains("--git-timeout") || !err.contains("RIPR_GIT_TIMEOUT") {
+            return Err(format!(
+                "timeout error should name the deadline knobs, got: {err}"
+            ));
+        }
+        if !err.contains("0 disables it") {
+            return Err(format!(
+                "timeout error should name the 0-disables escape, got: {err}"
+            ));
+        }
+        if !err.contains("gitTimeoutMs") {
+            return Err(format!(
+                "timeout error should name the editor-session deadline knob, got: {err}"
             ));
         }
         // Kill+reap proof without a wall-clock bound: drive the same

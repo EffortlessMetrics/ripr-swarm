@@ -318,6 +318,14 @@ and single-platform CI was the root cause enabling both.
   false-confidence condition it exists to prevent.
 - **Selection.** A daily schedule for standing signal, `workflow_dispatch`, and
   pull requests labeled `windows-ci` or `full-ci`.
+- **Always-on subset (#4938).** Every subscribed `pull_request` action
+  (`opened`, `synchronize`, `reopened`, `labeled`; `unlabeled` stays omitted
+  per #4380) also runs `windows-advisory-subset`, a fast advisory Windows job
+  (`lsp::gap_artifacts` lib tests, the #4918 cache-warning smoke, and
+  `cargo clippy -p ripr --all-targets`) under the same advisory contract as
+  the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
+  only by a native-Windows audit, so native-Windows verification of new
+  product behavior remains an author and audit responsibility.
 
 Promotion to required is gated on #2430 and on stability across repeated runs on
 hardware that reproduces the failures — the hosted runner does not reproduce the
@@ -446,6 +454,33 @@ trusted same-repo PR or push:
 fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
+
+Label events are not an implicit full-gate refresh:
+
+```text
+opened / reopened / synchronize / push to main / workflow_dispatch:
+  launch the required Rust or docs gate (unchanged)
+
+labeled full-ci:
+  launch the required gate with advisory reports and success artifacts
+
+labeled windows-ci, coverage, release-check, or any other non-full-ci label:
+  do not launch rust-gates; post Ripr Rust Small Ignored Label Event;
+  leave the previous exact-head Ripr Rust Small Result in place
+
+unlabeled (including windows-ci or full-ci removal):
+  do not start Routed Rust Small; the previous exact-head result remains
+```
+
+`windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
+Removing that label does not imply Windows proof and must not spend a required
+Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
+the next opened/synchronize/reopened proof observes the current labels.
+`cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
+distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
+replace a pending synchronize proof. An ignored labeled run is cheap, does not
+post the protected result context, and cannot manufacture a green required
+check for untested or previously failed code.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -647,6 +682,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
@@ -745,6 +781,33 @@ It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
 the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
+
+### PR Staleness Watchdog
+
+GitHub sometimes silently drops the `pull_request` event delivery that creates
+the `routed-rust.yml` run for a pushed PR head SHA, leaving a PR blocked with
+no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
+#4923 ~35 minutes).
+`.github/workflows/pr-staleness-watchdog.yml` runs every 30 minutes, finds open
+same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
+head SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
+remedy used during the incidents — capped at 5 dispatches per sweep. The
+required check, not run existence, is the discriminator: an unrelated `labeled`
+event produces a same-workflow run whose result job renames itself to the
+non-required `Ripr Rust Small Ignored Label Event` (`routed-rust.yml:228`; two
+of the three runs on #4923's opened head). The next sweep's required-check
+check dedupes; its racy window after a dispatch is bounded by the cap plus the
+30-minute cadence. No PR comments are posted: the
+dispatched run itself delivers the required `Ripr Rust Small Result` check,
+and each sweep's summary table is the audit trail. The alert-only alternative
+(report the dark head instead of dispatching; zero duplicate-gate risk by
+construction) was deferred, not rejected:
+
+```text
+# To flip to alert-only (issue #4937 option ii): replace the dispatch step in
+# .github/workflows/pr-staleness-watchdog.yml with a summary-only report and
+# drop the `actions: write` permission.
+```
 
 ### Self-Hosted Runner Placement
 
@@ -863,21 +926,26 @@ ripr init --ci github
 ```
 
 Copy the generated file, not a workflow from this page. Run
-`ripr init --ci github --dry-run` to print it without writing anything. The
-workflow installs the ripr version that generated it
-(`cargo install ripr --version <that version> --locked`), so a later release
-does not change CI behavior until you rerun `ripr init --ci github --force`
-with the newer ripr and review the diff. It
+`ripr init --ci github --dry-run` to print it without writing anything. It
 uploads the pilot, report, and agent artifact directories. The official GitHub
 SARIF upload documentation uses `github/codeql-action/upload-sarif@v4`; keep
 the RIPR job, artifact upload, and optional SARIF steps advisory until the
 repository has chosen a baseline policy.
 
-The generated workflow installs the exact `ripr` version that generated it,
-because its steps use that version's commands and flags. To upgrade, install
+The generated workflow installs the exact `ripr` version that generated it
+(`cargo install ripr --version <that version> --locked`), because its steps
+use that version's commands and flags; a later release does not change CI
+behavior until you regenerate. That version must be published on crates.io: a
+workflow generated by an unreleased development build names a version crates.io
+does not have yet, so its install step fails and no ripr step runs. Generate the
+committed workflow with a released `ripr`. To upgrade, install
 the newer `ripr` and compare its `ripr init --ci github --force --dry-run`
 output with the committed file (`--force` lets the dry run plan over the
-existing file; nothing is written). On pull requests the workflow checks out the PR head
+existing file; nothing is written). With `--ci`, `--force` replaces only the
+workflow: an existing `ripr.toml` is left unchanged, so refreshing CI keeps the
+repository's settings (`ripr init --force` without `--ci` resets the config).
+`ripr doctor` flags a workflow that installs ripr unpinned or at another
+version. On pull requests the workflow checks out the PR head
 commit, not GitHub's `refs/pull/N/merge` commit, so annotation and review
 comment lines match the lines in the PR diff after the base branch moves. A
 newer push cancels the older run of the same PR. Dependabot runs get a
@@ -1399,10 +1467,13 @@ Recommended acknowledgement workflow:
 3. When the gate reports a policy-eligible gap, review the job summary,
    `target/ripr/reports/gate-decision.md`, and the PR guidance packet.
 4. If the finding is acceptable for this PR, add `ripr-waive`.
-5. Let the labeled PR workflow rerun. The next gate decision should say
+5. The generated workflow triggers on `labeled` and `unlabeled` pull-request
+   events, so adding the label reruns it. The next gate decision should say
    `Decision: acknowledged`, list `ripr-waive`, and keep the candidate visible.
-6. If a focused test is added instead, remove `ripr-waive` and rerun the gate so
-   the receipt records the current evidence without an acknowledgement label.
+6. If a focused test is added instead, remove `ripr-waive`; the `unlabeled`
+   event reruns the gate so the receipt records the current evidence without an
+   acknowledgement label. Any label change reruns the job, and the workflow's
+   concurrency group cancels the superseded run.
 
 The expected acknowledged summary looks like:
 
@@ -1567,8 +1638,11 @@ ledger shape. For compatibility with existing fixtures and reviewed hand-built
 baselines, it also accepts identities from `decisions`, `comments`,
 `summary_only`, and `suppressed` arrays when those fields are present in the
 baseline file. For each entry, it indexes `seam_id`, `id`, and `dedupe_key`
-when present. Keep the baseline small and reviewable; do not check in an
-uninspected copy of every PR guidance artifact.
+when present. A baseline file with none of those arrays, a JSON array, or a
+`kind` other than `gate_baseline` (or a `gate_baseline` without `entries`) is
+rejected as a `config_error` instead of acting as an empty baseline. Keep the
+baseline small and reviewable; do not check in an uninspected copy of every PR
+guidance artifact.
 
 Baseline review checklist:
 

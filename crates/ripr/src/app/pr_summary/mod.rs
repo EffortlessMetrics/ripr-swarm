@@ -177,7 +177,9 @@ fn print_help() {
 /// Help body for `ripr pr-summary`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
 pub(crate) const PR_SUMMARY_HELP: &str = "\
-usage: ripr pr-summary [--root <path>] [--check] [--baseline <before.json>]
+Write the PR evidence summary from existing RIPR artifacts.
+
+Usage: ripr pr-summary [--root <path>] [--check] [--baseline <before.json>]
 
 Options:
   --root <path>        Select the artifact repository (default: current directory).
@@ -226,7 +228,8 @@ fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> 
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create parent dir for {label}: {err}"))?;
     }
-    fs::write(path, contents).map_err(|err| format!("failed to write {label}: {err}"))
+    crate::output::file_write::write(path, contents.as_ref())
+        .map_err(|err| format!("failed to write {label}: {err}"))
 }
 
 #[cfg(test)]
