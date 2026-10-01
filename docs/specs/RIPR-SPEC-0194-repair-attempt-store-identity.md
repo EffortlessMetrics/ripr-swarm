@@ -1,4 +1,4 @@
-# RIPR-SPEC-0193: Repair-attempt store identity and resolver
+# RIPR-SPEC-0194: Repair-attempt store identity and resolver
 
 Status: proposed
 
