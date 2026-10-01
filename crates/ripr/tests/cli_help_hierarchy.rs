@@ -102,6 +102,86 @@ fn normalized(doc: &str) -> String {
 }
 
 #[test]
+fn workflow_help_lists_the_five_governed_identities() -> Result<(), String> {
+    let stdout = rendered_help(&["help", "workflow"])?;
+    for id in [
+        "inspect-change",
+        "guided-adoption",
+        "repair-gap",
+        "compose-pr-evidence",
+        "adopt-ci",
+    ] {
+        assert_contains("`ripr help workflow`", &stdout, id)?;
+    }
+    assert_contains(
+        "`ripr help workflow`",
+        &stdout,
+        "Run `ripr help workflow <name>` for one workflow's steps",
+    )?;
+    // The listing is guidance only: it must not silently execute anything.
+    assert_contains(
+        "`ripr help workflow`",
+        &stdout,
+        "Nothing on this screen runs a command",
+    )
+}
+
+#[test]
+fn workflow_help_renders_one_workflow_with_bounded_sections() -> Result<(), String> {
+    let stdout = rendered_help(&["help", "workflow", "repair-gap"])?;
+    for section in [
+        "Workflow: repair-gap",
+        "Purpose:",
+        "Applies when:",
+        "Commands (ordered):",
+        "Result families:",
+        "Artifacts:",
+        "Recovery:",
+        "Stop conditions:",
+        "Limitations:",
+    ] {
+        assert_contains("`ripr help workflow repair-gap`", &stdout, section)?;
+    }
+    // Aliases resolve on the render path.
+    assert_contains(
+        "`ripr help workflow repair-gap`",
+        &rendered_help(&["help", "workflow", "adoption"])?,
+        "Workflow: guided-adoption",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn unknown_workflow_fails_with_a_family_distinct_from_unknown_command() -> Result<(), String> {
+    let output = run_ripr(&["help", "workflow", "repar-gap"])?;
+    if output.status.success() {
+        return Err(format!(
+            "unknown workflow exited 0\nstdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("unknown workflow") {
+        return Err(format!(
+            "unknown workflow error missing its family marker:\n{stderr}"
+        ));
+    }
+    if stderr.contains("unknown command") {
+        return Err(format!(
+            "unknown workflow error leaked the unknown-command family:\n{stderr}"
+        ));
+    }
+    // Suggestions, when present, must come from workflow identities only and
+    // must not suggest a command spelling for a workflow typo.
+    if stderr.contains("repair-loop") || stderr.contains("ripr agent") {
+        return Err(format!(
+            "unknown workflow error suggested command machinery instead of a workflow:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
     for args in [["--help"].as_slice(), ["help"].as_slice()] {
         let stdout = normalized(&rendered_help(args)?);
@@ -138,6 +218,58 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
         "`ripr first-pr` and `ripr start-here` compose `target/ripr/reports/start-here.{json,md}` from existing artifacts; they do not run analysis or repair a gap.",
     ] {
         assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
+    }
+    Ok(())
+}
+
+/// Non-public rows are visibly distinct in the exhaustive reference
+/// (issue #4823): advanced rows carry an `[advanced]` line marker and the
+/// compatibility alias carries `[compatibility]`, so a reader can tell the
+/// primary surface from control and legacy commands without opening each
+/// help page. The projection is validated against the typed tables in
+/// `command_metadata::tests::human_surfaces_agree_with_the_typed_tables`.
+#[test]
+fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
+    let rendered = rendered_help(&["help", "--all"])?;
+    let stdout = normalized(&rendered);
+    for needle in [
+        "ripr agent start --root . --seam-id ID [--out target/ripr/workflow] [advanced]",
+        "ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [advanced]",
+        "ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json [advanced]",
+        "ripr agent verify --root . --before before.json --after after.json --json [advanced]",
+        "ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json [advanced]",
+        "ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json [advanced]",
+        "ripr agent review-summary --root . [--json] [advanced]",
+        "ripr start-here [same options as first-pr] [compatibility]",
+    ] {
+        assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
+    }
+    // The primary public rows stay unmarked. Inspect each original rendered
+    // row: a class marker anywhere on the row (not just adjacent to the
+    // route) is a leak, and the canonical route must still be present.
+    let rendered_rows: Vec<String> = rendered.lines().map(normalized).collect();
+    for needle in [
+        "ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]",
+        "ripr agent status --root . [--json]",
+    ] {
+        let mut found = false;
+        for row in &rendered_rows {
+            if row.contains(needle) {
+                found = true;
+                for marker in ["[advanced]", "[compatibility]"] {
+                    if row.contains(marker) {
+                        return Err(format!(
+                            "public row unexpectedly carries a class marker: {needle} {marker}"
+                        ));
+                    }
+                }
+            }
+        }
+        if !found {
+            return Err(format!(
+                "exhaustive help (`ripr help --all`) lost the canonical route `{needle}`"
+            ));
+        }
     }
     Ok(())
 }

@@ -27,13 +27,14 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
+use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 mod lexical_test_grip;
@@ -44,14 +45,26 @@ mod lexical_test_grip;
 /// packages), and building that working set can exhaust a constrained runner
 /// (issue #1023). Above this many files the analysis fails closed with a named
 /// `diff_scope_oversized` error rather than exhausting host memory and aborting.
-const DIFF_INDEX_FILE_LIMIT: usize = 800;
+///
+/// Raised from 800: this repository's own decomposition waves grew the
+/// diff/repo-indexed working set to 802 files (796 at main `1b61c4757`,
+/// +6 with the eval-sweep-check module split), so the repo's own dogfood
+/// and smoke analyses tripped the default on an in-spec tree. 1200 keeps
+/// real headroom for module splits while still failing closed on genuinely
+/// oversized external scopes; constrained operators retain the
+/// `RIPR_MAX_DIFF_INDEX_FILES` override.
+const DIFF_INDEX_FILE_LIMIT: usize = 1200;
 
 /// Hard analysis-cost guard for the repo-scoped path (#2109): the diff path
 /// caps its working set at [`DIFF_INDEX_FILE_LIMIT`], and the repo path now
 /// has the same guard so `ripr check --mode deep|ready` on a large monorepo
 /// fails closed with a named `repo_scope_oversized` error instead of loading
 /// and indexing the entire workspace unbounded.
-const REPO_INDEX_FILE_LIMIT: usize = 800;
+///
+/// Raised in lockstep with [`DIFF_INDEX_FILE_LIMIT`] for the same measured
+/// repo-growth reason; `RIPR_MAX_REPO_INDEX_FILES` remains the operator
+/// override.
+const REPO_INDEX_FILE_LIMIT: usize = 1200;
 
 /// Env override for [`REPO_INDEX_FILE_LIMIT`].
 const REPO_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_REPO_INDEX_FILES";
@@ -1269,6 +1282,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
 
@@ -1364,7 +1378,10 @@ impl RustAdapter {
             cancellation::checkpoint()?;
             let probes =
                 analysis_probes::probes_for_file_with_relations(&options.root, changed, &index);
-            for (probe, binding_relation) in probes {
+            for seeded in probes {
+                seeded.record_span(&mut parser_spans);
+                let probe = seeded.probe;
+                let binding_relation = seeded.binding_relation;
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let related_test_candidate_index = related_test_candidate_index
@@ -1430,6 +1447,16 @@ impl RustAdapter {
             limitations.push(limitation);
         }
 
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
+
         Ok(LanguageDiffResult {
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
@@ -1454,6 +1481,7 @@ impl RustAdapter {
                     }),
                 )?)
                 .collect(),
+            rust_diagnostic_origins,
         })
     }
 }
@@ -1689,6 +1717,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
 
         // #2972: one path-dependency edge context per repo pass. Repo mode
         // indexes the whole workspace, so the admit precondition holds by
@@ -1705,8 +1734,10 @@ impl RustAdapter {
         };
 
         for path in &production_files {
-            let probes = analysis_probes::probes_for_repo_file(&options.root, path, &index);
-            for probe in probes {
+            let probes = analysis_probes::probes_for_repo_file_seeded(&options.root, path, &index);
+            for seeded in probes {
+                seeded.record_span(&mut parser_spans);
+                let probe = seeded.probe;
                 let related_test_candidate_index = related_test_candidate_index
                     .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));
                 let mut finding = classifier::classify_probe_with_candidate_index(
@@ -1730,6 +1761,16 @@ impl RustAdapter {
             }
         }
 
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_rust_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
+
         Ok(LanguageRepoResult {
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
@@ -1739,6 +1780,7 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            rust_diagnostic_origins,
         })
     }
 }
@@ -1750,8 +1792,8 @@ mod tests {
         PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
         PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
         PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets,
-        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter,
-        apply_probe_and_oracle_limits, changed_rust_line_count,
+        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT, REPO_INDEX_FILE_LIMIT_ENV,
+        RustAdapter, apply_probe_and_oracle_limits, changed_rust_line_count,
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
         diff_index_file_limit_from_env, enforce_changed_rust_line_limit,
         enforce_repo_index_file_limit, is_binary_source_path, is_cargo_binary_invocation,
@@ -2691,6 +2733,10 @@ fn absent_delimiter_boundary_returns_head() {
 
     #[test]
     fn diff_index_file_limit_defaults_when_unset() {
+        // Independent decision pin: the guard-raise set the measured default
+        // to 1200 (repo growth evidence); a revert of the constant must fail
+        // here rather than silently re-hide under the 800 default.
+        assert_eq!(DIFF_INDEX_FILE_LIMIT, 1200);
         assert_eq!(
             diff_index_file_limit_from_env(Err(VarError::NotPresent)),
             Ok(DIFF_INDEX_FILE_LIMIT)
@@ -3298,10 +3344,13 @@ fn absent_delimiter_boundary_returns_head() {
     fn repo_index_file_limit_env_parsing() -> Result<(), String> {
         // Default applies when unset; valid override wins; invalid fails
         // closed (#2109).
+        // Independent decision pin for the guard-raise default; see the diff
+        // guard test for the rationale.
+        assert_eq!(REPO_INDEX_FILE_LIMIT, 1200);
         let unset = repo_index_file_limit_from_env(Err(std::env::VarError::NotPresent))
             .map_err(|err| format!("default should parse: {err}"))?;
         assert_eq!(
-            unset, 800,
+            unset, REPO_INDEX_FILE_LIMIT,
             "default must be the {REPO_INDEX_FILE_LIMIT_ENV} guard"
         );
         let raised = repo_index_file_limit_from_env(Ok("5000".to_string()))

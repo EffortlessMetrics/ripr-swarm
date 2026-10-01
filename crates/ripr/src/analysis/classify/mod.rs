@@ -1,4 +1,5 @@
 mod activation;
+mod boundary_pairing;
 mod context;
 mod decision;
 mod flow;
@@ -19,6 +20,9 @@ pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_evidence_with_value_facts, literal_operand_value,
     local_boundary,
 };
+pub(in crate::analysis) use boundary_pairing::{
+    has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
+};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, missing_evidence,
@@ -35,7 +39,8 @@ pub(in crate::analysis) use propagation_witness::{
 pub(in crate::analysis) use reach::{owner_may_be_reached_unseen, reach_evidence};
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
-    find_related_tests_with_candidate_index, package_prefix,
+    find_related_tests_with_candidate_index, impl_self_type_name,
+    method_call_resolves_to_impl_type, package_prefix,
 };
 pub(in crate::analysis) use reveal::FileUseStatements;
 pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
