@@ -11,7 +11,11 @@ The CLI has two intentional output conventions:
   their primary result to stdout. `check`, `diff`, and `context` can emit
   machine-readable JSON; `explain` emits its human explanation. Warnings and
   diagnostics go to stderr, so scripts can capture stdout without filtering
-  status text.
+  status text. `ripr check` also writes bounded producer-owned analysis
+  stages to stderr (`ripr progress: <stage> [<scope>]`). That stream is not
+  part of the JSON/SARIF/GitHub stdout contract, carries no percentage or
+  ETA when totals are unknown, and is suppressed by `--quiet`. It does not
+  mean analysis is faster or that the command will succeed.
 - The gate-family commands write reviewed artifacts to the paths shown by their
   help text and print human `Wrote ...` status lines to stdout. `gate evaluate`,
   `baseline diff`, and `zero status` support their documented JSON/Markdown
@@ -45,12 +49,13 @@ map is:
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
 | `ripr check --format repo-exposure-json` | `schema_version` | `0.3` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
-| `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.4` |
+| `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
 | `ripr agent brief` | `schema_version` | `0.1` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
-| `ripr agent repair --phase after` success stdout | `schema_version` | `0.1` |
-| `ripr agent repair --phase after` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
+| `ripr agent repair --phase before --json` success stdout | `schema_version` | `0.5` |
+| `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
+| `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -59,6 +64,7 @@ map is:
 | `ripr cache status --json` | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
+| `ripr help --json` | `schema_version` | `1` |
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -316,6 +322,13 @@ identity agree and the analysis-outcome validator accepts the artifact.
 the typed outcome and its `limitations[]` rather than infer completeness from
 `findings` or `probes`. For `unsupported_input` and
 `partial_with_limitations`, zero findings is explicitly not a clean result.
+
+`eol_only_churn` (#4952) is a churn-shape disclosure, not an incomplete-analysis
+limitation: a changed file's lines pair identical before/after text at the same
+positions, so the churn is line-ending-only and probes treat the text as
+unchanged. It is the one limitation kind that may ride on a complete outcome
+(`complete_with_findings` / `complete_no_findings`); every other kind marks the
+outcome incomplete. Human output renders it without the incomplete-scope hedge.
 
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
@@ -6940,7 +6953,7 @@ Field contract:
 
 ### Agent repair after-phase stdout
 
-`ripr agent repair --attempt <id> --phase after` holds the verify render until
+`ripr agent repair --attempt <id> --phase after --json` holds the verify render until
 its post-verify tail (edit-cage finish, receipt write, apply record) settles,
 then prints exactly one JSON document on stdout. On success the document is
 its own versioned envelope, not a mutated verify document:
@@ -7013,8 +7026,9 @@ Field contract:
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
 --result-json <result-json> --authorize --json` is the only explicit process
-execution surface in the agent loop. It accepts one schema `0.4` producer
-envelope containing exactly one packet, and executes only the direct,
+execution surface in the agent loop. It accepts one producer
+envelope carrying the current agent-packet schema version (currently `0.5`)
+containing exactly one packet, and executes only the direct,
 no-network, no-write `ripr agent verify` route. The current ripr executable is
 used; shell text is never interpreted.
 
@@ -13779,7 +13793,7 @@ schema bump.
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "scope": "repo",
   "packets_total": 12565,
   "packets": [
@@ -13798,6 +13812,12 @@ schema bump.
         "file": "tests/pricing.rs",
         "reason": "place the new targeted test next to the nearest strong related test"
       },
+      "allowed_edit_surface": ["tests/pricing.rs"],
+      "forbidden_files": ["src/pricing.rs"],
+      "must_not_change": [
+        "Do not edit production code; only the files in allowed_edit_surface may change.",
+        "editing any file outside allowed_edit_surface fails the repair attempt terminally (allowed: tests/pricing.rs)"
+      ],
       "suggested_test_command": "cargo test discounted_total_boundary_discriminator",
       "suggested_test_command_status": "runnable_after_the_suggested_test_exists",
       "nearest_strong_test_to_imitate": {
@@ -13959,7 +13979,7 @@ schema bump.
             "kind": "exact_return_value",
             "example": "assert_eq!(discounted_total(/* discount_threshold (equality boundary) */), /* expected */)"
           },
-          "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+          "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
         },
         "actionability": {
           "class": "actionable_related_test_extension",
@@ -13986,7 +14006,7 @@ schema bump.
     }
   ],
   "next": {
-    "before_snapshot_command": "mkdir -p target/ripr/workflow target/ripr/reports && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
+    "before_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
     "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
     "verify_after_edit": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json",
     "receipt_after_verify": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id f3c9e4d21a0b7c88 --json --out target/ripr/reports/agent-receipt.json"
@@ -13996,11 +14016,20 @@ schema bump.
 
 Field contract:
 
-- `schema_version` — currently `"0.4"`. Distinct from the repo-exposure
+- `schema_version` — currently `"0.5"`. Distinct from the repo-exposure
   report's `"0.2"` because the packet is a separate contract aimed at
   coding agents rather than reviewers. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/agent_seam_packets.rs`),
-  and any downstream consumers in lockstep. `0.2` → `0.3`:
+  and any downstream consumers in lockstep. `0.4` → `0.5`: each seam packet
+  states the edit cage its repair will enforce — `allowed_edit_surface`
+  (the single resolved test path), `forbidden_files` (the production file
+  whose behavior changed), and `must_not_change` (the production-code
+  statement plus the explicit terminality warning) — derived from the same
+  recommended target the cage authority
+  (`app::repair_attempt::edit_cage_policy_from_packet`) consumes, so the
+  packet cannot drift from enforcement (#4330); `next.before_snapshot_command`
+  also dropped its POSIX-only `mkdir -p` prefix (see the `next` contract).
+  `0.2` → `0.3`:
   `related_existing_tests[]` entries gained `relation_reason` and
   `relation_confidence` fields, and the array is now ranked
   highest-confidence first (`analysis/related-test-precision-v1`);
@@ -14011,9 +14040,32 @@ Field contract:
   in-flight `0.3` contract had not yet closed. `0.4` adds the producer-owned
   `analysis_outcome_status` and `analysis_outcome` envelope so packet
   consumers cannot mistake seam-budget completion for diff-analysis
-  completeness.
+  completeness. `0.5` adds the optional envelope-level `repair_attempt`
+  continuation block (#4329), present only in the `ripr agent repair
+  --phase before` success stdout; every other projection (`ripr agent
+  packet`, `agent-seam-packets-json`, gap-ledger packets) keeps the `0.4`
+  shape and only the version string moves.
   Reason and confidence vocabularies are documented in the
   `repo-exposure.json` field contract above.
+- `repair_attempt` — optional envelope-level continuation block, present
+  only in the `ripr agent repair --phase before --json` success stdout.
+  It names the durable transaction the packet was prepared
+  for so a driver that captures only stdout can complete the before →
+  edit → after loop without reading stderr narration:
+  `attempt_id` (the closed-form repair attempt identity, also the
+  `--attempt` value), `manifest_path` (the durable attempt manifest the
+  after phase consumes), `next_command` (the exact `ripr agent repair …
+  --phase after` command to run after the focused test edit, including
+  the authorization placeholder suffix for trust-bound attempts), and
+  `packet_path` (the root-resolved workflow packet path the document was
+  rendered from, ending in `target/ripr/workflow/agent-packet.json`).
+  Every other envelope member
+  is the retained packet envelope unchanged; the stdout document is not an
+  input to the attempt's digest bindings — the packet file is. Both the
+  document and the stderr narration print only after the attempt is
+  durably published, so a refused preparation never emits a success
+  document. Without `--json`, stdout is a short prose summary whose final
+  line names the same next command.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
@@ -14134,6 +14186,22 @@ Field contract:
   falls back to the highest-confidence related test, and otherwise
   infers a conventional `tests/*_tests.rs` path from the production
   seam file. `reason` explains that choice.
+- `packets[].allowed_edit_surface` — the edit cage the packet's repair will
+  enforce (#4330): the single resolved test path the attempt may edit, derived
+  from the same recommended target the cage authority
+  (`app::repair_attempt::edit_cage_policy_from_packet`) consumes, which reads
+  this field first and falls back to `recommended_test.file`. An empty array
+  (`inspect_static_limitation` packets) allows no edits: the cage authority
+  fails closed on it before any attempt could start.
+- `packets[].forbidden_files` — the production file whose behavior changed;
+  the repair edits only the focused test surface. Mirrors the gap packets'
+  derivation (the anchor file, dropped when it is the allowed target itself).
+- `packets[].must_not_change` — policy statements: the production-code
+  statement and, when the surface is non-empty, the explicit terminality
+  warning ("editing any file outside allowed_edit_surface fails the repair
+  attempt terminally") naming the allowed paths. The same warning appears in
+  the before phase's TTY narration, so a piped agent and a human both learn
+  the cage before violating it terminally.
 - `packets[].suggested_test_command` — an advisory Cargo test-name filter for
   the recommended test. It is emitted only for `write_targeted_test` packets
   and is not expected to select a test until the agent writes the named test.
@@ -14205,21 +14273,32 @@ Field contract:
   agents and editor surfaces. Consumers should copy this field rather than
   infer runtime, coverage, correctness, gate, or merge claims from prose.
 - `next` — optional repair-loop commands emitted when the envelope contains at
-  least one actionable targeted-test packet. `before_snapshot_command` first
-  creates the workflow and report directories, then captures the initial
-  static evidence; `after_snapshot_command` captures the static evidence after
+  least one actionable targeted-test packet. `before_snapshot_command` is one
+  plain `ripr check` command with a single redirect (#4330 dropped the
+  POSIX-only `mkdir -p` prefix): the loop's `ripr` commands create their own
+  artifact directories (`agent start --out`, `agent repair --phase before`,
+  `agent receipt --out`), and the manual loop docs
+  (`docs/TARGETED_TEST_WORKFLOW.md`, `docs/LLM_OPERATOR_GUIDE.md`) teach the
+  directory setup as its own step. A shell opens the redirect before `ripr`
+  runs and creates no parent directories, so in a fresh workspace the
+  snapshot command fails at the redirect under bash, cmd.exe, and PowerShell
+  alike until the workflow directory exists (verified on a fresh workspace:
+  each shell refuses the missing `target/ripr/workflow`, and the snapshot
+  succeeds in each once it is created — per-shell setup commands are in the
+  manual loop docs). `after_snapshot_command` captures the static evidence after
   the edit;
   `verify_after_edit` writes the verify artifact consumed by the receipt
   command. `receipt_after_verify` is a seam-scoped command for a one-seam
   packet and is `null` for a repo-wide envelope containing multiple seams.
   These commands are advisory handoff instructions and do not execute a test,
   approve a patch, or authorize a merge.
-  Compound recipes use Bash-style quoting, directory creation, and redirects,
-  consistent with the structured workflow's `command_shell: "bash"`; they do
-  not establish PowerShell recipe compatibility. Read the structured workflow
-  for its shell contract before executing commands.
-  Explicit standalone per-seam CLI `agent packet` binds these `next` commands,
-  including directory creation, to the selected repository root.
+  Snapshot recipes are a single command with one redirect and carry no
+  shell-specific syntax; the other `next` commands use Bash-style quoting,
+  consistent with the structured workflow's `command_shell: "bash"`, and do
+  not establish PowerShell recipe compatibility for themselves. Read the
+  structured workflow for its shell contract before executing commands.
+  Explicit standalone per-seam CLI `agent packet` binds these `next` commands
+  to the selected repository root.
   Its optional `next.analysis_outcome_command` writes the static outcome
   consumed by the receipt, between the after snapshot and verify steps.
   Portable bulk/check-format wrappers omit this additive field and retain
@@ -16746,7 +16825,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.12",
+    "schema_version": "1.13",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16757,7 +16836,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.18",
+      "schema_version": "1.19",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

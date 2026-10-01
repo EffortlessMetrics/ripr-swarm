@@ -32,6 +32,45 @@ Pin both sides: `rust_adversarial_same_method_other_type` must stay below
 `exposed`; `rust_same_method_owner_type_positive` must keep `exposed`. Do not
 absorb #4478 (confirmation pin), #4486 (proximity-only oracle), or #3727.
 
+## 2026-09-29: Repo-seam FieldConstruction missing facts need parser-backed owner-result identity (#1981)
+
+`CallFact`, `LetBindingFact`, and `ValueEnv` cannot prove that a local is the
+direct return of the seam owner. A nearby test name or a `.field` token on
+another object must not emit a compatible missing discriminator. Derive the
+fact only after activation is already `Yes`; nonempty `missing_discriminators`
+classifies `WeaklyGripped` before `ActivationUnknown`, so an unconditional
+field fact would invent actionability. Keep helper-transfer and qualified or
+method callees as named limitations until a later producer can resolve them.
+A same-name local or imported callee, a mutable borrow of the observed field,
+an assertion-message-only field mention, and an assertion-local shadow of the
+owner-result binding are also not owner-result observations: credit only a
+parser-backed discriminating condition or compared operands, and fail closed
+when the bare callee identity is ambiguous, including a local binding of the
+owner name that is not itself the parser-backed direct owner-result. A grouped
+nested-`super` import is the production owner only when the resolved module
+path uniquely matches this seam's owner; do not whitelist every `super::`
+prefix. The same spelling from another module, an unresolved import, or two
+cfg-ambiguous same-name owners stay non-ready. A leading `::` path selects
+the extern prelude and is not this seam's owner. A
+DirectOwnerCall related test that failed target admission stays `Missing`;
+ranking must not fall through to a Proposed InlineUnit or Integration target
+just because the `field_value` fact is now present. Advisory related observers
+(`SameModule`, `WeakTokenSubstring`, `ImportPathAffinity`) do not occupy that
+existing-test slot.
+
+## 2026-09-29: Boundary input and oracle from different tests is a false `exposed` (#4828)
+
+Infection ("related test input at the changed boundary") and discrimination
+("strong oracle") were independently Yes across the related-test set. One test
+called `gate(10)` with no assertion; another asserted `gate(100) == true`.
+The mutant `>=` → `>` passed both. `exposed` for a predicate now requires one
+test that both feeds a boundary input to the owner and holds a discriminating
+oracle on that call's result. The split names `same_test_pairing_missing`.
+Do not absorb helper credit (#4574), proximity-only oracles (#4486), or
+bare-name method relation (#4760) into this pairing gate. Pairing reuses
+activation's `==` facts so a same-test oracle that already infected through
+a named constant or helper hop stays `exposed`.
+
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
 A SideEffect `items.push(...)` on a passed collection can be confirmed by

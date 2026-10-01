@@ -3,6 +3,7 @@ pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
+pub(crate) mod diagnostic_origin;
 mod diff;
 mod extract;
 mod facts;
@@ -566,6 +567,12 @@ pub struct PreviewLanguageAdvisory {
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,
+    /// How many of the `file_count` files are JavaScript-family sources
+    /// (`.js`, `.jsx`, `.mjs`, `.cjs`). The TypeScript adapter analyzes both
+    /// halves of the family under the `typescript` wire name, so this lets
+    /// prose call a JavaScript-only diff JavaScript (#4555). Always `0` for
+    /// other languages.
+    pub javascript_file_count: usize,
     /// Whether this preview adapter was configured and available for this
     /// analysis.
     ///
@@ -719,6 +726,8 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// Crate-private numeric diagnostic origins for Rust findings (#4464).
+    pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Default language list when callers do not pass `[languages]` config.
