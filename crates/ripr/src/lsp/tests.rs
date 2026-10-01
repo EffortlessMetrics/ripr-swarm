@@ -10,11 +10,12 @@ use super::capabilities::{
 use super::client_features::ClientFeatureProfile;
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
-    DiagnosticBatch, WorkspaceDiagnostics, add_canonical_group_data, canonical_finding_groups,
-    canonical_group_has_mixed_classes, diagnostic_for_classified_seam, diagnostic_for_finding,
-    diagnostic_refresh_plan, diagnostic_severity_for_class, finding_diagnostics_by_uri,
-    finding_diagnostics_by_uri_with_profile, take_all_uris, workspace_diagnostic_batches,
-    workspace_diagnostic_batches_with_config, workspace_diagnostics_with_config,
+    DiagnosticBatch, FindingDiagnosticProjection, WorkspaceDiagnostics, add_canonical_group_data,
+    canonical_finding_groups, canonical_group_has_mixed_classes, diagnostic_for_classified_seam,
+    diagnostic_for_finding, diagnostic_refresh_plan, diagnostic_severity_for_class,
+    finding_diagnostics_by_uri, finding_diagnostics_by_uri_with_profile, take_all_uris,
+    workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
+    workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
@@ -7143,9 +7144,11 @@ fn diagnostic_for_finding_measures_saved_prefix_in_negotiated_encoding() -> Resu
             std::slice::from_ref(&finding),
             &crate::config::SeverityConfig::default(),
             true,
-            crate::config::LspDiagnosticProfile::Full,
-            None,
-            encoding,
+            FindingDiagnosticProjection::new(
+                crate::config::LspDiagnosticProfile::Full,
+                encoding,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
         )?;
         let diagnostic = grouped
             .values()
@@ -13123,7 +13126,7 @@ fn execute_command_collect_context_returns_agent_seam_packet_for_known_seam() ->
         let Some(packet) = packet else {
             return Err("expected seam packet".to_string());
         };
-        assert_eq!(packet["schema_version"], "0.4");
+        assert_eq!(packet["schema_version"], "0.5");
         assert_eq!(packet["packets_total"], 1);
         assert_eq!(packet["packets"][0]["seam_id"], seam_id);
         assert_eq!(
@@ -19554,9 +19557,11 @@ fn profile_status(
             &findings,
             &crate::config::SeverityConfig::default(),
             true,
-            profile,
-            None,
-            &PositionEncodingKind::UTF16,
+            FindingDiagnosticProjection::new(
+                profile,
+                &PositionEncodingKind::UTF16,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
         )?;
         let published = grouped.get(&uri).cloned().unwrap_or_default();
         let published_count = published.len();

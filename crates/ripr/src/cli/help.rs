@@ -186,6 +186,19 @@ pub(super) fn print_help_all() {
     println!("{HELP_ALL}");
 }
 
+/// `ripr help workflow [name]`: bounded, non-executing workflow guidance
+/// (RIPR-SPEC-0189). The render is pure static text from the typed workflow
+/// catalog; it performs no repository discovery, analysis, compilation, test,
+/// child-process, network, mutation, or product-artifact work.
+pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
+    let rendered = match name {
+        Some(name) => crate::cli::workflow_catalog::render_workflow(name)?,
+        None => crate::cli::workflow_catalog::render_workflow_listing(),
+    };
+    println!("{rendered}");
+    Ok(())
+}
+
 pub(super) fn print_check_help() {
     println!("{CHECK_HELP}");
 }
@@ -338,6 +351,13 @@ pub(super) fn print_rerun_help() {
     println!("{RERUN_HELP}");
 }
 
+/// Test-only access to the two rendered human discovery surfaces, for the
+/// projection-agreement checks in `command_metadata` (issue #4823).
+#[cfg(test)]
+pub(crate) fn discovery_surfaces() -> (&'static str, &'static str) {
+    (overview::HELP, overview::HELP_ALL)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -377,7 +397,7 @@ mod tests {
         print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
         print_swarm_queue_help, print_zero_help,
     };
-    use crate::cli::command::KNOWN_COMMANDS;
+    use crate::cli::command::known_commands;
 
     /// The exhaustive reference owns the full inventory. This assertion used to
     /// target the default screen, which is why that screen had grown to 91
@@ -490,16 +510,15 @@ mod tests {
         // `help` documents itself in the header and `More:` lines rather than as
         // a catalog entry.
         let documented_elsewhere = ["help"];
-        let missing: Vec<&str> = KNOWN_COMMANDS
-            .iter()
-            .copied()
+        let missing: Vec<&str> = known_commands()
+            .into_iter()
             .filter(|command| !documented_elsewhere.contains(command))
             .filter(|command| !HELP_ALL.contains(&format!("ripr {command}")))
             .collect();
         assert!(
             missing.is_empty(),
             "ripr help --all omits reachable command(s): {missing:?}; \
-             every KNOWN_COMMANDS entry must appear in the full reference"
+             every catalog-derived known command must appear in the full reference"
         );
     }
 
@@ -519,8 +538,28 @@ mod tests {
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));
+        assert!(CHECK_HELP.contains("--quiet"));
+        assert!(CHECK_HELP.contains("ripr progress:"));
+        assert!(CHECK_HELP.contains("percentage or ETA"));
+        assert!(CHECK_HELP.contains("does not mean analysis is faster"));
+        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
+    }
+
+    #[test]
+    fn check_help_names_the_latency_trace_env_and_mode_cost_class() {
+        // #4946(d): every repo-exposure env var a check user can set is
+        // documented on the same "Environment variables:" surface; this one
+        // was the last omission.
+        assert!(CHECK_HELP.contains("RIPR_REPO_EXPOSURE_LATENCY_TRACE"));
+        assert!(CHECK_HELP.contains("emits diagnostic phase/cache"));
+        assert!(CHECK_HELP.contains("Presence enables tracing"));
+        // #4946(c): the --mode entry orients on the cost class, not only the
+        // index scope, so a caller can predict the wall-clock difference.
+        assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
+        assert!(CHECK_HELP.contains("order of magnitude longer"));
     }
 
     #[test]
@@ -1567,7 +1606,7 @@ mod tests {
             (
                 "check",
                 CHECK_HELP,
-                &["--base", "--diff", "--mode", "--json"],
+                &["--base", "--diff", "--mode", "--json", "--quiet"],
             ),
             (
                 "explain",
