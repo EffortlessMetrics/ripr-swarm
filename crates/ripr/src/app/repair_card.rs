@@ -1,5 +1,5 @@
 //! App-side builder that projects the shared repair authorities into a
-//! [`RepairCardV1`] (RIPR-SPEC-0191, #4663).
+//! [`RepairCardV1`] (RIPR-SPEC-0192, #4663).
 //!
 //! [`build_repair_card`] is the only production entry point. It is a pure
 //! projection: every card field names the authority it was copied from, no
@@ -443,7 +443,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.next_command = Some(&command);
 
-        assert!(matches!(build_repair_card(&input), Err(_)));
+        assert!(matches!(build_repair_card(&input), Err(_message)));
     }
 
     #[test]
@@ -485,7 +485,7 @@ mod tests {
         input.packet_eligible = false;
         input.next_command = Some(&command);
 
-        assert!(matches!(build_repair_card(&input), Err(_)));
+        assert!(matches!(build_repair_card(&input), Err(_message)));
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.subject.seam_id = "seam:other".to_string();
 
-        assert!(matches!(build_repair_card(&input), Err(_)));
+        assert!(matches!(build_repair_card(&input), Err(_message)));
     }
 
     #[test]
@@ -505,7 +505,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.subject.canonical_gap_id = Some("gap:other".to_string());
 
-        assert!(matches!(build_repair_card(&input), Err(_)));
+        assert!(matches!(build_repair_card(&input), Err(_message)));
     }
 
     #[test]
@@ -518,7 +518,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.selected_basis = Some("RIPR-0001 observed".to_string());
 
-        assert!(matches!(build_repair_card(&input), Err(_)));
+        assert!(matches!(build_repair_card(&input), Err(_message)));
     }
 
     #[test]
@@ -528,7 +528,7 @@ mod tests {
         let mut input = base_input(&instruction, &readiness);
         input.assertion_goal_detail = None;
 
-        assert!(matches!(build_repair_card(&input), Err(_)));
+        assert!(matches!(build_repair_card(&input), Err(_message)));
     }
 
     #[test]
@@ -625,7 +625,7 @@ mod tests {
             })
             .collect();
 
-        assert!(matches!(build_repair_card(&input), Err(_)));
+        assert!(matches!(build_repair_card(&input), Err(_message)));
     }
 
     #[test]

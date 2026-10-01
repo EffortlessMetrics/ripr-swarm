@@ -1,4 +1,4 @@
-# RIPR-SPEC-0191: RepairCardV1 projected from shared repair authorities
+# RIPR-SPEC-0192: RepairCardV1 projected from shared repair authorities
 
 Status: proposed
 

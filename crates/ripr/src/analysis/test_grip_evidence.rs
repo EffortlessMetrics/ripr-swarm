@@ -193,10 +193,6 @@ impl TestTargetEvidence {
     pub(crate) fn provenance(&self) -> TestTargetProvenance {
         self.provenance
     }
-
-    pub(crate) fn currentness(&self) -> TestTargetCurrentness {
-        self.currentness
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

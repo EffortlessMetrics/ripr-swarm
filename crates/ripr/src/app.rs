@@ -25,7 +25,7 @@ pub(crate) mod python_repair_binding;
 pub(crate) mod python_repair_verification;
 pub(crate) mod receipt;
 pub(crate) mod repair_attempt;
-// Staged internal repair-card contract (RIPR-SPEC-0191, #4663). The public Rust
+// Staged internal repair-card contract (RIPR-SPEC-0192, #4663). The public Rust
 // API remains unchanged until #4667 connects the first producer (CLI
 // projection) and a consumer adopts the card.
 #[cfg_attr(

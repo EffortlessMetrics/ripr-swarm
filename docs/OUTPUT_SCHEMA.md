@@ -65,7 +65,7 @@ map is:
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `1` |
-| `RepairCardV1` DTO (RIPR-SPEC-0191; no CLI projection until #4667) | `schema_version` | `repair_card.v1` |
+| `RepairCardV1` DTO (RIPR-SPEC-0192; no CLI projection until #4667) | `schema_version` | `repair_card.v1` |
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -93,7 +93,7 @@ that family's version only.
 
 ## Repair card (`RepairCardV1`, schema `repair_card.v1`)
 
-`RepairCardV1` (RIPR-SPEC-0191, #4663) is the compact provider-neutral
+`RepairCardV1` (RIPR-SPEC-0192, #4663) is the compact provider-neutral
 repair work object: one card orders one governed repair as a verbatim
 projection of the fix-instruction summary, repair-route readiness, typed
 target selection, typed command references and optional repair-attempt

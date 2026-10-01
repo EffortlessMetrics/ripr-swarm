@@ -1,4 +1,4 @@
-//! Semantic digest for `RepairCardV1` (RIPR-SPEC-0191, #4663).
+//! Semantic digest for `RepairCardV1` (RIPR-SPEC-0192, #4663).
 //!
 //! The digest logic lives at the crate root, not in `domain`, because domain
 //! must not know JSON rendering (see `command_spec_digest.rs` for the same
