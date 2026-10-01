@@ -27,13 +27,14 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
+use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 mod lexical_test_grip;
@@ -44,14 +45,26 @@ mod lexical_test_grip;
 /// packages), and building that working set can exhaust a constrained runner
 /// (issue #1023). Above this many files the analysis fails closed with a named
 /// `diff_scope_oversized` error rather than exhausting host memory and aborting.
-const DIFF_INDEX_FILE_LIMIT: usize = 800;
+///
+/// Raised from 800: this repository's own decomposition waves grew the
+/// diff/repo-indexed working set to 802 files (796 at main `1b61c4757`,
+/// +6 with the eval-sweep-check module split), so the repo's own dogfood
+/// and smoke analyses tripped the default on an in-spec tree. 1200 keeps
+/// real headroom for module splits while still failing closed on genuinely
+/// oversized external scopes; constrained operators retain the
+/// `RIPR_MAX_DIFF_INDEX_FILES` override.
+const DIFF_INDEX_FILE_LIMIT: usize = 1200;
 
 /// Hard analysis-cost guard for the repo-scoped path (#2109): the diff path
 /// caps its working set at [`DIFF_INDEX_FILE_LIMIT`], and the repo path now
 /// has the same guard so `ripr check --mode deep|ready` on a large monorepo
 /// fails closed with a named `repo_scope_oversized` error instead of loading
 /// and indexing the entire workspace unbounded.
-const REPO_INDEX_FILE_LIMIT: usize = 800;
+///
+/// Raised in lockstep with [`DIFF_INDEX_FILE_LIMIT`] for the same measured
+/// repo-growth reason; `RIPR_MAX_REPO_INDEX_FILES` remains the operator
+/// override.
+const REPO_INDEX_FILE_LIMIT: usize = 1200;
 
 /// Env override for [`REPO_INDEX_FILE_LIMIT`].
 const REPO_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_REPO_INDEX_FILES";
@@ -1269,6 +1282,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
 
@@ -1336,6 +1350,10 @@ impl RustAdapter {
                 .map(|file| file.path.as_path()),
         )?;
 
+        // Files whose probes became findings: only their evidence can be
+        // missing a related test, so only they earn an unresolved-route
+        // limitation.
+        let mut files_with_findings = std::collections::BTreeSet::new();
         for changed in analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -1364,7 +1382,13 @@ impl RustAdapter {
             cancellation::checkpoint()?;
             let probes =
                 analysis_probes::probes_for_file_with_relations(&options.root, changed, &index);
-            for (probe, binding_relation) in probes {
+            if !probes.is_empty() {
+                files_with_findings.insert(changed.path.clone());
+            }
+            for seeded in probes {
+                seeded.record_span(&mut parser_spans);
+                let probe = seeded.probe;
+                let binding_relation = seeded.binding_relation;
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let related_test_candidate_index = related_test_candidate_index
@@ -1430,6 +1454,16 @@ impl RustAdapter {
             limitations.push(limitation);
         }
 
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
+
         Ok(LanguageDiffResult {
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
@@ -1453,9 +1487,79 @@ impl RustAdapter {
                             && source_role_context.module_graph_orphans.contains(*path)
                     }),
                 )?)
+                .chain(unresolved_route_limitations(
+                    files_with_findings.iter().filter_map(|path| {
+                        source_role_context
+                            .module_graph_unresolved_routes
+                            .get(path)
+                            .map(|route| (path, route))
+                    }),
+                )?)
                 .collect(),
+            rust_diagnostic_origins,
         })
     }
+}
+
+/// Bounds a path to `max_chars` for a recovery sentence, whose length is
+/// capped: a long path shortens the sentence, never fails the analysis.
+fn bounded_path_display(path: &Path, max_chars: usize) -> String {
+    let display = path.to_string_lossy().replace('\\', "/");
+    if display.chars().count() > max_chars {
+        let kept = max_chars.saturating_sub(1);
+        format!("{}…", display.chars().take(kept).collect::<String>())
+    } else {
+        display
+    }
+}
+
+/// One typed limitation per changed Rust file whose only route into its
+/// crate is a `mod` with an unresolved `#[path]` target (#4435). The file
+/// still seeds, but ripr composes no module context for it, so related
+/// tests can be missed; the run names the declaration instead of reading as
+/// complete.
+fn unresolved_route_limitations<'a>(
+    routes: impl Iterator<Item = (&'a std::path::PathBuf, &'a (std::path::PathBuf, usize))>,
+) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    routes
+        .map(|(path, (declaring_file, line))| {
+            let display = path.to_string_lossy().replace('\\', "/");
+            // Two paths share the recovery sentence's character budget.
+            let named = bounded_path_display(path, 100);
+            let declaration = format!("{}:{line}", bounded_path_display(declaring_file, 100));
+            let limitation = AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    format!(
+                        "{named} is reached only through the `mod` at {declaration}, whose \
+                         `#[path]` target ripr cannot resolve (a `cfg_attr` or non-literal \
+                         path), so its related tests may be missing from these findings. \
+                         A plain `#[path = \"...\"]` declaration, or `#[cfg]`-gated \
+                         declarations per target, resolve."
+                    ),
+                )?,
+            );
+            // A path the portable form rejects drops the field, never the run;
+            // the recovery text still names the file.
+            limitation
+                .clone()
+                .with_path(&display)
+                .unwrap_or(limitation)
+                .with_affected_items(1)?
+                .with_detail(
+                    "No resolved `mod`, `#[path]` or `include!` edge reaches this changed \
+                     Rust file; a `mod` with an unresolved `#[path]` target names it, so ripr \
+                     composes no module context for it and its findings may miss related \
+                     tests.",
+                )
+        })
+        .collect()
 }
 
 /// One typed limitation per changed Rust file that no Cargo target's module
@@ -1471,13 +1575,7 @@ fn unreached_module_limitations<'a>(
     paths
         .map(|path| {
             let display = path.to_string_lossy().replace('\\', "/");
-            // The recovery text is bounded; a long path shortens the
-            // sentence, never fails the analysis.
-            let named = if display.chars().count() > 160 {
-                format!("{}…", display.chars().take(159).collect::<String>())
-            } else {
-                display.clone()
-            };
+            let named = bounded_path_display(path, 160);
             let limitation = AnalysisLimitation::new(
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 AnalysisStage::LanguageAdapter,
@@ -1689,6 +1787,7 @@ impl RustAdapter {
         let mut related_test_candidate_index = None;
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
 
         // #2972: one path-dependency edge context per repo pass. Repo mode
         // indexes the whole workspace, so the admit precondition holds by
@@ -1705,8 +1804,10 @@ impl RustAdapter {
         };
 
         for path in &production_files {
-            let probes = analysis_probes::probes_for_repo_file(&options.root, path, &index);
-            for probe in probes {
+            let probes = analysis_probes::probes_for_repo_file_seeded(&options.root, path, &index);
+            for seeded in probes {
+                seeded.record_span(&mut parser_spans);
+                let probe = seeded.probe;
                 let related_test_candidate_index = related_test_candidate_index
                     .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));
                 let mut finding = classifier::classify_probe_with_candidate_index(
@@ -1730,6 +1831,16 @@ impl RustAdapter {
             }
         }
 
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_rust_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
+
         Ok(LanguageRepoResult {
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
@@ -1739,6 +1850,7 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            rust_diagnostic_origins,
         })
     }
 }
@@ -1750,8 +1862,8 @@ mod tests {
         PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
         PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
         PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets,
-        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter,
-        apply_probe_and_oracle_limits, changed_rust_line_count,
+        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT, REPO_INDEX_FILE_LIMIT_ENV,
+        RustAdapter, apply_probe_and_oracle_limits, changed_rust_line_count,
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
         diff_index_file_limit_from_env, enforce_changed_rust_line_limit,
         enforce_repo_index_file_limit, is_binary_source_path, is_cargo_binary_invocation,
@@ -2691,6 +2803,10 @@ fn absent_delimiter_boundary_returns_head() {
 
     #[test]
     fn diff_index_file_limit_defaults_when_unset() {
+        // Independent decision pin: the guard-raise set the measured default
+        // to 1200 (repo growth evidence); a revert of the constant must fail
+        // here rather than silently re-hide under the 800 default.
+        assert_eq!(DIFF_INDEX_FILE_LIMIT, 1200);
         assert_eq!(
             diff_index_file_limit_from_env(Err(VarError::NotPresent)),
             Ok(DIFF_INDEX_FILE_LIMIT)
@@ -3298,10 +3414,13 @@ fn absent_delimiter_boundary_returns_head() {
     fn repo_index_file_limit_env_parsing() -> Result<(), String> {
         // Default applies when unset; valid override wins; invalid fails
         // closed (#2109).
+        // Independent decision pin for the guard-raise default; see the diff
+        // guard test for the rationale.
+        assert_eq!(REPO_INDEX_FILE_LIMIT, 1200);
         let unset = repo_index_file_limit_from_env(Err(std::env::VarError::NotPresent))
             .map_err(|err| format!("default should parse: {err}"))?;
         assert_eq!(
-            unset, 800,
+            unset, REPO_INDEX_FILE_LIMIT,
             "default must be the {REPO_INDEX_FILE_LIMIT_ENV} guard"
         );
         let raised = repo_index_file_limit_from_env(Ok("5000".to_string()))
@@ -4640,6 +4759,101 @@ fn absent_delimiter_boundary_returns_head() {
         );
         assert_eq!(orphan_limitation_paths(&result), vec!["src/unused.rs"]);
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_names_the_unresolved_path_a_changed_file_is_reached_through()
+    -> Result<(), String> {
+        // #4435 follow-up: `src/platform/unix_impl.rs` enters the crate only
+        // through `#[cfg_attr(unix, path = ...)] mod sys;`, which ripr cannot
+        // resolve, so it gets no module context and its findings can miss
+        // related tests. It still seeds, and the run names the declaration.
+        // `src/used.rs` is reached by a resolved `mod` and earns nothing;
+        // `src/sys.rs` (the default resolution) changes only a comment, so
+        // it has no finding to qualify.
+        let root = temp_root("module-graph-unresolved-route")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub mod used;\n#[cfg_attr(unix, path = \"platform/unix_impl.rs\")]\nmod sys;\n",
+        )?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(&root.join("src/platform/unix_impl.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("src/sys.rs"),
+            "// fallback\npub fn fallback() {}\n",
+        )?;
+        let diff = format!(
+            "{}{}diff --git a/src/sys.rs b/src/sys.rs\n\
+             --- a/src/sys.rs\n\
+             +++ b/src/sys.rs\n\
+             @@ -1,2 +1,2 @@\n\
+             -// old fallback\n\
+             +// fallback\n \
+             pub fn fallback() {{}}\n",
+            predicate_change_diff("src/used.rs"),
+            predicate_change_diff("src/platform/unix_impl.rs"),
+        );
+
+        let result = module_graph_diff(&root, &diff)?;
+
+        let files = finding_files(&root, &result);
+        for seeded in ["src/used.rs", "src/platform/unix_impl.rs"] {
+            assert!(
+                files.iter().any(|file| file == seeded),
+                "{seeded} must still seed: {files:?}"
+            );
+        }
+        let routes = result
+            .limitations
+            .iter()
+            .filter(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("unresolved `#[path]` target"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            routes
+                .iter()
+                .filter_map(|limitation| limitation.path.clone())
+                .collect::<Vec<_>>(),
+            vec!["src/platform/unix_impl.rs"]
+        );
+        let recovery = routes
+            .first()
+            .map(|limitation| limitation.recovery.detail.clone())
+            .unwrap_or_default();
+        assert!(
+            recovery.contains("the `mod` at src/lib.rs:3"),
+            "the limitation must name the declaration: {recovery}"
+        );
+        assert!(orphan_limitation_paths(&result).is_empty());
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn unresolved_route_limitation_bounds_long_paths() -> Result<(), String> {
+        let long = PathBuf::from(format!("src/{}.rs", "deep/".repeat(80)));
+        let route = (
+            PathBuf::from(format!("src/{}/lib.rs", "x".repeat(300))),
+            usize::MAX,
+        );
+        let limitations = super::unresolved_route_limitations(std::iter::once((&long, &route)))?;
+        let recovery = limitations
+            .first()
+            .map(|limitation| limitation.recovery.detail.clone())
+            .unwrap_or_default();
+        assert!(
+            recovery.contains('…') && recovery.contains(&format!(":{}", usize::MAX)),
+            "{recovery}"
+        );
         Ok(())
     }
 

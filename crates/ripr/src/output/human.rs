@@ -1,4 +1,4 @@
-use crate::app::{CheckOutput, FindingNavigation};
+use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
 use std::collections::BTreeSet;
@@ -24,8 +24,8 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
 }
 
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
-    let navigation = FindingNavigation::legacy();
-    render_bounded_with_config_and_navigation(output, config, Some(&navigation))
+    let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
+    render_bounded_with_config_and_navigation(output, config, Some(&drill_in))
 }
 
 /// #4012: the no-scope note must describe what was actually analyzed. When
@@ -50,7 +50,7 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
 pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
-    navigation: Option<&FindingNavigation>,
+    drill_in: Option<&FindingDrillIn>,
 ) -> String {
     let mut out = render_header_summary(output);
     render_analysis_outcome_disclosure(&mut out, output);
@@ -61,7 +61,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str("No diff-derived static exposure probes found.\n");
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
-            triage::render_human_triage(&mut out, &triage, output, config, navigation);
+            triage::render_human_triage(&mut out, &triage, output, config, drill_in);
         }
         if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(&render_no_scope_note(output));
@@ -75,7 +75,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     }
 
     let triage = triage::select_human_triage(output, config);
-    triage::render_human_triage(&mut out, &triage, output, config, navigation);
+    triage::render_human_triage(&mut out, &triage, output, config, drill_in);
     render_all_no_path_disclosure(&mut out, output);
     if output.unanalyzed_working_tree {
         out.push_str(UNANALYZED_WORKING_TREE_NOTE);
@@ -94,14 +94,15 @@ pub(crate) fn render_full_with_config(output: &CheckOutput, config: &RiprConfig)
     render_full_with_config_and_navigation(output, config, None)
 }
 
-/// Full human form. With `navigation`, every rendered finding carries its own
-/// `ripr explain` / `ripr context` drill-in pair, so rerunning with
+/// Full human form. With `drill_in`, every rendered finding carries its own
+/// `ripr explain` / `ripr context` drill-in pair (or, for a `--worktree` run
+/// without an artifact, the one-line replay route), so rerunning with
 /// `--format human-full` as the digest suggests never loses the commands the
-/// digest printed (#4379).
+/// digest printed (#4379, #4321).
 pub(crate) fn render_full_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
-    navigation: Option<&FindingNavigation>,
+    drill_in: Option<&FindingDrillIn>,
 ) -> String {
     let mut out = render_header_summary(output);
 
@@ -140,16 +141,28 @@ pub(crate) fn render_full_with_config_and_navigation(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    let mut findings_rendered = 0usize;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
+        findings_rendered += 1;
         out.push_str(&render_finding_with_config(finding, config));
-        if let Some(navigation) = navigation {
+        if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
             out.push_str(&format!("  {}\n", navigation.explain_command(&finding.id)));
             out.push_str(&format!("  {}\n", navigation.context_command(&finding.id)));
         }
+        out.push('\n');
+    }
+    // #4321: a `--worktree` run without `--write-artifact` has no artifact for
+    // drill-in commands to replay; say so and name the route instead of
+    // dropping the block silently. The note only points at ids it actually
+    // printed — an all-suppressed run states the route without the pointer.
+    if let Some(FindingDrillIn::WorktreeReplayNeedsArtifact) = drill_in {
+        out.push_str(&FindingDrillIn::worktree_replay_note_full(
+            findings_rendered > 0,
+        ));
         out.push('\n');
     }
     render_all_no_path_disclosure(&mut out, output);
@@ -171,16 +184,32 @@ fn render_header_summary(output: &CheckOutput) -> String {
         output.mode.as_str(),
         output.root.display()
     ));
+    // #4322: the only per-run denominator line a human sees must match the
+    // finding vocabulary. All seven classes render with their canonical
+    // `ExposureClass::as_str()` tokens (no `weak`/`unrevealed` abbreviations,
+    // no summed unknown bucket — the unknown split is exactly what tells the
+    // reader which discriminator machinery is missing), and the shown/total
+    // denominator discloses suppression: per-class buckets count unsuppressed
+    // findings only, while `summary.findings` stays the total.
+    let suppressed = output
+        .suppression
+        .as_ref()
+        .map_or(0, |suppression| suppression.suppressed.len());
+    let shown = output.summary.findings.saturating_sub(suppressed);
     out.push_str(&format!(
-        "Summary: {} probe(s), {} exposed, {} weak, {} unrevealed, {} no path, {} unknown\n\n",
+        "Summary: {} probe(s), {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
+         {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
+         {} of {} finding(s) shown\n\n",
         output.summary.probes,
         output.summary.exposed,
         output.summary.weakly_exposed,
         output.summary.reachable_unrevealed,
         output.summary.no_static_path,
-        output.summary.static_unknown
-            + output.summary.infection_unknown
-            + output.summary.propagation_unknown
+        output.summary.infection_unknown,
+        output.summary.propagation_unknown,
+        output.summary.static_unknown,
+        shown,
+        output.summary.findings,
     ));
     render_language_file_breakdown(&mut out, output);
     out
@@ -193,14 +222,15 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
     let Some(outcome) = &output.analysis_outcome else {
         return;
     };
-    let kind = outcome.kind.as_str();
     out.push_str(&format!(
-        "Analysis outcome: {kind} ({}).\n",
+        "Analysis outcome: {} ({}; {}).\n",
+        outcome.kind.plain_label(),
         if outcome.kind.is_complete() {
             "analysis complete"
         } else {
             "analysis incomplete"
-        }
+        },
+        outcome.kind.as_str()
     ));
     if outcome.limitations.is_empty() {
         out.push_str(&format!(
@@ -214,32 +244,48 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         return;
     }
     // The "zero findings" hedge only makes sense when there are zero findings;
-    // a partial run with findings gets the scope caveat instead.
-    if output.findings.is_empty() {
-        out.push_str(
-            "  Zero findings is not a clean result because the analyzed scope is incomplete.\n",
-        );
-    } else {
-        out.push_str(&format!(
-            "  The {} finding(s) below cover only the analyzed scope; behavior outside it has no finding.\n",
-            output.findings.len()
-        ));
+    // a partial run with findings gets the scope caveat instead. #4952: the
+    // EOL-only churn disclosure does not scope the analysis down, so the
+    // incomplete-scope hedges stay off when it is the only limitation.
+    let scoped_down = outcome.limitations.iter().any(|limitation| {
+        limitation.kind != crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
+    });
+    if scoped_down {
+        if output.findings.is_empty() {
+            out.push_str(
+                "  Zero findings is not a clean result because the analyzed scope is incomplete.\n",
+            );
+        } else {
+            out.push_str(&format!(
+                "  The {} finding(s) below cover only the analyzed scope; behavior outside it has no finding.\n",
+                output.findings.len()
+            ));
+        }
     }
     for limitation in &outcome.limitations {
+        // Plain words lead; the schema tokens follow in parentheses so the
+        // line still greps against JSON and docs (#4323).
         out.push_str(&format!(
-            "  Limitation: {} at {}",
+            "  Limitation: {} during {} ({} at {})",
+            limitation.kind.plain_label(),
+            limitation.producer_stage.plain_label(),
             limitation.kind.as_str(),
             limitation.producer_stage.as_str()
         ));
         if let Some(path) = &limitation.path {
-            out.push_str(&format!(" ({path})"));
+            out.push_str(&format!("; file: {path}"));
         }
         if let Some(count) = limitation.affected_items {
             out.push_str(&format!("; affected items: {count}"));
         }
+        let recovery = limitation.recovery.kind;
+        let recovery_label = if recovery.plain_label() == recovery.as_str() {
+            recovery.as_str().to_string()
+        } else {
+            format!("{} ({})", recovery.plain_label(), recovery.as_str())
+        };
         out.push_str(&format!(
-            "; recovery: {} — {}.\n",
-            limitation.recovery.kind.as_str(),
+            "; recovery: {recovery_label} — {}.\n",
             // The recovery detail is often a full sentence; the line supplies
             // its own terminal period.
             limitation.recovery.detail.trim_end_matches('.')
@@ -730,11 +776,166 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("mode: draft"));
+        // #4322: canonical class tokens, unknown classes kept separate, and a
+        // shown/total denominator.
         assert!(rendered.contains(
-            "Summary: 8 probe(s), 1 exposed, 2 weak, 1 unrevealed, 1 no path, 3 unknown"
+            "Summary: 8 probe(s), 1 exposed, 2 weakly_exposed, 1 reachable_unrevealed, 1 no_static_path, 1 infection_unknown, 1 propagation_unknown, 1 static_unknown; 0 of 0 finding(s) shown"
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
         assert!(!rendered.contains("Next:"));
+    }
+
+    /// #4322: the three unknown classes answer *which* discriminator
+    /// machinery is missing, so the header must keep them separate instead of
+    /// summing them into one bucket.
+    #[test]
+    fn summary_header_keeps_the_unknown_classes_separate() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 9,
+                findings: 9,
+                infection_unknown: 3,
+                propagation_unknown: 5,
+                static_unknown: 1,
+                ..Summary::default()
+            },
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains(
+                "3 infection_unknown, 5 propagation_unknown, 1 static_unknown; 9 of 9 finding(s) shown"
+            ),
+            "unknown classes must render separately; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains(" unknown\n"),
+            "the summed unknown bucket must not return; got:\n{rendered}"
+        );
+    }
+
+    /// #4322: per-class buckets count unsuppressed findings only, so the
+    /// header's shown/total denominator must disclose the suppressed
+    /// remainder instead of letting a reader sum mismatching counts.
+    #[test]
+    fn summary_header_shown_total_denominator_reflects_suppression() {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let mut kept = sample_finding();
+        kept.id = "kept-finding".to_string();
+        let mut suppressed = sample_finding();
+        suppressed.id = "suppressed-finding".to_string();
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 2,
+                findings: 2,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![kept, suppressed],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: Some(CheckSuppressionOutcome {
+                policy_path: "policy/ripr-suppressions.toml".to_string(),
+                suppressed: vec![SuppressedCheckFinding {
+                    finding_id: "suppressed-finding".to_string(),
+                    selector: "src/**".to_string(),
+                }],
+                warnings: Vec::new(),
+            }),
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("; 1 of 2 finding(s) shown"),
+            "the denominator must disclose the suppressed remainder; got:\n{rendered}"
+        );
+    }
+
+    /// #4322: the header tokens are the canonical `ExposureClass` wire
+    /// tokens, so grepping the header against finding lines (or the spec
+    /// vocabulary) succeeds. The distinctive per-class counts pin both token
+    /// and position; adding a class without extending the header fails here.
+    #[test]
+    fn summary_header_names_every_class_with_its_canonical_token() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 7,
+                findings: 7,
+                exposed: 1,
+                weakly_exposed: 2,
+                reachable_unrevealed: 3,
+                no_static_path: 4,
+                infection_unknown: 5,
+                propagation_unknown: 6,
+                static_unknown: 7,
+                ..Summary::default()
+            },
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains(
+            "Summary: 7 probe(s), 1 exposed, 2 weakly_exposed, 3 reachable_unrevealed, \
+             4 no_static_path, 5 infection_unknown, 6 propagation_unknown, 7 static_unknown; \
+             7 of 7 finding(s) shown"
+        ));
+        // Token-to-taxonomy binding: every canonical token appears in the
+        // header, so a renamed or added class cannot silently diverge.
+        for class in [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ] {
+            assert!(
+                rendered.contains(class.as_str()),
+                "header must carry the canonical token {}; got:\n{rendered}",
+                class.as_str()
+            );
+        }
     }
 
     fn partial_outcome_output(findings: Vec<Finding>) -> Result<CheckOutput, String> {
@@ -796,6 +997,99 @@ mod tests {
         let empty = render(&partial_outcome_output(Vec::new())?);
         assert!(empty.contains("Zero findings is not a clean result"));
         assert!(!empty.contains("finding(s) below cover only"));
+        Ok(())
+    }
+
+    // #4952: the EOL-only churn disclosure is a churn-shape note, not an
+    // incompleteness, so a complete run carrying it renders the limitation
+    // without the incomplete-scope hedges.
+    fn eol_only_outcome_output(findings: Vec<Finding>) -> Result<CheckOutput, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::EolOnlyChurn,
+            AnalysisStage::DiffParse,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::Retry,
+                "Normalize line endings and re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(1)?
+        .with_detail(
+            "1 file(s) changed only in line endings; probes treat text as unchanged: src/lib.rs",
+        )?;
+        let outcome = AnalysisOutcome::new(
+            if findings.is_empty() {
+                AnalysisOutcomeKind::CompleteNoFindings
+            } else {
+                AnalysisOutcomeKind::CompleteWithFindings
+            },
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                // CompleteNoFindings requires a probe or candidate subject.
+                candidate_line_count: if findings.is_empty() { 1 } else { 0 },
+                finding_count: u64::try_from(findings.len()).unwrap_or(u64::MAX),
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?;
+        Ok(CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary::default(),
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: Some(outcome),
+            partial_scope: None,
+        })
+    }
+
+    #[test]
+    fn eol_only_disclosure_renders_without_the_incomplete_scope_hedges() -> Result<(), String> {
+        let rendered = render(&eol_only_outcome_output(vec![sample_finding()])?);
+        assert!(rendered.contains("analysis complete"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "Limitation: some files changed only in line endings during parsing the diff (eol_only_churn at diff_parse)"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("affected items: 1"), "{rendered}");
+        // A disclosure does not scope the analysis down: no incomplete-scope
+        // hedge may accompany it.
+        assert!(
+            !rendered.contains("finding(s) below cover only"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Zero findings is not a clean result"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn eol_only_disclosure_with_zero_findings_does_not_claim_incomplete_scope() -> Result<(), String>
+    {
+        let rendered = render(&eol_only_outcome_output(Vec::new())?);
+        assert!(
+            !rendered.contains("Zero findings is not a clean result"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("eol_only_churn"), "{rendered}");
         Ok(())
     }
 
@@ -904,7 +1198,10 @@ mod tests {
                 partial_scope: None,
             };
             let rendered = render(&output);
-            assert!(rendered.contains("State: preview_limited"), "{rendered}");
+            assert!(
+                rendered.contains("State: preview language, advisory only (preview_limited)"),
+                "{rendered}"
+            );
             assert!(
                 rendered.contains("  File: pricing/__init__.py:11\n"),
                 "{rendered}"
@@ -999,6 +1296,187 @@ mod tests {
         assert!(!rendered.contains("More:"));
     }
 
+    /// #4320: the `Hidden:` block must name what it hides by
+    /// `file:line (class)` so a reader can confirm a file they care about was
+    /// covered without a rerun.
+    #[test]
+    fn hidden_block_lists_omitted_findings_by_file_line_and_class() {
+        let findings = (0..3)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("finding-{index}");
+                finding.probe.location = SourceLocation::new(format!("src/f{index}.rs"), 1, 1);
+                finding
+            })
+            .collect::<Vec<_>>();
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(
+            rendered.contains("    - src/f1.rs:1 (weakly_exposed)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/f2.rs:1 (weakly_exposed)\n"),
+            "{rendered}"
+        );
+    }
+
+    /// #4320: when the #3281 candidate filter hides every finding, the run is
+    /// all base-side evidence — the honest framing names that (with the
+    /// human-full rerun pointer), not a lower-priority framing, and the
+    /// suppressed-by-policy claim must not fire when nothing was suppressed.
+    #[test]
+    fn hidden_block_all_base_side_run_names_base_side_evidence() {
+        let findings = (0..2)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("base-finding-{index}");
+                finding.probe.location = SourceLocation::new(format!("src/base_{index}.rs"), 1, 1);
+                finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+                finding
+            })
+            .collect::<Vec<_>>();
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("suppressed by policy"), "{rendered}");
+        assert!(rendered.contains("\nHidden:\n"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "  All 2 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/base_0.rs:1 (weakly_exposed)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("    - src/base_1.rs:1 (weakly_exposed)\n"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("lower-priority finding(s) omitted"),
+            "the all-base-side case must not use the lower-priority framing:\n{rendered}"
+        );
+    }
+
+    /// #4320 review: `unresolved_subject` is the explicit unknown (#3281), not
+    /// base-side evidence. A run where nothing is resolved must not call the
+    /// findings base-side — the wording preserves the unknown-currentness
+    /// distinction on both the Hidden line and the safe action.
+    #[test]
+    fn hidden_block_unresolved_subject_run_names_the_unknown_not_base_side() {
+        let findings = (0..2)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("unresolved-finding-{index}");
+                finding.probe.location =
+                    SourceLocation::new(format!("src/unresolved_{index}.rs"), 1, 1);
+                finding.source_currentness = crate::domain::SourceCurrentness::UnresolvedSubject;
+                finding
+            })
+            .collect::<Vec<_>>();
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(rendered.contains("(no_actionable_gap)"), "{rendered}");
+        assert!(
+            !rendered.contains("base-side evidence"),
+            "unknown currentness must not read as base-side:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "  All 2 finding(s) have unresolved subject currentness — not established base-side or candidate edit targets; rerun with --format human-full for the full evidence.\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "  Safe next action: no finding is resolved to the candidate (subject currentness unresolved); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+            ),
+            "{rendered}"
+        );
+    }
+
+    /// #4320 review: a mixed no-selection run names both dispositions with
+    /// their counts instead of collapsing them into one claim.
+    #[test]
+    fn hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts() {
+        let mut base = sample_finding();
+        base.id = "mixed-base".to_string();
+        base.probe.location = SourceLocation::new("src/mixed_base.rs".to_string(), 1, 1);
+        base.source_currentness = crate::domain::SourceCurrentness::MovedOrRenamed;
+        let mut unresolved = sample_finding();
+        unresolved.id = "mixed-unresolved".to_string();
+        unresolved.probe.location =
+            SourceLocation::new("src/mixed_unresolved.rs".to_string(), 1, 1);
+        unresolved.source_currentness = crate::domain::SourceCurrentness::UnresolvedSubject;
+
+        let rendered = render(&bounded_output_with_findings(vec![base, unresolved]));
+
+        assert!(
+            rendered.contains(
+                "  None of the 2 finding(s) is a candidate edit target (1 base-side, 1 unresolved currentness) — rerun with --format human-full for the full evidence.\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "  Safe next action: no finding is a candidate edit target (1 base-side, 1 unresolved currentness); rerun with --format human-full to inspect the full evidence before treating this run as actionable.\n"
+            ),
+            "{rendered}"
+        );
+    }
+
+    /// #4320: the `Hidden:` list is itself a bounded window — beyond the
+    /// `HIDDEN_FINDINGS_LISTED` cap it discloses the remainder instead of
+    /// printing every identity, keeping the default surface bounded.
+    #[test]
+    fn hidden_block_list_discloses_remainder_beyond_its_window() {
+        let findings = (0..26)
+            .map(|index| {
+                let mut finding = sample_finding();
+                finding.id = format!("finding-{index}");
+                finding.probe.location = SourceLocation::new("src/f.rs", index + 1, 1);
+                finding
+            })
+            .collect::<Vec<_>>();
+
+        let rendered = render(&bounded_output_with_findings(findings));
+
+        assert!(
+            rendered.contains("25 lower-priority finding(s) omitted"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.starts_with("    - src/f.rs:"))
+                .count(),
+            20,
+            "the list window stays bounded:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "    - … and 5 more omitted finding(s); every identity is in --format json.\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.lines().count() < 150,
+            "the default surface stays bounded with many findings"
+        );
+    }
+
     /// #4395(b): mixed-repo remainder must name the omitted preview-language
     /// identity. Ranking still selects the Rust gap; the Hidden line is how
     /// a reader learns the omitted finding was Python preview.
@@ -1019,7 +1497,7 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(vec![rust, python]));
 
-        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
         assert!(rendered.contains("File: src/lib.rs:4"));
         assert!(!rendered.contains("File: src/margin.py:2"));
         assert!(
@@ -1073,7 +1551,7 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(
             rendered.contains(
                 "  2 lower-priority finding(s) omitted from default human output (Python preview: 2).\n"
@@ -1271,7 +1749,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Start here:"));
-        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
         assert!(rendered.contains("599 lower-priority finding(s) omitted"));
         assert!(rendered.contains("--format human-full"));
         assert!(rendered.lines().count() < 150);
@@ -1320,7 +1798,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
         assert!(rendered.contains("File: src/actionable.rs:9"));
         assert!(rendered.contains("Static exposure: unrevealed (reachable_unrevealed, "));
         assert!(!rendered.contains("File: src/exposed.rs:1"));
@@ -1349,7 +1827,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Start here:"));
-        assert!(rendered.contains("State: missing_scope"));
+        assert!(rendered.contains("State: nothing in scope (missing_scope)"));
         assert!(rendered.contains("provide an analysis scope"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
     }
@@ -1388,9 +1866,9 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(rendered.contains("preview-language evidence is advisory"));
-        assert!(!rendered.contains("State: top_gap"));
+        assert!(!rendered.contains("State: a test gap to inspect or repair (top_gap)"));
     }
 
     // #2273: an `exposed` finding can carry an observation rationale (not a
@@ -1462,7 +1940,8 @@ mod tests {
 {digest}"));
         }
         // A real missing discriminator keeps the discriminator label even
-        // on the unknown classes.
+        // on the unknown classes. #4320: the digest discloses the window —
+        // the full Weakness section here carries two entries.
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
             value: "end == start".to_string(),
             reason: "no related test call uses end equal to start".to_string(),
@@ -1473,7 +1952,9 @@ mod tests {
             &finding,
             &crate::config::RiprConfig::default(),
         );
-        if !digest.contains("  Missing discriminator: No strong discriminator was detected") {
+        if !digest
+            .contains("  Missing discriminator (1 of 2): No strong discriminator was detected")
+        {
             return Err(format!(
                 "a finding with a real missing discriminator keeps its label:
 {digest}"
@@ -1500,7 +1981,7 @@ mod tests {
             );
 
             assert!(
-                digest.contains("  Missing discriminator: missing strong oracle"),
+                digest.contains("  Missing discriminator (1 of 2): missing strong oracle"),
                 "expected missing-discriminator label for {:?}; got:\n{digest}",
                 finding.class
             );
@@ -1530,8 +2011,8 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing discriminator: AuthError::RevokedToken\n"),
-            "digest must print the value alone; got:\n{digest}"
+            digest.contains("  Missing discriminator (1 of 2): AuthError::RevokedToken\n"),
+            "digest must print the value alone and disclose the window; got:\n{digest}"
         );
         assert!(
             !digest.contains("Missing discriminator: Missing discriminator"),
@@ -1553,7 +2034,9 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing discriminator: No strong discriminator was detected\n"),
+            digest.contains(
+                "  Missing discriminator (1 of 2): No strong discriminator was detected\n"
+            ),
             "prose entries must render unchanged; got:\n{digest}"
         );
     }
@@ -1608,7 +2091,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         let expected = format!(
             "  Safe next action: this TypeScript preview finding's repair packet is not ready ({}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`.\n",
             super::sections::one_line(&why)
@@ -1724,7 +2207,10 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"), "{rendered}");
+        assert!(
+            rendered.contains("State: preview language, advisory only (preview_limited)"),
+            "{rendered}"
+        );
         assert!(rendered.contains(
             "  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it.\n"
         ), "{rendered}");
@@ -1739,7 +2225,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         // The complete packet names its own action, test file, and verify
         // command instead of a bare "verify independently" with no route.
         assert!(
@@ -1767,7 +2253,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(rendered.contains(
             "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting.\n"
         ));
@@ -1789,7 +2275,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"));
+        assert!(rendered.contains("State: preview language, advisory only (preview_limited)"));
         assert!(
             rendered.contains(
                 "  Safe next action: this TypeScript preview finding's repair packet is not ready ("
@@ -1814,7 +2300,10 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: preview_limited"), "{rendered}");
+        assert!(
+            rendered.contains("State: preview language, advisory only (preview_limited)"),
+            "{rendered}"
+        );
         assert!(rendered.contains(
             "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`.\n"
         ), "{rendered}");
@@ -1944,7 +2433,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: top_gap"));
+        assert!(rendered.contains("State: a test gap to inspect or repair (top_gap)"));
         assert!(rendered.contains("File: src/stable.rs:10"));
         assert!(!rendered.contains("File: src/preview.ts:1"));
         assert!(
@@ -1996,11 +2485,12 @@ mod tests {
 
         // #4379: the digest sends readers to human-full, so human-full must
         // carry every finding's drill-in pair, not lose them.
-        let navigation = crate::app::FindingNavigation::legacy();
+        let drill_in =
+            crate::app::FindingDrillIn::Commands(crate::app::FindingNavigation::legacy());
         let navigated = super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
-            Some(&navigation),
+            Some(&drill_in),
         );
         for id in ["first", "second"] {
             assert!(
@@ -2010,6 +2500,217 @@ mod tests {
                 "human-full must carry the drill-in pair for {id}: {navigated}"
             );
         }
+    }
+
+    /// #4321: the exhaustive surface prints each finding's id once, so the
+    /// digest's `--format human-full` route ends at a nameable finding — the
+    /// same token `ripr explain`, `ripr context`, and the JSON `id` carry.
+    #[test]
+    fn human_full_prints_each_finding_id_exactly_once() {
+        let mut first = sample_finding();
+        first.id = "probe:src_lib.rs:predicate:c80557eb".to_string();
+        first.probe.location.line = 7;
+        let mut second = sample_finding();
+        second.id = "probe:src_lib.rs:error_path:9af31c02".to_string();
+        second.probe.location.line = 8;
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 2,
+                findings: 2,
+                weakly_exposed: 2,
+                ..Summary::default()
+            },
+            findings: vec![first, second],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered =
+            super::render_full_with_config(&output, &crate::config::RiprConfig::default());
+
+        for id in [
+            "probe:src_lib.rs:predicate:c80557eb",
+            "probe:src_lib.rs:error_path:9af31c02",
+        ] {
+            assert_eq!(
+                rendered.matches(&format!("  id: {id}\n")).count(),
+                1,
+                "each full-form finding block prints its id exactly once; got:\n{rendered}"
+            );
+        }
+    }
+
+    /// #4321: a `--worktree` run without `--write-artifact` has no artifact
+    /// for drill-in commands to replay, so the digest states the artifact
+    /// route and names the selected finding instead of dropping the block.
+    #[test]
+    fn worktree_digest_names_the_artifact_replay_route() {
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let drill_in = crate::app::FindingDrillIn::WorktreeReplayNeedsArtifact;
+        let rendered = super::render_bounded_with_config_and_navigation(
+            &output,
+            &crate::config::RiprConfig::default(),
+            Some(&drill_in),
+        );
+
+        assert!(
+            rendered.contains(&format!(
+                "Next: this worktree run has no artifact to replay — rerun with --write-artifact, then `ripr explain --from <artifact> {finding_id}` drills into the top finding"
+            )),
+            "the digest must state the replay route and name the finding; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Next: drill into the top finding:"),
+            "commands replaying a different analysis must not print; got:\n{rendered}"
+        );
+    }
+
+    /// #4321: the full form for the same run carries the replay route once
+    /// instead of per-finding command blocks.
+    #[test]
+    fn worktree_human_full_names_the_artifact_replay_route_once() {
+        let mut first = sample_finding();
+        first.id = "first".to_string();
+        first.probe.location.line = 7;
+        let mut second = sample_finding();
+        second.id = "second".to_string();
+        second.probe.location.line = 8;
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 2,
+                findings: 2,
+                weakly_exposed: 2,
+                ..Summary::default()
+            },
+            findings: vec![first, second],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let drill_in = crate::app::FindingDrillIn::WorktreeReplayNeedsArtifact;
+        let rendered = super::render_full_with_config_and_navigation(
+            &output,
+            &crate::config::RiprConfig::default(),
+            Some(&drill_in),
+        );
+
+        assert!(
+            rendered.contains("Finding ids print above."),
+            "the full form must state the replay route; got:\n{rendered}"
+        );
+        assert_eq!(
+            rendered.matches("--write-artifact").count(),
+            1,
+            "the replay route prints once, not per finding; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Drill in:"),
+            "commands replaying a different analysis must not print; got:\n{rendered}"
+        );
+    }
+
+    /// #4924 review: the full-form replay route must not point at ids it did
+    /// not print — when policy suppresses every finding, no `id:` line exists
+    /// above the note, so the route prints without the id pointer.
+    #[test]
+    fn worktree_full_omits_the_id_pointer_when_every_finding_is_suppressed() {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: Some(CheckSuppressionOutcome {
+                policy_path: "policy/ripr-suppressions.toml".to_string(),
+                suppressed: vec![SuppressedCheckFinding {
+                    finding_id,
+                    selector: "src/**".to_string(),
+                }],
+                warnings: Vec::new(),
+            }),
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let drill_in = crate::app::FindingDrillIn::WorktreeReplayNeedsArtifact;
+        let rendered = super::render_full_with_config_and_navigation(
+            &output,
+            &crate::config::RiprConfig::default(),
+            Some(&drill_in),
+        );
+
+        assert!(
+            rendered.contains("Next: this worktree run has no artifact to replay"),
+            "the replay route must still print under full suppression; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Finding ids print above."),
+            "the note must not claim ids it did not print; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("  id: "),
+            "a fully suppressed run prints no finding blocks; got:\n{rendered}"
+        );
     }
 
     #[test]
@@ -2098,7 +2799,7 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("State: no_actionable_gap"));
+        assert!(rendered.contains("State: no gap selected for repair (no_actionable_gap)"));
         assert!(rendered.contains("all findings are suppressed by policy"));
         assert!(!rendered.contains("inspect the named static limitation"));
         assert!(!rendered.contains("Next: drill into the top finding:"));
@@ -2371,6 +3072,168 @@ mod tests {
         ));
         assert!(rendered.contains("Next step\n"));
         assert!(rendered.contains("Add assertion for disabled path result."));
+    }
+
+    /// #4320: the 5-related-test window must disclose the total — the number
+    /// of reaching tests is core exposure evidence, and an unmarked cap reads
+    /// as the whole evidence.
+    #[test]
+    fn evidence_window_discloses_related_tests_cap() {
+        let mut finding = sample_finding();
+        for index in 1..9 {
+            finding.related_tests.push(RelatedTest {
+                name: format!("test_extra_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 100 + index,
+                oracle: None,
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+            });
+        }
+        assert_eq!(finding.related_tests.len(), 9);
+
+        let rendered = render_finding(&finding);
+
+        assert_eq!(
+            rendered.matches("related test tests/sample.rs:").count(),
+            5,
+            "only the windowed related tests render:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("related tests (showing 5 of 9; more in --format json)"),
+            "expected the related-tests window disclosure; got:\n{rendered}"
+        );
+    }
+
+    /// #4320: the 8-observed-value window must disclose the total — observed
+    /// values are the raw material for writing the missing-discriminator test,
+    /// and an unmarked cap can hide the one boundary value the reader needs.
+    #[test]
+    fn evidence_window_discloses_observed_values_cap() {
+        let mut finding = sample_finding();
+        // sample_finding already carries one observed value; 13 more make 14.
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+        assert_eq!(finding.activation.observed_values.len(), 14);
+
+        let rendered = render_finding(&finding);
+
+        assert_eq!(
+            rendered
+                .matches("observed function argument value ")
+                .count(),
+            8,
+            "only the windowed observed values render:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("observed values (showing 8 of 14; full list in --format json)"),
+            "expected the observed-values window disclosure; got:\n{rendered}"
+        );
+    }
+
+    /// #4320 review: beyond JSON's own ranked 32-value cap, both formats are
+    /// windows — the human pointer must name JSON's cap instead of promising
+    /// a full list no surface carries.
+    #[test]
+    fn evidence_window_observed_values_pointer_names_json_cap_beyond_it() {
+        let mut finding = sample_finding();
+        // sample_finding already carries one observed value; 41 more make 42
+        // (over the 8-value human window and the 32-value ranked JSON cap).
+        for index in 0..41 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 300 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::AssertionArgument,
+            });
+        }
+        assert_eq!(finding.activation.observed_values.len(), 42);
+
+        let rendered = render_finding(&finding);
+
+        assert!(
+            rendered.contains("observed values (showing 8 of 42; --format json keeps a ranked 32)"),
+            "the pointer must disclose JSON's ranked cap; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("full list in --format json"),
+            "no surface carries the full list at this size:\n{rendered}"
+        );
+    }
+
+    /// #4320: the digest shows only the first related test; the line must
+    /// carry the total so the reader knows how much reaching-test evidence
+    /// exists. A single related test keeps the unmarked form.
+    #[test]
+    fn digest_related_test_line_carries_the_total() {
+        let mut finding = sample_finding();
+        finding.related_tests.push(RelatedTest {
+            name: "test_second_observer".to_string(),
+            file: PathBuf::from("tests/other.rs"),
+            line: 9,
+            oracle: None,
+            oracle_kind: OracleKind::SmokeOnly,
+            oracle_strength: OracleStrength::Weak,
+            relation_reason: None,
+            relation_confidence: None,
+        });
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.contains("  Related test (1 of 2): tests/sample.rs:22 test_handles_disabled\n"),
+            "expected the digest related-test total; got:\n{digest}"
+        );
+
+        let single = sample_finding();
+        let digest = super::sections::render_finding_digest_with_config(
+            &single,
+            &crate::config::RiprConfig::default(),
+        );
+        assert!(
+            digest.contains("  Related test: tests/sample.rs:22 test_handles_disabled\n"),
+            "a single related test keeps the unmarked form; got:\n{digest}"
+        );
+        assert!(!digest.contains("Related test (1 of"), "{digest}");
+    }
+
+    /// #4320: the digest missing-discriminator line discloses its window into
+    /// the full Weakness set (acceptance wording: `Missing discriminator (1 of 3)`).
+    #[test]
+    fn digest_missing_discriminator_discloses_one_of_n_window() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.missing = vec![
+            format!("{MISSING_DISCRIMINATOR_VALUE_PREFIX}amount >= threshold"),
+            "no strong oracle observes the boundary".to_string(),
+            "no related test constructs the boundary input".to_string(),
+        ];
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount >= threshold".to_string(),
+            reason: "no related test call uses an amount at the threshold".to_string(),
+            flow_sink: None,
+        }];
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.contains("  Missing discriminator (1 of 3): amount >= threshold\n"),
+            "expected the 1-of-3 window disclosure; got:\n{digest}"
+        );
     }
 
     /// #2752: the `Changed` block rendered `before`/`after`/`expr` at full source
@@ -2844,6 +3707,83 @@ mod tests {
         assert!(
             digest.lines().all(|line| line.chars().count() <= 180),
             "wrapped lines stay within the display budget; got:\n{digest}"
+        );
+    }
+
+    /// #4324: evidence ordering is pipeline-ordered, so a positional 2-line
+    /// window hid propagation/observation/discriminator behind a bare count.
+    /// The digest names all five stage states compactly — every stage always
+    /// has a line, so no stage is ever silently dropped — and keeps the
+    /// 2-line detail window with an honest remainder disclosure that names
+    /// the recovery format.
+    #[test]
+    fn digest_names_all_five_stage_states_and_keeps_the_remainder_disclosure() {
+        let finding = sample_finding();
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.contains(
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator no\n"
+            ),
+            "digest must name all five stage states; got:\n{digest}"
+        );
+        // sample_finding carries flow-sink, related-test and observed-value
+        // lines beyond the five stage lines, so the window cannot show
+        // everything and the remainder disclosure must fire.
+        assert!(
+            digest.contains("more detail line(s) in --format human-full"),
+            "digest must keep an honest remainder disclosure; got:\n{digest}"
+        );
+        assert!(
+            digest.lines().all(|line| line.chars().count() <= 180),
+            "the compact stage line stays within the display budget; got:\n{digest}"
+        );
+    }
+
+    /// #4324 review: the `discriminate` stage grades the strongest related
+    /// oracle, so a non-`exposed` finding can carry a `yes` grade while the
+    /// digest simultaneously names the missing discriminating input. The
+    /// compact token keeps the full evidence line's semantic and must not
+    /// read `discriminator yes` in that case.
+    #[test]
+    fn digest_compact_discriminator_token_mirrors_the_full_evidence_line() {
+        let mut finding = sample_finding();
+        finding.ripr.reveal.discriminate =
+            stage(StageState::Yes, Confidence::High, "strong oracle grade");
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == discount_threshold".to_string(),
+            reason: "no related test call uses the boundary value".to_string(),
+            flow_sink: None,
+        }];
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+
+        assert!(
+            digest.contains(
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator missing\n"
+            ),
+            "a yes oracle grade on a non-exposed finding must not read as a present discriminator; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("discriminator yes"),
+            "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
+        );
+
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        assert!(
+            digest.contains("· discriminator not established\n"),
+            "without a named missing discriminator the token keeps the full line's wording; got:\n{digest}"
         );
     }
 
