@@ -13,9 +13,9 @@ use crate::app::agent_brief::{
 use crate::app::{self, OutputFormat};
 use crate::cli::CommandError;
 use crate::cli::agent::{
-    AgentBriefOptions, AgentCardOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
-    AgentRepairOptions, AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions,
-    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
+    AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions, AgentRepairOptions,
+    AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions,
+    AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
 };
 use crate::cli::commands_agent_support::{
     build_agent_receipt_provenance, read_agent_verify_snapshot, resolve_agent_brief_working_set,
