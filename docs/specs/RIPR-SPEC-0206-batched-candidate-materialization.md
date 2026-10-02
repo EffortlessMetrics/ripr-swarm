@@ -2,7 +2,9 @@
 
 Status: proposed
 
-Issue: #5015
+Owner: product-analysis
+
+Linked issues: #5015 (builds on #3237 / #3277 / #3548)
 
 ## Problem
 
@@ -41,6 +43,19 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
   batch protocol returns raw blob bytes, preserving the #3548
   no-textconv identity argument against `git archive`.
 
+## Non-Goals
+
+- The identity-resolution and diff-derivation spawns are unchanged (already
+  one call each).
+- Wall-clock measurement: spawn count N+1 → 2 is structural, but the
+  magnitude of the wall-clock improvement stays a measurement-pending
+  `design_question` (the issue's own classification) until measured on a
+  real large candidate; no unmeasured speedup is asserted in tracked files.
+- The unrelated per-blob `cat-file` consumers (`committed_source`,
+  `python_repair_verification`) are untouched.
+- Real mutation testing, coverage dashboards, and any evidence-promotion
+  vocabulary remain out of scope per the product contract.
+
 ## Required Evidence
 
 - Real-repository session round trip: one process answers many blob
@@ -49,22 +64,57 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
 - Stream parser unit tests: chunk-boundary reassembly of headers, content
   with interior newlines, and framing; truncated-stream fail-closed;
   spent-budget timeout classification.
-- Zero-budget session control: the first blocking read classifies as the
-  named `git_invocation_timeout` with the raw prefix intact.
+- Zero-budget session control: a blocking wait classifies as the named
+  `git_invocation_timeout` with the raw prefix intact.
 - Scale fixture: a 300-file nested tree plus a >1 MiB binary blob and an
   empty file materialize byte-identically to the `git show` oracle through
   the batched path.
 - Existing byte-parity, attribute-conversion, long-path, worktree-isolation,
   and pipeline tests keep passing over the batched path.
 
-## Required guards
+## Acceptance Examples
 
-- The batch session spawns through the shared git spawn authority
-  (`git_command`, `OwnedProcess`): same config hardening, same
-  process-tree termination, same error families.
-- The overall deadline is enforced on every blocking read; no per-blob
-  full-deadline multiplication survives.
-- Performance claims stay analytical: spawn count N+1 → 2 is structural;
-  wall-clock magnitude remains a measured-future claim (the issue itself
-  classifies timing as `design_question`), and no unmeasured speedup is
-  asserted in tracked files.
+- A candidate tree with 5,000 files materializes through two git processes
+  (`ls-tree` + one `cat-file --batch`) instead of 5,001, under one
+  `git_timeout` deadline for the whole phase.
+- A tree whose materialized bytes exceed 512 MiB fails closed with a named
+  total-limit error and the temp root is removed.
+- A hung `git cat-file --batch` is terminated at the single overall
+  deadline and surfaces the named `git_invocation_timeout` repair route.
+
+## Test Mapping
+
+- `crates/ripr/src/git.rs::tests::cat_file_batch_stream_reads_across_chunk_boundaries`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_stream_fails_closed_on_truncated_blob`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_stream_times_out_when_budget_is_spent`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_session_round_trips_blobs_and_reports_missing`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_session_enforces_the_overall_budget`
+- `crates/ripr/src/analysis/git_candidate_execution.rs::tests::batched_materialization_preserves_bytes_at_scale`
+- Existing `git_candidate_execution.rs` byte-parity, attribute, long-path,
+  worktree-isolation, and pipeline tests (unchanged, exercising the new
+  path)
+
+## Implementation Mapping
+
+- `crates/ripr/src/git.rs` — `CatFileBatch` session, `CatFileBatchStream`
+  parser, `git_invocation_timeout_message` (extracted from `poll_child`),
+  `spawn_cat_file_batch_chunk_reader`.
+- `crates/ripr/src/analysis/git_candidate_execution.rs` — `materialize`
+  entry validation up front, batched streaming loop, whole-tree byte cap.
+
+## Metrics
+
+- Spawn count for the materialization phase: N+1 → 2 (structural).
+- Cold materialization wall-clock before/after on a multi-thousand-file
+  tree: measurement pending (no toolchain in the authoring environment);
+  to be captured by a future dogfood receipt per the issue's acceptance
+  sketch.
+
+## Failure Modes
+
+- Missing object: named `git cat-file blob <oid> is missing` error; the
+  whole subject fails closed.
+- Deadline expiry mid-materialization: named `git_invocation_timeout`; the
+  partial tree is removed by the temp-root guard.
+- Corrupt or truncated batch stream: named framing/truncation error; the
+  owned process tree is terminated.
