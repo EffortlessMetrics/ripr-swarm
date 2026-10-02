@@ -4852,6 +4852,54 @@ mod tests {
         Ok(())
     }
 
+    /// The emitted human command, rather than a test-only rooted rewrite,
+    /// must keep the selected repository when pasted beside a real decoy.
+    #[cfg(unix)]
+    #[test]
+    fn ledger_command_context_runs_from_foreign_cwd() -> Result<(), String> {
+        let repo = temp_python_repo("selected café's project")?;
+        let foreign = temp_python_repo("foreign decoy")?;
+        let mut ledger = ledger_with_python_repairable_gap();
+        ledger["records"][0]["verification_commands"] = json!(["git rev-parse --show-toplevel"]);
+        let selected = top_gap_from_record(
+            &ledger["records"][0],
+            &ledger,
+            &repo,
+            &FirstPrOptions::default(),
+        );
+        let packet = json!({"status": "actionable", "selected": selected.to_json()});
+        let summary = start_here_cli_summary(
+            &packet,
+            Path::new("start-here.json"),
+            Path::new("start-here.md"),
+        );
+        let prefix = format!("{VERIFY_AFTER_EDIT_LABEL}: `");
+        let command = summary
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix(&prefix)
+                    .and_then(|line| line.strip_suffix('`'))
+            })
+            .ok_or_else(|| format!("missing displayed verification command: {summary}"))?;
+        let output = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", command])
+            .current_dir(&foreign)
+            .output()
+            .map_err(|error| format!("replay displayed command: {error}"))?;
+        let expected = repo.canonicalize().map_err(|error| error.to_string())?;
+        let observed = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        cleanup(&repo)?;
+        cleanup(&foreign)?;
+        if !output.status.success() || observed != expected.to_string_lossy() {
+            return Err(format!(
+                "displayed verification selected wrong CWD: expected {}, observed {observed}, status {}, command {command}",
+                expected.display(),
+                output.status
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn python_preview_gap_ledger_is_selected_for_start_here() -> Result<(), String> {
         let repo = temp_python_repo("first-pr-python-preview")?;
