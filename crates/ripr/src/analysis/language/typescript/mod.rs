@@ -148,6 +148,35 @@ impl LanguageAdapter for TypeScriptAdapter {
             ts_workspace_read_budget(),
         )
     }
+
+    fn analyze_repo(
+        &self,
+        _options: &AnalysisOptions,
+        _oracle_policy: &OraclePolicy,
+    ) -> Result<LanguageRepoResult, String> {
+        // Repo-mode preview output lands in a follow-up. The current
+        // sub-slice scopes to diff-mode for the smallest useful fixture.
+        // The stub still returns an empty result, but it now discloses
+        // the partial run through `partial_reason` so the pipeline
+        // records a `Partial` language run on the shared `language_runs`
+        // channel (adapter.rs): human/JSON output renders the limitation
+        // and gates fail closed on the partial denominator. Without this
+        // disclosure the empty adapter result was silent — and in a mixed
+        // Rust+TypeScript repo the render-side `typescript_diff_first`
+        // guidance (output/render.rs) never fires because it requires an
+        // empty seam inventory AND no Rust files. See
+        // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
+        // the limitation contract.
+        Ok(LanguageRepoResult {
+            findings: Vec::new(),
+            harness_projections: Vec::new(),
+            production_files: 0,
+            skipped_files: 0,
+            partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
+            rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
+        })
+    }
 }
 
 impl TypeScriptAdapter {
@@ -330,7 +359,7 @@ impl TypeScriptAdapter {
             // counting (#3743). The workspace walk prunes the same trees, so
             // no facts can back a changed file under one of them. Counting it
             // would put an uninspected file in the report denominator.
-            if !self.accepts_path(&changed.path)
+            if !TypeScriptAdapter.accepts_path(&changed.path)
                 || is_detectable_generated_typescript_path(&changed.path)
                 || is_detectable_excluded_typescript_path(&changed.path)
             {
@@ -727,37 +756,6 @@ impl TypeScriptAdapter {
             partial_scope: None,
             skipped_files,
             limitations,
-            rust_diagnostic_origins: Default::default(),
-            rust_consumed_sources: Default::default(),
-        })
-    }
-}
-
-impl LanguageAdapter for TypeScriptAdapter {
-    fn analyze_repo(
-        &self,
-        _options: &AnalysisOptions,
-        _oracle_policy: &OraclePolicy,
-    ) -> Result<LanguageRepoResult, String> {
-        // Repo-mode preview output lands in a follow-up. The current
-        // sub-slice scopes to diff-mode for the smallest useful fixture.
-        // The stub still returns an empty result, but it now discloses
-        // the partial run through `partial_reason` so the pipeline
-        // records a `Partial` language run on the shared `language_runs`
-        // channel (adapter.rs): human/JSON output renders the limitation
-        // and gates fail closed on the partial denominator. Without this
-        // disclosure the empty adapter result was silent — and in a mixed
-        // Rust+TypeScript repo the render-side `typescript_diff_first`
-        // guidance (output/render.rs) never fires because it requires an
-        // empty seam inventory AND no Rust files. See
-        // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
-        // the limitation contract.
-        Ok(LanguageRepoResult {
-            findings: Vec::new(),
-            harness_projections: Vec::new(),
-            production_files: 0,
-            skipped_files: 0,
-            partial_reason: Some("typescript_repo_mode_not_implemented_diff_first".to_string()),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
