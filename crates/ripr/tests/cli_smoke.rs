@@ -3744,7 +3744,10 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     assert_eq!(clean_json["done_when"]["currentness"], "current");
 
     // A cold agent's `probe:...` finding ID is refused with the same seam-ID
-    // source hint the packet surface names.
+    // source hint the packet surface names. #5007: the refusal is typed —
+    // exit code 3, not an operational failure — and under `--json` stderr
+    // carries one parseable `agent_card_refusal` envelope with the prose
+    // rendering after it, while stdout stays empty.
     let unknown = run_ripr(&[
         "agent",
         "card",
@@ -3753,11 +3756,62 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "--seam-id",
         "probe:src_lib.rs:predicate:566edf6b",
     ]);
-    assert!(!unknown.status.success());
+    assert_eq!(
+        unknown.status.code(),
+        Some(3),
+        "a named refusal takes the decision exit code: {unknown:?}"
+    );
     let stderr = String::from_utf8_lossy(&unknown.stderr);
     assert!(
         stderr.contains("is a `ripr check` finding ID, not a seam ID"),
         "{stderr}"
+    );
+    let typed = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "probe:src_lib.rs:predicate:566edf6b",
+        "--json",
+    ]);
+    assert_eq!(
+        typed.status.code(),
+        Some(3),
+        "a named refusal takes the decision exit code: {typed:?}"
+    );
+    assert!(
+        typed.stdout.is_empty(),
+        "the card-artifact stdout stays empty on a refusal: {typed:?}"
+    );
+    let typed_stderr = String::from_utf8_lossy(&typed.stderr);
+    let envelope_end = typed_stderr
+        .find("\n}\n")
+        .ok_or("the refusal envelope did not terminate on stderr")?
+        + 3;
+    let envelope: serde_json::Value = serde_json::from_str(&typed_stderr[..envelope_end])?;
+    assert_eq!(envelope["schema_version"], "0.1", "{envelope}");
+    assert_eq!(envelope["kind"], "agent_card_refusal", "{envelope}");
+    assert_eq!(envelope["error"]["kind"], "seam_not_found", "{envelope}");
+    assert_eq!(
+        envelope["error"]["seam_id"], "probe:src_lib.rs:predicate:566edf6b",
+        "{envelope}"
+    );
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("was not found")),
+        "{envelope}"
+    );
+    assert!(
+        envelope["error"]["remedy_route"]
+            .as_str()
+            .is_some_and(|route| route.starts_with("ripr pilot --root ")),
+        "{envelope}"
+    );
+    assert!(
+        typed_stderr[envelope_end..].contains("is a `ripr check` finding ID, not a seam ID"),
+        "the human prose rendering stays on stderr after the envelope: {typed_stderr}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -10122,6 +10176,71 @@ fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
     );
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -> Result<(), String>
+{
+    // #4531: doctor named the non-Git root, then recommended `ripr check`
+    // (which cannot run there) after a raw `git status` failure on stderr.
+    // A missing root also blamed cargo and rustc for the failed spawn.
+    let outside = unique_external_workspace("doctor-outside-git")?;
+    std::fs::create_dir_all(outside.join("src")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        outside.join("Cargo.toml"),
+        "[package]\nname = \"outside\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let root = outside.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The recommendation names the physical root (#5010): the canonicalized
+    // root minus its Windows verbatim prefix, so the pasted command analyzes
+    // the diagnosed directory without an `//?/` spelling a paste would not
+    // resolve. `first_command_at` reproduces the same quoting.
+    let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
+    let result = if !stdout.contains(&format!(
+        "- Recommended first command: fix the Git check above, or scan without Git history: `{}`",
+        first_command_at(&physical, " --format repo-exposure-md")
+    )) || stdout.contains("- Recommended first command: ripr check\n")
+        || stderr.contains("working-tree change probe failed")
+    {
+        Err(format!(
+            "a non-Git root must get a runnable first command and no raw probe failure\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ))
+    } else {
+        Ok(())
+    };
+    ignore_remove_dir_all(&outside);
+    result?;
+
+    let missing = unique_external_workspace("doctor-missing-root")?;
+    let root = missing.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_failure(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // #5010 keeps a runnable recovery command for a missing root, naming its
+    // lossless physical spelling; #4531's residual is that cargo and rustc
+    // are skipped instead of blamed, and no raw work-tree probe failure is
+    // printed on stderr.
+    let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
+    if !stdout.contains("- cargo check skipped: the root directory does not exist")
+        || !stdout.contains("- rustc check skipped: the root directory does not exist")
+        || stdout.contains("not available")
+        || !stdout.contains(&format!(
+            "- Recommended first command: {}",
+            first_command_at(&physical, "")
+        ))
+        || !stdout.contains("- The selected root does not exist; rerun with `--root <path>` naming an existing repository directory")
+        || stderr.contains("working-tree change probe failed")
+    {
+        return Err(format!(
+            "a missing root must not blame the tools\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
     Ok(())
 }
 
