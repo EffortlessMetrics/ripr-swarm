@@ -58,6 +58,11 @@ pub(crate) struct SeamCardFacts<'a> {
     pub(crate) packet_json: &'a str,
     pub(crate) repository_head: &'a str,
     pub(crate) workspace_identity: &'a str,
+    /// Producer-observed working-tree currentness for the files this card's
+    /// evidence binds: `Current` on a clean scope, `AcceptedDirtyDraft` when
+    /// an uncommitted change touches them. Both currentness axes project this
+    /// fact verbatim; the assembly never mints an unchecked `current` claim.
+    pub(crate) currentness: RepairCardSnapshotCurrentness,
     /// The typed inspection route (`ripr agent packet ... --json`) offered as
     /// the card's one next action when the route gate is open.
     pub(crate) next_command: Option<CommandSpec>,
@@ -87,13 +92,8 @@ pub(crate) fn repair_card_for_entry(
     let workspace_identity = workspace_identity_for(entry, &eligibility.readiness)?;
     let seam_id = entry.seam.id().as_str().to_string();
     let attempt = latest_attempt_for_seam(root, &seam_id)?;
-    let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
-    let packet_json = render_agent_seam_packet_json_with_context(
-        entry,
-        PacketCommandContext::Standalone {
-            root: packet_root.as_str(),
-        },
-    );
+    let currentness = evidence_tree_currentness(root, entry)?;
+    let packet_json = card_packet_json(entry);
     let next_command = agent_inspection_command_spec(
         AgentArtifactRoute::Packet,
         &root.to_string_lossy(),
@@ -108,8 +108,58 @@ pub(crate) fn repair_card_for_entry(
         packet_json: &packet_json,
         repository_head: &repository_head,
         workspace_identity: &workspace_identity,
+        currentness,
         next_command: Some(next_command),
     })
+}
+
+/// Render the canonical-packet envelope whose bytes feed the card's
+/// `canonical_packet` content digest. The content-bound render always uses
+/// the portable root (`.`), never the bound checkout spelling: the packet's
+/// `next`-block command strings embed that root, and `detail_digest` /
+/// `complete_evidence_digest` are load-bearing identity — equivalent roots
+/// must hash identically (RIPR-SPEC-0192 authority 4; the #3166
+/// equivalent-roots acceptance). The human-facing packet command keeps
+/// binding the concrete root (#4000's display contract is untouched:
+/// display is presentation and never enters identity).
+pub(crate) fn card_packet_json(entry: &ClassifiedSeam) -> String {
+    render_agent_seam_packet_json_with_context(
+        entry,
+        PacketCommandContext::Standalone { root: "." },
+    )
+}
+
+/// One bounded dirty-state probe over the files this card's evidence binds:
+/// the seam file (the forbidden edit surface) and, when the packet task is
+/// the targeted-test task, the recommended test file (the allowed edit
+/// surface). Any uncommitted change in that scope — tracked modification or
+/// untracked draft — projects `AcceptedDirtyDraft`, because the analysis the
+/// card projects reads working-tree bytes while `snapshot.repository_head`
+/// names the committed head. A clean scope projects `Current`. A probe
+/// failure fails closed: the gather errors, no card is minted, and no
+/// unchecked `current` claim escapes.
+pub(crate) fn evidence_tree_currentness(
+    root: &Path,
+    entry: &ClassifiedSeam,
+) -> Result<RepairCardSnapshotCurrentness, String> {
+    let mut paths = vec![display_path(entry.seam.file())];
+    if task_for(entry) == TASK_WRITE_TARGETED_TEST {
+        let recommended = recommended_test_for(entry);
+        if recommended.file != "not_applicable" && !paths.contains(&recommended.file) {
+            paths.push(recommended.file);
+        }
+    }
+    let mut args: Vec<&str> = vec!["status", "--porcelain", "--"];
+    for path in &paths {
+        args.push(path.as_str());
+    }
+    let output = git_output(root, &args)
+        .map_err(|error| format!("agent card could not probe the working-tree state: {error}"))?;
+    if output.trim().is_empty() {
+        Ok(RepairCardSnapshotCurrentness::Current)
+    } else {
+        Ok(RepairCardSnapshotCurrentness::AcceptedDirtyDraft)
+    }
 }
 
 /// Assemble one [`RepairCardV1`] from producer-owned facts. Pure projection:
@@ -164,7 +214,15 @@ pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCa
         },
         edit_cage: EditCageGoal::Compliant,
         mutation_confirmation: MutationConfirmationGoal::NotRequested,
-        currentness: CardCurrentnessGoal::Current,
+        // Both currentness axes name the one producer-observed tree fact; a
+        // dirty evidence scope stays an accepted dirty draft, never a silent
+        // `current` (#5008).
+        currentness: match facts.currentness {
+            RepairCardSnapshotCurrentness::Current => CardCurrentnessGoal::Current,
+            RepairCardSnapshotCurrentness::AcceptedDirtyDraft => {
+                CardCurrentnessGoal::AcceptedDirtyDraft
+            }
+        },
     };
     let mut stop_conditions = vec![EDIT_CAGE_PRODUCTION_STATEMENT.to_string()];
     if !allowed_files.is_empty() {
@@ -222,7 +280,7 @@ pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCa
         snapshot: RepairCardSnapshot {
             workspace_identity: facts.workspace_identity.to_string(),
             repository_head: facts.repository_head.to_string(),
-            currentness: RepairCardSnapshotCurrentness::Current,
+            currentness: facts.currentness,
         },
         subject: RepairCardSubject {
             seam_id,
@@ -558,6 +616,7 @@ mod tests {
             packet_json,
             repository_head: "abc123",
             workspace_identity: "workspace:demo",
+            currentness: RepairCardSnapshotCurrentness::Current,
             next_command: None,
         }
     }
@@ -770,6 +829,124 @@ mod tests {
         if reference.route.as_deref().is_none() {
             return Err("a stale attempt keeps its typed status route".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_evidence_tree_projects_accepted_dirty_draft_on_both_axes() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let packet = packet_for(&entry);
+        let mut facts = facts_for(&entry, &packet);
+        facts.currentness = RepairCardSnapshotCurrentness::AcceptedDirtyDraft;
+        let card = assemble_repair_card(&facts)?;
+        if card.snapshot.currentness != RepairCardSnapshotCurrentness::AcceptedDirtyDraft {
+            return Err(
+                "a dirty evidence scope must project accepted_dirty_draft on the snapshot axis"
+                    .to_string(),
+            );
+        }
+        if card.done_when.currentness != CardCurrentnessGoal::AcceptedDirtyDraft {
+            return Err(
+                "a dirty evidence scope must project accepted_dirty_draft on the done_when axis"
+                    .to_string(),
+            );
+        }
+        // The dirty-draft state is load-bearing identity, not presentation.
+        let clean = assemble_repair_card(&facts_for(&entry, &packet))?;
+        if clean.repair_card_id == card.repair_card_id {
+            return Err("the currentness projection must remint the semantic identity".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn clean_evidence_tree_projects_current_on_both_axes() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let packet = packet_for(&entry);
+        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+        if card.snapshot.currentness != RepairCardSnapshotCurrentness::Current {
+            return Err("a clean evidence scope must project current on the snapshot axis"
+                .to_string());
+        }
+        if card.done_when.currentness != CardCurrentnessGoal::Current {
+            return Err(
+                "a clean evidence scope must project current on the done_when axis".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// #5005: the packet bytes the card content-hashes must carry no absolute
+    /// checkout spelling. Binding the checkout the way the pre-fix producer
+    /// did (`bound_root`) would embed the absolutized working directory in
+    /// every `next`-block command string and leak it into
+    /// `detail_digest`.
+    #[test]
+    fn card_packet_json_binds_no_checkout_spelling() -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let first = card_packet_json(&entry);
+        let second = card_packet_json(&entry);
+        if first != second {
+            return Err("the content-bound packet render is not deterministic".to_string());
+        }
+        let bound_cwd = crate::agent::loop_commands::bound_root(".");
+        if bound_cwd == "." {
+            return Err("the test working directory must resolve to an absolute root".to_string());
+        }
+        if first.contains(&bound_cwd) {
+            return Err(
+                "the content-bound packet render leaks the absolute checkout spelling".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// #5005: equivalent evidence assembled through the producer's own
+    /// content-bound render mints one card identity — the packet content
+    /// carries no root spelling to differ on.
+    #[test]
+    fn equivalent_evidence_mints_one_card_identity_through_the_portable_render()
+    -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let first = card_packet_json(&entry);
+        let second = card_packet_json(&entry);
+        let first_card = assemble_repair_card(&facts_for(&entry, &first))?;
+        let second_card = assemble_repair_card(&facts_for(&entry, &second))?;
+        if first_card.repair_card_id != second_card.repair_card_id {
+            return Err("equivalent evidence minted different card identities".to_string());
+        }
+        if first_card.complete_evidence_digest != second_card.complete_evidence_digest {
+            return Err(
+                "equivalent evidence minted different complete evidence identities".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// #5008: a probe failure fails closed — no card, hence no `current`
+    /// claim. A directory that is not a git repository makes the probe (and
+    /// any git spawn) error out.
+    #[test]
+    fn evidence_tree_currentness_probe_failure_fails_closed() -> Result<(), String> {
+        let probe_root = std::env::temp_dir().join(format!(
+            "ripr-card-currentness-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("clock error: {error}"))?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&probe_root)
+            .map_err(|error| format!("probe fixture directory failed: {error}"))?;
+        let entry = weakly_gripped_entry();
+        let outcome = evidence_tree_currentness(&probe_root, &entry);
+        std::fs::remove_dir_all(&probe_root)
+            .map_err(|error| format!("probe fixture cleanup failed: {error}"))?;
+        let Err(_message) = outcome else {
+            return Err(
+                "a dirty-state probe failure must fail closed, not default to current".to_string(),
+            );
+        };
         Ok(())
     }
 }
