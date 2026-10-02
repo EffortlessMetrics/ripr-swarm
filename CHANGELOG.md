@@ -11,7 +11,7 @@ are scoped or reviewed.
 
 ### Added
 
-- Domains: RepairCard budget ratification (RIPR-SPEC-0195, #4669) measures
+- Domains: RepairCard budget ratification (RIPR-SPEC-0196, #4669) measures
   the default-field card against its canonical packet on four deterministic
   synthetic corpus profiles (boundary without/with witness, witness with a
   current attempt, witness with a stale attempt) and records a versioned

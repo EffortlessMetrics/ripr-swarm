@@ -69,7 +69,7 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, String>
 /// as a bug, not a gate decision.
 ///
 /// Crate-visible for the #4669 usability measurement, which counts the human
-/// presentation separately from the JSON wire shape (RIPR-SPEC-0195).
+/// presentation separately from the JSON wire shape (RIPR-SPEC-0196).
 pub(crate) fn agent_card_prose_lines(card: &RepairCardV1) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("Repair card {}", card.repair_card_id));

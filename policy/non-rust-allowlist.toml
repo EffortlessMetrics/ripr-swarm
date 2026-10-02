@@ -431,7 +431,7 @@ kind = "repair_card_usability_evidence"
 owner = "ripr/repair-card"
 surface = "repo"
 classification = "metadata"
-reason = "Committed RepairCard synthetic usability expectations and versioned budget-ratification decision receipt (RIPR-SPEC-0195); real-attempt ratification stays pending on the governed #1702/#1579 corpus, and drifted bounds or receipts without limitations fail closed."
+reason = "Committed RepairCard synthetic usability expectations and versioned budget-ratification decision receipt (RIPR-SPEC-0196); real-attempt ratification stays pending on the governed #1702/#1579 corpus, and drifted bounds or receipts without limitations fail closed."
 covered_by = ["cargo xtask repair-card-usability-report", "cargo xtask check-file-policy"]
 
 [[allow]]

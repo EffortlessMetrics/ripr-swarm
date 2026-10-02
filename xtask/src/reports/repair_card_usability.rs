@@ -1,4 +1,4 @@
-//! `cargo xtask repair-card-usability-report` (#4669, RIPR-SPEC-0195):
+//! `cargo xtask repair-card-usability-report` (#4669, RIPR-SPEC-0196):
 //! runs the RepairCard usability measurement from the `ripr` library over
 //! the governed #1702/#1579 corpus, validates the committed synthetic
 //! expectations and the versioned budget decision receipt, and writes the
@@ -369,7 +369,7 @@ mod tests {
         serde_json::json!({
             "schema_version": "1.0",
             "kind": "repair_card_budget_decision_receipt",
-            "decision": "RIPR-SPEC-0195",
+            "decision": "RIPR-SPEC-0196",
             "status": "ratified_synthetic_scope",
             "ratified_defaults": {
                 "max_detail_items": 16,

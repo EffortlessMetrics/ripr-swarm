@@ -1,4 +1,4 @@
-# RIPR-SPEC-0195: RepairCard context measurement and default budget ratification
+# RIPR-SPEC-0196: RepairCard context measurement and default budget ratification
 
 Status: proposed
 

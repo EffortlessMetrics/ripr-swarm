@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "kind": "repair_card_budget_decision_receipt",
-  "decision": "RIPR-SPEC-0195",
+  "decision": "RIPR-SPEC-0196",
   "status": "ratified_synthetic_scope",
   "ratified_defaults": {
     "max_detail_items": 16,

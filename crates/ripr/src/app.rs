@@ -31,7 +31,7 @@ pub(crate) mod repair_card;
 /// behind the explicit `ripr agent packet` route).
 pub(crate) mod repair_card_handoff;
 /// Measurement and ratification producer for the RepairCard default budget
-/// (#4669; RIPR-SPEC-0195): synthetic wire-size measurement and governed
+/// (#4669; RIPR-SPEC-0196): synthetic wire-size measurement and governed
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
 pub(crate) mod ripr_plus;

@@ -1,5 +1,5 @@
 //! RepairCard usability measurement and budget-ratification evidence producer
-//! (RIPR-SPEC-0195, #4669): measures the normalized wire size of
+//! (RIPR-SPEC-0196, #4669): measures the normalized wire size of
 //! [`RepairCardV1`] cards against the complete canonical packet envelope for
 //! the same seam, over deterministic synthetic fixture profiles, and accounts
 //! governed real repair opportunities from the shared #1702/#1579 counting
@@ -420,7 +420,7 @@ pub fn repair_card_usability_report(corpus: &Value) -> Result<Value, String> {
             "max_serialized_bytes": DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
             "max_inline_detail_bytes": crate::domain::DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES,
             "field_set": "RIPR-SPEC-0192 RepairCardV1 default fields, unchanged",
-            "source": "#4666 provisional constants, ratified for the synthetic fixture scope by RIPR-SPEC-0195",
+            "source": "#4666 provisional constants, ratified for the synthetic fixture scope by RIPR-SPEC-0196",
         },
         "field_set_decision": {
             "status": "unchanged",
