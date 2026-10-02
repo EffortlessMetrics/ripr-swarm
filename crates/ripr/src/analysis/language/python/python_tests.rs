@@ -1135,7 +1135,10 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1579,7 +1582,10 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1596,9 +1602,144 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         alias: "tax".to_string(),
         source_module: String::new(),
     };
-    assert!(imported_module_matches_owner(&dotted, &owner));
-    assert!(imported_module_matches_owner(&plain, &owner));
-    assert!(!imported_module_matches_owner(&mismatched, &owner));
+    assert!(imported_module_matches_owner(
+        &dotted,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+    assert!(imported_module_matches_owner(
+        &plain,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+    assert!(!imported_module_matches_owner(
+        &mismatched,
+        &owner,
+        Path::new("tests/test_x.py")
+    ));
+}
+
+/// #4566: a src-layout short module name two workspace files share
+/// identifies the owner only for a test inside the owner's project root.
+#[test]
+fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Result<(), String> {
+    let owner_for = |file: &str| PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
+    };
+    let sources = [
+        PathBuf::from("a/src/shared/calc.py"),
+        PathBuf::from("b/src/shared/calc.py"),
+        PathBuf::from("c/src/only_c/calc.py"),
+    ];
+    let mut owners = vec![
+        owner_for("a/src/shared/calc.py"),
+        owner_for("c/src/only_c/calc.py"),
+    ];
+    super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+    let [shared_owner, unique_owner] = owners.as_slice() else {
+        return Err(format!("expected two owners, got {owners:?}"));
+    };
+    let from = |module: &str| PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: module.to_string(),
+    };
+    let shared = from("shared.calc");
+    // The owner's own package test keeps the short name.
+    assert!(import_source_module_matches_owner(
+        &shared,
+        shared_owner,
+        Path::new("a/tests/test_calc.py")
+    ));
+    // The rival package's test imports its own module: no identity.
+    assert!(!import_source_module_matches_owner(
+        &shared,
+        shared_owner,
+        Path::new("b/tests/test_calc.py")
+    ));
+    // A third package cannot tell which one it imports: fail closed.
+    assert!(!import_source_module_matches_owner(
+        &shared,
+        shared_owner,
+        Path::new("c/tests/test_calc.py")
+    ));
+    // The full repository path is never ambiguous.
+    assert!(import_source_module_matches_owner(
+        &from("a.src.shared.calc"),
+        shared_owner,
+        Path::new("b/tests/test_calc.py")
+    ));
+    // A unique short name still identifies the owner from any package, so a
+    // sibling-package test keeps its cross-package relation.
+    assert!(import_source_module_matches_owner(
+        &from("only_c.calc"),
+        unique_owner,
+        Path::new("a/tests/test_calc.py")
+    ));
+    assert!(unique_owner.ambiguous_src_modules.is_empty());
+    Ok(())
+}
+
+/// A root-level src layout and a package-level one: the deeper project owns
+/// its tests, the root owns the rest.
+#[test]
+fn nested_src_layout_rival_claims_tests_under_its_own_root() {
+    let owner = |file: &str| PythonOwner {
+        name: "price".to_string(),
+        qualified_name: "price".to_string(),
+        file: PathBuf::from(file),
+        start_line: 1,
+        end_line: 4,
+        owner_kind: Some(OwnerKind::Function),
+        decorators: Vec::new(),
+        imports: Vec::new(),
+        cli_receiver_names: Vec::new(),
+        route_paths: Vec::new(),
+        dynamic_route_decorators: Vec::new(),
+        parameters: Vec::new(),
+        reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
+        module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
+    };
+    let sources = [
+        PathBuf::from("src/shared/calc.py"),
+        PathBuf::from("plugins/b/src/shared/calc.py"),
+    ];
+    let mut owners = vec![owner("src/shared/calc.py")];
+    super::related_tests::apply_src_module_ambiguity(&mut owners, sources.iter());
+    let import = PythonImport {
+        imported: "price".to_string(),
+        alias: "price".to_string(),
+        source_module: "shared.calc".to_string(),
+    };
+    assert!(import_source_module_matches_owner(
+        &import,
+        &owners[0],
+        Path::new("tests/test_calc.py")
+    ));
+    assert!(!import_source_module_matches_owner(
+        &import,
+        &owners[0],
+        Path::new("plugins/b/tests/test_calc.py")
+    ));
 }
 
 #[test]
@@ -1617,7 +1758,10 @@ fn same_stem_related_handles_missing_stems() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let test = PythonTest {
         constant_rebinding: Default::default(),
@@ -1630,6 +1774,7 @@ fn same_stem_related_handles_missing_stems() {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -2616,6 +2761,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         decorators: vec!["mock.patch".to_string()],
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -2631,6 +2777,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         decorators: vec!["patch".to_string()],
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -2646,6 +2793,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         decorators: vec!["pytest.mark.skip".to_string()],
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -3043,7 +3191,10 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -3108,7 +3259,10 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -3141,6 +3295,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -3167,7 +3322,10 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         dynamic_route_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     }
 }
 
@@ -3204,6 +3362,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     }
@@ -3246,6 +3405,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };

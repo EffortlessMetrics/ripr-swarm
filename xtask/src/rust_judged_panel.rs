@@ -6,10 +6,12 @@ use ra_ap_syntax::{Edition, SourceFile, SyntaxKind};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
+mod calibration;
 mod host_run;
 mod packet;
 mod release_judgments;
 mod rolling_observation;
+mod rust_analysis_feedback;
 mod subject;
 
 pub(crate) use release_judgments::check_release_judgments;
@@ -296,7 +298,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         [subcommand] if subcommand == "check" => {
             let manifest = check_at(Path::new("."))?;
             println!(
-                "Rust judged panel seed, subjects, portable packets, and rolling observation valid: manifest={MANIFEST_PATH} items={} directions={}",
+                "Rust judged panel seed, subjects, portable packets, rolling observation, calibration scorecard, and feedback ledger valid: manifest={MANIFEST_PATH} items={} directions={}",
                 manifest.items.len(),
                 manifest.required_directions.join(",")
             );
@@ -318,8 +320,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             let manifest = check_seed_at(Path::new("."))?;
             packet::publish(Path::new("."), &manifest, current)
         }
+        [subcommand, rest @ ..] if subcommand == "calibrate" => calibration::run(rest),
+        args if args.first().map(String::as_str) == Some("feedback") => {
+            rust_analysis_feedback::run_feedback(&args[1..])
+        }
         [] => Err(format!(
-            "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, or `packet [--host-current target/ripr/<path>/current.json]`\nrerun: {RERUN_COMMAND}"
+            "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, `packet [--host-current target/ripr/<path>/current.json]`, `calibrate [--records <dir>] [--out <dir>] [--check]`, or `feedback [--out <dir>] [--check]`\nrerun: {RERUN_COMMAND}"
         )),
         _ => Err(format!(
             "unknown rust-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",
@@ -336,6 +342,8 @@ fn check_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
     let manifest = check_seed_at(root)?;
     packet::validate_at(root, &manifest)?;
     rolling_observation::validate_at(root, &manifest)?;
+    rust_analysis_feedback::validate_at(root)?;
+    calibration::validate_retained_at(root)?;
     Ok(manifest)
 }
 
