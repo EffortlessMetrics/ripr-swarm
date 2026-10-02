@@ -8,7 +8,10 @@
 
 use crate::analysis;
 use crate::app::CheckInput;
-use crate::app::agent_brief::{AgentBriefPolicy, AgentBriefResolvedWorkingSet, BoundedAgentBrief};
+use crate::app::agent_brief::{
+    AgentBriefChangedOwner, AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet,
+    BoundedAgentBrief,
+};
 use crate::cli::commands_agent_support::{
     agent_brief_lines_from_diff, agent_brief_owner_attribution_for_lines,
 };
@@ -27,18 +30,13 @@ use super::write_text_file;
 
 const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
 
-/// Default ceiling on the closure inputs one review-guidance dispatch may
-/// admit. The guidance pass materializes the whole analyzable workspace
-/// corpus (issue #3768: peak memory scales with the closure, not the diff),
-/// and #3768 measured oomd-class SIGTERMs at 1,600-1,700 indexed files on a
-/// 16 GB 4-core runner while the diff-scoped analysis stage — capped by the
-/// same 800-file family default (`RIPR_MAX_DIFF_INDEX_FILES`,
-/// `RIPR_MAX_REPO_INDEX_FILES`) — completed on those same closures. Above
-/// this many closure input files the dispatch fails closed with a named
-/// `review_guidance_oversized` error before the corpus is materialized,
-/// instead of letting the runner's oomd kill the process group with no
-/// receipt at all.
-const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 800;
+/// Default ceiling on the union of analyzable workspace files and changed
+/// owner-attribution inputs. Match the current diff/repo family default
+/// (raised in #4972 after this repository grew beyond 800 files), while
+/// remaining below the 1,600–1,700-file external failure shapes in #3768.
+/// This is input admission, not an RSS bound or evidence that admitted
+/// execution will complete on every runner.
+const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 1200;
 
 /// Env override for [`REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT`], in the
 /// `RIPR_MAX_DIFF_INDEX_FILES` family. Operators on larger, well-resourced
@@ -115,7 +113,8 @@ impl GuidancePayloadCeiling {
                 "{REVIEW_GUIDANCE_OVERSIZED_PREFIX}: {count} closure input files exceed the \
                  review-guidance ceiling ({env}={limit}); the guidance pass was not run to \
                  protect runner memory. Repair route: raise the limit via {env}=<number> on a \
-                 runner with enough memory, or narrow the diff scope.",
+                 runner with enough memory, or reduce the workspace input set. Narrowing only \
+                 the diff does not reduce the workspace file count.",
                 count = corpus.file_count,
                 env = REVIEW_GUIDANCE_MAX_INDEX_FILES_ENV,
                 limit = self.max_index_files,
@@ -126,8 +125,8 @@ impl GuidancePayloadCeiling {
                 "{REVIEW_GUIDANCE_OVERSIZED_PREFIX}: {bytes} guidance payload bytes (changed \
                  diff plus closure corpus) exceed the review-guidance ceiling ({env}={limit}); \
                  the guidance pass was not run to protect runner memory. Repair route: raise \
-                 the limit via {env}=<number> on a runner with enough memory, or narrow the \
-                 diff scope.",
+                 the limit via {env}=<number> on a runner with enough memory, or reduce the \
+                 workspace corpus bytes and/or diff bytes.",
                 bytes = payload_bytes,
                 env = REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES_ENV,
                 limit = self.max_payload_bytes,
@@ -386,20 +385,48 @@ fn review_comments_with_diff_loader_at(
     load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
     now: impl Fn() -> Instant + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let ceiling = GuidancePayloadCeiling::from_env()?;
-    review_comments_with_diff_loader_at_with_ceiling(args, load_diff, now, ceiling)
+    review_comments_with_admission(
+        args,
+        load_diff,
+        now,
+        GuidancePayloadCeiling::from_env,
+        agent_brief_owner_attribution_for_lines,
+    )
 }
 
+#[cfg(test)]
 fn review_comments_with_diff_loader_at_with_ceiling(
     args: &[String],
     load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
     now: impl Fn() -> Instant + Send + Sync + 'static,
     ceiling: GuidancePayloadCeiling,
 ) -> Result<(), String> {
+    review_comments_with_admission(
+        args,
+        load_diff,
+        now,
+        || Ok(ceiling),
+        agent_brief_owner_attribution_for_lines,
+    )
+}
+
+fn review_comments_with_admission(
+    args: &[String],
+    load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
+    now: impl Fn() -> Instant + Send + Sync + 'static,
+    load_ceiling: impl FnOnce() -> Result<GuidancePayloadCeiling, String>,
+    attribute_owners: impl FnOnce(
+        &Path,
+        &[AgentBriefLine],
+    ) -> (Vec<AgentBriefChangedOwner>, Vec<AgentBriefChangedOwner>),
+) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_review_comments_help();
         return Ok(());
     }
+    // Help must stay available even when an operator needs it to repair a
+    // malformed runtime limit. Real dispatches still validate both values.
+    let ceiling = load_ceiling()?;
 
     let options = parse_review_comments_options(args)?;
     if !options.root.is_dir() {
@@ -581,8 +608,31 @@ fn review_comments_with_diff_loader_at_with_ceiling(
     receipt.phase("diff_discovery", "language_facts");
     receipt.write_atomic(&receipt_path)?;
     let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
-    let (changed_owners, enclosing_owners) =
-        agent_brief_owner_attribution_for_lines(&input.root, &changed_lines);
+    // Admit before either owner attribution or canonical inventory builds
+    // an index. Changed paths can include generated/excluded files the
+    // canonical corpus skips, so count their union without dropping owners.
+    let owner_files = changed_lines
+        .iter()
+        .map(|line| line.file.clone())
+        .collect::<Vec<_>>();
+    let corpus_payload =
+        analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files).map_err(
+            |error| {
+                record_review_comments_error(&mut receipt, &receipt_path, "language_facts", error)
+            },
+        )?;
+    let payload_bytes = corpus_payload
+        .total_bytes
+        .saturating_add(diff_text.len() as u64);
+    if let Err(error) = ceiling.enforce(corpus_payload, payload_bytes) {
+        return Err(record_review_comments_oversized(
+            &mut receipt,
+            &receipt_path,
+            "language_facts",
+            error,
+        ));
+    }
+    let (changed_owners, enclosing_owners) = attribute_owners(&input.root, &changed_lines);
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -593,26 +643,6 @@ fn review_comments_with_diff_loader_at_with_ceiling(
     )?;
     receipt.phase("language_facts", "canonical_analysis");
     receipt.write_atomic(&receipt_path)?;
-    // Guidance-payload memory ceiling (#4388), enforced before the closure
-    // corpus is materialized: the inventory below reads and indexes the
-    // whole analyzable workspace, so an over-ceiling dispatch is refused
-    // here with a named, receipt-carrying state instead of growing into an
-    // oomkilled process group that leaves no receipt at all (#3768).
-    let corpus_payload =
-        analysis::analyzable_corpus_payload_size(&input.root, &config).map_err(|error| {
-            record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
-        })?;
-    let payload_bytes = corpus_payload
-        .total_bytes
-        .saturating_add(diff_text.len() as u64);
-    if let Err(error) = ceiling.enforce(corpus_payload, payload_bytes) {
-        return Err(record_review_comments_oversized(
-            &mut receipt,
-            &receipt_path,
-            "canonical_analysis",
-            error,
-        ));
-    }
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
         .with_changed_owners(changed_owners)
         .with_enclosing_owners(enclosing_owners);
@@ -1886,6 +1916,172 @@ mod tests {
     }
 
     #[test]
+    fn review_comments_admission_precedes_changed_owner_indexing() -> Result<(), String> {
+        // All three files change: the old guard ran the full owner index
+        // before refusing. Observe the actual attribution call, including a
+        // successful control, rather than asserting source-code ordering.
+        for (label, ceiling, admitted) in [
+            (
+                "files",
+                GuidancePayloadCeiling {
+                    max_index_files: 2,
+                    max_payload_bytes: u64::MAX,
+                },
+                false,
+            ),
+            (
+                "bytes",
+                GuidancePayloadCeiling {
+                    max_index_files: usize::MAX,
+                    max_payload_bytes: 8,
+                },
+                false,
+            ),
+            (
+                "admitted",
+                GuidancePayloadCeiling {
+                    max_index_files: 3,
+                    max_payload_bytes: u64::MAX,
+                },
+                true,
+            ),
+        ] {
+            let root = over_ceiling_fixture(&format!("review-admission-order-{label}"))?;
+            let out = root.join("target/ripr/review/comments.json");
+            let calls = std::cell::Cell::new(0usize);
+            let diff = (1..=3)
+                .map(|unit| ceiling_diff().replace("unit_1.rs", &format!("unit_{unit}.rs")))
+                .collect::<String>();
+            let result = review_comments_with_admission(
+                &args(&[
+                    "--root",
+                    &root.display().to_string(),
+                    "--base",
+                    "BASE",
+                    "--head",
+                    "HEAD",
+                    "--out",
+                    &out.display().to_string(),
+                ]),
+                |_root, _base, _head| Ok(diff.clone()),
+                Instant::now,
+                || Ok(ceiling),
+                |root, lines| {
+                    calls.set(calls.get() + 1);
+                    assert_eq!(
+                        lines.len(),
+                        3,
+                        "all changed inputs must reach attribution when admitted"
+                    );
+                    let owners = agent_brief_owner_attribution_for_lines(root, lines);
+                    assert_eq!(
+                        owners.0.len(),
+                        3,
+                        "positive control must build a real owner index"
+                    );
+                    owners
+                },
+            );
+            assert_eq!(
+                calls.get(),
+                usize::from(admitted),
+                "{label}: refused inputs must never build the owner index"
+            );
+            let receipt = read_receipt(&out)?;
+            if admitted {
+                result?;
+                assert_eq!(receipt["status"], "complete");
+                assert!(out.exists() && out.with_extension("md").exists());
+            } else {
+                let error = result.err().ok_or("oversized inputs were admitted")?;
+                assert!(error.starts_with(REVIEW_GUIDANCE_OVERSIZED_PREFIX));
+                assert_eq!(receipt["status"], "failed");
+                assert_eq!(receipt["active_phase"], "language_facts");
+                assert_eq!(receipt["last_completed_phase"], "diff_discovery");
+                assert_eq!(
+                    receipt["limitations"][0]["category"],
+                    REVIEW_GUIDANCE_OVERSIZED_PREFIX
+                );
+                assert!(!out.exists() && !out.with_extension("md").exists());
+            }
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_admission_counts_changed_inputs_outside_corpus_once() -> Result<(), String> {
+        let root = over_ceiling_fixture("review-admission-generated-input")?;
+        let generated = root.join("src/bindings.rs");
+        std::fs::write(&generated, "pub fn generated() {}\n")
+            .map_err(|err| format!("write generated source: {err}"))?;
+        let config = crate::config::RiprConfig::default();
+        let corpus = analysis::analyzable_corpus_payload_size(&root, &config, &[])?;
+        assert_eq!(
+            corpus.file_count, 3,
+            "fixture must exclude the generated file from inventory"
+        );
+        let admitted = analysis::analyzable_corpus_payload_size(
+            &root,
+            &config,
+            &[
+                PathBuf::from("src/unit_1.rs"),
+                PathBuf::from("src/unit_1.rs"),
+                PathBuf::from("src/bindings.rs"),
+                PathBuf::from("src/absent.rs"),
+            ],
+        )?;
+        assert_eq!(admitted.file_count, 4);
+        assert_eq!(
+            admitted.total_bytes,
+            corpus.total_bytes
+                + std::fs::metadata(generated)
+                    .map_err(|err| err.to_string())?
+                    .len()
+        );
+        let err = GuidancePayloadCeiling {
+            max_index_files: 3,
+            max_payload_bytes: u64::MAX,
+        }
+        .enforce(admitted, admitted.total_bytes)
+        .err()
+        .ok_or("changed generated input escaped admission")?;
+        assert!(err.starts_with(REVIEW_GUIDANCE_OVERSIZED_PREFIX));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn guidance_payload_default_admits_current_family_but_refuses_failure_scale()
+    -> Result<(), String> {
+        let ceiling = GuidancePayloadCeiling::parse(
+            Err(std::env::VarError::NotPresent),
+            Err(std::env::VarError::NotPresent),
+        )?;
+        assert_eq!(ceiling.max_index_files, 1200);
+        ceiling.enforce(
+            analysis::CorpusPayloadSize {
+                file_count: 1200,
+                total_bytes: 1200,
+            },
+            1200,
+        )?;
+        let error = ceiling
+            .enforce(
+                analysis::CorpusPayloadSize {
+                    file_count: 1700,
+                    total_bytes: 1700,
+                },
+                1700,
+            )
+            .err()
+            .ok_or("the measured external failure scale must remain refused by default")?;
+        assert!(error.contains("=1200"));
+        assert!(error.contains("Narrowing only the diff does not reduce the workspace file count"));
+        Ok(())
+    }
+
+    #[test]
     fn guidance_payload_ceiling_defaults_and_validates_env_family_values() -> Result<(), String> {
         let absent = Err(std::env::VarError::NotPresent);
         let defaults = GuidancePayloadCeiling::parse(absent.clone(), absent)
@@ -2025,7 +2221,8 @@ mod tests {
         // and publishes no review artifacts (fail closed, never truncated).
         let receipt = read_receipt(&out)?;
         assert_eq!(receipt["status"], "failed");
-        assert_eq!(receipt["active_phase"], "canonical_analysis");
+        assert_eq!(receipt["active_phase"], "language_facts");
+        assert_eq!(receipt["last_completed_phase"], "diff_discovery");
         assert_eq!(
             receipt["limitations"][0]["category"],
             "review_guidance_oversized"

@@ -10,6 +10,7 @@ use super::language::is_generated_rust_file_with_patterns;
 use super::seam_cache::corpus_fingerprint;
 use super::workspace;
 use crate::config::RiprConfig;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Discovered Rust files after the generated-source predicate `ripr check`
@@ -21,33 +22,45 @@ pub(crate) struct AnalyzableRustCorpus {
     pub(crate) fingerprint: Option<String>,
 }
 
-/// Stat-only size of the analyzable corpus: the file count and total source
-/// bytes an index build over the workspace would read. Nothing is read or
-/// materialized, so a caller can refuse an over-ceiling payload before the
-/// corpus is loaded (#4388).
+/// Stat-only size of the admitted workspace and owner-attribution inputs.
+/// Source contents are not read or indexed by this census.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CorpusPayloadSize {
     pub(crate) file_count: usize,
     pub(crate) total_bytes: u64,
 }
 
-/// Measure the analyzable corpus without loading it: same discovery the
-/// inventory uses, then metadata-only byte totals. A file whose metadata
-/// cannot be read fails closed — the later index build could not read it
-/// either.
+/// Use the inventory's discovery/generated-file predicate, without computing
+/// its cache fingerprint. Add changed owner inputs because attribution also
+/// reads files outside that canonical corpus. Count each present path once;
+/// absent changed paths remain available for the downstream absence warning.
 pub(crate) fn analyzable_corpus_payload_size(
     root: &Path,
     config: &RiprConfig,
+    owner_files: &[PathBuf],
 ) -> Result<CorpusPayloadSize, String> {
-    let corpus = discover_analyzable_rust_corpus(root, config)?;
+    let (analyzable, _) = partition_generated_paths(workspace::discover_rust_files(root)?, config);
+    let mut files = analyzable.into_iter().collect::<BTreeSet<_>>();
+    for path in owner_files {
+        files.insert(path.clone());
+    }
     let mut total_bytes = 0u64;
-    for path in &corpus.analyzable {
-        let metadata = std::fs::metadata(root.join(path))
-            .map_err(|err| format!("stat {} failed: {err}", path.display()))?;
+    let mut file_count = 0usize;
+    for path in &files {
+        let metadata = match std::fs::metadata(root.join(path)) {
+            Ok(metadata) => metadata,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::NotFound && owner_files.contains(path) =>
+            {
+                continue;
+            }
+            Err(err) => return Err(format!("stat {} failed: {err}", path.display())),
+        };
+        file_count += 1;
         total_bytes = total_bytes.saturating_add(metadata.len());
     }
     Ok(CorpusPayloadSize {
-        file_count: corpus.analyzable.len(),
+        file_count,
         total_bytes,
     })
 }
@@ -68,6 +81,19 @@ pub(crate) fn partition_analyzable_rust_corpus(
     discovered: Vec<PathBuf>,
     config: &RiprConfig,
 ) -> AnalyzableRustCorpus {
+    let (analyzable, skipped_generated) = partition_generated_paths(discovered, config);
+    let fingerprint = corpus_fingerprint(root, &analyzable);
+    AnalyzableRustCorpus {
+        analyzable,
+        skipped_generated,
+        fingerprint,
+    }
+}
+
+fn partition_generated_paths(
+    discovered: Vec<PathBuf>,
+    config: &RiprConfig,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let patterns = config.languages().generated_file_patterns();
     let mut analyzable = Vec::new();
     let mut skipped_generated = Vec::new();
@@ -78,12 +104,7 @@ pub(crate) fn partition_analyzable_rust_corpus(
             analyzable.push(path);
         }
     }
-    let fingerprint = corpus_fingerprint(root, &analyzable);
-    AnalyzableRustCorpus {
-        analyzable,
-        skipped_generated,
-        fingerprint,
-    }
+    (analyzable, skipped_generated)
 }
 
 #[cfg(test)]

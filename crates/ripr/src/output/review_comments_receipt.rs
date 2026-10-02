@@ -136,10 +136,9 @@ impl ReviewCommentsRunReceipt {
     }
 
     /// Typed state for a dispatch refused at the guidance-payload memory
-    /// ceiling (#4388). The run is not truncated and never materializes the
-    /// over-ceiling payload; the receipt carries the named limitation so a
-    /// consumer can classify an instrument-limited pass instead of reading
-    /// an oomkilled process group. Status stays `failed` (the receipt
+    /// ceiling (#4388). The run is not truncated and does not build either
+    /// source index after refusal; diff capture precedes this admission.
+    /// The named limitation lets a consumer classify incomplete guidance. Status stays `failed` (the receipt
     /// vocabulary has no third terminal failure kind), and the limitation
     /// category carries the classification.
     pub fn oversized(&mut self, active_phase: &str, error: &str) {

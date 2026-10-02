@@ -65,6 +65,40 @@ Generated CI should publish that report through the least intrusive useful
 surfaces first: job summary and check annotations by default, optional inline PR
 review comments only when explicitly enabled.
 
+### Guidance input admission
+
+Before changed-line owner attribution builds an index or canonical inventory
+loads source files, the diff route measures the union of the analyzable Rust
+workspace corpus and present changed owner-attribution inputs. Generated or
+excluded changed inputs are still counted when attribution reads them; each
+path is counted once. Missing changed paths remain available to the existing
+absent-file disclosure. Census uses file metadata, not source reads or a cache
+fingerprint. It never truncates the inputs or the guidance silently.
+
+`RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` defaults to 1200, aligned with the
+current diff/repo family after #4972's measured self-repo growth beyond 800.
+`RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` defaults to 268435456 (256 MiB) and
+covers that source-byte total plus changed diff text. Exact equality is
+admitted. Both overrides must be positive integers for a real dispatch;
+`--help` and `-h` bypass runtime override validation.
+
+Either exceeded limit returns `review_guidance_oversized` before owner
+indexing. The existing run-receipt vocabulary is preserved: `status = failed`,
+`active_phase = language_facts`, `last_completed_phase = diff_discovery`, and a
+`limitations` entry with category `review_guidance_oversized` plus the repair
+route. No guidance JSON or Markdown is published by the refused dispatch.
+The xtask wrapper preserves the named category and incomplete/non-all-clear
+semantics, rather than turning refusal into clean guidance or a real gap.
+
+The repair route may raise the owning limit on a measured, sufficiently
+resourced runner or reduce the actual workspace inputs. Narrowing only the
+diff cannot shrink a whole-workspace file census. These limits are admission
+budgets, not an RSS bound or a guarantee that admitted analysis completes.
+They do not prove hosted replay acceptance (#4693), remove the second index
+(#4692), or bound the earlier Git diff capture (#5000). Bounded evidence
+windows retain their independent contract; a refusal alone does not deliver
+completed guidance for a large downstream workspace.
+
 ### Cooperative analysis budget
 
 `--timeout-ms` defaults to 120000ms. The default diff route consumes one

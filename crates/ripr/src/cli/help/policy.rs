@@ -38,16 +38,22 @@ Options:
 
 Environment variables:
   RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES
-                                 Maximum analyzable closure files one guidance
-                                 dispatch admits before failing closed as
-                                 review_guidance_oversized, before the corpus
-                                 is loaded. The run receipt carries the named
-                                 `review_guidance_oversized` limitation and no
-                                 guidance artifacts are published. Default: 800.
+                                 Maximum unique input files: analyzable workspace
+                                 plus present changed owner-attribution inputs.
+                                 Refuses as review_guidance_oversized before
+                                 owner indexing or loading the workspace corpus.
+                                 Receipt status is failed with the named
+                                 limitation; no guidance artifacts are published.
+                                 Default: 1200. Must be a positive integer.
   RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES
-                                 Byte budget over the guidance payload (changed
-                                 diff text plus closure corpus) for the same
-                                 named refusal. Default: 268435456 (256 MiB).
+                                 Byte budget for those inputs plus changed diff
+                                 text. Same named refusal; default: 268435456
+                                 (256 MiB). Must be a positive integer.
+
+These are input-admission limits, not an RSS or completion guarantee. Raise
+only on a measured, sufficiently resourced runner, or reduce the workspace
+inputs. Narrowing only the diff does not reduce the workspace file count.
+Help remains available when either environment override is malformed.
 
 The review-comments command writes a bounded advisory PR guidance report as
 JSON plus a sibling Markdown file. It joins existing static seam evidence with
