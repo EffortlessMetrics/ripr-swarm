@@ -114,12 +114,6 @@ are scoped or reviewed.
 
 ### Fixed
 
-- Agent repair cards now apply the actual transaction's edit-cage admission
-  to readiness and next actions. An inline test whose production file is
-  not an allowed repair surface carries the exact refusal instead of
-  claiming repair readiness; separate-test routes stay available
-  (EffortlessMetrics/ripr#1810, RIPR-SPEC-0192/0194).
-
 - A changed source file that is not in the working tree (sparse checkout
   or a local delete) is now a named `changed_file_absent_from_worktree`
   limitation and a partial analysis outcome. Before, `ripr check` treated
@@ -171,6 +165,11 @@ are scoped or reviewed.
   typed value, and `ripr context --max-related-tests 0` parses again — zero
   suppresses related tests, matching the config surface
   ([#4318](https://github.com/EffortlessMetrics/ripr-swarm/issues/4318)).
+- Agent repair cards now apply the actual transaction's edit-cage admission
+  to readiness and next actions. An inline test whose production file is
+  not an allowed repair surface carries the exact refusal instead of
+  claiming repair readiness; separate-test routes stay available
+  (EffortlessMetrics/ripr#1810, RIPR-SPEC-0192/0194).
 - Perl preview findings with an unavailable test runner now disclose that
   limitation and ask for runner verification instead of saying no test change
   is needed solely because static evidence aligns with the changed sink
