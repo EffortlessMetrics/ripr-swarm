@@ -47,6 +47,7 @@ pub(in crate::analysis) use related_tests::{
 pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements};
+pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
 pub(in crate::analysis) use text::{
