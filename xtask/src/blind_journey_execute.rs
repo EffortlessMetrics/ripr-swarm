@@ -41,9 +41,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::blind_journey::{
     BLIND_JOURNEY_ANSWER_KEY_SCHEMA_VERSION, BLIND_JOURNEY_PROMPT_SCHEMA_VERSION,
-    BLIND_JOURNEY_RECEIPT_SCHEMA_VERSION,
-    BlindJourneyAnswerKeyV1, BlindJourneyAssessmentV1, BlindJourneyAssistanceStateV1,
-    BlindJourneyCandidateRefV1, BlindJourneyContaminationResultV1,
+    BLIND_JOURNEY_RECEIPT_SCHEMA_VERSION, BlindJourneyAnswerKeyV1, BlindJourneyAssessmentV1,
+    BlindJourneyAssistanceStateV1, BlindJourneyCandidateRefV1, BlindJourneyContaminationResultV1,
     BlindJourneyCurrentnessV1, BlindJourneyEditCageVerdictV1, BlindJourneyEventKindV1,
     BlindJourneyEventV1, BlindJourneyEvidenceAxesV1, BlindJourneyInterventionV1,
     BlindJourneyPacketV1, BlindJourneyPromptReviewV1, BlindJourneyPromptV1,
@@ -344,8 +343,10 @@ fn derive_axes(
     // observations bind to execution events exactly like the contract axis
     // rules, and the executor refuses an unbound observation before any
     // receipt exists.
-    let verification_executions =
-        kind_count(events, BlindJourneyEventKindV1::ProjectVerificationExecution);
+    let verification_executions = kind_count(
+        events,
+        BlindJourneyEventKindV1::ProjectVerificationExecution,
+    );
     let project_verification_status = match (
         verification_executions,
         journey.observations.verification_exit,
@@ -409,8 +410,10 @@ fn derive_axes(
         );
     }
     let key = &journey.answer_key;
-    let selection_correctness =
-        match last_subject(events, BlindJourneyEventKindV1::OperatorProductOptionSelection) {
+    let selection_correctness = match last_subject(
+        events,
+        BlindJourneyEventKindV1::OperatorProductOptionSelection,
+    ) {
         None => BlindJourneySelectionCorrectnessV1::Unknown,
         Some(chosen) if key.quiet_neighbors.iter().any(|item| *item == chosen) => {
             BlindJourneySelectionCorrectnessV1::QuietNeighborSelected
@@ -476,11 +479,20 @@ fn derive_terminal(
         }
     }
     // 2. Answer-key comparison: the selection, then the edit cage.
-    if let Some(chosen) =
-        last_subject(events, BlindJourneyEventKindV1::OperatorProductOptionSelection)
-    {
-        if journey.answer_key.quiet_neighbors.iter().any(|item| *item == chosen)
-            || !journey.answer_key.eligible_items.iter().any(|item| *item == chosen)
+    if let Some(chosen) = last_subject(
+        events,
+        BlindJourneyEventKindV1::OperatorProductOptionSelection,
+    ) {
+        if journey
+            .answer_key
+            .quiet_neighbors
+            .iter()
+            .any(|item| *item == chosen)
+            || !journey
+                .answer_key
+                .eligible_items
+                .iter()
+                .any(|item| *item == chosen)
         {
             return BlindJourneyResultV1::WrongOrStaleSubject;
         }
@@ -488,7 +500,10 @@ fn derive_terminal(
     if axes.edit_cage_verdict == BlindJourneyEditCageVerdictV1::Violation {
         return BlindJourneyResultV1::UnsafeOrWrongEdit;
     }
-    if kind_count(events, BlindJourneyEventKindV1::OperatorProductOptionSelection) == 0
+    if kind_count(
+        events,
+        BlindJourneyEventKindV1::OperatorProductOptionSelection,
+    ) == 0
         && kind_count(events, BlindJourneyEventKindV1::OperatorQuestion) > 0
     {
         return BlindJourneyResultV1::ProductDiscoverabilityFailure;
@@ -520,7 +535,8 @@ fn require_exact_limitations(
 ) -> Result<(), String> {
     let requires_limitations = matches!(
         terminal,
-        BlindJourneyResultV1::HonestLimitation | BlindJourneyResultV1::ProductDiscoverabilityFailure
+        BlindJourneyResultV1::HonestLimitation
+            | BlindJourneyResultV1::ProductDiscoverabilityFailure
     );
     if !requires_limitations {
         return Ok(());
@@ -798,9 +814,9 @@ mod tests {
         if packet.receipt.terminal_result != BlindJourneyResultV1::PassedBlindJourney {
             return Err("the derived terminal must be passed_blind_journey".to_string());
         }
-        if packet.receipt.events.iter().any(|event| event.input_digest.is_none()
-            && matches!(event.kind, BlindJourneyEventKindV1::FileEdit))
-        {
+        if packet.receipt.events.iter().any(|event| {
+            event.input_digest.is_none() && matches!(event.kind, BlindJourneyEventKindV1::FileEdit)
+        }) {
             return Err("the executor must digest the recorded edit input bytes".to_string());
         }
         Ok(())
@@ -851,18 +867,18 @@ mod tests {
     #[test]
     fn verification_exit_without_an_execution_refuses() -> Result<(), String> {
         let mut journey = positive_journey();
-        journey.actions.retain(|step| {
-            step.kind != BlindJourneyEventKindV1::ProjectVerificationExecution
-        });
+        journey
+            .actions
+            .retain(|step| step.kind != BlindJourneyEventKindV1::ProjectVerificationExecution);
         refused_reason(execute_blind_journey(&journey), "observation_unbound")
     }
 
     #[test]
     fn declared_static_movement_without_an_execution_refuses() -> Result<(), String> {
         let mut journey = positive_journey();
-        journey.actions.retain(|step| {
-            step.kind != BlindJourneyEventKindV1::StaticAnalysisExecution
-        });
+        journey
+            .actions
+            .retain(|step| step.kind != BlindJourneyEventKindV1::StaticAnalysisExecution);
         refused_reason(execute_blind_journey(&journey), "observation_unbound")
     }
 
@@ -1069,7 +1085,10 @@ mod tests {
         let mut journey = positive_journey();
         journey.review.verdict =
             crate::blind_journey::BlindJourneyPromptReviewVerdictV1::NotReviewed;
-        refused_reason(execute_blind_journey(&journey), "positive_without_accepted_review")
+        refused_reason(
+            execute_blind_journey(&journey),
+            "positive_without_accepted_review",
+        )
     }
 
     #[test]

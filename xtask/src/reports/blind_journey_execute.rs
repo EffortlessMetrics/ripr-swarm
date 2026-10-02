@@ -103,8 +103,7 @@ pub(crate) fn assess_blind_journey_execute_corpus(
             .expected
             .terminal
             .is_none_or(|expected| observed_terminal == Some(expected));
-        let reason_matches = if scenario.expected.outcome == BlindJourneyExecuteOutcomeV1::Refused
-        {
+        let reason_matches = if scenario.expected.outcome == BlindJourneyExecuteOutcomeV1::Refused {
             refusal_reason
                 .as_deref()
                 .is_some_and(|reason| reason.contains(expected_reason.as_str()))
@@ -179,12 +178,8 @@ fn read_json(path: &Path, label: &str) -> Result<Value, String> {
 /// it must name this consumer's decision and schema identities, stay inside
 /// its ratified fixture scope, bind to the assessed corpus, and carry
 /// explicit limitations and not-exercised combinations with exact entries.
-fn validate_executor_receipt(
-    receipt: &Value,
-    corpus_scenario_count: usize,
-) -> Result<(), String> {
-    if receipt.get("kind").and_then(Value::as_str)
-        != Some("blind_journey_execute_decision_receipt")
+fn validate_executor_receipt(receipt: &Value, corpus_scenario_count: usize) -> Result<(), String> {
+    if receipt.get("kind").and_then(Value::as_str) != Some("blind_journey_execute_decision_receipt")
     {
         return Err("executor receipt carries an unexpected kind".to_string());
     }
@@ -201,8 +196,14 @@ fn validate_executor_receipt(
         .ok_or_else(|| "executor receipt must pin the consumer schema versions".to_string())?;
     for (key, expected) in [
         ("journey", BLIND_JOURNEY_JOURNEY_SCHEMA_VERSION),
-        ("execute_corpus", BLIND_JOURNEY_EXECUTE_CORPUS_SCHEMA_VERSION),
-        ("execute_report", BLIND_JOURNEY_EXECUTE_REPORT_SCHEMA_VERSION),
+        (
+            "execute_corpus",
+            BLIND_JOURNEY_EXECUTE_CORPUS_SCHEMA_VERSION,
+        ),
+        (
+            "execute_report",
+            BLIND_JOURNEY_EXECUTE_REPORT_SCHEMA_VERSION,
+        ),
     ] {
         if schema_versions.get(key).and_then(Value::as_str) != Some(expected) {
             return Err(format!(
@@ -238,8 +239,7 @@ fn validate_executor_receipt(
     Ok(())
 }
 
-pub(crate) fn blind_journey_execute_report_value() -> Result<BlindJourneyExecuteReportV1, String>
-{
+pub(crate) fn blind_journey_execute_report_value() -> Result<BlindJourneyExecuteReportV1, String> {
     let corpus_body = fs::read_to_string(workspace_path(CORPUS_PATH))
         .map_err(|error| format!("read blind journey execute corpus: {error}"))?;
     let corpus = load_blind_journey_execute_corpus(&corpus_body)?;
@@ -347,8 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_corpus_and_receipt_validate_against_the_live_executor(
-    ) -> Result<(), String> {
+    fn committed_corpus_and_receipt_validate_against_the_live_executor() -> Result<(), String> {
         let report = live_report()?;
         require_required_scenarios(&report)?;
         validate_executor_receipt(&committed_receipt()?, report.scenarios.len())?;
@@ -386,8 +385,9 @@ mod tests {
             Err(message) => Err(format!(
                 "expected a schema-version drift error, got: {message}"
             )),
-            Ok(()) => Err("an executor receipt with a drifted schema version must be rejected"
-                .to_string()),
+            Ok(()) => Err(
+                "an executor receipt with a drifted schema version must be rejected".to_string(),
+            ),
         }
     }
 
@@ -415,9 +415,9 @@ mod tests {
             Err(message) => Err(format!(
                 "expected an exact-limitations error, got: {message}"
             )),
-            Ok(()) => Err(
-                "an executor receipt with a blank limitation must be rejected".to_string()
-            ),
+            Ok(()) => {
+                Err("an executor receipt with a blank limitation must be rejected".to_string())
+            }
         }
     }
 
