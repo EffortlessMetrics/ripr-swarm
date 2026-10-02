@@ -29635,7 +29635,9 @@ fn file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata() -
                 // DeTable retains numeric lexemes. The previous Value reader
                 // also enforced representable integers and finite exponents,
                 // including inside otherwise ignored metadata.
-                assert!(toml::de::DeTable::parse(&source).is_ok());
+                toml::de::DeTable::parse(&source).map_err(|error| {
+                    format!("{location}/{value}: invalid DeTable fixture: {error}")
+                })?;
                 assert_eq!(
                     toml::from_str::<toml::Value>(&source).is_ok(),
                     accepted,
