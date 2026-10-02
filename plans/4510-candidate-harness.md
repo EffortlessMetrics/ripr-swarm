@@ -289,3 +289,32 @@ counts, incorrect counts/order/digests, and supported/unsupported origin forms.
 The retained boundary commit fixture hashes to the actual 45b56c object; its
 synthetic descendants do not claim release acceptance. Local execution and
 current-main reconciliation are still pending at this checkpoint.
+
+### 2026-10-02 integrated execution handoff
+
+Published #4915 history is retained. Local merge `5eec1e56d` integrated native
+main `b5b75658`; its sole run.rs conflict preserved the stdin writer together
+with main's shared deadline API. Subsequent review found and repaired a real
+composition defect: an observed deadline kill was masked by the stdin writer's
+BrokenPipe. The control failed with that exact classification error before
+`9e1cc0d19`; afterward timeout evidence survives, while early-exit BrokenPipe
+and unknown writer/drain failures still refuse.
+
+Actual all-target xtask metadata passed on `5eec1e56d` and `a0e5a6a74` using the
+task-local Rust 1.99 toolchain (82 s and 74 s, native repository pin unchanged).
+The exact-source harness executed 40 passing controls on `9e1cc0d19`, including
+large stdin/timeout/early-exit/cancellation and existing pipe-drain controls.
+`a0e5a6a74` only strengthened the Git-range test: the changed real-Git control
+passed again and production source bytes are unchanged. Harness source hashes,
+commands, native exits, first setup failures, and the intended behavioral red
+are retained with the local execution handoff. No setup failure is claimed as
+a product behavioral red.
+
+The harness includes real source/live-head custody, registry authority, shared
+range recipe and owned-process dependencies. Archive/package orchestration is
+not part of this bounded execution claim. The actual runbook jq filter passed
+a synthetic shape check; 55 Bash blocks passed syntax checks and retained
+registry hashes matched. Full independent review, applicable owning policies,
+native pinned CI and final-candidate package/install/doctor/corpus proof remain
+open. Selected controls do not establish the 35-scenario blind campaign or a
+human journey. The separate #4604 consumer remains pending.
