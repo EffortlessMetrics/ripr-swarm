@@ -101,6 +101,27 @@ pub(crate) enum BlindJourneyEventKindV1 {
     HarnessIntervention,
 }
 
+impl BlindJourneyEventKindV1 {
+    /// Events the operator originates. Their subjects record what the operator
+    /// actually saw or did, so an honest transcript may legitimately name a
+    /// quiet neighbor, a forbidden path or a limitation; the answer-key secrecy
+    /// scan must not treat the operator's own actions as a leak. Harness- and
+    /// verifier-originated events stay in the scanned projection: their
+    /// subjects and reasons are written by the evaluator side.
+    pub(crate) fn operator_originated(self) -> bool {
+        matches!(
+            self,
+            Self::ProductCommandInvocation
+                | Self::ProductOutputFollowed
+                | Self::PublicDocumentationLookup
+                | Self::OrdinaryTargetSourceRead
+                | Self::OperatorQuestion
+                | Self::OperatorProductOptionSelection
+                | Self::FileEdit
+        )
+    }
+}
+
 /// The one terminal result vocabulary (#4603). Only
 /// `passed_blind_journey` is the positive row; negative controls retain their
 /// own expected result and no aggregate percentage converts them into success.
@@ -281,10 +302,12 @@ pub(crate) struct BlindJourneyPromptV1 {
     pub prohibited_hints: Vec<String>,
     /// Exact operator-visible prompt bytes.
     pub prompt_bytes: String,
-    /// SHA-256 hex of `prompt_bytes`.
+    /// SHA-256 hex over the canonical operator-visible prompt surface (this
+    /// byte string plus every restated operator-visible field).
     pub prompt_digest: String,
     pub review: BlindJourneyPromptReviewV1,
-    /// Producer-recorded mechanical scan result over `prompt_bytes`.
+    /// Producer-recorded mechanical scan result over the operator-visible
+    /// prompt surface.
     pub contamination_result: BlindJourneyContaminationResultV1,
 }
 
@@ -434,6 +457,20 @@ struct BlindJourneyAnswerKeyDigestInput<'a> {
     forbidden_edits: &'a [String],
 }
 
+/// The operator-visible surface of the prompt: every field the operator was
+/// actually shown. Field order is the canonical digest identity; the review,
+/// the mechanical scan and the secrecy projection all bind this same text, so
+/// a producer cannot restate a reviewed field after review.
+#[derive(Serialize)]
+struct BlindJourneyPromptDigestInput<'a> {
+    schema_version: &'a str,
+    operator_goal: &'a str,
+    public_inputs: &'a [String],
+    ordinary_permissions: &'a [String],
+    prohibited_hints: &'a [String],
+    prompt_bytes: &'a str,
+}
+
 fn canonical_json<T: Serialize>(value: &T) -> Result<String, String> {
     serde_json::to_string(value).map_err(|error| format!("canonical serialization failed: {error}"))
 }
@@ -454,8 +491,21 @@ pub(crate) fn blind_journey_answer_key_digest(
     Ok(sha256_hex(canonical_json(&input)?.as_bytes()))
 }
 
+/// SHA-256 hex over the canonical operator-visible prompt surface: the exact
+/// prompt bytes plus every restated operator-visible field.
 fn prompt_digest(prompt: &BlindJourneyPromptV1) -> String {
-    sha256_hex(prompt.prompt_bytes.as_bytes())
+    let input = BlindJourneyPromptDigestInput {
+        schema_version: &prompt.schema_version,
+        operator_goal: &prompt.operator_goal,
+        public_inputs: &prompt.public_inputs,
+        ordinary_permissions: &prompt.ordinary_permissions,
+        prohibited_hints: &prompt.prohibited_hints,
+        prompt_bytes: &prompt.prompt_bytes,
+    };
+    match canonical_json(&input) {
+        Ok(json) => sha256_hex(json.as_bytes()),
+        Err(error) => format!("prompt_digest_error:{error}"),
+    }
 }
 
 /// Portable semantic identity of one packet: candidate identity without
@@ -515,13 +565,19 @@ pub(crate) fn stamp_blind_journey_packet(
     let prompt_digest = prompt_digest(&prompt);
     let answer_key_digest = blind_journey_answer_key_digest(&answer_key)?;
     if !prompt.review.reviewer.trim().is_empty() {
-        if prompt.review.prompt_digest != prompt_digest {
+        // An empty binding is stamped now; a present but different binding is
+        // a stale review and refuses the packet.
+        if prompt.review.prompt_digest.is_empty() {
+            prompt.review.prompt_digest = prompt_digest.clone();
+        } else if prompt.review.prompt_digest != prompt_digest {
             return Err(
                 "blind journey packet is refused: prompt review binds different prompt bytes"
                     .to_string(),
             );
         }
-        if prompt.review.answer_key_digest != answer_key_digest {
+        if prompt.review.answer_key_digest.is_empty() {
+            prompt.review.answer_key_digest = answer_key_digest.clone();
+        } else if prompt.review.answer_key_digest != answer_key_digest {
             return Err(
                 "blind journey packet is refused: prompt review binds a different answer key"
                     .to_string(),
@@ -537,6 +593,9 @@ pub(crate) fn stamp_blind_journey_packet(
     answer_key.answer_key_digest = answer_key_digest.clone();
     receipt.prompt_digest = Some(prompt_digest);
     receipt.answer_key_digest = Some(answer_key_digest);
+    // The receipt retains the same review, not a second opinion: the producer
+    // copies the reviewed binding instead of restating it.
+    receipt.review = prompt.review.clone();
     Ok(BlindJourneyPacketV1 {
         prompt,
         answer_key,
@@ -544,12 +603,37 @@ pub(crate) fn stamp_blind_journey_packet(
     })
 }
 
-/// Mechanical contamination scan over the exact prompt bytes. Each category is
-/// checked independently; every match is a finding. This is the closed
-/// structured judgment: it rejects evaluator-only fields, internal references
-/// and preselected item/target/command/artifact hints. Keyword absence is not
-/// evidence of semantic blindness, which is why the retained reviewer verdict
-/// stays a separate, required judgment.
+/// The exact operator-visible prompt surface: the goal, restated inputs,
+/// permissions and hints, and the exact prompt bytes. The review digest, the
+/// mechanical contamination scan and the answer-key secrecy projection all
+/// bind this one text, so none of them can be restated after review.
+pub(crate) fn prompt_operator_visible_text(prompt: &BlindJourneyPromptV1) -> String {
+    let mut text = String::new();
+    text.push_str(&prompt.operator_goal);
+    text.push('\n');
+    for input in &prompt.public_inputs {
+        text.push_str(input);
+        text.push('\n');
+    }
+    for permission in &prompt.ordinary_permissions {
+        text.push_str(permission);
+        text.push('\n');
+    }
+    for hint in &prompt.prohibited_hints {
+        text.push_str(hint);
+        text.push('\n');
+    }
+    text.push_str(&prompt.prompt_bytes);
+    text.push('\n');
+    text
+}
+
+/// Mechanical contamination scan over the exact operator-visible prompt
+/// surface. Each category is checked independently; every match is a finding.
+/// This is the closed structured judgment: it rejects evaluator-only fields,
+/// internal references and preselected item/target/command/artifact hints.
+/// Keyword absence is not evidence of semantic blindness, which is why the
+/// retained reviewer verdict stays a separate, required judgment.
 pub(crate) fn mechanical_contamination_findings(
     prompt: &BlindJourneyPromptV1,
 ) -> Vec<BlindJourneyContaminationFindingV1> {
@@ -588,7 +672,7 @@ pub(crate) fn mechanical_contamination_findings(
             ["transcript", "prior journey", "earlier attempt"],
         ),
     ];
-    let text = prompt.prompt_bytes.to_ascii_lowercase();
+    let text = prompt_operator_visible_text(prompt).to_ascii_lowercase();
     let mut findings = Vec::new();
     for (category, patterns) in PATTERN_CATEGORIES {
         for pattern in patterns {
@@ -615,29 +699,16 @@ pub(crate) fn mechanical_contamination_findings(
     findings
 }
 
-/// Operator-visible material only: public prompt fields, exact prompt bytes and
-/// operator-visible event subjects/reasons. Answer-key secrecy is tested over
-/// exactly this projection.
+/// Operator-visible material only: the exact operator-visible prompt surface
+/// and the subjects/reasons of operator-visible harness- or verifier-originated
+/// events. Operator-originated events (selections, edits, ordinary reads,
+/// questions) are excluded: an honest transcript records what the operator
+/// actually did, which may legitimately name a quiet neighbor or a forbidden
+/// path. Answer-key secrecy is tested over exactly this projection.
 pub(crate) fn blind_journey_operator_visible_text(packet: &BlindJourneyPacketV1) -> String {
-    let mut text = String::new();
-    text.push_str(&packet.prompt.operator_goal);
-    text.push('\n');
-    for input in &packet.prompt.public_inputs {
-        text.push_str(input);
-        text.push('\n');
-    }
-    for permission in &packet.prompt.ordinary_permissions {
-        text.push_str(permission);
-        text.push('\n');
-    }
-    for hint in &packet.prompt.prohibited_hints {
-        text.push_str(hint);
-        text.push('\n');
-    }
-    text.push_str(&packet.prompt.prompt_bytes);
-    text.push('\n');
+    let mut text = prompt_operator_visible_text(&packet.prompt);
     for event in &packet.receipt.events {
-        if event.operator_visible {
+        if event.operator_visible && !event.kind.operator_originated() {
             text.push_str(&event.subject);
             text.push('\n');
             if let Some(reason) = &event.reason {
@@ -765,6 +836,24 @@ pub(crate) fn assess_blind_journey_packet(
             reasons.push("review_stale:the retained verdict is marked stale".to_string());
         }
     }
+    // Mechanical findings reject the packet on their own, independent of the
+    // reviewer verdict or the terminal result: a contaminated prompt never
+    // becomes a valid transcript, and an honest limitation cannot rest on a
+    // hinted prompt.
+    if !findings.is_empty() {
+        reasons.push(
+            "mechanically_contaminated:the operator-visible prompt material fails the mechanical scan"
+                .to_string(),
+        );
+    }
+    // The receipt retains a copy of the review; it must be the same review,
+    // not a second opinion recorded after the fact.
+    if packet.receipt.review != packet.prompt.review {
+        reasons.push(
+            "review_binding_mismatch:the receipt review differs from the retained prompt review"
+                .to_string(),
+        );
+    }
 
     // 4. Candidate identity must be portable-equal between prompt and receipt.
     if !packet
@@ -803,7 +892,22 @@ pub(crate) fn assess_blind_journey_packet(
                 event.sequence
             ));
         }
-        if event.kind == BlindJourneyEventKindV1::HarnessIntervention
+        for (field, digest) in [("input", &event.input_digest), ("output", &event.output_digest)] {
+            if let Some(digest) = digest {
+                let wellformed = digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+                if !wellformed {
+                    reasons.push(format!(
+                        "event_digest_malformed:event {} records a malformed {field} digest",
+                        event.sequence
+                    ));
+                }
+            }
+        }
+        if (event.kind == BlindJourneyEventKindV1::HarnessIntervention
+            || event.kind == BlindJourneyEventKindV1::ProcessCancellationRestartCleanup)
             && event.intervention.is_none()
         {
             reasons.push(format!(
@@ -853,18 +957,60 @@ pub(crate) fn assess_blind_journey_packet(
     }
 
     // 7. Answer-key comparison: selection and edit cage checked without
-    //    exposing the key; several eligible items may be represented.
+    //    exposing the key; several eligible items may be represented. The
+    //    comparison binds to what the transcript records, not to fields the
+    //    producer could restate: the chosen item is the last recorded
+    //    operator selection event, and every recorded file edit must stay
+    //    inside the cage and out of the forbidden list.
     let key = &packet.answer_key;
     let mut comparison_disqualifiers: std::collections::BTreeSet<BlindJourneyResultV1> =
         std::collections::BTreeSet::new();
     let mut disqualifiers = assistance_disqualifiers.clone();
+    let selection_event_subjects: Vec<&str> = events
+        .iter()
+        .filter(|event| event.kind == BlindJourneyEventKindV1::OperatorProductOptionSelection)
+        .map(|event| event.subject.as_str())
+        .collect();
+    let edit_event_subjects: Vec<&str> = events
+        .iter()
+        .filter(|event| event.kind == BlindJourneyEventKindV1::FileEdit)
+        .map(|event| event.subject.as_str())
+        .collect();
     let mut selection_matches_key = false;
-    if let Some(selected) = &packet.receipt.selected_item {
+    let chosen_item = selection_event_subjects
+        .last()
+        .copied()
+        .or(packet.receipt.selected_item.as_deref());
+    if let Some(chosen) = chosen_item {
         selection_matches_key = true;
-        if key.quiet_neighbors.iter().any(|item| item == selected) {
+        if key.quiet_neighbors.iter().any(|item| item == chosen)
+            || !key.eligible_items.iter().any(|item| item == chosen)
+        {
             comparison_disqualifiers.insert(BlindJourneyResultV1::WrongOrStaleSubject);
-        } else if !key.eligible_items.iter().any(|item| item == selected) {
-            comparison_disqualifiers.insert(BlindJourneyResultV1::WrongOrStaleSubject);
+        }
+    }
+    if let Some(selected) = packet.receipt.selected_item.as_deref() {
+        match selection_event_subjects.last() {
+            Some(last) if *last == selected => {}
+            Some(_) => {
+                reasons.push(
+                    "selection_event_mismatch:the recorded selection disagrees with the operator selection event"
+                        .to_string(),
+                );
+            }
+            None => {
+                reasons.push(
+                    "selection_event_missing:the recorded selection has no operator selection event"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    for subject in &edit_event_subjects {
+        if key.forbidden_edits.iter().any(|path| path == subject)
+            || !key.expected_edit_cage.iter().any(|path| path == subject)
+        {
+            comparison_disqualifiers.insert(BlindJourneyResultV1::UnsafeOrWrongEdit);
         }
     }
     if let Some(edit) = &packet.receipt.selected_edit {
@@ -872,6 +1018,12 @@ pub(crate) fn assess_blind_journey_packet(
             || !key.expected_edit_cage.iter().any(|path| path == edit)
         {
             comparison_disqualifiers.insert(BlindJourneyResultV1::UnsafeOrWrongEdit);
+        }
+        if !edit_event_subjects.contains(&edit.as_str()) {
+            reasons.push(
+                "selected_edit_unbound:the recorded selected edit names no recorded file edit"
+                    .to_string(),
+            );
         }
     }
     disqualifiers.extend(comparison_disqualifiers.iter().copied());
@@ -896,11 +1048,7 @@ pub(crate) fn assess_blind_journey_packet(
         );
     }
     if axes.selection_correctness == BlindJourneySelectionCorrectnessV1::QuietNeighborSelected
-        && !packet
-            .receipt
-            .selected_item
-            .as_ref()
-            .is_some_and(|selected| key.quiet_neighbors.iter().any(|item| item == selected))
+        && !chosen_item.is_some_and(|chosen| key.quiet_neighbors.iter().any(|item| item == chosen))
     {
         reasons.push(
             "selection_axis_misrecorded:quiet_neighbor_selected without a quiet-neighbor selection"
@@ -923,6 +1071,17 @@ pub(crate) fn assess_blind_journey_packet(
     {
         reasons.push(
             "verification_axis_misrecorded:failed without a project verification execution event"
+                .to_string(),
+        );
+    }
+    if axes.project_verification_status == BlindJourneyVerificationStatusV1::Passed
+        && !event_kind_present(
+            packet,
+            BlindJourneyEventKindV1::ProjectVerificationExecution,
+        )
+    {
+        reasons.push(
+            "verification_axis_misrecorded:passed without a project verification execution event"
                 .to_string(),
         );
     }
@@ -1054,9 +1213,31 @@ pub(crate) fn assess_blind_journey_packet(
                             .to_string(),
                     );
                 }
+                if packet
+                    .receipt
+                    .limitations
+                    .iter()
+                    .any(|limitation| limitation.trim().is_empty())
+                {
+                    reasons.push(
+                        "honest_limitation_with_blank_limitation:every recorded limitation must be exact"
+                            .to_string(),
+                    );
+                }
                 if packet.receipt.non_claims.is_empty() {
                     reasons.push(
                         "honest_limitation_without_non_claim:the exact recovery non-claim is required"
+                            .to_string(),
+                    );
+                }
+                if packet
+                    .receipt
+                    .non_claims
+                    .iter()
+                    .any(|non_claim| non_claim.trim().is_empty())
+                {
+                    reasons.push(
+                        "honest_limitation_with_blank_non_claim:every recorded non-claim must be exact"
                             .to_string(),
                     );
                 }
@@ -1077,6 +1258,17 @@ pub(crate) fn assess_blind_journey_packet(
                 if packet.receipt.limitations.is_empty() {
                     reasons.push(
                         "discoverability_failure_without_limitations:the blocked public input is required"
+                            .to_string(),
+                    );
+                }
+                if packet
+                    .receipt
+                    .limitations
+                    .iter()
+                    .any(|limitation| limitation.trim().is_empty())
+                {
+                    reasons.push(
+                        "discoverability_failure_with_blank_limitation:every recorded limitation must be exact"
                             .to_string(),
                     );
                 }
@@ -1132,6 +1324,7 @@ pub(crate) fn assess_blind_journey_packet(
 
 /// Scenario expectation recorded in the committed fixture corpus.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BlindJourneyFixtureExpectationV1 {
     pub accepted: bool,
     pub terminal: Option<BlindJourneyResultV1>,
@@ -1140,6 +1333,7 @@ pub(crate) struct BlindJourneyFixtureExpectationV1 {
 
 /// One committed fixture scenario: an expected outcome plus one full packet.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BlindJourneyFixtureScenarioV1 {
     pub id: String,
     pub expected: BlindJourneyFixtureExpectationV1,
@@ -1353,7 +1547,6 @@ mod tests {
     fn stamped_positive_packet(root: &str) -> Result<BlindJourneyPacketV1, String> {
         let candidate = candidate_ref(root);
         let key = answer_key();
-        let bound_prompt_digest = sha256_hex(clean_prompt_bytes().as_bytes());
         let bound_key_digest = blind_journey_answer_key_digest(&key)?;
         let prompt = BlindJourneyPromptV1 {
             schema_version: BLIND_JOURNEY_PROMPT_SCHEMA_VERSION.to_string(),
@@ -1367,7 +1560,7 @@ mod tests {
             review: BlindJourneyPromptReviewV1 {
                 reviewer: "reviewer-1".to_string(),
                 verdict: BlindJourneyPromptReviewVerdictV1::Accepted,
-                prompt_digest: bound_prompt_digest,
+                prompt_digest: String::new(),
                 answer_key_digest: bound_key_digest,
             },
             contamination_result: BlindJourneyContaminationResultV1::MechanicallyClean,
@@ -1422,7 +1615,7 @@ mod tests {
             ),
             (
                 "target_file_or_edit",
-                "Edit src/lib.rs tests/add.rs for the change.",
+                "Edit src/lib.rs:12 and tests/add.rs for the change.",
             ),
             (
                 "private_artifact_path",
@@ -1436,15 +1629,21 @@ mod tests {
         for (category, text) in contaminated_prompts {
             let mut packet = stamped_positive_packet("/srv/journey")?;
             packet.prompt.prompt_bytes = text.to_string();
+            packet.prompt.contamination_result =
+                BlindJourneyContaminationResultV1::MechanicallyContaminated;
             let assessment = assess_blind_journey_packet(&packet);
             if assessment.accepted {
                 return Err(format!(
                     "prompt contaminated via {category} must be rejected"
                 ));
             }
-            if !reason_contains(&assessment, "prompt_digest_mismatch") {
+            if !assessment
+                .contamination_findings
+                .iter()
+                .any(|finding| finding.category == category)
+            {
                 return Err(format!(
-                    "contamination via {category} must surface a prompt digest mismatch"
+                    "contamination via {category} must surface its own category finding"
                 ));
             }
         }
@@ -1621,6 +1820,11 @@ mod tests {
         for selected in ["item-a", "item-b"] {
             let mut packet = stamped_positive_packet("/srv/journey")?;
             packet.receipt.selected_item = Some(selected.to_string());
+            for event in &mut packet.receipt.events {
+                if event.kind == BlindJourneyEventKindV1::OperatorProductOptionSelection {
+                    event.subject = selected.to_string();
+                }
+            }
             let assessment = assess_blind_journey_packet(&packet);
             if !assessment.positive() {
                 return Err(format!(
@@ -1636,6 +1840,11 @@ mod tests {
     fn quiet_neighbor_selection_fails_the_answer_key_comparison() -> Result<(), String> {
         let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.selected_item = Some("quiet-neighbor".to_string());
+        for event in &mut packet.receipt.events {
+            if event.kind == BlindJourneyEventKindV1::OperatorProductOptionSelection {
+                event.subject = "quiet-neighbor".to_string();
+            }
+        }
         packet.receipt.axes.selection_correctness =
             BlindJourneySelectionCorrectnessV1::QuietNeighborSelected;
         packet.receipt.terminal_result = BlindJourneyResultV1::WrongOrStaleSubject;
@@ -1655,6 +1864,11 @@ mod tests {
     fn forbidden_edit_fails_the_edit_cage_comparison() -> Result<(), String> {
         let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.selected_edit = Some("src/main.rs".to_string());
+        for event in &mut packet.receipt.events {
+            if event.kind == BlindJourneyEventKindV1::FileEdit {
+                event.subject = "src/main.rs".to_string();
+            }
+        }
         packet.receipt.axes.edit_cage_verdict = BlindJourneyEditCageVerdictV1::Violation;
         packet.receipt.terminal_result = BlindJourneyResultV1::UnsafeOrWrongEdit;
         let assessment = assess_blind_journey_packet(&packet);
@@ -1812,6 +2026,94 @@ mod tests {
         }
         if short_root.portable_identity != deep_root.portable_identity {
             return Err("equivalent roots must share one portable semantic identity".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_review_divergence_rejects() -> Result<(), String> {
+        let mut packet = stamped_positive_packet("/srv/journey")?;
+        packet.receipt.review.verdict = BlindJourneyPromptReviewVerdictV1::Rejected;
+        let assessment = assess_blind_journey_packet(&packet);
+        if assessment.accepted || !reason_contains(&assessment, "review_binding_mismatch") {
+            return Err(
+                "a receipt review that differs from the retained prompt review must reject"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn forbidden_edit_event_rejects_even_when_the_selected_edit_is_allowed() -> Result<(), String>
+    {
+        let mut packet = stamped_positive_packet("/srv/journey")?;
+        let last = packet.receipt.events.len() as u64;
+        packet.receipt.events.push(BlindJourneyEventV1 {
+            sequence: last + 1,
+            predecessor_sequence: Some(last),
+            kind: BlindJourneyEventKindV1::FileEdit,
+            subject: "src/main.rs".to_string(),
+            input_digest: None,
+            output_digest: None,
+            operator_visible: true,
+            intervention: None,
+            actor: None,
+            reason: None,
+        });
+        let assessment = assess_blind_journey_packet(&packet);
+        if assessment.positive() {
+            return Err("a forbidden edit event must not validate positive".to_string());
+        }
+        if !assessment
+            .disqualifiers
+            .contains(&BlindJourneyResultV1::UnsafeOrWrongEdit)
+        {
+            return Err(
+                "a forbidden edit event must disqualify as unsafe_or_wrong_edit".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn honest_forbidden_edit_run_is_accepted() -> Result<(), String> {
+        let mut packet = stamped_positive_packet("/srv/journey")?;
+        let last = packet.receipt.events.len() as u64;
+        packet.receipt.events.push(BlindJourneyEventV1 {
+            sequence: last + 1,
+            predecessor_sequence: Some(last),
+            kind: BlindJourneyEventKindV1::FileEdit,
+            subject: "src/main.rs".to_string(),
+            input_digest: None,
+            output_digest: None,
+            operator_visible: true,
+            intervention: None,
+            actor: None,
+            reason: None,
+        });
+        packet.receipt.axes.edit_cage_verdict = BlindJourneyEditCageVerdictV1::Violation;
+        packet.receipt.terminal_result = BlindJourneyResultV1::UnsafeOrWrongEdit;
+        let assessment = assess_blind_journey_packet(&packet);
+        if !assessment.accepted {
+            return Err(format!(
+                "an honest unsafe_or_wrong_edit receipt must stay accepted, got {:?}",
+                assessment.rejection_reasons
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selection_event_mismatch_rejects() -> Result<(), String> {
+        let mut packet = stamped_positive_packet("/srv/journey")?;
+        packet.receipt.selected_item = Some("item-b".to_string());
+        let assessment = assess_blind_journey_packet(&packet);
+        if assessment.accepted || !reason_contains(&assessment, "selection_event_mismatch") {
+            return Err(
+                "a recorded selection that disagrees with the operator selection event must reject"
+                    .to_string(),
+            );
         }
         Ok(())
     }

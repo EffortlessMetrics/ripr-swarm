@@ -9,10 +9,12 @@
     "answer_key": "blind_journey_answer_key.v1",
     "receipt": "blind_journey_receipt.v1"
   },
+  "corpus_scenario_count": 35,
   "claim_boundary": "Static blind-journey transcript contract: validator success defines auditability of one committed operator-visible transcript only; it claims no installed usefulness, no candidate qualification, no blind acceptance and no release verdict.",
   "limitations": [
     "synthetic fixture packets cannot qualify a candidate; the #4604 execution lane must supply a real immutable-candidate run",
     "semantic answer-leak review requires a named human reviewer verdict over the exact prompt and separately stored answer key; the mechanical scan alone cannot establish semantic blindness",
+    "event input/output digests are optional in this contract version: when present they must be well-formed SHA-256 hex, but per-kind presence requirements are deferred to the #4604 execution slice",
     "public docs/help inputs in the corpus are synthetic; #4508 owns the real deterministic journey input corpus",
     "candidate/process/artifact admission is referenced, not owned; #4510 stays the admission authority"
   ],

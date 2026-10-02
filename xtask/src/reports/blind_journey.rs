@@ -197,8 +197,12 @@ fn read_json(path: &Path, label: &str) -> Result<Value, String> {
 
 /// The committed decision receipt is the versioned contract record; it must
 /// name this contract's schema identities, stay inside its ratified fixture
-/// scope, and carry explicit limitations and not-exercised combinations.
-fn validate_contract_receipt(receipt: &Value) -> Result<(), String> {
+/// scope, bind to the assessed corpus, and carry explicit limitations and
+/// not-exercised combinations with exact entries.
+fn validate_contract_receipt(
+    receipt: &Value,
+    corpus_scenario_count: usize,
+) -> Result<(), String> {
     if receipt.get("kind").and_then(Value::as_str)
         != Some("blind_journey_contract_decision_receipt")
     {
@@ -224,6 +228,13 @@ fn validate_contract_receipt(receipt: &Value) -> Result<(), String> {
             ));
         }
     }
+    if receipt.get("corpus_scenario_count").and_then(Value::as_u64)
+        != Some(corpus_scenario_count as u64)
+    {
+        return Err(
+            "contract receipt corpus_scenario_count does not bind the assessed corpus".to_string(),
+        );
+    }
     for key in ["limitations", "combinations_not_exercised"] {
         let entries = receipt
             .get(key)
@@ -231,6 +242,14 @@ fn validate_contract_receipt(receipt: &Value) -> Result<(), String> {
             .ok_or_else(|| format!("contract receipt must carry a non-empty {key} list"))?;
         if entries.is_empty() {
             return Err(format!("contract receipt must record explicit {key}"));
+        }
+        if entries
+            .iter()
+            .any(|entry| entry.as_str().is_none_or(str::is_empty))
+        {
+            return Err(format!(
+                "contract receipt must record exact non-empty {key} entries"
+            ));
         }
     }
     Ok(())
@@ -244,7 +263,7 @@ pub(crate) fn blind_journey_contract_report_value() -> Result<BlindJourneyContra
     let report = assess_blind_journey_fixture_corpus(&corpus);
     require_required_scenarios(&report)?;
     let receipt = read_json(&workspace_path(RECEIPT_PATH), "contract receipt")?;
-    validate_contract_receipt(&receipt)?;
+    validate_contract_receipt(&receipt, report.scenarios.len())?;
     if !report.expectation_failures.is_empty() {
         return Err(format!(
             "blind journey fixture corpus drifted: {:?}",
@@ -368,8 +387,11 @@ mod tests {
         let mut receipt = committed_receipt()?;
         receipt["contract_schema_versions"]["prompt"] =
             serde_json::json!("blind_journey_prompt.v2");
-        match validate_contract_receipt(&receipt) {
-            Err(_message) => Ok(()),
+        match validate_contract_receipt(&receipt, live_report()?.scenarios.len()) {
+            Err(message) if message.contains("schema version") => Ok(()),
+            Err(message) => Err(format!(
+                "expected a schema-version drift error, got: {message}"
+            )),
             Ok(()) => {
                 Err("a contract receipt with a drifted schema version must be rejected".to_string())
             }
@@ -380,8 +402,11 @@ mod tests {
     fn receipt_without_limitations_is_rejected() -> Result<(), String> {
         let mut receipt = committed_receipt()?;
         receipt["limitations"] = serde_json::json!([]);
-        match validate_contract_receipt(&receipt) {
-            Err(_message) => Ok(()),
+        match validate_contract_receipt(&receipt, live_report()?.scenarios.len()) {
+            Err(message) if message.contains("limitations") => Ok(()),
+            Err(message) => Err(format!(
+                "expected an explicit-limitations error, got: {message}"
+            )),
             Ok(()) => {
                 Err("a contract receipt without explicit limitations must be rejected".to_string())
             }
@@ -389,11 +414,27 @@ mod tests {
     }
 
     #[test]
+    fn receipt_with_a_blank_limitation_is_rejected() -> Result<(), String> {
+        let mut receipt = committed_receipt()?;
+        receipt["limitations"] = serde_json::json!([" "]);
+        match validate_contract_receipt(&receipt, live_report()?.scenarios.len()) {
+            Err(message) if message.contains("non-empty limitations") => Ok(()),
+            Err(message) => Err(format!(
+                "expected an exact-limitations error, got: {message}"
+            )),
+            Ok(()) => Err("a contract receipt with a blank limitation must be rejected".to_string()),
+        }
+    }
+
+    #[test]
     fn receipt_without_not_exercised_combinations_is_rejected() -> Result<(), String> {
         let mut receipt = committed_receipt()?;
         receipt["combinations_not_exercised"] = serde_json::json!([]);
-        match validate_contract_receipt(&receipt) {
-            Err(_message) => Ok(()),
+        match validate_contract_receipt(&receipt, live_report()?.scenarios.len()) {
+            Err(message) if message.contains("combinations_not_exercised") => Ok(()),
+            Err(message) => Err(format!(
+                "expected an explicit-combinations error, got: {message}"
+            )),
             Ok(()) => Err(
                 "a contract receipt without not-exercised combinations must be rejected"
                     .to_string(),
@@ -434,7 +475,10 @@ mod tests {
                 || row.scenario == "clean_generic_prompt_accepted"
         });
         match require_required_scenarios(&reduced) {
-            Err(_message) => Ok(()),
+            Err(message) if message.contains("missing required scenarios") => Ok(()),
+            Err(message) => Err(format!(
+                "expected a missing-required-scenarios error, got: {message}"
+            )),
             Ok(()) => Err("dropping a required scenario must fail the coverage gate".to_string()),
         }
     }

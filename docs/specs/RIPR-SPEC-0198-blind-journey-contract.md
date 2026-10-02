@@ -104,19 +104,32 @@ selection fails the answer-key comparison; a passing verification or static
 axis cannot hide operator assistance; an honest limitation stays an accepted
 non-positive receipt with the complete transcript and exact recovery
 non-claim; missing predecessors, reordered traces, altered prompt bindings,
-changed answer keys and human/machine disagreement reject; equivalent
-concrete root spellings share one portable semantic identity while concrete root
-evidence remains retained; and an unsupported future schema rejects instead of
-aggregating to a clean pass. Answer-key bytes remain evaluator-only: the
+changed answer keys and human/machine disagreement reject; a receipt review
+that diverges from the retained prompt review, a recorded selection that
+disagrees with the recorded selection event, a passed verification axis
+without an execution event, an unclassified process-control event, a
+malformed event digest, and a forbidden edit recorded only in the transcript
+all reject; equivalent concrete root spellings share one portable semantic
+identity while concrete root evidence remains retained; and an unsupported
+future schema rejects instead of aggregating to a clean pass. The prompt
+digest, the mechanical scan and the secrecy projection all bind the same
+operator-visible prompt surface — the goal, restated inputs, permissions,
+hints and exact prompt bytes — so a producer cannot restate one reviewed
+field after review. Answer-key bytes remain evaluator-only: the
 operator-visible projection is scanned for exact absence of answer-key
-contents and references at the event boundary. Timestamps, durations, PIDs
-and absolute temporary-root spelling stay telemetry.
+contents and references at the event boundary; operator-originated events
+(selections, edits, ordinary reads, questions) stay outside the secrecy
+projection because an honest transcript records what the operator actually
+did, which may legitimately name a quiet neighbor or a forbidden path.
+Timestamps, durations, PIDs and absolute temporary-root spelling stay
+telemetry.
 
 JSON and Markdown derive from one evaluated DTO, so prose cannot strengthen
 machine state. The committed decision receipt
 `metrics/blind-journey-contract/contract-receipt.json` ratifies the fixture
-scope and is rejected when it drifts from the contract schema versions,
-carries no limitations, or claims more than the fixture evidence supports.
+scope and is rejected when it drifts from the contract schema versions, no
+longer binds the assessed corpus scenario count, carries no exact
+limitations, or claims more than the fixture evidence supports.
 
 ## Required Evidence
 
@@ -161,7 +174,11 @@ carries no limitations, or claims more than the fixture evidence supports.
 6. Two packets identical except for concrete root spelling share
    one portable semantic identity and both validate.
 7. A hand-edited decision receipt that drifts from the contract schema
-   versions or drops its limitations fails the report gate.
+   versions, drops its limitations or blanks a limitation entry, or stops
+   binding the assessed corpus scenario count fails the report gate.
+8. A packet whose transcript records a forbidden edit that the selected edit
+   does not name still rejects as `unsafe_or_wrong_edit`; the answer-key
+   comparison binds to every recorded file edit, not only the selected one.
 
 ## Test Mapping
 
