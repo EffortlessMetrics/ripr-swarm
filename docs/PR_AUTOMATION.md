@@ -261,9 +261,9 @@ Before allocating or generating, record in the existing task handoff:
   identified by source SHA, artifact hash and the receipt that consumes it;
 - reusable mutable build state, and disposable or superseded outputs eligible for
   the already-authorized recoverable closeout after their consumers release them;
-- observed free space, the host's accepted reserve and the conservative **peak
-  additional bytes** for compilation, downloads, snapshots, archive creation and
-  full restoration verification on every affected volume. Do not count prospective
+- observed free space, the host's accepted reserve and the conservative
+  **peak additional bytes** for compilation, downloads, snapshots, archive creation
+  and full restoration verification on every affected volume. Do not count prospective
   reclamation before it is verified, assume a compression ratio, or lower a floor
   merely to admit another run. Stop generation when that budget no longer fits.
 
@@ -278,9 +278,9 @@ selected compiler artifact and observed behavior under its admitted ownership.
 
 Before the next batch, and at merge, closure, cancellation or handoff, reconcile
 resources with the actual writer and all queued, running and independent consumers.
-Classify every resource as `released`, `retained with reason`, or `awaiting owner
-verification` in the existing terminal return. Missing process/PID observations,
-old mtimes, an unlocked directory, a clean source tree or a merged PR are not
+Classify every resource as `released`, `retained with reason`, or
+`awaiting owner verification` in the existing terminal return. Missing process/PID
+observations, old mtimes, an unlocked directory, a clean source tree or a merged PR are not
 release evidence. Preserve open-claim witnesses and unknown resources. Bound a
 retention reason to the real consumer or proof need, rather than keeping every
 superseded runner expanded by default.
