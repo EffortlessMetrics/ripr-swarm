@@ -11,6 +11,37 @@ are scoped or reviewed.
 
 ### Added
 
+- CLI: `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194, #4667) makes
+  the compact `RepairCardV1` the default bounded agent handoff. The card is
+  assembled verbatim from the shared authorities — the check finding's
+  fix-instruction witness, repair-route readiness and packet eligibility, the
+  packet's own edit-cage derivation, the seam's latest repair-attempt
+  manifest, and the typed command catalog — with producer-owned portable
+  workspace identity (fail-closed, never minted from a checkout path). The
+  complete canonical packet stays behind the card's explicit detail route;
+  `ripr agent packet` is unchanged and remains the compatibility path.
+  Without `--json`, the same typed fields render as a compact human summary
+  that never re-derives, reorders, or strengthens the card.
+- Domains: `RepairCardV1` detail references (RIPR-SPEC-0193, #4666) keep the
+  default card finite: nine load-bearing evidence families (full fix
+  instruction, witness/stage evidence, related-test candidates, limitation
+  detail, canonical packet, RepairAttempt status, focused-proof receipt,
+  static movement, optional mutation calibration) ride behind typed
+  `RepairCardDetailRef` routes with sha256 content digests and measured
+  selected/omitted/complete byte accounting under a versioned provisional
+  budget (`repair-card-budget-v1`; #4669 ratifies the numbers). Stale,
+  malformed, wrong-root, missing and unavailable evidence stays visibly so;
+  budgeting never changes canonical identity, readiness, target selection or
+  actionability, and oversized compact fields or root-specific route
+  spellings fail closed instead of truncating silently.
+- Domains: `RepairCardV1` (`repair_card.v1`, RIPR-SPEC-0195) is the compact
+  provider-neutral repair work object projected from the shared repair
+  authorities: fix-instruction summary, repair-route readiness, typed target
+  selection, typed command references and optional repair-attempt state. One
+  app-layer builder owns the projection; a sha256 semantic digest covers the
+  load-bearing surface, a single fail-closed gate keeps stale/limited/
+  unavailable cards from exposing a route, and `done_when` keeps five axes
+  separate. No CLI/LSP/MCP projection consumes the card yet (#4663).
 - CLI: the seven full-repo audit-path formats (`repo-seams-json`,
   `repo-seams-md`, `repo-exposure-json`, `repo-exposure-summary-json`,
   `repo-exposure-md`, `repo-sarif`, `agent-seam-packets-json`) are no longer
@@ -79,7 +110,7 @@ are scoped or reviewed.
   The changed expression must also be the owner's tail, and when the owner
   can exit early through `?` or `return`, the pinned value must be the
   changed `Ok(..)` or `Some(..)`, so an `Err(..)` pin on that owner does
-  not count (RIPR-SPEC-0192). `use ::crate_name::..` imports now read as
+  not count (RIPR-SPEC-0195). `use ::crate_name::..` imports now read as
   the named crate.
 - A changed Rust file whose only route into its crate is a `mod` with an
   unresolved `#[path]` target (`#[cfg_attr(unix, path = "unix.rs")] mod sys;`,
@@ -155,6 +186,15 @@ are scoped or reviewed.
   succeeds. A plain `ripr init` stages and fsyncs the new file, then links it
   into place only if nothing appeared there, so a failed write leaves no file
   (#4883).
+- `ripr lsp` now refreshes diagnostics when the root gap decision ledger
+  (`target/ripr/reports/gap-decision-ledger.json`) is rewritten or the root
+  `.git/HEAD` moves. Before, a `ripr check` run from a terminal or a
+  `git checkout` that touched no open buffer left the old diagnostics in place
+  until the next save. The server watches exactly those two root paths, anchored
+  at the workspace root (as a relative pattern where the client supports it,
+  otherwise as absolute paths), re-anchors them when the workspace root
+  changes, and ignores nested copies. Workspace status now discloses the
+  client's `watched_files_relative_pattern_support` (#4896).
 - An unchanged Rust test file that the reference parser refuses is no longer
   a silent related-test hole. If a classified owner consults that
   lexical-fallback file (the file contributed a related test, or it calls the
@@ -518,11 +558,14 @@ are scoped or reviewed.
   comment, so the documented route produced no cards. A gap-ledger card is
   keyed by its gap record and now omits `seam_id` when the row has none; the
   schema requires `seam_id` only on diff-scoped cards (#4524).
-- LSP: the server now asks clients for `textDocument/didSave`. It advertised
-  only the numeric full-sync kind, which under the LSP spec does not request
-  save notifications, so a strictly conforming editor could save without ripr
-  re-analyzing. The capability is now the options form with `save: true`,
-  which the VS Code extension's compatibility check already accepts.
+- LSP: the server now asks clients for `textDocument/didSave` and negotiates
+  incremental document sync (#1746). It advertised only the numeric full-sync
+  kind, which under the LSP spec does not request save notifications, so a
+  strictly conforming editor could save without ripr re-analyzing. The
+  capability is now the options form with incremental ranges and
+  `save: {includeText: false}`: conforming clients send `didSave` without
+  resending the whole document, and the VS Code extension's compatibility
+  check accepts the advertised shape.
 - Rust: a changed PyO3 binding with no Rust test now reads `no_static_path`
   with the `cross_language_oracle_visibility_unresolved` limitation, and its
   next step says to add or check tests in the binding's other language

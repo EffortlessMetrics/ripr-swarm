@@ -65,6 +65,8 @@ map is:
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `1` |
+| `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
+| `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -89,6 +91,48 @@ records that distinction.
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
+
+## Repair card (`RepairCardV1`, schema `repair_card.v1`)
+
+`RepairCardV1` (RIPR-SPEC-0192, #4663) is the compact provider-neutral
+repair work object: one card orders one governed repair as a verbatim
+projection of the fix-instruction summary, repair-route readiness, typed
+target selection, typed command references and optional repair-attempt
+state. The card carries a sha256 semantic digest scoped to its load-bearing
+fields (command display strings, like all presentation, never enter
+identity; no timestamp or absolute checkout spelling exists on the DTO), a
+single fail-closed route gate, five separate `done_when` axes, and a bounded
+rejected-alternative set. It describes the work order and never marks itself
+complete; observed completion stays with the RepairAttempt/receipt
+authorities.
+
+The schema is additive within `repair_card.v1`: new fields arrive with
+`#[serde(default)]`; a breaking shape change mints a new version. The CLI
+projection is `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194,
+#4667): the compact card is the default agent handoff, the complete packet
+stays behind the card's explicit detail route, and no LSP or MCP projection
+emits the card yet; measured field/budget ratification lands in #4669.
+
+Detail references and overflow disclosure (RIPR-SPEC-0193, #4666) keep the
+default card finite: nine load-bearing evidence families — the full fix
+instruction, witness/stage evidence, related-test candidates, limitation
+detail, the canonical packet, RepairAttempt status, the focused-proof
+receipt, static movement, and optional mutation calibration — ride behind
+typed `RepairCardDetailRef` routes with sha256 content digests and measured
+omitted bytes instead of embedding in the card. The card carries
+`detail_references` (deterministic family-sorted order), a measured
+`detail_summary` (selected/omitted/complete bytes, referenced and
+unavailable item counts, sorted omission classes), and a
+`complete_evidence_digest` binding the semantic card id with the routed
+families' content digests.
+Stale, malformed, wrong-root, missing and unavailable evidence states stay
+visible on the references; the card never upgrades them and never lets
+budgeting change readiness, target selection or actionability. The
+item/byte budget (`repair-card-budget-v1`: 16 detail items, 64 KiB wire
+card, 4 KiB per compact inline field) is provisional but versioned; #4669
+ratifies the numbers. The budget-version constant lives in
+`crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
+`cargo xtask check-output-contracts`.
 
 ## Executed-control packet (`executed_control_packet`, schema `1`)
 

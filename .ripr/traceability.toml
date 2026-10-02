@@ -8235,7 +8235,7 @@ id = "RIPR-SPEC-0129"
 name = "editor integration contract and support matrix"
 spec = "docs/specs/RIPR-SPEC-0129-editor-integration-contract.md"
 tests = [
-  "crates/ripr/tests/lsp_lifecycle.rs::initialize_advertises_full_sync_with_save_notifications",
+  "crates/ripr/tests/lsp_lifecycle.rs::initialize_advertises_incremental_sync_with_save_notifications",
   "crates/ripr/tests/lsp_lifecycle.rs::dollar_request_is_answered_method_not_found",
   "crates/ripr/src/lsp/diagnostics.rs::lsp_next_step_parity_tests::unwitnessed_finding_fallback_explains_class_and_inspection",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::gap_record_diagnostic_names_preview_inspection_route",
@@ -8761,6 +8761,11 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::receipt_status_discloses_bounded_client_feature_profile",
   "crates/ripr/src/lsp/tests.rs::malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsupported",
   "crates/ripr/src/lsp/tests.rs::initialize_surfaces_poisoned_client_features_store_as_a_session_failure",
+  "crates/ripr/src/lsp/client_features.rs::tests::watched_files_relative_pattern_support_is_parsed_and_fails_closed",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_anchor_diagnostics_inputs_at_the_root",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_skip_absolute_diagnostics_globs_for_metacharacter_roots",
+  "crates/ripr/src/lsp/tests.rs::watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire",
+  "crates/ripr/src/lsp/tests.rs::workspace_folder_transitions_root_switch_reanchors_diagnostics_input_watchers",
 ]
 fixtures = []
 code = [
@@ -10314,8 +10319,125 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0192"
+name = "repair card v1 projected from shared repair authorities"
+spec = "docs/specs/RIPR-SPEC-0192-repair-card-v1.md"
+tests = [
+  "crates/ripr/src/repair_card_digest.rs::tests::digest_is_stable_across_presentation_only_changes",
+  "crates/ripr/src/repair_card_digest.rs::tests::every_load_bearing_field_move_remints_the_digest",
+  "crates/ripr/src/repair_card_digest.rs::tests::proposed_and_existing_targets_stay_distinct",
+  "crates/ripr/src/repair_card_digest.rs::tests::done_when_keeps_all_five_axes_separate",
+  "crates/ripr/src/domain/repair_card.rs::tests::route_exposure_follows_instruction_and_readiness_together",
+  "crates/ripr/src/app/repair_card.rs::tests::ready_card_projects_authority_facts_verbatim",
+  "crates/ripr/src/app/repair_card.rs::tests::stale_card_omits_route_and_keeps_instruction",
+  "crates/ripr/src/app/repair_card.rs::tests::not_ready_with_command_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::limited_card_surfaces_producer_blocker_and_missing_evidence",
+  "crates/ripr/src/app/repair_card.rs::tests::unavailable_card_has_no_target_and_no_action",
+  "crates/ripr/src/app/repair_card.rs::tests::ineligible_packet_with_command_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::mismatched_seam_identity_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::mismatched_gap_identity_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::basis_without_target_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::suggested_assertion_without_text_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::inspect_only_card_is_advisory_only",
+  "crates/ripr/src/app/repair_card.rs::tests::proposed_target_stays_proposed",
+  "crates/ripr/src/app/repair_card.rs::tests::over_boundary_rejected_alternatives_fail_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::wrong_owner_shape_records_basis_and_rejections",
+  "crates/ripr/src/app/repair_card.rs::tests::effect_observer_shape_projects_observer_goal_and_improved_axis",
+  "crates/ripr/src/app/repair_card.rs::tests::attempt_state_copies_without_upgrade",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/domain/repair_card.rs",
+  "crates/ripr/src/repair_card_digest.rs",
+  "crates/ripr/src/app/repair_card.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0192-repair-card-v1.md",
+]
+metrics = [
+  "repair_card_schema_version",
+  "repair_card_violations",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0193"
+name = "repair card detail references and overflow disclosure"
+spec = "docs/specs/RIPR-SPEC-0193-repair-card-detail-references.md"
+tests = [
+  "crates/ripr/src/repair_card_budget.rs::tests::default_budget_routes_every_family_in_deterministic_order",
+  "crates/ripr/src/repair_card_budget.rs::tests::byte_accounting_measures_the_actual_normalized_representation",
+  "crates/ripr/src/repair_card_budget.rs::tests::oversized_single_detail_stays_bounded_and_visible",
+  "crates/ripr/src/repair_card_budget.rs::tests::equivalent_facts_keep_identity_regardless_of_source_order",
+  "crates/ripr/src/repair_card_budget.rs::tests::route_spelling_is_presentation_not_identity",
+  "crates/ripr/src/repair_card_budget.rs::tests::unavailable_family_requires_exact_reason_and_no_content",
+  "crates/ripr/src/repair_card_budget.rs::tests::routed_states_require_portable_routes_and_content",
+  "crates/ripr/src/repair_card_budget.rs::tests::stale_malformed_wrongroot_missing_states_stay_visible",
+  "crates/ripr/src/repair_card_budget.rs::tests::budgeting_never_strengthens_card_state",
+  "crates/ripr/src/repair_card_budget.rs::tests::duplicate_family_fails_closed",
+  "crates/ripr/src/repair_card_budget.rs::tests::oversized_compact_field_fails_closed_naming_the_field",
+  "crates/ripr/src/repair_card_budget.rs::tests::item_bound_is_enforced",
+  "crates/ripr/src/repair_card_budget.rs::tests::budget_numbers_are_presentation_not_identity",
+  "crates/ripr/src/repair_card_budget.rs::tests::empty_projection_stays_finite_and_stable",
+  "crates/ripr/src/repair_card_budget.rs::tests::complete_digest_binds_card_identity_to_evidence",
+  "crates/ripr/src/repair_card_budget.rs::tests::wire_bound_is_measured_with_the_finalized_card_id",
+  "crates/ripr/src/repair_card_budget.rs::tests::escapes_count_toward_the_inline_budget",
+  "crates/ripr/src/repair_card_budget.rs::tests::detail_vocabulary_round_trips_snake_case",
+  "crates/ripr/src/domain/repair_card.rs::tests::budget_validate_rejects_zero_limits",
+  "crates/ripr/src/domain/repair_card.rs::tests::detail_summary_default_names_the_budget_version",
+  "crates/ripr/src/app/repair_card.rs::tests::ready_card_with_detail_sources_carries_typed_references",
+  "crates/ripr/src/app/repair_card.rs::tests::detail_content_move_remints_card_identity",
+  "crates/ripr/src/app/repair_card.rs::tests::stale_detail_evidence_does_not_strengthen_or_weaken_route",
+  "crates/ripr/src/repair_card_digest.rs::tests::detail_references_enter_identity_without_retrieval_spelling",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/domain/repair_card.rs",
+  "crates/ripr/src/repair_card_budget.rs",
+  "crates/ripr/src/repair_card_digest.rs",
+  "crates/ripr/src/app/repair_card.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0193-repair-card-detail-references.md",
+]
+metrics = [
+  "repair_card_schema_version",
+  "repair_card_budget_version",
+  "repair_card_violations",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0194"
+name = "repair card default cli handoff"
+spec = "docs/specs/RIPR-SPEC-0194-repair-card-default-handoff.md"
+tests = [
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_projects_every_family_with_packet_route",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_omits_next_action_when_route_gate_is_closed",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_stays_within_the_default_bounds",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::gap_names_seam_requires_owner_match",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::packet_queue_omission_marks_canonical_packet_unavailable",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::attempt_recorded_at_another_head_is_stale_not_current",
+  "crates/ripr/src/cli/agent.rs::tests::agent_card_parses_seam_id_request",
+  "crates/ripr/src/cli/agent.rs::tests::agent_card_requires_seam_id_and_rejects_unknown_arguments",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/app/repair_card_handoff.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/cli/agent.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0194-repair-card-default-handoff.md",
+]
+metrics = [
+  "repair_card_schema_version",
+  "repair_card_budget_version",
+  "repair_card_violations",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0195"
 name = "Owner-return pins through calls that name the owner"
-spec = "docs/specs/RIPR-SPEC-0192-owner-return-pins.md"
+spec = "docs/specs/RIPR-SPEC-0195-owner-return-pins.md"
 tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_default_pinned_through_a_byte_slice_receiver",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_method_needs_its_trait_imported_from_the_workspace",

@@ -1,6 +1,6 @@
 # Fixture: owner_return_pin_trait_method
 
-Spec: RIPR-SPEC-0192
+Spec: RIPR-SPEC-0195
 
 ## Given
 

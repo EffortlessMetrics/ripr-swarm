@@ -25,6 +25,11 @@ pub(crate) mod python_repair_binding;
 pub(crate) mod python_repair_verification;
 pub(crate) mod receipt;
 pub(crate) mod repair_attempt;
+pub(crate) mod repair_card;
+/// Production handoff producer that assembles a `RepairCardV1` for one seam
+/// entry (#4667: card-first bounded agent handoff; canonical packet stays
+/// behind the explicit `ripr agent packet` route).
+pub(crate) mod repair_card_handoff;
 pub(crate) mod ripr_plus;
 mod selector;
 pub(crate) mod temp_diff;

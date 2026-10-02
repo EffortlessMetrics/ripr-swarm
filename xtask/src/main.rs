@@ -13869,6 +13869,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/evidence.rs",
         "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/probe.rs",
+        "crates/ripr/src/domain/repair_card.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
     ] {
@@ -13876,6 +13877,7 @@ fn check_output_contracts() -> Result<(), String> {
         domain.push('\n');
     }
     let app = read_text_lossy(Path::new("crates/ripr/src/app.rs"))?;
+    let repair_card_domain = read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
     let evidence_record = read_text_lossy(Path::new("crates/ripr/src/output/evidence_record.rs"))?;
     let mutation_calibration =
         read_text_lossy(Path::new("crates/ripr/src/output/mutation_calibration.rs"))?;
@@ -13933,6 +13935,38 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
                 validate_evidence_record_contract_schema_version(value, &mut violations)?;
+            }
+            "repair_card_schema_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "repair_card_budget_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
             }
             "context_version" => {
                 require_contract_value(
