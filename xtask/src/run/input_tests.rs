@@ -1,0 +1,137 @@
+//! Composition controls for the byte-input owner used by candidate Git custody.
+//! Unix execution controls; native Windows Job Object proof remains separate.
+use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+struct Root(std::path::PathBuf);
+impl Drop for Root {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn root() -> Result<Root, String> {
+    let path = std::env::temp_dir().join(format!(
+        "ripr-byte-input-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    Ok(Root(path))
+}
+fn require_reaped(pid: &str) -> Result<(), String> {
+    let output = capture_bytes_in_dir_with_timeout(
+        Path::new("kill"),
+        &["-0".to_string(), pid.trim().to_string()],
+        Path::new("."),
+        &[],
+        &[],
+        Duration::from_secs(5),
+        "observe owned child cleanup",
+    )?;
+    if output.timed_out || output.status.is_none_or(|status| status.success()) {
+        return Err(format!(
+            "owned child {pid:?} is still live or cleanup observation failed"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn byte_input_round_trips_more_than_pipe_capacity() -> Result<(), String> {
+    let root = root()?;
+    let input = vec![0x80; 1024 * 1024];
+    let output = capture_bytes_in_dir_with_input_timeout(
+        Path::new("cat"),
+        &[],
+        &root.0,
+        &input,
+        &[],
+        Duration::from_secs(5),
+        "binary round trip",
+    )?;
+    if output.timed_out
+        || !output.status.is_some_and(|status| status.success())
+        || output.stdout != input
+    {
+        return Err("binary stdin/output did not round-trip completely".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn byte_input_nonreader_timeout_and_early_exit_are_bounded_and_reaped() -> Result<(), String> {
+    for (label, script, timeout_expected) in [
+        (
+            "nonreader timeout",
+            "printf '%s\\n' \"$$\" > child.pid; exec sleep 30",
+            true,
+        ),
+        (
+            "early exit",
+            "printf '%s\\n' \"$$\" > child.pid; exit 0",
+            false,
+        ),
+    ] {
+        let root = root()?;
+        let start = Instant::now();
+        let result = capture_bytes_in_dir_with_input_timeout(
+            Path::new("sh"),
+            &["-c".to_string(), script.to_string()],
+            &root.0,
+            &vec![b'x'; 1024 * 1024],
+            &[],
+            Duration::from_millis(500),
+            label,
+        );
+        let elapsed = start.elapsed();
+        let pid = fs::read_to_string(root.0.join("child.pid"))
+            .map_err(|e| format!("fixture did not start: {e}"))?;
+        require_reaped(&pid)?;
+        if elapsed > Duration::from_secs(8) {
+            return Err(format!(
+                "{label} exceeded its timeout/drain bound: {elapsed:?}"
+            ));
+        }
+        match result {
+            Ok(output)
+                if timeout_expected
+                    && output.timed_out
+                    && output.status.is_some_and(|status| !status.success()) =>
+            {
+                ()
+            }
+            Err(error) if !timeout_expected && error.contains("write stdin") => (),
+            Err(error) => {
+                return Err(format!(
+                    "{label} lost its actual timeout/early-exit classification: {error}"
+                ));
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "{label} silently accepted incomplete stdin or lost timeout status"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn dropping_owned_byte_command_reaps_the_cancelled_primary() -> Result<(), String> {
+    let mut command = Command::new("sleep");
+    command
+        .arg("30")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    configure_timed_child_command(&mut command);
+    let owned = OwnedProcess::spawn(command).map_err(|e| e.to_string())?;
+    let pid = owned.id();
+    let start = Instant::now();
+    drop(owned);
+    require_reaped(&pid.to_string())?;
+    if start.elapsed() > Duration::from_secs(5) {
+        return Err("owner cancellation did not return promptly".to_string());
+    }
+    Ok(())
+}

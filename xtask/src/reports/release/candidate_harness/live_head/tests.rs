@@ -22,6 +22,12 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
+        // Shared CARGO_TARGET_DIR can leave the repo-local configured TMPDIR
+        // absent. Create only its parent, then require an exclusively new root.
+        if let Some(parent) = root.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create fixture parent: {error}"))?;
+        }
         std::fs::create_dir(&root).map_err(|error| format!("create owned fixture: {error}"))?;
         let mut fixture = Self {
             root,

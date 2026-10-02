@@ -696,10 +696,18 @@ fn capture_bytes_with_input(
         error_context,
     )?;
     if let Some(receiver) = input_completion {
-        receiver
+        let result = receiver
             .recv_timeout(POST_KILL_DRAIN_GRACE)
-            .map_err(|error| format!("stdin completion for {error_context}: {error}"))?
-            .map_err(|error| format!("write stdin for {error_context}: {error}"))?;
+            .map_err(|error| format!("stdin completion for {error_context}: {error}"))?;
+        if let Err(error) = result {
+            // A deadline kill closes the reader while a large stdin write may
+            // still be blocked. Preserve that observed timeout, rather than
+            // replacing it with its expected BrokenPipe consequence. Early
+            // exit and every other writer/drain failure still refuse.
+            if !wait_outcome.timed_out || error.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(format!("write stdin for {error_context}: {error}"));
+            }
+        }
     }
     Ok(TimedBytesOutput {
         status: Some(wait_outcome.status),
@@ -1867,3 +1875,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "run/input_tests.rs"]
+mod input_tests;
