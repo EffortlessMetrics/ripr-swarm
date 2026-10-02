@@ -707,11 +707,18 @@ fn unobserved_controls(
             continue;
         }
         for control in controls {
-            if control_identity(first, second, control)
-                .is_none_or(|subject| outcome.observe(&subject) == TestObservation::NotObserved)
+            let subject = control_identity(first, second, control);
+            if subject
+                .as_ref()
+                .is_none_or(|subject| outcome.observe(subject) == TestObservation::NotObserved)
             {
+                let reason = if subject.is_some() {
+                    "test absent from its owning artifact"
+                } else {
+                    "owning artifact absent or ambiguous"
+                };
                 missing.push(format!(
-                    "{label} did not observe {} control `{}` ({}, defined in {}; owning target absent or ambiguous)",
+                    "{label} did not observe {} control `{}` ({}, defined in {}; {reason})",
                     control.seam, control.test, control.issue, control.source
                 ));
             }
@@ -1904,7 +1911,7 @@ mod tests {
             missing,
             vec![
                 "run 2 did not observe process control `seam::absent` \
-                 (#3803, defined in crates/ripr/src/process_owner.rs; owning target absent or ambiguous)"
+                 (#3803, defined in crates/ripr/src/process_owner.rs; test absent from its owning artifact)"
                     .to_string()
             ],
             "a failed control is observed; only the run that never reported one is refused"
