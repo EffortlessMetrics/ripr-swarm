@@ -401,10 +401,16 @@ mod tests {
         let reports_dir = workspace_path("target/ripr/reports");
         fs::create_dir_all(&reports_dir)
             .map_err(|error| format!("create {}: {error}", reports_dir.display()))?;
-        fs::write(reports_dir.join("repair-card-usability.json"), format!("{json_body}\n"))
-            .map_err(|error| format!("write usability JSON report: {error}"))?;
-        fs::write(reports_dir.join("repair-card-usability.md"), markdown_report(&report))
-            .map_err(|error| format!("write usability Markdown report: {error}"))
+        fs::write(
+            reports_dir.join("repair-card-usability.json"),
+            format!("{json_body}\n"),
+        )
+        .map_err(|error| format!("write usability JSON report: {error}"))?;
+        fs::write(
+            reports_dir.join("repair-card-usability.md"),
+            markdown_report(&report),
+        )
+        .map_err(|error| format!("write usability Markdown report: {error}"))
     }
 
     #[test]
