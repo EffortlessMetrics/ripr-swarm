@@ -27,3 +27,10 @@ pinned.
 Regeneration: hand-trace `render` in `crates/ripr/src/output/github.rs` (the
 warning lines are built by `unanalyzed_state_warnings`); there is no separate
 generator. Update the file and the matching renderer test in the same change.
+
+This directory is registered in `is_manifest_only_fixture_dir`
+(`xtask/src/reports/fixtures.rs`): it is a pinned-output corpus, not a
+runnable BDD fixture (it has no `input/` workspace or `diff.patch`, and an
+end-to-end `check.json` golden would embed sha256 digests only a live run can
+produce). Its dedicated validator is the renderer unit tests above, which
+compare the full stream byte-for-byte in every feature-lane test run.
