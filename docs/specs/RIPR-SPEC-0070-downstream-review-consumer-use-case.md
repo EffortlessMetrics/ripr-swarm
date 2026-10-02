@@ -364,7 +364,7 @@ The bounded review-evidence slice has executable controls and traceability:
   covers window-size output parity, retained cardinality, and failed-receipt
   authority for invalid configuration.
 - `crates/ripr/src/app/agent_brief.rs::tests::streamed_selection_matches_complete_ranking_and_omissions_across_windows`
-  and `streamed_first_stage_threshold_matches_full_selection_with_hidden_ties`
+  and `crates/ripr/src/app/agent_brief.rs::tests::streamed_first_stage_threshold_matches_full_selection_with_hidden_ties`
   compare the bounded selection with the complete reference.
 - `crates/ripr/src/app/agent_brief.rs::tests::streamed_selection_rejects_duplicate_identity_across_windows`
   and `crates/ripr/src/app/agent_brief/bounded.rs::tests::late_hidden_scope_match_discards_fallback_and_counter_overflow_refuses`
