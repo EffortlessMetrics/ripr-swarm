@@ -1516,9 +1516,11 @@ mod tests {
     /// findings to lower-priority candidates.
     #[test]
     fn hidden_block_selected_mixed_omitted_names_base_side_count() {
+        // Ranking ties break on file path (see `triage_rank`), so the
+        // intended top gap must sort before the omitted candidates.
         let mut selected = sample_finding();
         selected.id = "selected-gap".to_string();
-        selected.probe.location = SourceLocation::new("src/selected.rs", 1, 1);
+        selected.probe.location = SourceLocation::new("src/a_selected.rs", 1, 1);
         let mut base = sample_finding();
         base.id = "omitted-base".to_string();
         base.probe.location = SourceLocation::new("src/base.rs", 1, 1);
