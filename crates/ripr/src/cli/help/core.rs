@@ -136,7 +136,11 @@ Options:
                            diff touches; the default), fast (same as draft for
                            now), deep and ready (whole workspace, slowest).
                            Modes never change what an exposure class means.
-                           See docs/CONFIGURATION.md "Analysis modes".
+                           Cost class: whole-workspace modes (deep, ready) can
+                           take roughly an order of magnitude longer than the
+                           diff-scoped modes (instant, draft, fast) on large
+                           workspaces. See docs/CONFIGURATION.md "Analysis
+                           modes".
   --format FORMAT          Output format. Defaults to human. Groups:
                              Analysis (diff-scoped):
                                human, human-full, json, github, sarif
@@ -199,6 +203,20 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --quiet                  Suppress analysis progress and heartbeats on
+                           stderr. Does not change machine stdout, exit
+                           codes, or error reporting.
+
+Progress:
+  Long-running check analysis writes producer stages to stderr as
+  `ripr progress: <stage> [<scope>]` and, while a stage stays active,
+  throttled `still active after <elapsed class>` heartbeats. Non-TTY
+  / CI output is newline-delimited with no control sequences. A TTY
+  may reuse one line and stays silent for sub-threshold flashes.
+  Machine formats (json, sarif, github) keep stdout byte-clean;
+  they do not disable stderr progress. Unknown totals never become a
+  percentage or ETA. Progress does not mean analysis is faster or
+  that the command will succeed. `--quiet` turns this stream off.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES  Maximum added plus removed Rust diff lines
@@ -210,7 +228,7 @@ Environment variables:
                                     index before check fails closed as
                                     diff_scope_oversized. With --json, stdout
                                     carries a non-consumable limited artifact.
-                                    Default: 800.
+                                    Default: 1200.
   RIPR_PARTIAL_DIFF_FILE_BUDGET     Changed-line files analyzed before check
                                     returns a bounded limited_partial_scope
                                     partition with exact selected paths,
@@ -233,6 +251,11 @@ Environment variables:
                                     error names git_invocation_timeout. 0 disables
                                     the deadline. Invalid values fail closed.
                                     Default: 300 (5 minutes).
+  RIPR_REPO_EXPOSURE_LATENCY_TRACE  When present, emits diagnostic phase/cache
+                                    trace lines for repo-exposure analysis.
+                                    Presence enables tracing even if the value
+                                    is empty or 0; it does not change the
+                                    analysis verdict.
   RIPR_ALLOW_REPO_PERL_EXECUTABLE   Set to 1 to let [perl].executable from
                                     ripr.toml run as the Perl facts exporter.
                                     Unset, ripr ignores it and runs the
@@ -376,7 +399,11 @@ First-run diagnosis (printed automatically):
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
     nature of preview-language evidence.
   - Recommended first command: ripr check (no base: the loader resolves this
-    repository's own default branch)
+    repository's own default branch). When git is not on PATH, the `!` git line
+    names install git or `--diff PATH` / `--diff -`, and the recommended
+    command is `ripr check --diff PATH`. Outside a Git work tree it names the
+    repository-free scan, and a missing root is named in the recovery command
+    through its lossless spelling.
 
 Start-here next step:
   - open `target/ripr/reports/start-here.md` first when it exists

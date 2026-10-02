@@ -11,12 +11,10 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// Files parsed per parallel batch. Cancellation is cooperative and
-/// thread-local: `cancellation::with_token` installs the token on the
-/// calling thread only, so rayon workers cannot observe `checkpoint()`.
-/// Checking the token on the calling thread between batches keeps
-/// cancellation effective with latency bounded by one batch of parses
-/// while the per-file reads/parses still run on the pool.
+/// Files parsed per parallel batch. Each worker installs the owning request's
+/// cancellation token and checks before and after its file, so queued work can
+/// stop without parsing the rest of a batch. One parser call remains cooperative,
+/// not preemptible; callers must still enforce file/closure admission limits.
 const PARSE_BATCH_FILES: usize = 64;
 
 pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<RustIndex, String> {
@@ -66,6 +64,10 @@ fn build_index_with_file_fact_cache(
     // Initialize once during lookup, before this build parses or stores facts.
     let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
     let mut stats = FileFactCacheStats::default();
+    // One stderr line per build, not one per file: an unusable cache
+    // directory makes every lookup fail the same way, and a line per file
+    // buried the analysis output under hundreds of repeats (#4888).
+    let mut first_corrupt_reason: Option<String> = None;
 
     // Phase 1 (sequential): cache lookups decide which files need a
     // fresh parse. Hit/miss/invalidation stats and the corrupt-entry stderr
@@ -76,7 +78,11 @@ fn build_index_with_file_fact_cache(
     }
     let mut pending: Vec<Pending> = Vec::with_capacity(files.len());
     for (file, bytes) in files {
-        cancellation::checkpoint()?;
+        if let Err(err) = cancellation::checkpoint() {
+            // A cancelled lookup still reports the corrupt entries it found.
+            emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
+            return Err(err);
+        }
         let key = RepoFileFactCacheKey::new(file, bytes);
         match cache.load_file_facts(&key) {
             CacheLoad::Hit(facts) => {
@@ -95,11 +101,12 @@ fn build_index_with_file_fact_cache(
             }
             CacheLoad::CorruptIgnored { reason } => {
                 stats.corrupt_ignored += 1;
-                eprintln!("ripr: repo file fact cache entry ignored ({reason})");
+                first_corrupt_reason.get_or_insert(reason);
                 pending.push(Pending::Parse { key });
             }
         }
     }
+    emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
 
     // Phase 2 (parallel): parse cache misses on the rayon pool. Each parse
     // is independent; collecting an indexed parallel iterator preserves
@@ -111,18 +118,28 @@ fn build_index_with_file_fact_cache(
         .enumerate()
         .filter_map(|(position, entry)| matches!(entry, Pending::Parse { .. }).then_some(position))
         .collect();
+    let token = cancellation::current_token();
     for batch in parse_positions.chunks(PARSE_BATCH_FILES) {
         cancellation::checkpoint()?;
         let results: Vec<(usize, Result<super::FileFacts, String>)> = batch
             .par_iter()
             .map(|&position| {
-                let (file, bytes) = &files[position];
-                (
-                    position,
-                    summarize_loaded_file(file, bytes, adapter, fallback),
-                )
+                let result = cancellation::with_optional_token(token.as_ref(), || {
+                    cancellation::checkpoint()?;
+                    let (file, bytes) = &files[position];
+                    let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
+                    cancellation::checkpoint()?;
+                    Ok(facts)
+                });
+                (position, result)
             })
             .collect();
+        // An already-observed source/worker failure wins in input order.
+        // Do not replace it with a deadline noticed only after joining.
+        if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
+            return Err(error.clone());
+        }
+        cancellation::checkpoint()?;
         for (position, result) in results {
             parsed[position] = Some(result);
         }
@@ -151,6 +168,7 @@ fn build_index_with_file_fact_cache(
                         ));
                     }
                 };
+                cancellation::checkpoint()?;
                 match cache.store_file_facts(&key, &facts) {
                     Ok(()) => stats.stores += 1,
                     Err(error) => stats.record_store_failure(file.clone(), error),
@@ -158,16 +176,37 @@ fn build_index_with_file_fact_cache(
                 facts
             }
         };
+        cancellation::checkpoint()?;
         insert_file_summary(&mut index, file.clone(), summary);
         cancellation::checkpoint()?;
     }
+    cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
         file_fact_cache: stats,
     })
+}
+
+fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
+    if let Some(reason) = first_reason {
+        eprintln!("{}", corrupt_entries_warning(count, reason));
+    }
+}
+
+/// The build's single corrupt-cache-entry warning. A lone entry keeps the
+/// message it always had; several name the count and the first reason.
+fn corrupt_entries_warning(count: usize, first_reason: &str) -> String {
+    if count == 1 {
+        format!("ripr: repo file fact cache entry ignored ({first_reason})")
+    } else {
+        format!("ripr: {count} repo file fact cache entries ignored; first: ({first_reason})")
+    }
 }
 
 fn build_index_with_adapters(
@@ -177,6 +216,7 @@ fn build_index_with_adapters(
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
 ) -> Result<RustIndex, String> {
     let mut index = RustIndex::default();
+    let token = cancellation::current_token();
     for batch in files.chunks(PARSE_BATCH_FILES) {
         cancellation::checkpoint()?;
         // Read + parse run on rayon workers; every file is independent.
@@ -185,13 +225,22 @@ fn build_index_with_adapters(
         let results: Vec<Result<(PathBuf, super::FileFacts, bool), String>> = batch
             .par_iter()
             .map(|file| {
-                let full = root.join(file);
-                let bytes = std::fs::read(&full)
-                    .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
-                Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
+                cancellation::with_optional_token(token.as_ref(), || {
+                    cancellation::checkpoint()?;
+                    let full = root.join(file);
+                    let bytes = std::fs::read(&full)
+                        .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
+                    cancellation::checkpoint()?;
+                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
+                    cancellation::checkpoint()?;
+                    Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
+                })
             })
             .collect();
+        if let Some(error) = results.iter().find_map(|result| result.as_ref().err()) {
+            return Err(error.clone());
+        }
+        cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
         // and `RustIndex.functions` are extended per file, so this drain
         // reproduces the sequential loop byte-for-byte — the first error
@@ -202,13 +251,18 @@ fn build_index_with_adapters(
             if not_utf8 {
                 index.non_utf8_sources.insert(file.clone());
             }
+            cancellation::checkpoint()?;
             insert_file_summary(&mut index, file, summary);
             cancellation::checkpoint()?;
         }
     }
+    cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    cancellation::checkpoint()?;
     Ok(index)
 }
 
@@ -325,6 +379,25 @@ fn insert_file_summary(index: &mut RustIndex, file: PathBuf, summary: super::Fil
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn corrupt_entries_collapse_into_one_warning_line() {
+        let one = super::corrupt_entries_warning(1, "read failed");
+        assert_eq!(
+            one,
+            "ripr: repo file fact cache entry ignored (read failed)"
+        );
+        let many = super::corrupt_entries_warning(723, "read failed: Not a directory");
+        assert_eq!(many.lines().count(), 1);
+        assert!(
+            many.starts_with("ripr: 723 repo file fact cache entries ignored;"),
+            "{many}"
+        );
+        assert!(
+            many.ends_with("first: (read failed: Not a directory)"),
+            "{many}"
+        );
+    }
+
     use super::*;
     use crate::analysis::syntax::{SyntaxNodeFact, TextRange};
     use std::cell::Cell;
@@ -1308,6 +1381,89 @@ pub fn check(x: i32) -> bool {
     }
 
     #[test]
+    fn cached_parse_workers_observe_request_cancellation_before_cache_store()
+    -> Result<(), Box<dyn Error>> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        struct CancellingAdapter {
+            token: AnalysisCancellationToken,
+            missing_context: AtomicBool,
+            calls: AtomicUsize,
+            entered: std::sync::Barrier,
+        }
+        impl RustSyntaxAdapter for CancellingAdapter {
+            fn summarize_file(
+                &self,
+                path: &Path,
+                text: &str,
+            ) -> Result<super::super::FileFacts, String> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.entered.wait();
+                self.token.cancel(AnalysisAbortKind::Cancelled);
+                if cancellation::checkpoint().err().as_deref()
+                    != Some("analysis cancelled: Cancelled")
+                {
+                    self.missing_context.store(true, Ordering::SeqCst);
+                }
+                Ok(super::super::FileFacts {
+                    path: path.to_path_buf(),
+                    source: text.to_string(),
+                    ..super::super::FileFacts::default()
+                })
+            }
+            fn changed_nodes(
+                &self,
+                _: &super::super::FileFacts,
+                _: &[TextRange],
+            ) -> Vec<SyntaxNodeFact> {
+                Vec::new()
+            }
+        }
+        let fixture = CacheInventoryFixture::new("worker_cancellation")?;
+        let files = [
+            (PathBuf::from("src/a.rs"), b"pub fn value_a() {}".to_vec()),
+            (PathBuf::from("src/b.rs"), b"pub fn value_b() {}".to_vec()),
+        ];
+        let token = AnalysisCancellationToken::new();
+        let adapter = CancellingAdapter {
+            token: token.clone(),
+            missing_context: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+            entered: std::sync::Barrier::new(2),
+        };
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        let result = pool.install(|| {
+            with_token(&token, || {
+                build_index_with_file_fact_cache(
+                    &fixture.root,
+                    &files,
+                    &adapter,
+                    &StubSyntaxAdapter,
+                    &fixture.cache,
+                    HashSet::new,
+                )
+            })
+        });
+        assert_eq!(
+            result.err().as_deref(),
+            Some("analysis cancelled: Cancelled")
+        );
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 2);
+        assert!(
+            !adapter.missing_context.load(Ordering::SeqCst),
+            "worker must inherit the owning cancellation context"
+        );
+        let key = RepoFileFactCacheKey::new(&files[0].0, &files[0].1);
+        assert!(
+            matches!(fixture.cache.load_file_facts(&key), CacheLoad::Miss),
+            "cancelled parse must not commit cache facts"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn build_index_observes_cancelled_token_before_parsing() -> Result<(), Box<dyn Error>> {
         use crate::analysis::cancellation::{
             AnalysisAbortKind, AnalysisCancellationToken, with_token,
@@ -1395,5 +1551,132 @@ pub fn check(x: i32) -> bool {
         assert_eq!(cached.index.functions, uncached.functions);
         assert_eq!(cached.index.files.len(), uncached.files.len());
         Ok(())
+    }
+
+    fn source_failure_precedes_join_deadline(cached: bool) -> Result<(), Box<dyn Error>> {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::time::{Duration, Instant};
+
+        struct FailingBeforeDeadline {
+            expired: Arc<AtomicBool>,
+        }
+        impl RustSyntaxAdapter for FailingBeforeDeadline {
+            fn summarize_file(
+                &self,
+                path: &Path,
+                text: &str,
+            ) -> Result<super::super::FileFacts, String> {
+                if path.ends_with("first.rs") {
+                    // Produce an ordinary source failure, then make the clock
+                    // expire before the collecting thread can inspect it.
+                    let error = "controlled first-file source failure".to_string();
+                    self.expired.store(true, Ordering::SeqCst);
+                    return Err(error);
+                }
+                Ok(super::super::FileFacts {
+                    path: path.to_path_buf(),
+                    source: text.to_string(),
+                    ..super::super::FileFacts::default()
+                })
+            }
+            fn changed_nodes(
+                &self,
+                _: &super::super::FileFacts,
+                _: &[TextRange],
+            ) -> Vec<SyntaxNodeFact> {
+                Vec::new()
+            }
+        }
+        let fixture = CacheInventoryFixture::new(if cached {
+            "cached_error_deadline"
+        } else {
+            "uncached_error_deadline"
+        })?;
+        let files = [
+            (PathBuf::from("src/first.rs"), b"fn first() {}".to_vec()),
+            (PathBuf::from("src/second.rs"), b"fn second() {}".to_vec()),
+        ];
+        for (path, bytes) in &files {
+            fs::write(fixture.root.join(path), bytes)?;
+        }
+        let expired = Arc::new(AtomicBool::new(false));
+        let clock_expired = Arc::clone(&expired);
+        let started = Instant::now();
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if clock_expired.load(Ordering::SeqCst) {
+                    started + Duration::from_secs(1)
+                } else {
+                    started
+                }
+            }),
+        );
+        let adapter = FailingBeforeDeadline {
+            expired: Arc::clone(&expired),
+        };
+        let paths = files
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        let error = pool.install(|| {
+            with_token(&token, || {
+                if cached {
+                    build_index_with_file_fact_cache(
+                        &fixture.root,
+                        &files,
+                        &adapter,
+                        &adapter,
+                        &fixture.cache,
+                        HashSet::new,
+                    )
+                    .err()
+                } else {
+                    build_index_with_adapters(&fixture.root, &paths, &adapter, &adapter).err()
+                }
+            })
+        });
+        assert!(
+            expired.load(Ordering::SeqCst),
+            "fixture must cross the deadline"
+        );
+        assert_eq!(
+            error.as_deref(),
+            Some("controlled first-file source failure")
+        );
+        assert_eq!(
+            with_token(&token, cancellation::checkpoint)
+                .err()
+                .as_deref(),
+            Some("analysis cancelled: DeadlineExceeded")
+        );
+        for (path, bytes) in &files {
+            assert!(
+                matches!(
+                    fixture
+                        .cache
+                        .load_file_facts(&RepoFileFactCacheKey::new(path, bytes)),
+                    CacheLoad::Miss
+                ),
+                "failed batch must not store successful sibling facts"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cached_source_failure_precedes_join_deadline() -> Result<(), Box<dyn Error>> {
+        source_failure_precedes_join_deadline(true)
+    }
+
+    #[test]
+    fn uncached_source_failure_precedes_join_deadline() -> Result<(), Box<dyn Error>> {
+        source_failure_precedes_join_deadline(false)
     }
 }
