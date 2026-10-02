@@ -2248,7 +2248,9 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()
         })?;
         let distinct = roots.iter().collect::<BTreeSet<_>>();
-        if distinct.len() != 16 || transition_root(7) == transition_root(7) {
+        let first = transition_root(7);
+        let second = transition_root(7);
+        if distinct.len() != 16 || first == second {
             return Err(
                 "a fixed clock must still produce distinct serial and concurrent roots".to_string(),
             );

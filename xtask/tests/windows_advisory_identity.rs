@@ -622,7 +622,9 @@ fn corpus_roots_are_distinct_with_a_fixed_clock_in_parallel() -> Result<(), Stri
             .collect::<Result<Vec<_>, _>>()
     })?;
     let distinct = roots.iter().collect::<std::collections::BTreeSet<_>>();
-    if distinct.len() != 16 || corpus_root(7) == corpus_root(7) {
+    let first = corpus_root(7);
+    let second = corpus_root(7);
+    if distinct.len() != 16 || first == second {
         return Err(
             "a fixed clock must still produce distinct serial and concurrent roots".to_string(),
         );
