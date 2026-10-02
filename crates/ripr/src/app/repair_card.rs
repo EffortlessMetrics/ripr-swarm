@@ -535,7 +535,10 @@ mod tests {
                 .any(|item| item == refusal)
         );
         input.next_command = Some(&command);
-        assert!(build_repair_card(&input).is_err());
+        assert_eq!(
+            build_repair_card(&input).err().as_deref(),
+            Some("repair card route gate is closed; the card must not present a runnable route")
+        );
         Ok(())
     }
 

@@ -603,12 +603,14 @@ mod tests {
         assert!(!readiness.is_repair_ready());
         assert!(!readiness.missing_evidence.is_empty());
         let packet = packet_for(&entry);
-        assert!(
+        assert_eq!(
             super::super::repair_attempt::edit_cage_policy_from_packet(
                 &packet,
                 entry.seam.id().as_str()
             )
-            .is_err()
+            .err()
+            .as_deref(),
+            Some("repair packet is missing allowed_edit_surface")
         );
         let card = assemble_repair_card(&facts_for(&entry, &packet))?;
         assert!(!card.readiness.repair_ready);
