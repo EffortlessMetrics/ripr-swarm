@@ -10488,6 +10488,7 @@ metrics = [
   "repair_attempt_store_default_resolutions",
   "repair_attempt_store_explicit_resolutions",
   "repair_attempt_store_containment_refusals",
+]
 
 [[behavior]]
 id = "RIPR-SPEC-0196"
