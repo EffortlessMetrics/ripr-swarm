@@ -953,11 +953,27 @@ mod tests {
         // #5024: help used to be recognized only as the sole argument, so
         // `ripr cache status --json --help` failed with a self-referential
         // "Run `ripr cache status --help`" error instead of printing help.
-        run(&["status".to_string(), "--json".to_string(), "--help".to_string()])?;
-        run(&["status".to_string(), "--help".to_string(), "--json".to_string()])?;
+        run(&[
+            "status".to_string(),
+            "--json".to_string(),
+            "--help".to_string(),
+        ])?;
+        run(&[
+            "status".to_string(),
+            "--help".to_string(),
+            "--json".to_string(),
+        ])?;
         run(&["status".to_string(), "-h".to_string(), "--json".to_string()])?;
-        run(&["clear".to_string(), "--dry-run".to_string(), "--help".to_string()])?;
-        run(&["clear".to_string(), "--help".to_string(), "--force".to_string()])?;
+        run(&[
+            "clear".to_string(),
+            "--dry-run".to_string(),
+            "--help".to_string(),
+        ])?;
+        run(&[
+            "clear".to_string(),
+            "--help".to_string(),
+            "--force".to_string(),
+        ])?;
         run(&["clear".to_string(), "-h".to_string()])?;
         // `ripr cache --help <anything>`: help wins at the family level,
         // matching the sibling command families.
