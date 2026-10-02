@@ -964,14 +964,13 @@ mod tests {
         // assert feature-independent fragments only.
         let mut typescript = output_with_unknown_finding();
         typescript.findings.clear();
-        typescript.preview_language_advisories =
-            vec![crate::analysis::PreviewLanguageAdvisory {
-                language: "typescript".to_string(),
-                file_count: 2,
-                sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
-                javascript_file_count: 0,
-                enabled: false,
-            }];
+        typescript.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "typescript".to_string(),
+            file_count: 2,
+            sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
+            javascript_file_count: 0,
+            enabled: false,
+        }];
 
         let rendered = render(&typescript);
 
@@ -992,14 +991,13 @@ mod tests {
 
         let mut javascript = output_with_unknown_finding();
         javascript.findings.clear();
-        javascript.preview_language_advisories =
-            vec![crate::analysis::PreviewLanguageAdvisory {
-                language: "typescript".to_string(),
-                file_count: 1,
-                sample_paths: vec!["src/a.js".to_string()],
-                javascript_file_count: 1,
-                enabled: false,
-            }];
+        javascript.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "typescript".to_string(),
+            file_count: 1,
+            sample_paths: vec!["src/a.js".to_string()],
+            javascript_file_count: 1,
+            enabled: false,
+        }];
 
         let rendered = render(&javascript);
 
