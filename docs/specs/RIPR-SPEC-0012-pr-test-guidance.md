@@ -79,11 +79,25 @@ with the active phase. An ordinary source error remains `failed`, even if a
 later clock observation would expire. Default LSP tokens remain deadline-free,
 and scoped command contexts restore the caller's token.
 
-This is cooperative cancellation, not preemption. Individual parser, helper-map,
-filesystem, syscall, and classification operations may overrun the budget;
-Rayon workers do not inherit the caller's thread-local token. An outer wrapper
-is required for a hard process bound. The wider phase/shutdown contract remains
-under #1778/#1699/#1604; this canonical slice does not complete those issues.
+Index parse workers install the owning request's captured cancellation context
+for each job and restore the prior pool-thread context afterward, including
+unwind. They check before/after each file; the caller checks before cache stores,
+index insertion, and post-parse role phases. Source-role normalization checks
+per file and function, including whole-index identity-map construction. A
+cancelled partial index is returned as an error, never as complete guidance.
+Already completed per-file cache entries remain reusable parser facts, not
+run-level completion receipts.
+
+The opt-in `RIPR_REPO_EXPOSURE_LATENCY_TRACE` stream names cached/plain parsing,
+parameterized-test promotion, test-style normalization, role composition and
+harness-registration phases. This separates stage attribution from inference
+based only on process RSS.
+
+This is cooperative cancellation, not preemption. One parser call, filesystem
+operation, syscall, or classification operation can still overrun the budget;
+there is no hard allocator ceiling. An outer wrapper is required for a hard
+process bound. The wider phase/shutdown contract remains under
+#1778/#1699/#1604; this index-boundary repair does not complete those issues.
 
 ## Surfaces
 

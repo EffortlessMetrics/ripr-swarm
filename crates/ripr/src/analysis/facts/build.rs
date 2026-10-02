@@ -11,12 +11,10 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// Files parsed per parallel batch. Cancellation is cooperative and
-/// thread-local: `cancellation::with_token` installs the token on the
-/// calling thread only, so rayon workers cannot observe `checkpoint()`.
-/// Checking the token on the calling thread between batches keeps
-/// cancellation effective with latency bounded by one batch of parses
-/// while the per-file reads/parses still run on the pool.
+/// Files parsed per parallel batch. Each worker installs the owning request's
+/// cancellation token and checks before and after its file, so queued work can
+/// stop without parsing the rest of a batch. One parser call remains cooperative,
+/// not preemptible; callers must still enforce file/closure admission limits.
 const PARSE_BATCH_FILES: usize = 64;
 
 pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<RustIndex, String> {
@@ -120,18 +118,23 @@ fn build_index_with_file_fact_cache(
         .enumerate()
         .filter_map(|(position, entry)| matches!(entry, Pending::Parse { .. }).then_some(position))
         .collect();
+    let token = cancellation::current_token();
     for batch in parse_positions.chunks(PARSE_BATCH_FILES) {
         cancellation::checkpoint()?;
         let results: Vec<(usize, Result<super::FileFacts, String>)> = batch
             .par_iter()
             .map(|&position| {
-                let (file, bytes) = &files[position];
-                (
-                    position,
-                    summarize_loaded_file(file, bytes, adapter, fallback),
-                )
+                let result = cancellation::with_optional_token(token.as_ref(), || {
+                    cancellation::checkpoint()?;
+                    let (file, bytes) = &files[position];
+                    let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
+                    cancellation::checkpoint()?;
+                    Ok(facts)
+                });
+                (position, result)
             })
             .collect();
+        cancellation::checkpoint()?;
         for (position, result) in results {
             parsed[position] = Some(result);
         }
@@ -160,6 +163,7 @@ fn build_index_with_file_fact_cache(
                         ));
                     }
                 };
+                cancellation::checkpoint()?;
                 match cache.store_file_facts(&key, &facts) {
                     Ok(()) => stats.stores += 1,
                     Err(error) => stats.record_store_failure(file.clone(), error),
@@ -167,12 +171,17 @@ fn build_index_with_file_fact_cache(
                 facts
             }
         };
+        cancellation::checkpoint()?;
         insert_file_summary(&mut index, file.clone(), summary);
         cancellation::checkpoint()?;
     }
+    cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
         file_fact_cache: stats,
@@ -202,6 +211,7 @@ fn build_index_with_adapters(
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
 ) -> Result<RustIndex, String> {
     let mut index = RustIndex::default();
+    let token = cancellation::current_token();
     for batch in files.chunks(PARSE_BATCH_FILES) {
         cancellation::checkpoint()?;
         // Read + parse run on rayon workers; every file is independent.
@@ -210,13 +220,19 @@ fn build_index_with_adapters(
         let results: Vec<Result<(PathBuf, super::FileFacts, bool), String>> = batch
             .par_iter()
             .map(|file| {
-                let full = root.join(file);
-                let bytes = std::fs::read(&full)
-                    .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
-                Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
+                cancellation::with_optional_token(token.as_ref(), || {
+                    cancellation::checkpoint()?;
+                    let full = root.join(file);
+                    let bytes = std::fs::read(&full)
+                        .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
+                    cancellation::checkpoint()?;
+                    let summary = summarize_loaded_file(file, &bytes, adapter, fallback)?;
+                    cancellation::checkpoint()?;
+                    Ok((file.clone(), summary, rust_source_text(&bytes).not_utf8))
+                })
             })
             .collect();
+        cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
         // and `RustIndex.functions` are extended per file, so this drain
         // reproduces the sequential loop byte-for-byte — the first error
@@ -227,13 +243,18 @@ fn build_index_with_adapters(
             if not_utf8 {
                 index.non_utf8_sources.insert(file.clone());
             }
+            cancellation::checkpoint()?;
             insert_file_summary(&mut index, file, summary);
             cancellation::checkpoint()?;
         }
     }
+    cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    cancellation::checkpoint()?;
     Ok(index)
 }
 
@@ -1347,6 +1368,89 @@ pub fn check(x: i32) -> bool {
         assert!(
             matches!(result, Err(ref err) if err.contains("z_missing.rs")),
             "first error in input order must win: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cached_parse_workers_observe_request_cancellation_before_cache_store()
+    -> Result<(), Box<dyn Error>> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        struct CancellingAdapter {
+            token: AnalysisCancellationToken,
+            missing_context: AtomicBool,
+            calls: AtomicUsize,
+            entered: std::sync::Barrier,
+        }
+        impl RustSyntaxAdapter for CancellingAdapter {
+            fn summarize_file(
+                &self,
+                path: &Path,
+                text: &str,
+            ) -> Result<super::super::FileFacts, String> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.entered.wait();
+                self.token.cancel(AnalysisAbortKind::Cancelled);
+                if cancellation::checkpoint().err().as_deref()
+                    != Some("analysis cancelled: Cancelled")
+                {
+                    self.missing_context.store(true, Ordering::SeqCst);
+                }
+                Ok(super::super::FileFacts {
+                    path: path.to_path_buf(),
+                    source: text.to_string(),
+                    ..super::super::FileFacts::default()
+                })
+            }
+            fn changed_nodes(
+                &self,
+                _: &super::super::FileFacts,
+                _: &[TextRange],
+            ) -> Vec<SyntaxNodeFact> {
+                Vec::new()
+            }
+        }
+        let fixture = CacheInventoryFixture::new("worker_cancellation")?;
+        let files = [
+            (PathBuf::from("src/a.rs"), b"pub fn value_a() {}".to_vec()),
+            (PathBuf::from("src/b.rs"), b"pub fn value_b() {}".to_vec()),
+        ];
+        let token = AnalysisCancellationToken::new();
+        let adapter = CancellingAdapter {
+            token: token.clone(),
+            missing_context: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+            entered: std::sync::Barrier::new(2),
+        };
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        let result = pool.install(|| {
+            with_token(&token, || {
+                build_index_with_file_fact_cache(
+                    &fixture.root,
+                    &files,
+                    &adapter,
+                    &StubSyntaxAdapter,
+                    &fixture.cache,
+                    HashSet::new,
+                )
+            })
+        });
+        assert_eq!(
+            result.err().as_deref(),
+            Some("analysis cancelled: Cancelled")
+        );
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 2);
+        assert!(
+            !adapter.missing_context.load(Ordering::SeqCst),
+            "worker must inherit the owning cancellation context"
+        );
+        let key = RepoFileFactCacheKey::new(&files[0].0, &files[0].1);
+        assert!(
+            matches!(fixture.cache.load_file_facts(&key), CacheLoad::Miss),
+            "cancelled parse must not commit cache facts"
         );
         Ok(())
     }
