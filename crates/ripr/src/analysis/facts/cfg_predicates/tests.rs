@@ -390,3 +390,37 @@ fn split_handles_leading_whitespace_and_trailing_non_ascii() {
         Some(("#[cfg(test)]", " mod módulos {"))
     );
 }
+
+#[test]
+fn test_build_availability_preserves_unknown_and_boolean_identity() {
+    for (text, expected) in [
+        ("#[cfg(test)]", Some(true)),
+        ("#![cfg(all())]", Some(true)),
+        ("#[cfg(any())]", Some(false)),
+        ("#[cfg(not(test))]", Some(false)),
+        ("#[cfg(all(test, any()))]", Some(false)),
+        ("#[cfg(any(test, feature = \"unknown\"))]", Some(true)),
+        ("#[cfg(all(unix, any()))]", Some(false)),
+        ("#[cfg(any(all(), unix))]", Some(true)),
+        ("#[cfg(unix)]", None),
+        ("#[cfg(feature = \"test\")]", None),
+        ("#[cfg(all(test, feature = \"unknown\"))]", None),
+        ("#[cfg(all(test,))]", Some(true)),
+        ("#[cfg(all(test,,))]", None),
+        ("#[cfg(any(test, not()))]", None),
+        ("#[cfg(not(test, test))]", None),
+        ("#[doc = \"cfg(any())\"]", Some(true)),
+        ("#[allow(dead_code)]", Some(true)),
+        ("#[cfg_attr(test, cfg(any()))]", Some(false)),
+        (
+            "#[cfg_attr(test, cfg_attr(all(), cfg(any())))]",
+            Some(false),
+        ),
+        ("#[cfg_attr(not(test), cfg(any()))]", Some(true)),
+        ("#[cfg_attr(unix, cfg(any()))]", None),
+        ("#[cfg_attr(unix, allow(dead_code))]", Some(true)),
+        ("#[cfg_attr(test,)]", None),
+    ] {
+        assert_eq!(attribute_test_build_availability(text), expected, "{text}");
+    }
+}

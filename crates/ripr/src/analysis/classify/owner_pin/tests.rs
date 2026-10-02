@@ -826,3 +826,32 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         assert!(!is_bare_assert_eq_invocation(assertion), "{assertion}");
     }
 }
+
+#[test]
+fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
+    for module in [
+        "mod nested { #![cfg(any())] BODY }",
+        "#[cfg(any())] mod nested { BODY }",
+        "#[cfg(not(test))] mod nested { BODY }",
+        "#[cfg(test)] #[cfg(any())] mod nested { BODY }",
+        "#[cfg(feature = \"unknown\")] mod nested { BODY }",
+        "#[cfg_attr(test, cfg(any()))] mod nested { BODY }",
+        "fn outer() { BODY }",
+    ] {
+        let body = "#[test] fn check() { assert_eq!(weight(4), 12); }";
+        let tests = format!("use demo::weight;\n{}", module.replace("BODY", body));
+        assert!(weight_admitted(&tests).is_empty(), "{module}");
+    }
+    for attribute in [
+        "",
+        "#[cfg(test)]",
+        "#[cfg(all())]",
+        "#[cfg(any(test, feature = \"unknown\"))]",
+        "#[allow(dead_code)] #[doc = \"cfg(any())\"]",
+    ] {
+        let tests = format!(
+            "{attribute} mod outer {{ mod nested {{ use demo::weight; #[test] fn check() {{ assert_eq!(weight(4), 12); }} }} }}"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{attribute}");
+    }
+}
