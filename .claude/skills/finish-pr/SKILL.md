@@ -23,9 +23,37 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
 
-A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before arming auto-merge or merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
+A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the draft PR, complete preparation, then mark ready to obtain remote evidence. Before arming auto-merge or merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
 
 Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, arm normal auto-merge, use protected squash merge, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
+
+# Late qualification boundary
+
+Publish development checkpoints as draft. Complete implementation, focused
+local/owned-compute proof, applicable format/lint/type/build checks, source/oracle
+review and the evidence packet before marking ready. `ready_for_review` is the
+native request for final CI, not `REVIEW_READY` or permission to merge. Missing
+remote evidence may still be `REVIEW_INCOMPLETE` at this transition when source
+review is complete and its remaining proof gaps are named. `REVIEW_READY` and
+current required proof remain mandatory before auto-merge/protected merge.
+
+Return to draft for repair or base retarget, refresh affected proof/review, then
+mark ready again. Ready-state pushes refresh the exact current subject only as
+a safety net. Do not repeatedly use CI to shape the candidate, trigger duplicate
+draft/ready qualification, or run CI again merely when enabling auto-merge.
+Commits/pushes remain useful checkpoints. See the root's CI readiness policy.
+
+Keep one small evidence record in the existing PR body or owned progress
+comment: exact head/base or merge-tree subject, source-review disposition,
+commands run with outcomes, intentionally skipped checks with reasons, and
+final qualification links. Use the existing `check-fast`/`precommit` entrypoints
+and inspect their selected/ran/skipped reports; do not invent a parallel gate.
+After merge, verify the actual main object and its applicable post-merge proof.
+For the next completed PRs, record qualification runs per merged PR, hosted
+minutes, repeated same-cause failures and avoidable blocking in that native
+record. Use observed run/job data; unavailable metrics stay unknown. This is
+feedback on the process, not a new board, background scan or merge criterion.
+
 
 # Procedure
 

@@ -5897,8 +5897,7 @@ enum RoutedRustEventRoute {
     WorkflowNotTriggered,
 }
 
-const ROUTED_RUST_PROOF_ACTIONS_SNIPPET: &str =
-    r#"contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)"#;
+const ROUTED_RUST_PROOF_ACTIONS_SNIPPET: &str = r#"contains(fromJSON('["opened", "synchronize", "reopened", "ready_for_review"]'), github.event.action)"#;
 const ROUTED_RUST_FULL_CI_LABELED_SNIPPET: &str =
     "github.event.action == 'labeled' && github.event.label.name == 'full-ci'";
 const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
@@ -5982,7 +5981,7 @@ fn routed_rust_proof_event(event_name: &str, action: Option<&str>, label: Option
         return true;
     }
     match action {
-        Some("opened" | "synchronize" | "reopened") => true,
+        Some("opened" | "synchronize" | "reopened" | "ready_for_review") => true,
         Some("labeled") if label == Some("full-ci") => true,
         _ => false,
     }
@@ -6022,11 +6021,17 @@ fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
     }
     let Some(types) = routed_rust_pull_request_types(workflow) else {
         return vec![
-            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so opened/synchronize/reopened and full-ci labeled events still launch".to_string(),
+            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so opened/synchronize/reopened/ready_for_review and full-ci labeled events still launch".to_string(),
         ];
     };
     let mut violations = Vec::new();
-    for required in ["opened", "synchronize", "reopened", "labeled"] {
+    for required in [
+        "opened",
+        "synchronize",
+        "reopened",
+        "labeled",
+        "ready_for_review",
+    ] {
         if !types.iter().any(|value| value == required) {
             violations.push(format!(
                 ".github/workflows/routed-rust.yml pull_request types must keep `{required}` so ordinary proof events still launch the required Rust or docs gate"
@@ -6055,7 +6060,7 @@ fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
     for job in ["route", "detect-docs-only"] {
         if !routed_rust_job_has_proof_event_if(workflow, job) {
             violations.push(format!(
-                ".github/workflows/routed-rust.yml job `{job}` must launch only on opened/synchronize/reopened or full-ci labeled events"
+                ".github/workflows/routed-rust.yml job `{job}` must launch only on opened/synchronize/reopened/ready_for_review or full-ci labeled events"
             ));
         }
     }
@@ -6137,18 +6142,6 @@ fn routed_rust_workflow_contract_violations_with_reusable(
         ("CPX42 capacity label", "rust-16gb"),
         ("CX53 capacity label", "rust-large"),
         ("normalized result job", "Ripr Rust Small Result"),
-        (
-            "CX43 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cx43'",
-        ),
-        (
-            "CPX42 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cpx42'",
-        ),
-        (
-            "CX53 conditional implementation job",
-            "if: needs.route.outputs.router_target == 'cx53'",
-        ),
         (
             "hosted fallback conditional job",
             "needs.route.outputs.router_target == 'github'",
@@ -6377,6 +6370,21 @@ fn routed_rust_workflow_contract_violations_with_reusable(
         violations.push(
             ".github/workflows/routed-rust.yml must guard pull_request events from forks before selecting self-hosted runners".to_string(),
         );
+    }
+
+    // Inspect the actual job predicate so a native draft guard may wrap the
+    // route selector without letting comments or another job satisfy it.
+    for (job, target) in [
+        ("rust-cx43", "cx43"),
+        ("rust-cpx42", "cpx42"),
+        ("rust-cx53", "cx53"),
+    ] {
+        let selector = format!("needs.route.outputs.router_target == '{target}'");
+        if !routed_rust_job_if_text(workflow, job).contains(&selector) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml job `{job}` must retain its conditional `{target}` route selector"
+            ));
+        }
     }
 
     for forbidden in [

@@ -6,7 +6,7 @@ on:
     # unrelated) label removal must not start this required workflow, occupy
     # the per-PR concurrency group, or replace Ripr Rust Small Result.
     # `labeled` stays so `full-ci` can still refresh advisory reports.
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -30,12 +30,13 @@ env:
 jobs:
   route:
     name: Route Ripr Rust Small
-    # Launch the required gate on opened/synchronize/reopened, main pushes,
+    # After draft preparation, launch on ready_for_review or ready-state
+    # opened/synchronize/reopened, main pushes,
     # workflow_dispatch, and `full-ci` labeled. Other labeled events (including
     # windows-ci) stay in this workflow only long enough for the result job to
     # post a non-required ignore check and leave the previous exact-head
     # Ripr Rust Small Result untouched.
-    if: github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened", "ready_for_review"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -91,7 +92,7 @@ jobs:
 
   detect-docs-only:
     name: Detect Docs-Only Surface
-    if: github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened", "ready_for_review"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -123,7 +124,7 @@ jobs:
   rust-cx43:
     name: Ripr Rust Small on CX43
     needs: [route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx43' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.route.outputs.router_target == 'cx43' && needs.detect-docs-only.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
@@ -140,7 +141,7 @@ jobs:
   rust-cpx42:
     name: Ripr Rust Small on CPX42
     needs: [route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cpx42' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.route.outputs.router_target == 'cpx42' && needs.detect-docs-only.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
@@ -157,7 +158,7 @@ jobs:
   rust-cx53:
     name: Ripr Rust Small on CX53
     needs: [route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx53' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.route.outputs.router_target == 'cx53' && needs.detect-docs-only.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
@@ -174,14 +175,7 @@ jobs:
   rust-github:
     name: Ripr Rust Small on GitHub Hosted
     needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]
-    if: >-
-      always() &&
-      needs.detect-docs-only.result == 'success' &&
-      needs.detect-docs-only.outputs.docs_only != 'true' &&
-      (needs.route.outputs.router_target == 'github' ||
-      (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||
-      (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||
-      (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always() && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))) }}
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '"ubuntu-latest"'
@@ -198,7 +192,7 @@ jobs:
   docs-gate:
     name: Ripr Docs Gate
     needs: [detect-docs-only]
-    if: github.event_name == 'pull_request' && needs.detect-docs-only.outputs.docs_only == 'true'
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'pull_request' && needs.detect-docs-only.outputs.docs_only == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -227,7 +221,7 @@ jobs:
   result:
     name: ${{ github.event_name == 'pull_request' && (github.event.action == 'unlabeled' || (github.event.action == 'labeled' && github.event.label.name != 'full-ci')) && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}
     needs: [route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate]
-    if: always()
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (always()) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

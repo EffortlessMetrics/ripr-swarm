@@ -68,12 +68,14 @@ claim. For `check-fast`, independently verify the diff selector and base before
 using it as evidence. An empty or failed selector is not proof that nothing
 needs testing.
 
-PR CI supplies the required merge matrix. Publishing a coherent candidate with
-`REVIEW_INCOMPLETE` allows hosted proof and review to run; it is not permission
-to merge without them. When local execution is unavailable, record that limit,
-publish the candidate for the available hosted route, and inspect its exact-head
-results. Do not claim that a check ran locally or use unavailable local proof as
-a permanent reason to keep the branch unpublished.
+PR CI supplies final merge qualification after local/owned-compute candidate
+preparation. Publish checkpoints as draft; finish focused tests, applicable
+format/lint/type/build checks and source/oracle review before `ready_for_review`.
+That transition requests CI, not merge permission or `REVIEW_READY`. When local
+execution is unavailable, record the gap, finish possible static/source review,
+and request one deliberate qualification of the coherent candidate. Inspect its
+exact-head and integration-subject results; never invent a local pass. Return to
+draft for further repair rather than repeatedly pushing ready work to debug in CI.
 
 Read the actual job steps and reports: selected/executed subjects, skips,
 features, target, runner, command status and candidate identity. A green

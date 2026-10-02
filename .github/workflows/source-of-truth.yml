@@ -2,6 +2,7 @@ name: Source of Truth
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, master]
     paths:
       - '.github/workflows/source-of-truth.yml'
@@ -29,6 +30,7 @@ permissions:
 
 jobs:
   source-of-truth:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     name: source-of-truth
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -60,6 +62,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   spec-maintenance-digest:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     name: spec-maintenance-digest
     runs-on: ubuntu-latest
     timeout-minutes: 20

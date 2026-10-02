@@ -27,6 +27,22 @@ One writer owns the candidate worktree at a time. A delegated writer receives th
 
 Bind background commands to retained task/session handles, candidate identities and logs. A process-name filter, quiet interval or stale report does not establish failure or orphaned work. Read the native exit and terminal report, not stderr noise or a success-looking line alone. Serialize Cargo operations that share a worktree, target lock or memory bottleneck. Do not kill unrelated processes. The parent goal may advance another ready claim on a separate worker/worktree while this candidate waits.
 
+# Late qualification boundary
+
+Publish development checkpoints as draft. Complete implementation, focused
+local/owned-compute proof, applicable format/lint/type/build checks, source/oracle
+review and the evidence packet before marking ready. `ready_for_review` is the
+native request for final CI, not `REVIEW_READY` or permission to merge. Missing
+remote evidence may still be `REVIEW_INCOMPLETE` at this transition when source
+review is complete and its remaining proof gaps are named. `REVIEW_READY` and
+current required proof remain mandatory before auto-merge/protected merge.
+
+Return to draft for repair or base retarget, refresh affected proof/review, then
+mark ready again. Ready-state pushes refresh the exact current subject only as
+a safety net. Do not repeatedly use CI to shape the candidate, trigger duplicate
+draft/ready qualification, or run CI again merely when enabling auto-merge.
+Commits/pushes remain useful checkpoints. See the root's CI readiness policy.
+
 # Procedure
 
 1. Bind the issue, acceptance/rollback boundary, existing candidate, exact base and semantic owner. Re-read current source, all-state/recent PRs and substantive issue decisions for an equivalent implementation before editing.
@@ -52,7 +68,7 @@ Bind background commands to retained task/session handles, candidate identities 
 10. Repair accepted findings in the same candidate. Commit coherent changes without another routine permission pause so verification can bind to a real Git object.
 11. Run `check-fast` on the committed candidate and compare its selector report and ran/skipped categories with the independently resolved path set. Reconcile a changed basis or run base-aware gates directly. Unexpected zero, omitted categories or selector failure is `INSTRUMENT_FAILURE`, not pass.
 12. Run `precommit`, focused tests and the relevant changed-surface checks. Keep proof proportional: full local runs are for named failures or explicit qualification, not automatic duplication of the entire hosted matrix before publishing.
-13. Hand the committed candidate to `review-pr`. Missing hosted evidence normally yields `REVIEW_INCOMPLETE`; enter `finish-pr` to publish and obtain that evidence, then return to exact published-head review before merge.
+13. Hand the committed candidate to `review-pr`. Missing hosted evidence normally yields `REVIEW_INCOMPLETE`; enter `finish-pr` to publish as draft, finish preparation, and request late qualification, then return to exact published-head review before merge.
 14. On `REPAIR_REQUIRED`, repair the same candidate and refresh affected proof/review dimensions. Before resolving an integration conflict, check whether upstream already delivered the claim; preserve only a genuine unique residual.
 
 # Currentness and delivery

@@ -4,6 +4,48 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
+
+## CI comes after candidate readiness
+
+Use draft PRs for development and checkpoints. Commit and push coherent work
+without waiting for full CI. Before requesting merge qualification, finish the
+implementation, focused tests, applicable formatting/lint/type/build checks,
+source and oracle review, and the evidence packet on local or owned compute.
+Run the smallest meaningful proof first; longer owned-compute runs are fine.
+Do not use repeated expensive CI runs as the development/debugging loop.
+
+Once that preparation is complete, mark the PR ready for review. The native
+`ready_for_review` transition is the explicit request for final merge
+qualification; no extra label or auto-merge toggle is needed. Automatic PR jobs
+are server-side gated while draft, including routers, planners, summaries and
+opt-in lanes. Main, scheduled and explicit manual workflows retain their own
+triggers. An explicitly requested `@droid` action is not automatic PR CI.
+
+Readiness for CI is distinct from `REVIEW_READY` for merge: the latter still
+requires actual current required proof and substantive published-head review.
+Enable normal protected auto-merge only after those conditions are satisfied;
+do not enable it just to obtain the proof it requires. A skipped draft check is
+not proof. Preserve every required gate, failure and trust boundary.
+
+If qualification finds a defect, return the PR to draft for local repair and
+review, then request qualification again. A push while still ready refreshes
+current-head proof as a safety net, not an invitation to iterate in CI. Retarget
+a base through draft, re-evaluate the integration basis, and mark ready again.
+Record head SHA and the evaluated base/merge tree; old-head or changed-tree
+results never establish current integration proof. Unrelated main movement does
+not by itself require rerunning unaffected focused evidence.
+
+Use the minimum required qualification for the reviewed subject. Opt-in labels
+expand proof only on ready PRs. Do not duplicate the same draft/ready matrix or
+rerun it when merely enabling auto-merge. If local tools are unavailable, name
+the missing proof, complete all possible source/static review first, and request
+one deliberate final qualification; never claim an unexecuted local pass.
+
+The infrastructure target is zero GitHub-hosted execution on the self-hosted
+path, with hosted execution only for a real fallback. This lifecycle gate does
+not claim to finish that routing migration: the current ready-path hosted
+router/detection/result jobs remain visible infrastructure debt. Do not deploy
+new routing, lower gates or bypass protected merge to disguise it.
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
@@ -458,13 +500,19 @@ fork or otherwise untrusted PR:
 Label events are not an implicit full-gate refresh:
 
 ```text
-opened / reopened / synchronize / push to main / workflow_dispatch:
-  launch the required Rust or docs gate (unchanged)
+draft PR event (including labels and synchronize):
+  allocate no automatic PR jobs; a skipped check is not qualification
 
-labeled full-ci:
+ready PR opened / reopened / synchronize / ready_for_review:
+  launch the required Rust or docs gate for the current subject
+
+push to main / workflow_dispatch:
+  retain the existing explicit route
+
+ready PR labeled full-ci:
   launch the required gate with advisory reports and success artifacts
 
-labeled windows-ci, coverage, release-check, or any other non-full-ci label:
+ready PR labeled windows-ci, coverage, release-check, or any other non-full-ci label:
   do not launch rust-gates; post Ripr Rust Small Ignored Label Event;
   leave the previous exact-head Ripr Rust Small Result in place
 
@@ -475,7 +523,7 @@ unlabeled (including windows-ci or full-ci removal):
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
 Removing that label does not imply Windows proof and must not spend a required
 Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
-the next opened/synchronize/reopened proof observes the current labels.
+the next ready-state opened/synchronize/reopened/ready_for_review proof observes the current labels.
 `cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
 distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
 replace a pending synchronize proof. An ignored labeled run is cheap, does not

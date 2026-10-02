@@ -2,6 +2,7 @@ name: Security
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main, master]
 
@@ -10,6 +11,7 @@ permissions:
 
 jobs:
   cargo-deny:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     name: cargo-deny
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -24,7 +26,7 @@ jobs:
 
   dependency-review:
     name: dependency-review
-    if: github.event_name == 'pull_request'
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'pull_request') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

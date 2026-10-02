@@ -5,6 +5,48 @@ mutation-exposure analyzer for Rust/Cargo workspaces. This file is the complete
 Claude root instruction set. Do not import or route through `AGENTS.md` or
 another provider's skill tree; the AGENTS-consuming runtimes have their own file set.
 
+## CI comes after candidate readiness
+
+Use draft PRs for development and checkpoints. Commit and push coherent work
+without waiting for full CI. Before requesting merge qualification, finish the
+implementation, focused tests, applicable formatting/lint/type/build checks,
+source and oracle review, and the evidence packet on local or owned compute.
+Run the smallest meaningful proof first; longer owned-compute runs are fine.
+Do not use repeated expensive CI runs as the development/debugging loop.
+
+Once that preparation is complete, mark the PR ready for review. The native
+`ready_for_review` transition is the explicit request for final merge
+qualification; no extra label or auto-merge toggle is needed. Automatic PR jobs
+are server-side gated while draft, including routers, planners, summaries and
+opt-in lanes. Main, scheduled and explicit manual workflows retain their own
+triggers. An explicitly requested `@droid` action is not automatic PR CI.
+
+Readiness for CI is distinct from `REVIEW_READY` for merge: the latter still
+requires actual current required proof and substantive published-head review.
+Enable normal protected auto-merge only after those conditions are satisfied;
+do not enable it just to obtain the proof it requires. A skipped draft check is
+not proof. Preserve every required gate, failure and trust boundary.
+
+If qualification finds a defect, return the PR to draft for local repair and
+review, then request qualification again. A push while still ready refreshes
+current-head proof as a safety net, not an invitation to iterate in CI. Retarget
+a base through draft, re-evaluate the integration basis, and mark ready again.
+Record head SHA and the evaluated base/merge tree; old-head or changed-tree
+results never establish current integration proof. Unrelated main movement does
+not by itself require rerunning unaffected focused evidence.
+
+Use the minimum required qualification for the reviewed subject. Opt-in labels
+expand proof only on ready PRs. Do not duplicate the same draft/ready matrix or
+rerun it when merely enabling auto-merge. If local tools are unavailable, name
+the missing proof, complete all possible source/static review first, and request
+one deliberate final qualification; never claim an unexecuted local pass.
+
+The infrastructure target is zero GitHub-hosted execution on the self-hosted
+path, with hosted execution only for a real fallback. This lifecycle gate does
+not claim to finish that routing migration: the current ready-path hosted
+router/detection/result jobs remain visible infrastructure debt. Do not deploy
+new routing, lower gates or bypass protected merge to disguise it.
+
 ## Authority and session rehydration
 
 - `operating_contract:primary_authority`
@@ -381,7 +423,7 @@ subjects.
 
 Use `.claude/skills/finish-pr/SKILL.md` for publication, review repair, CI,
 integration, merge, and reconciliation. A committed candidate with
-`REVIEW_INCOMPLETE` may be published so remote evidence can run. `finish-pr` may
+`REVIEW_INCOMPLETE` may be published as draft; mark ready after source review/preparation so remote evidence can run. `finish-pr` may
 arm merge only after the exact published head has a `REVIEW_READY` disposition
 from `review-pr`; a later material head change refreshes affected review
 dimensions.

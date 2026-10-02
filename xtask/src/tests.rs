@@ -191,7 +191,7 @@ use super::{
     ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
     ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
     ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions, ripr_swarm_readiness_summary,
-    routed_rust_event_route, routed_rust_label_event_contract_violations,
+    routed_rust_event_route, routed_rust_job_if_text, routed_rust_label_event_contract_violations,
     routed_rust_workflow_contract_violations,
     routed_rust_workflow_contract_violations_with_reusable, run_ci_full_evidence_gates,
     run_repo_badge_artifact_command, sarif_policy_report_json, sarif_policy_report_markdown,
@@ -10709,6 +10709,12 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
     let cases = [
         (
             "pull_request",
+            Some("ready_for_review"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
             Some("opened"),
             None,
             RoutedRustEventRoute::LaunchFullGate,
@@ -10778,8 +10784,8 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
     }
 
     let unlabeled_restored = workflow.replace(
-        "types: [opened, synchronize, reopened, labeled]",
-        "types: [opened, synchronize, reopened, labeled, unlabeled]",
+        "types: [opened, synchronize, reopened, labeled, ready_for_review]",
+        "types: [opened, synchronize, reopened, labeled, ready_for_review, unlabeled]",
     );
     assert_eq!(
         routed_rust_event_route(
@@ -10799,7 +10805,7 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
     );
 
     let unlabeled_unconditional = unlabeled_restored.replace(
-        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\", \"ready_for_review\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')) }}",
         "",
     );
     assert_eq!(
@@ -10814,7 +10820,7 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
     );
 
     let missing_filter = workflow.replace(
-        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\", \"ready_for_review\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')) }}",
         "",
     );
     assert_eq!(
@@ -10846,8 +10852,8 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
     );
 
     let decoy_if = workflow.replace(
-        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
-        "if: always()\n    # contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) github.event.action == 'labeled' && github.event.label.name == 'full-ci'",
+        "if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\", \"ready_for_review\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')) }}",
+        "if: always()\n    # contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\", \"ready_for_review\"]'), github.event.action) github.event.action == 'labeled' && github.event.label.name == 'full-ci'",
     );
     assert!(
         routed_rust_label_event_contract_violations(&decoy_if)
@@ -10857,8 +10863,10 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
         routed_rust_label_event_contract_violations(&decoy_if)
     );
 
-    let missing_types =
-        workflow.replace("    types: [opened, synchronize, reopened, labeled]\n", "");
+    let missing_types = workflow.replace(
+        "    types: [opened, synchronize, reopened, labeled, ready_for_review]\n",
+        "",
+    );
     assert!(
         routed_rust_label_event_contract_violations(&missing_types)
             .iter()
@@ -10878,6 +10886,28 @@ fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
         "sharing the proof concurrency group with ignored labels must fail: {:?}",
         routed_rust_label_event_contract_violations(&shared_group)
     );
+}
+
+#[test]
+fn routed_rust_contract_rejects_route_selector_moved_to_comment() {
+    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+    let reusable = include_str!("../../.github/workflows/rust-gates.yml");
+    let predicate = routed_rust_job_if_text(workflow, "rust-cx43");
+    let changed = workflow.replacen(
+        &format!("    if: {predicate}"),
+        &format!("    if: false\n    # {predicate}"),
+        1,
+    );
+    assert_ne!(changed, workflow, "route mutation must engage");
+    let violations = routed_rust_workflow_contract_violations_with_reusable(
+        &changed,
+        Some(reusable),
+        None,
+        None,
+    );
+    assert!(violations.iter().any(|violation| {
+        violation.contains("job `rust-cx43` must retain its conditional `cx43` route selector")
+    }));
 }
 
 #[test]
