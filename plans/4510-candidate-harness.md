@@ -338,3 +338,43 @@ same-size checkout substitution, exact/over-budget Git output, per-file/count/
 aggregate source limits, wrong batch sizes, stdout/stderr overflow with cleanup,
 and missing terminal drain output. This checkpoint records source/static work
 only; execution awaits the shared compiler handback.
+
+### 2026-10-02 source-owner execution handoff
+
+The source repair is local at `9cf1dfefd0e218f52fef416adf021e7650c039c4`.
+It addresses native #4915 discussions 4168448472 and 4168448479. The initial
+45-control run had 44 passes and one stale expected-error string in the new
+same-size substitution test; that oracle failure is retained as setup/proof
+repair, not a behavioral red. The corrected exact-source batch then passed
+45/45 controls on `add1682d5`.
+
+Three isolated wrong-implementation variants failed for their intended
+reasons: allowing replacement objects only for blob batches broke parity;
+removing the aggregate retained-source check admitted an oversized aggregate;
+and removing the actual output read cap consumed beyond limit+1. After all
+variants were restored, the complete bounded batch passed. Mutations were
+confined to the disposable proof harness, never the candidate worktree.
+
+The actual engineering checkout at `9cf1dfefd` was then read through the same
+bounded inventory and checkout verifier: 5,414 ordinary blobs / 58,586,484 bytes
+passed in 1.31 seconds. This is source-budget workload proof, not an accepted
+release candidate or package/install qualification. Its source capture mode is
+explicitly `byte_budgeted_strict_terminal_drain`; both metadata and body reads
+use `--no-replace-objects` and no truncated placeholder can be admitted.
+
+Actual `cargo check -p xtask --all-targets --offline` passed on `e8db60425`
+(78 s). Its single unused legacy stdin-wrapper warning was removed by scoping
+that test-only wrapper to tests; the affected production check passed without
+warnings on `9cf1dfefd` (46 s). The final exact-source workload compile also
+covered that wrapper in test mode. Native repository pin remains 1.95; these
+local checks used the authorized task-local 1.99 toolchain. Rustfmt/diff checks
+passed and registered artifact bytes stayed intact. Compiler slot was returned
+with the shared target/dependencies preserved.
+
+Read-only caller audit retained existing Python replay `not_run`, Rust replay
+`spawn_error`, and other uncapped consumers' established timeout reporting.
+Only budgeted source capture opts into strict terminal-drain refusal. Byte
+overflow drops the reader pipe immediately but can surface after the existing
+child deadline/cleanup; it does not promise immediate cancellation. Independent
+full review, owning policy/hosted checks and actual installed-candidate proof
+remain separate publication/qualification gates.
