@@ -527,3 +527,254 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
     }
     Ok(())
 }
+
+#[cfg(unix)]
+struct ConsumedSourceAliasFixture {
+    _temp: TempLspRoot,
+    root: PathBuf,
+    alias: PathBuf,
+    file: PathBuf,
+}
+
+#[cfg(unix)]
+fn consumed_source_alias_fixture(name: &str) -> Result<ConsumedSourceAliasFixture, String> {
+    let temp = unique_lsp_test_root(name)?;
+    let root = temp.path().join("project");
+    fs::create_dir_all(&root).map_err(|error| format!("create alias fixture: {error}"))?;
+    write_lsp_scope_fixture(&root)?;
+    fs::write(root.join("src/lib.rs"), SOURCE_A)
+        .map_err(|error| format!("write alias fixture A: {error}"))?;
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize alias fixture: {error}"))?;
+    let alias = temp.path().join("linked-project");
+    std::os::unix::fs::symlink(&root, &alias)
+        .map_err(|error| format!("link alias fixture: {error}"))?;
+    let file = root.join("src/lib.rs");
+    Ok(ConsumedSourceAliasFixture {
+        _temp: temp,
+        root,
+        alias,
+        file,
+    })
+}
+
+#[cfg(unix)]
+#[test]
+fn admitted_root_aliases_resolve_captured_identity_and_preserve_refusals() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("consumed-root-alias")?;
+    let canonical_uri = file_uri_for_path(&fixture.file)?;
+    let lexical_uri = file_uri_for_path(&fixture.alias.join("src/lib.rs"))?;
+    let expected = content_digest(SOURCE_A.as_bytes());
+    let mut captured = crate::analysis::consumed_source::ConsumedRustSources::default();
+    captured.record(Path::new("src/lib.rs"), Some(SOURCE_A.as_bytes()));
+    for (label, root, uri) in [
+        ("ordinary", &fixture.root, &canonical_uri),
+        ("lexical alias", &fixture.alias, &lexical_uri),
+        (
+            "canonical URI under aliased root",
+            &fixture.alias,
+            &canonical_uri,
+        ),
+    ] {
+        if !crate::lsp::uri::file_uri_is_within_root(root, uri) {
+            return Err(format!("SETUP: {label} is not admitted by URI containment"));
+        }
+        let mut documents = DocumentStore::default();
+        documents.open(quarantine_open_params(uri, SOURCE_A));
+        let (pending, _) = documents.pending_analyzed_digests(root, &captured);
+        if pending.get(uri).and_then(Option::as_ref) != Some(&expected) {
+            return Err(format!(
+                "BEHAVIORAL: admitted {label} lost its consumed identity: {:?}",
+                pending.get(uri)
+            ));
+        }
+        documents.note_refresh_analyzed(None, &pending, &[]);
+        if documents
+            .state_for_uri(uri)
+            .is_none_or(|state| state.is_quarantined())
+        {
+            return Err(format!("BEHAVIORAL: fresh {label} stayed quarantined"));
+        }
+        let mut missing = crate::analysis::consumed_source::ConsumedRustSources::default();
+        missing.record(Path::new("src/lib.rs"), None);
+        let mut conflicting = captured.clone();
+        conflicting.record(Path::new("src/lib.rs"), Some(SOURCE_B.as_bytes()));
+        for unavailable in [Default::default(), missing, conflicting] {
+            let (pending, _) = documents.pending_analyzed_digests(root, &unavailable);
+            if !matches!(pending.get(uri), Some(None)) {
+                return Err(format!("{label} borrowed an unavailable source commitment"));
+            }
+            documents.note_refresh_analyzed(None, &pending, &[]);
+            if documents
+                .state_for_uri(uri)
+                .is_none_or(|state| !state.is_quarantined())
+            {
+                return Err(format!("{label} did not quarantine an unavailable input"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn consumed_identity_rejects_outside_and_symlink_escaped_documents() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("consumed-root-refusal")?;
+    let outside = fixture._temp.path().join("outside.rs");
+    fs::write(&outside, SOURCE_A).map_err(|error| format!("write outside control: {error}"))?;
+    let escaped = fixture.root.join("src/escaped.rs");
+    std::os::unix::fs::symlink(&outside, &escaped)
+        .map_err(|error| format!("link escaped control: {error}"))?;
+    let mut captured = crate::analysis::consumed_source::ConsumedRustSources::default();
+    captured.record(Path::new("outside.rs"), Some(SOURCE_A.as_bytes()));
+    captured.record(Path::new("src/escaped.rs"), Some(SOURCE_A.as_bytes()));
+    for root in [&fixture.root, &fixture.alias] {
+        for path in [&outside, &escaped, &fixture.alias.join("src/escaped.rs")] {
+            let uri = file_uri_for_path(path)?;
+            if crate::lsp::uri::file_uri_is_within_root(root, &uri) {
+                return Err(format!(
+                    "SETUP: outside control was admitted: {}",
+                    path.display()
+                ));
+            }
+            let mut documents = DocumentStore::default();
+            documents.open(quarantine_open_params(&uri, SOURCE_A));
+            let (pending, _) = documents.pending_analyzed_digests(root, &captured);
+            if !matches!(pending.get(&uri), Some(None)) {
+                return Err(format!(
+                    "BEHAVIORAL: refused outside path borrowed a captured key: {}",
+                    path.display()
+                ));
+            }
+            documents.note_refresh_analyzed(None, &pending, &[]);
+            if documents
+                .state_for_uri(&uri)
+                .is_none_or(|state| !state.is_quarantined())
+            {
+                return Err("a refused outside document became current".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn real_saved_refresh_admits_canonical_uri_under_symlinked_root() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("consumed-alias-producer")?;
+    run_lsp_scope_git(&fixture.root, &["init"])?;
+    run_lsp_scope_git(
+        &fixture.root,
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(&fixture.root, &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        &fixture.root,
+        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
+    )?;
+    run_lsp_scope_git(&fixture.root, &["commit", "-m", "base"])?;
+    let uri = file_uri_for_path(&fixture.file)?;
+    if !crate::lsp::uri::file_uri_is_within_root(&fixture.alias, &uri) {
+        return Err("SETUP: canonical document URI not admitted under symlinked root".into());
+    }
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.alias.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+    let (witness, release) = backend.install_consumed_source_barrier_for_test(config)?;
+    let controller = async {
+        let (_, produced) = witness
+            .await
+            .map_err(|error| format!("alias producer barrier: {error}"))?;
+        release
+            .send(())
+            .map_err(|_| "alias producer release closed".to_string())?;
+        Ok::<_, String>(produced)
+    };
+    let ((), produced) = tokio::time::timeout(Duration::from_mins(2), async {
+        tokio::join!(
+            backend.did_open(quarantine_open_params(&uri, SOURCE_A)),
+            controller
+        )
+    })
+    .await
+    .map_err(|error| format!("alias producer didOpen deadline: {error}"))?;
+    let produced = produced?;
+    if produced.root != fixture.alias || !produced.findings.is_empty() {
+        return Err("SETUP: clean aliased producer changed the root or seeded findings".into());
+    }
+    let expected = content_digest(SOURCE_A.as_bytes());
+    let state = backend
+        .document_state_for_test(&uri)
+        .ok_or("alias document state missing")?;
+    eprintln!(
+        "alias producer: root={} uri={} captured={:?} analyzed={:?} quarantined={}",
+        produced.root.display(),
+        uri.as_str(),
+        produced
+            .rust_consumed_sources
+            .digest(&produced.root, &fixture.alias.join("src/lib.rs")),
+        state.analyzed_saved_digest,
+        state.is_quarantined()
+    );
+    if state.analyzed_saved_digest.as_ref() != Some(&expected) || state.is_quarantined() {
+        return Err(
+            "BEHAVIORAL: fresh canonical document under symlinked root stayed quarantined".into(),
+        );
+    }
+    fs::write(&fixture.file, SOURCE_B).map_err(|error| format!("write aliased B: {error}"))?;
+    backend
+        .did_change(quarantine_change_params(&uri, 2, SOURCE_B))
+        .await;
+    if backend
+        .document_state_for_test(&uri)
+        .is_none_or(|state| !state.is_quarantined())
+    {
+        return Err("aliased B escaped quarantine before analysis".into());
+    }
+    tokio::time::timeout(
+        Duration::from_mins(2),
+        backend.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ExplicitRefresh),
+    )
+    .await
+    .map_err(|error| format!("alias B refresh deadline: {error}"))?;
+    let snapshot = backend
+        .latest_analysis_snapshot()
+        .ok_or("alias B snapshot missing")?;
+    if !snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.expression.contains("!flag"))
+    {
+        return Err("SETUP: actual aliased B producer lacks B-specific evidence".into());
+    }
+    let state = backend
+        .document_state_for_test(&uri)
+        .ok_or("alias B document missing")?;
+    if state.analyzed_saved_digest != Some(content_digest(SOURCE_B.as_bytes()))
+        || state.is_quarantined()
+    {
+        return Err("fresh aliased B failed to recover consumed currentness".into());
+    }
+    let report = pull_document_json(backend, &uri, None).await?;
+    if report
+        .get("resultId")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| id.ends_with(":quarantined"))
+    {
+        return Err("aliased B pull still reports quarantine after actual analysis".into());
+    }
+    eprintln!(
+        "alias delivery: current=true snapshot_findings={} canonical_pull_items={}",
+        snapshot.findings.len(),
+        report_kind_and_items(&report).1
+    );
+    Ok(())
+}
