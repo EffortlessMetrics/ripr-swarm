@@ -354,7 +354,7 @@ mod tests {
     fn committed_corpus_and_receipt_validate_against_the_live_validator() -> Result<(), String> {
         let report = live_report()?;
         require_required_scenarios(&report)?;
-        validate_contract_receipt(&committed_receipt()?)?;
+        validate_contract_receipt(&committed_receipt()?, report.scenarios.len())?;
         if !report.expectation_failures.is_empty() {
             return Err(format!(
                 "committed corpus drifted from the live validator: {:?}",
