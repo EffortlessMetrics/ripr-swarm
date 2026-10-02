@@ -39,7 +39,7 @@ fn owned_reads_require_regular_contained_files_and_available_budget() -> Result<
         (
             "../escape",
             MAX_RETAINED_BYTES,
-            "ordinary controller-relative path",
+            "ordinary root-relative path",
         ),
     ] {
         match read_owned(&fixture.root, path, budget) {

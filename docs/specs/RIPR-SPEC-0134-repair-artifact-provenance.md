@@ -305,3 +305,29 @@ For portable workspace identities, CRLF is normalized to LF before hashing;
 standalone CR bytes are preserved so invalid input cannot collide with valid LF
 input. Changing this normalization is an identity-algorithm change and requires
 a new identity version. The prior `input:v2:` shape is unsupported.
+
+
+### Selected-source resource and object custody (#4510)
+
+Metadata and blob batches use the same `git --no-replace-objects` contract.
+Ambient replacement objects cannot alter the raw candidate bytes. A checkout
+that substitutes those bytes, including via skip-worktree flags, refuses.
+
+Source limits are independent of the direct manifest's 64 MiB input limit:
+16,384 ordinary blobs, 16 MiB per blob, and 128 MiB total retained blob bytes.
+Git metadata stdout is capped at 8 MiB and stderr at 1 MiB. The ordinary-blob
+census includes declared sizes before body capture. Batch stdout is capped at
+the exact sum of those body sizes and Git's per-object headers/terminators;
+changed batch identities or sizes refuse. Readers consume at most limit+1
+bytes. Oversized output or missing terminal drain output is a refusal.
+
+Checkout revalidation uses the shared observed regular-file snapshot reader,
+with each read capped at the already admitted blob length plus one. Empty
+ordinary files are permitted. The retained source budget is checked again.
+These are unlocked observations with the same stated race limits as manifest
+custody. The batch buffer and retained blob map can coexist transiently; the
+128 MiB limit names retained blob bytes, not total process resident memory.
+
+The 2026-10-02 review census had 5,411 ordinary blobs, 58,566,161 body bytes,
+1,949,776 bytes in the largest blob, and 647,658 metadata bytes. That observation
+motivates the limits and is not a promise about the final release candidate.

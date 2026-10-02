@@ -135,3 +135,85 @@ fn dropping_owned_byte_command_reaps_the_cancelled_primary() -> Result<(), Strin
     }
     Ok(())
 }
+
+#[test]
+fn bounded_byte_capture_rejects_stdout_and_stderr_overflow_and_reaps_child() -> Result<(), String> {
+    let exact = capture_bytes_in_dir_with_budget(
+        Path::new("sh"),
+        &["-c".to_string(), "printf 1234; printf 5678 >&2".to_string()],
+        (Path::new("."), None),
+        &[],
+        ByteCaptureBudget {
+            timeout: Duration::from_secs(5),
+            stdout_bytes: 4,
+            stderr_bytes: 4,
+        },
+        "exact output budget",
+    )?;
+    if exact.stdout != b"1234"
+        || exact.stderr != b"5678"
+        || exact.timed_out
+        || !exact.status.is_some_and(|s| s.success())
+    {
+        return Err("exact output budget lost bytes/status".to_string());
+    }
+    for (script, stream) in [
+        (
+            "printf '%s\\n' \"$$\" > child.pid; printf 12345; exec sleep 30",
+            "stdout",
+        ),
+        (
+            "printf '%s\\n' \"$$\" > child.pid; printf 12345 >&2; exec sleep 30",
+            "stderr",
+        ),
+    ] {
+        let root = root()?;
+        let start = Instant::now();
+        let result = capture_bytes_in_dir_with_budget(
+            Path::new("sh"),
+            &["-c".to_string(), script.to_string()],
+            (&root.0, None),
+            &[],
+            ByteCaptureBudget {
+                timeout: Duration::from_millis(500),
+                stdout_bytes: 4,
+                stderr_bytes: 4,
+            },
+            "overflow cleanup",
+        );
+        let pid = fs::read_to_string(root.0.join("child.pid")).map_err(|e| e.to_string())?;
+        require_reaped(&pid)?;
+        if start.elapsed() > Duration::from_secs(8) {
+            return Err("overflow escaped timeout/cleanup bound".to_string());
+        }
+        match result {
+            Err(error) if error.contains(&format!("{stream} exceeds its 4-byte output budget")) => {
+                ()
+            }
+            Err(error) => return Err(format!("wrong overflow refusal: {error}")),
+            Ok(_) => return Err(format!("{stream} overflow was accepted")),
+        }
+    }
+    let mut bytes = std::io::Cursor::new(b"123456789");
+    if read_stream_bytes_limited(&mut bytes, "stdout", 4).is_ok() || bytes.position() != 5 {
+        return Err("bounded process reader consumed beyond limit+1".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn bounded_byte_drain_requires_terminal_output() -> Result<(), String> {
+    let (_sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(|| {});
+    match drain_byte_reader_bounded(
+        receiver,
+        handle,
+        Duration::from_millis(10),
+        "stdout",
+        "missing terminal output",
+    ) {
+        Err(error) if error.contains("byte output is not established") => Ok(()),
+        Err(error) => Err(format!("wrong missing-output refusal: {error}")),
+        Ok(_) => Err("byte drain fabricated successful output after grace expiry".to_string()),
+    }
+}

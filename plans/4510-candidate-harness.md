@@ -318,3 +318,21 @@ registry hashes matched. Full independent review, applicable owning policies,
 native pinned CI and final-candidate package/install/doctor/corpus proof remain
 open. Selected controls do not establish the 35-scenario blind campaign or a
 human journey. The separate #4604 consumer remains pending.
+
+
+### 2026-10-02 source-owner review repair (execution pending)
+
+Native COMMENT review 5395118632 identified replacement-object inconsistency
+and missing source/output bounds on the preserved published #4915 head; both
+also applied to this local adapter. Source metadata and cat-file batches now
+share one no-replacement Git invocation. Metadata includes ordinary blob sizes
+before capture, with independent source count/file/aggregate limits. The
+existing owned process helper has optional stdout/stderr byte caps, and byte
+drain expiry refuses. Checkout reads reuse the manifest's observed snapshot
+reader with exact admitted-size caps; manifest and source budgets stay separate.
+
+New authored controls exercise active replacement-object parity and concealed
+same-size checkout substitution, exact/over-budget Git output, per-file/count/
+aggregate source limits, wrong batch sizes, stdout/stderr overflow with cleanup,
+and missing terminal drain output. This checkpoint records source/static work
+only; execution awaits the shared compiler handback.

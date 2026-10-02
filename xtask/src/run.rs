@@ -594,7 +594,7 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
         (cwd, None),
         envs,
         env_remove,
-        timeout,
+        (timeout, None),
         error_context,
     )
 }
@@ -616,7 +616,35 @@ pub(crate) fn capture_bytes_in_dir_with_input_timeout(
         (cwd, Some(input)),
         &[],
         env_remove,
-        timeout,
+        (timeout, None),
+        error_context,
+    )
+}
+
+/// Explicit resource limits for selected-source Git capture. Other callers
+/// retain their existing behavior; the owned process lifecycle is shared.
+#[derive(Clone, Copy)]
+pub(crate) struct ByteCaptureBudget {
+    pub(crate) timeout: Duration,
+    pub(crate) stdout_bytes: usize,
+    pub(crate) stderr_bytes: usize,
+}
+
+pub(crate) fn capture_bytes_in_dir_with_budget(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    env_remove: &[&str],
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
+    capture_bytes_with_input(
+        program,
+        args,
+        source,
+        &[],
+        env_remove,
+        (budget.timeout, Some(budget)),
         error_context,
     )
 }
@@ -627,10 +655,11 @@ fn capture_bytes_with_input(
     source: (&Path, Option<&[u8]>),
     envs: &[(&str, &str)],
     env_remove: &[&str],
-    timeout: Duration,
+    deadline: (Duration, Option<ByteCaptureBudget>),
     error_context: &str,
 ) -> Result<TimedBytesOutput, String> {
     let (cwd, input) = source;
+    let (timeout, budget) = deadline;
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd);
@@ -656,8 +685,10 @@ fn capture_bytes_with_input(
         .stderr_pipe()
         .take()
         .ok_or_else(|| format!("failed to capture stderr for {error_context}"))?;
-    let (stdout_handle, stdout_rx) = spawn_byte_reader_channel(stdout);
-    let (stderr_handle, stderr_rx) = spawn_byte_reader_channel(stderr);
+    let (stdout_handle, stdout_rx) =
+        spawn_byte_reader_channel(stdout, budget.map(|v| ("stdout", v.stdout_bytes)));
+    let (stderr_handle, stderr_rx) =
+        spawn_byte_reader_channel(stderr, budget.map(|v| ("stderr", v.stderr_bytes)));
     let input_completion = if let Some(bytes) = input {
         let mut stdin = child
             .stdin_pipe()
@@ -979,6 +1010,22 @@ fn read_stream_bytes<T: Read>(mut stream: T) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn read_stream_bytes_limited(
+    stream: impl Read,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    stream
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read bounded {name}: {error}"))?;
+    if bytes.len() > limit {
+        return Err(format!("{name} exceeds its {limit}-byte output budget"));
+    }
+    Ok(bytes)
+}
+
 fn stream_to_file<T: Read>(mut stream: T, mut file: fs::File) -> Result<usize, String> {
     let mut total = 0usize;
     let mut buf = [0u8; 64 * 1024];
@@ -1040,13 +1087,17 @@ fn spawn_stream_reader_channel<T: Read + Send + 'static>(
 
 fn spawn_byte_reader_channel<T: Read + Send + 'static>(
     stream: T,
+    limit: Option<(&'static str, usize)>,
 ) -> (
     thread::JoinHandle<()>,
     mpsc::Receiver<Result<Vec<u8>, String>>,
 ) {
     let (tx, rx) = mpsc::channel();
     let handle = thread::spawn(move || {
-        let result = read_stream_bytes(stream);
+        let result = match limit {
+            Some((name, bytes)) => read_stream_bytes_limited(stream, name, bytes),
+            None => read_stream_bytes(stream),
+        };
         let _ = tx.send(result);
     });
     (handle, rx)
@@ -1114,11 +1165,10 @@ fn drain_byte_reader_bounded(
 ) -> Result<Vec<u8>, String> {
     match rx.recv_timeout(grace) {
         Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => Ok(format!(
-            "[ripr-xtask: {stream_name} drain exceeded post-kill grace ({}s) for {error_context}; output truncated]",
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "{stream_name} drain exceeded post-kill grace ({}s) for {error_context}; byte output is not established",
             grace.as_secs()
-        )
-        .into_bytes()),
+        )),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
             "{stream_name} reader thread disconnected while running {error_context}"
         )),

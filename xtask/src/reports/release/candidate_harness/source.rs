@@ -1,9 +1,10 @@
 //! Immutable source and controller custody for qualification-only producers.
-use super::{QualificationInput, safe_artifact_path};
+use super::QualificationInput;
+mod inventory;
 use crate::policy::{CandidateAuthoritySnapshot, capture_candidate_authority};
+use inventory::{committed_blobs, verify_checkout};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 /// Legacy registry fixtures remain separate from explicit direct #1609 input.
 enum SourceAuthority {
@@ -223,15 +224,7 @@ impl AdmittedSource {
         // Git's clean status does not detect skip-worktree/filter substitutions.
         // This first slice supports raw-byte checkouts only; it does not guess
         // Cargo normalization for source inputs or accept ignored file bytes.
-        for (path, expected) in &self.blobs {
-            let actual = std::fs::read(self.root.join(path))
-                .map_err(|error| format!("read selected source blob {path}: {error}"))?;
-            if actual != *expected {
-                return Err(format!(
-                    "selected checkout bytes differ from committed blob: {path}"
-                ));
-            }
-        }
+        verify_checkout(&self.root, &self.blobs)?;
         Ok(())
     }
     pub(crate) fn committed_file(&self, path: &str) -> Option<&[u8]> {
@@ -244,22 +237,19 @@ impl AdmittedSource {
         serde_json::json!({"controller": self.authority.custody_json(),
             "source_root": self.root, "package_name": self.package_name,
             "package_version": self.version, "package_prefix": self.package_prefix,
-            "source_checkout_contract": "ordinary tracked files match raw committed blobs; transformed/sparse inputs refuse"})
+            "source_checkout_contract": "ordinary tracked files match raw committed blobs; transformed/sparse inputs refuse; unlocked observed snapshots",
+            "source_resource_budget": {"ordinary_blobs": inventory::MAX_SOURCE_FILES, "file_bytes": inventory::MAX_SOURCE_FILE_BYTES,
+                "retained_blob_bytes": inventory::MAX_SOURCE_BYTES, "metadata_stdout_bytes": inventory::MAX_GIT_METADATA_BYTES,
+                "stderr_bytes": inventory::MAX_GIT_STDERR_BYTES, "batch_stdout": "declared total body bytes plus exact per-object protocol headers; bounded before capture"}})
     }
 }
 
 pub(super) fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let args = args
-        .iter()
-        .map(|value| (*value).to_string())
-        .collect::<Vec<_>>();
-    let output = crate::run::capture_bytes_in_dir_with_timeout(
-        Path::new("git"),
-        &args,
+    let output = inventory::git_capture(
         root,
-        &[("GIT_NO_REPLACE_OBJECTS", "1")],
-        &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"],
-        Duration::from_secs(30),
+        args,
+        None,
+        inventory::MAX_GIT_METADATA_BYTES,
         "candidate source Git identity",
     )?;
     if output.timed_out || !output.status.is_some_and(|status| status.success()) {
@@ -302,107 +292,4 @@ fn verify_source_identity(root: &Path, authority: &SourceAuthority) -> Result<()
         return Err("candidate source checkout is not clean".to_string());
     }
     Ok(())
-}
-
-fn committed_blobs(root: &Path, sha: &str) -> Result<BTreeMap<String, Vec<u8>>, String> {
-    let tree = git_bytes(root, &["ls-tree", "-rz", "--full-tree", sha])?;
-    let mut entries = Vec::new();
-    let mut input = Vec::new();
-    for entry in tree
-        .split(|byte| *byte == 0)
-        .filter(|entry| !entry.is_empty())
-    {
-        let separator = entry
-            .iter()
-            .position(|byte| *byte == b'\t')
-            .ok_or_else(|| "malformed Git tree entry".to_string())?;
-        let header = std::str::from_utf8(
-            entry
-                .get(..separator)
-                .ok_or_else(|| "Git tree header boundary".to_string())?,
-        )
-        .map_err(|error| format!("Git tree header UTF-8: {error}"))?;
-        let mut fields = header.split_whitespace();
-        let mode = fields
-            .next()
-            .ok_or_else(|| "Git tree mode missing".to_string())?;
-        let kind = fields
-            .next()
-            .ok_or_else(|| "Git tree kind missing".to_string())?;
-        let oid = fields
-            .next()
-            .ok_or_else(|| "Git tree OID missing".to_string())?;
-        if !matches!(mode, "100644" | "100755") || kind != "blob" {
-            // Only ordinary blobs can attribute an ordinary package entry. A
-            // packaged symlink/submodule is rejected during archive validation.
-            continue;
-        }
-        let path = std::str::from_utf8(
-            entry
-                .get(separator.saturating_add(1)..)
-                .ok_or_else(|| "Git tree path boundary".to_string())?,
-        )
-        .map_err(|error| format!("Git tree path UTF-8: {error}"))?
-        .to_string();
-        if !safe_artifact_path(Path::new(&path)) {
-            return Err("unsupported Git source path".to_string());
-        }
-        entries.push((path, oid.to_string()));
-        input.extend_from_slice(oid.as_bytes());
-        input.push(b'\n');
-    }
-    let output = crate::run::capture_bytes_in_dir_with_input_timeout(
-        Path::new("git"),
-        &["cat-file".to_string(), "--batch".to_string()],
-        root,
-        &input,
-        &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"],
-        Duration::from_secs(30),
-        "candidate committed source blobs",
-    )?;
-    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
-        return Err("candidate committed blob capture failed or timed out".to_string());
-    }
-    let mut remaining = output.stdout.as_slice();
-    let mut blobs = BTreeMap::new();
-    for (path, oid) in entries {
-        let end = remaining
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .ok_or_else(|| "Git batch header incomplete".to_string())?;
-        let header = std::str::from_utf8(
-            remaining
-                .get(..end)
-                .ok_or_else(|| "Git batch header boundary".to_string())?,
-        )
-        .map_err(|error| format!("Git batch header UTF-8: {error}"))?;
-        let mut fields = header.split_whitespace();
-        if fields.next() != Some(oid.as_str()) || fields.next() != Some("blob") {
-            return Err("Git batch object identity/type mismatch".to_string());
-        }
-        let size = fields
-            .next()
-            .ok_or_else(|| "Git batch size missing".to_string())?
-            .parse::<usize>()
-            .map_err(|error| format!("Git batch size: {error}"))?;
-        let body = remaining
-            .get(end.saturating_add(1)..)
-            .ok_or_else(|| "Git batch body boundary".to_string())?;
-        let bytes = body
-            .get(..size)
-            .ok_or_else(|| "Git batch body incomplete".to_string())?;
-        if body.get(size) != Some(&b'\n') {
-            return Err("Git batch terminator missing".to_string());
-        }
-        if blobs.insert(path, bytes.to_vec()).is_some() {
-            return Err("duplicate committed source path".to_string());
-        }
-        remaining = body
-            .get(size.saturating_add(1)..)
-            .ok_or_else(|| "Git batch tail boundary".to_string())?;
-    }
-    if !remaining.is_empty() {
-        return Err("unexpected Git batch tail".to_string());
-    }
-    Ok(blobs)
 }

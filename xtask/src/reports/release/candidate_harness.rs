@@ -1,5 +1,6 @@
 //! Qualification-only source/package custody. Raw inputs are not admitted handles.
 mod archive;
+mod input;
 mod live_head;
 mod source;
 pub(crate) use archive::{AttributedArchive, CandidateExecution};

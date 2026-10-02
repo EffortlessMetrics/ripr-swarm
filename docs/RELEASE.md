@@ -200,6 +200,10 @@ The direct adapter recomputes source-promotion-style ordered Git range digests,
 keeps record-set adjudication with #2768, and caps retained inputs at 64 proof
 references, 16 MiB per file and 64 MiB total. SPEC-0144 names its three supported
 origin spellings and the limits of unlocked file snapshots.
+Source custody separately caps 16,384 ordinary blobs, 16 MiB per blob and
+128 MiB retained blob bytes, with bounded Git metadata/batch output and exact
+checkout reads. SPEC-0134 defines these limits and the shared no-replacement
+Git-object contract.
 
 The version-only invocation above remains legacy smoke. In both explicit
 qualification modes canonical source/controller roots must not be equal or
