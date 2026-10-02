@@ -344,7 +344,7 @@ fn materialize(
         }
         let Some(size) = session
             .request_blob(object)
-            .map_err(|error| failed(format!("git cat-file blob {object} failed: {error}")))
+            .map_err(|error| failed(format!("git cat-file blob {object} failed: {error}")))?
         else {
             return Err(failed(format!("git cat-file blob {object} is missing")));
         };

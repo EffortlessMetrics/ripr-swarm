@@ -765,8 +765,10 @@ impl CatFileBatch {
     /// the child to exit under whatever budget remains. Surfaces the bounded
     /// stderr capture when the child exits non-zero.
     pub(crate) fn finish(mut self) -> Result<(), String> {
-        drop(self.stdin);
+        // Budget first: dropping stdin partially moves `self`, after which
+        // no whole-`self` method may run.
         let remaining = self.remaining();
+        drop(self.stdin);
         let wait = poll_child(&mut self.child, Some(remaining), &self.describe);
         let timed_out = !matches!(&wait, ChildWait::Exited(_));
         let drain_deadline = timed_out.then(|| Instant::now() + POST_KILL_DRAIN_GRACE);
