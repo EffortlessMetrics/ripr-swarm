@@ -282,10 +282,8 @@ fn both_failure_reasons_keep_their_target_and_count() -> Result<(), String> {
         &[
             "observed 15 pass, 2 fail",
             "repeated_failure (2)",
-            "alpha reason",
-            "beta reason",
-            "alpha-1111111111111111",
-            "beta-1111111111111111",
+            "- `tests/alpha.rs (alpha-1111111111111111) :: same_name`\n  - Run 1: Error: alpha reason\n  - Run 2: Error: alpha reason",
+            "- `tests/beta.rs (beta-1111111111111111) :: same_name`\n  - Run 1: Error: beta reason\n  - Run 2: Error: beta reason",
         ],
         &[],
     )
@@ -501,4 +499,88 @@ fn missing_log_or_status_never_becomes_clean_evidence() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[test]
+fn completed_owner_cannot_lend_identity_to_an_orphan_tail() -> Result<(), String> {
+    let required = CONTROLS[5].2;
+    let log = controls_adjusted(
+        Some(required),
+        Some((
+            "unittests src/main.rs",
+            "xtask",
+            ("unrelated_xtask_test", "ok", ""),
+        )),
+        None,
+    ) + &format!(
+        "running 1 test\ntest {required} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+    );
+    verify(
+        log.clone(),
+        log,
+        1,
+        &["incomplete_evidence", "without an admitted target"],
+        &[],
+    )
+}
+
+#[test]
+fn native_empty_child_summary_preserves_the_parent_harness() -> Result<(), String> {
+    let required = CONTROLS[5].2;
+    let log = controls(None).replace(&format!("test {required} ... ok"), &format!("running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2528 filtered out; finished in 0.00s\ntest {required} ... ok"));
+    verify(
+        log.clone(),
+        log,
+        0,
+        &["observed 15 pass, 0 fail"],
+        &["incomplete_evidence", "not_observed"],
+    )
+}
+
+#[test]
+fn nested_child_cannot_supply_an_owning_release_control() -> Result<(), String> {
+    let required = CONTROLS[5].2;
+    let log = controls_adjusted(Some(required), Some(("unittests src/main.rs", "xtask", ("unrelated_xtask_test", "ok", ""))), None)
+        .replace("test unrelated_xtask_test ... ok", &format!("running 1 test\ntest {required} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\ntest unrelated_xtask_test ... ok"));
+    verify(
+        log.clone(),
+        log,
+        1,
+        &["incomplete_evidence", "unowned nested harness"],
+        &[],
+    )
+}
+
+#[test]
+fn ordinary_captured_progress_keeps_its_real_failure_reason() -> Result<(), String> {
+    let log = controls(None)
+        + &alpha("FAILED").replace(
+            "Error: alpha reason",
+            "Running cleanup for fixture\nDoc-tests are checked separately\nError: alpha reason",
+        );
+    verify(
+        log.clone(),
+        log,
+        0,
+        &[
+            "repeated_failure (1)",
+            "- `tests/alpha.rs (alpha-1111111111111111) :: same_name`\n  - Run 1: Error: alpha reason\n  - Run 2: Error: alpha reason",
+        ],
+        &["incomplete_evidence"],
+    )
+}
+
+#[test]
+fn a_captured_header_cannot_authenticate_another_target() -> Result<(), String> {
+    let log = controls(None) + &alpha("FAILED").replace("Error: alpha reason", "Running tests/echoed.rs (target/debug/deps/echoed-1111111111111111.exe)\ntest echoed_name ... ok\nError: alpha reason");
+    verify(
+        log.clone(),
+        log,
+        1,
+        &[
+            "incomplete_evidence",
+            "target header inside an unterminated failure block",
+        ],
+        &[],
+    )
 }

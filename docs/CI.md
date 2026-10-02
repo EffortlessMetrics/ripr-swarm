@@ -347,6 +347,18 @@ and single-platform CI was the root cause enabling both.
   Recollect both complete logs from one build rather than mixing histories.
   The summary still counts observed subjects rather than failure-section echoes.
 
+- **Console provenance limit.** This is a bounded parser for the lane's Cargo
+  text, not universal authentication of test origin. Target completion expires
+  ownership; a later headerless harness cannot inherit it. Announced counts
+  must agree with observed rows. The retained native log's well-formed empty
+  child harness supplies no subjects and does not end its parent. Nonempty
+  nested harnesses have unproven attribution and are refused. Ordinary captured
+  failure stdout remains reason text; complete header/result-shaped content in
+  an unterminated captured block is ambiguous and refused. Doctests may have
+  multiple announced batches beneath their explicit header. Reliable origin
+  for arbitrary interleaved or deliberately forged console output would need
+  structured producer evidence, which this change neither adds nor claims.
+
 The production-command corpus in `xtask/tests/windows_advisory_identity.rs`
 checks colliding names, cross-target pass/failure substitution, independent
 failure reasons, same-source executables, hash/path boundaries, owning-control

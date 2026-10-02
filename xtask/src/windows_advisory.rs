@@ -535,6 +535,10 @@ fn exact_isolated_result(result: &str, passed: bool) -> bool {
     let Some(rest) = result.strip_prefix(prefix) else {
         return false;
     };
+    valid_result_tail(rest)
+}
+
+fn valid_result_tail(rest: &str) -> bool {
     let Some((filtered, duration)) = rest.split_once(" filtered out; finished in ") else {
         return false;
     };
@@ -809,19 +813,55 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
     let mut outcome = RunOutcome::missing(RunState::StatusMissing);
     let mut block: Option<FailureBlock> = None;
     let mut current: Option<TargetIdentity> = None;
+    let mut doc_context: Option<TargetIdentity> = None;
+    let mut announced = None;
+    let mut observed_rows = 0usize;
+    let mut nested: Option<usize> = None;
     for raw_line in text.lines() {
         let line = strip_ansi(raw_line);
         let trimmed = line.trim();
+        let header = running_target(trimmed);
         let boundary = trimmed == "Running"
             || trimmed.starts_with("Running ")
             || trimmed == "Doc-tests"
             || trimmed.starts_with("Doc-tests ");
+        // Captured stdout is not Cargo progress. Ordinary prose must remain in
+        // its failure block; a complete header-shaped echo is ambiguous, not
+        // authority to credit a different target.
+        if boundary && block.is_some() {
+            if header.is_none() {
+                if let Some(open) = block.as_mut() {
+                    open.push(trimmed);
+                }
+                continue;
+            }
+            outcome
+                .provenance_errors
+                .push("target header inside an unterminated failure block".to_string());
+        }
+        if trimmed.starts_with("test result:") && block.is_some() {
+            outcome
+                .provenance_errors
+                .push("result summary inside an unterminated failure block".to_string());
+        }
         if boundary || trimmed == "failures:" || trimmed.starts_with("test result:") {
             close_failure_block(&mut outcome, block.take());
         }
         if boundary {
+            if current.is_some() && announced.is_some() {
+                outcome
+                    .provenance_errors
+                    .push("target transition before the owning harness completed".to_string());
+            }
             outcome.raw_headers.push(raw_line.to_string());
-            current = running_target(trimmed);
+            current = header;
+            doc_context = current
+                .as_ref()
+                .filter(|target| target.kind == TargetKind::DocTest)
+                .cloned();
+            announced = None;
+            observed_rows = 0;
+            nested = None;
             if let Some(target) = &current {
                 if outcome.targets.contains(target) {
                     outcome
@@ -838,7 +878,7 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
         }
         if let Some(name) = failure_block_header(trimmed) {
             close_failure_block(&mut outcome, block.take());
-            block = current.as_ref().map(|target| {
+            block = current.as_ref().filter(|_| nested.is_none()).map(|target| {
                 FailureBlock::new(TestIdentity {
                     target: target.clone(),
                     name,
@@ -850,8 +890,84 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
             open.push(trimmed);
             continue;
         }
+        if trimmed.starts_with("all doctests ran in ") {
+            current = None;
+            doc_context = None;
+            announced = None;
+            observed_rows = 0;
+            continue;
+        }
+        if let Some(count) = harness_announcement(trimmed) {
+            if current.is_none() {
+                current = doc_context.clone();
+            }
+            if current.is_none() {
+                outcome
+                    .provenance_errors
+                    .push("harness announcement without an admitted target".to_string());
+            } else if announced.is_some() {
+                nested = Some(count);
+                if count != 0 {
+                    outcome.provenance_errors.push(
+                        "nonempty nested harness has no independently admitted target".to_string(),
+                    );
+                }
+            } else {
+                announced = Some(count);
+                observed_rows = 0;
+            }
+            continue;
+        }
+        if trimmed.starts_with("running ") {
+            outcome
+                .provenance_errors
+                .push(format!("malformed harness announcement: {trimmed}"));
+            current = None;
+            continue;
+        }
+        if trimmed.starts_with("test result:") {
+            outcome.results.push(trimmed.to_string());
+            if let Some(count) = nested.take() {
+                // Native Windows xtask tests print a filtered, empty child
+                // libtest run. It supplies no subjects and does not complete
+                // the owning harness. Nonempty or malformed child output has
+                // no trustworthy attribution in this interleaved text format.
+                if count != 0 || !exact_empty_result(trimmed) {
+                    outcome
+                        .provenance_errors
+                        .push("unproven nested harness result".to_string());
+                }
+            } else {
+                if let Some(expected) = announced
+                    && expected != observed_rows
+                {
+                    outcome.provenance_errors.push(format!("owning harness announced {expected} subjects but observed {observed_rows} rows"));
+                }
+                current = None;
+                announced = None;
+                observed_rows = 0;
+            }
+            continue;
+        }
+        if nested.is_some() && trimmed.starts_with("test ") {
+            outcome
+                .provenance_errors
+                .push("test row inside an unowned nested harness".to_string());
+            continue;
+        }
+        if ignored_result_line(trimmed) {
+            if current.is_some() {
+                observed_rows += 1;
+            } else {
+                outcome
+                    .provenance_errors
+                    .push("ignored test without an admitted target".to_string());
+            }
+            continue;
+        }
         if let Some((name, failed)) = test_result_line(trimmed) {
             if let Some(target) = &current {
+                observed_rows += 1;
                 let subject = TestIdentity {
                     target: target.clone(),
                     name,
@@ -872,12 +988,44 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
                     .push(format!("test without an admitted target: {name}"));
             }
         }
-        if trimmed.starts_with("test result:") {
-            outcome.results.push(trimmed.to_string());
-        }
     }
     close_failure_block(&mut outcome, block.take());
+    if nested.is_some() {
+        outcome
+            .provenance_errors
+            .push("unterminated nested harness".to_string());
+    }
+    if current.is_some() && announced.is_some() {
+        outcome
+            .provenance_errors
+            .push("owning harness has no completion summary".to_string());
+    }
     outcome
+}
+
+fn harness_announcement(line: &str) -> Option<usize> {
+    let count = line
+        .strip_prefix("running ")?
+        .strip_suffix(" tests")
+        .or_else(|| line.strip_prefix("running ")?.strip_suffix(" test"))?;
+    if count.is_empty() || !count.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    count.parse().ok()
+}
+
+fn ignored_result_line(line: &str) -> bool {
+    line.strip_prefix("test ")
+        .and_then(|rest| rest.split_once(" ... "))
+        .is_some_and(|(name, result)| {
+            !name.is_empty() && (result == "ignored" || result.starts_with("ignored, "))
+        })
+}
+
+fn exact_empty_result(result: &str) -> bool {
+    result
+        .strip_prefix("test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; ")
+        .is_some_and(valid_result_tail)
 }
 
 /// Longest failure reason carried into the verdict. The reason exists so a
@@ -1199,7 +1347,7 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
         out.push_str(&format!("- {label}: {targets}\n"));
         for header in &outcome.raw_headers {
             out.push_str(&format!(
-                "  - Cargo header: `{}`\n",
+                "  - Header text: `{}`\n",
                 strip_ansi(header).replace('`', "'")
             ));
         }
@@ -1213,7 +1361,7 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
             continue;
         }
         out.push_str(&format!(
-            "- {label}: observed {} pass, {} fail across {} target result line(s)\n",
+            "- {label}: observed {} pass, {} fail across {} reported result line(s)\n",
             outcome.passed.len(),
             outcome.failed.len(),
             outcome.results.len()
