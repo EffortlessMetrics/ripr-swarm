@@ -569,3 +569,101 @@ fn equality_oracle_family_matched_static_and_runtime_controls() -> Result<(), St
     }
     Ok(())
 }
+
+#[test]
+fn equality_family_admission_preserves_mixed_oracle_identity_and_projection() -> Result<(), String>
+{
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for (family, strong, weak, binding) in [
+        (
+            "error_path",
+            "assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);",
+            "assert!(read_all(rdr).is_err());",
+            "let rdr = BrokenReader;",
+        ),
+        (
+            "predicate",
+            "assert_eq!(discounted_total(100, 100), 90);",
+            "assert!(discounted_total(100, 100) > 0);",
+            "",
+        ),
+    ] {
+        let fixture = fixtures.join(format!("{family}_oracle_execution_direct"));
+        let original = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+            .map_err(|error| error.to_string())?;
+        let (prefix, _) = original
+            .split_once("    #[test]\n")
+            .ok_or("missing fixture test boundary")?;
+        let deferred = format!("let _later = || {{ {binding} {strong} }};");
+        for (body, expected_strength, exposed, copies) in [
+            (format!("{strong}\n{deferred}"), "strong", true, 1),
+            (format!("{deferred}\n{strong}"), "strong", true, 1),
+            (format!("{weak}\n{deferred}"), "weak", false, 1),
+            (format!("{deferred}\n{weak}"), "weak", false, 1),
+            (format!("{deferred}\nassert_ready(true);"), "none", false, 1),
+            (format!("{deferred}\n{strong}"), "strong", true, 10),
+        ] {
+            let scratch = Scratch::create()?;
+            std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+            std::fs::copy(
+                fixture.join("input/Cargo.toml"),
+                scratch.0.join("Cargo.toml"),
+            )
+            .map_err(|error| error.to_string())?;
+            let functions = (0..copies)
+                .map(|index| {
+                    format!("    #[test]\n    fn checks_{index}() {{\n{binding}\n{body}\n    }}\n")
+                })
+                .collect::<String>();
+            std::fs::write(
+                scratch.0.join("src/lib.rs"),
+                format!("{prefix}    fn assert_ready(_: bool) {{}}\n{functions}}}\n"),
+            )
+            .map_err(|error| error.to_string())?;
+            let report = check_workspace(CheckInput {
+                root: scratch.0.clone(),
+                diff_file: Some(fixture.join("diff.patch")),
+                mode: Mode::Fast,
+                format: OutputFormat::Json,
+                include_unchanged_tests: true,
+                ..CheckInput::default()
+            })?;
+            let json: serde_json::Value =
+                serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                    .map_err(|error| error.to_string())?;
+            let findings = json["findings"]
+                .as_array()
+                .ok_or("missing findings")?
+                .iter()
+                .filter(|finding| finding["probe"]["family"] == family)
+                .collect::<Vec<_>>();
+            assert_eq!(findings.len(), 1, "{family}: {body}");
+            let finding = findings[0];
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{family}: {body}"
+            );
+            assert_eq!(
+                finding["oracle_strength"], expected_strength,
+                "{family}: {body}"
+            );
+            assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
+            let related = finding["related_tests"]
+                .as_array()
+                .ok_or("missing related-test rows")?;
+            assert_eq!(related.len(), copies.min(8), "{family}: {body}");
+            assert!(
+                related
+                    .iter()
+                    .all(|test| test["oracle_strength"] == expected_strength),
+                "{family}: {body}"
+            );
+            if expected_strength == "none" {
+                assert_eq!(finding["ripr"]["observe"]["state"], "no");
+                assert_eq!(finding["ripr"]["discriminate"]["state"], "no");
+            }
+        }
+    }
+    Ok(())
+}
