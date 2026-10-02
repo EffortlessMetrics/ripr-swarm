@@ -116,7 +116,8 @@ fn diff_index_file_limit() -> Result<usize, String> {
 
 /// Admit only Git-tracked open paths. Discovery excludes symlinks and
 /// generated surfaces separately; a newly opened untracked file does not
-/// acquire a saved-workspace commitment from an unrelated clean diff.
+/// enter the index solely because it is open. Inherited mode selection may
+/// independently load an untracked source and capture its consumed bytes.
 fn tracked_open_rust_index_paths(
     options: &AnalysisOptions,
     discovered: &[PathBuf],

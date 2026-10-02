@@ -33,7 +33,9 @@ Git-tracked analyzable files and adds them to its index-only load set before
 the existing index budget. The adapter reads those saved bytes and records
 their commitments before cache lookup. Open paths do not seed changed-file
 probes or findings. Foreign, symlink-escaped, untracked and unavailable paths
-do not acquire a commitment; an oversized combined index retains the named
+are not added solely because they are open. Existing mode-selected inputs can
+still acquire commitments when the adapter actually loads them. An oversized
+combined index retains the named
 scope limit instead of silently omitting open files. The same cap bounds the
 admitted candidate count before Git tracking probes, and returned Git paths
 must match an admitted candidate.
