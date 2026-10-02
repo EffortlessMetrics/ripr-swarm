@@ -415,10 +415,10 @@ fn derive_axes(
         BlindJourneyEventKindV1::OperatorProductOptionSelection,
     ) {
         None => BlindJourneySelectionCorrectnessV1::Unknown,
-        Some(chosen) if key.quiet_neighbors.iter().any(|item| *item == chosen) => {
+        Some(chosen) if key.quiet_neighbors.contains(&chosen) => {
             BlindJourneySelectionCorrectnessV1::QuietNeighborSelected
         }
-        Some(chosen) if key.eligible_items.iter().any(|item| *item == chosen) => {
+        Some(chosen) if key.eligible_items.contains(&chosen) => {
             BlindJourneySelectionCorrectnessV1::CorrectActionable
         }
         Some(_chosen) => BlindJourneySelectionCorrectnessV1::NotActionable,
@@ -482,20 +482,10 @@ fn derive_terminal(
     if let Some(chosen) = last_subject(
         events,
         BlindJourneyEventKindV1::OperatorProductOptionSelection,
-    ) {
-        if journey
-            .answer_key
-            .quiet_neighbors
-            .iter()
-            .any(|item| *item == chosen)
-            || !journey
-                .answer_key
-                .eligible_items
-                .iter()
-                .any(|item| *item == chosen)
-        {
-            return BlindJourneyResultV1::WrongOrStaleSubject;
-        }
+    ) && (journey.answer_key.quiet_neighbors.contains(&chosen)
+        || !journey.answer_key.eligible_items.contains(&chosen))
+    {
+        return BlindJourneyResultV1::WrongOrStaleSubject;
     }
     if axes.edit_cage_verdict == BlindJourneyEditCageVerdictV1::Violation {
         return BlindJourneyResultV1::UnsafeOrWrongEdit;
