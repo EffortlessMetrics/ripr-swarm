@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_transitive_reach_negative (3)
+
+Reason:
+RIPR-SPEC-0201: review repair (CodeRabbit thread PRRT_kwDOSiSx0c6oY-y2). Same off-by-one hunk start as the positive fixture: headers now declare @@ -9,6 +9,6 @@ so coordinates match the true source lines; negative control stays silent.
+
+Command:
+`cargo xtask goldens bless python_transitive_reach_negative --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

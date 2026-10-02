@@ -6,7 +6,7 @@
   "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:438ee31f3b48d2b546c41ea4163d8a56a9c64483f8a62c36bbc1338285e89cb2","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:0a90dc1c4cfb7cc9d9017c576aa4a0afcf9d717307b01a15eb3e9c729270418e","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -31,7 +31,7 @@
         "family": "predicate",
         "delta": "control",
         "file": "src/table.py",
-        "line": 13,
+        "line": 12,
         "expression": "        if column_index >= len(self.columns) - 1:",
         "owner": "python:src/table.py::Table._get_padding_width"
        },
@@ -42,9 +42,9 @@
         "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"no","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
-      "evidence_path": ["reach no: 0 related Python test(s) found for owner `_get_padding_width`", "infection yes: Changed Python predicate can alter branch selection: `if column_index >= len(self.columns) - 1:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: if column_index >= len(self.columns) - 1: (line 13)"],
+      "evidence_path": ["reach no: 0 related Python test(s) found for owner `_get_padding_width`", "infection yes: Changed Python predicate can alter branch selection: `if column_index >= len(self.columns) - 1:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: if column_index >= len(self.columns) - 1: (line 12)"],
       "flow_sinks": [
-        {"kind":"unknown","text":"if column_index >= len(self.columns) - 1:","line":13}
+        {"kind":"unknown","text":"if column_index >= len(self.columns) - 1:","line":12}
       ],
       "evidence": ["owner: Table._get_padding_width", "owner_kind: method", "ripr saw a Python test that constructs or calls into this owner's class; a bounded same-class method path may lead here, but the preview adapter does not fully trace it. This is not a coverage assessment — ripr cannot confirm or deny that the change is observed.", "For example, the test `test_print_table` (tests/test_table.py:4) calls `Table`, an entry point that may lead here. Inspect it to judge whether this change is observed.", "limitation_last_established_edge: test `test_print_table` (tests/test_table.py:4) -> entry `Table`", "limitation_first_unresolved_edge: entry `Table` -> owner `_get_padding_width` through a bounded same-class Python method path", "limitation_analyzer_route: analysis/python-same-class-transitive-reach", "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"],
       "missing": ["No statically reachable Python test path was found; a test may construct or call into the owner's class through a method path ripr does not fully trace."],

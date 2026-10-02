@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_transitive_reach_positive (5)
+
+Reason:
+RIPR-SPEC-0201: review repair (CodeRabbit thread PRRT_kwDOSiSx0c6oY-y2). The hunk start was off by one: the first body line return self._get_padding_width(0) is source line 9, not 10, so the changed if-line reported as 13 instead of its true line 12. Headers now declare @@ -9,6 +9,6 @@; goldens regenerated for the corrected coordinates.
+
+Command:
+`cargo xtask goldens bless python_transitive_reach_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
