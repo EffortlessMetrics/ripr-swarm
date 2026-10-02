@@ -4508,6 +4508,230 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
     Ok(())
 }
 
+/// #4668: the editor workspace is not a git repository in this fixture, so
+/// the RepairCard action must fail closed to omission like every other
+/// producer-gated handoff, keeping the legacy action list byte-identical.
+#[test]
+fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), String> {
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if commands
+        .iter()
+        .any(|(title, _, _)| title == "Agent handoff: copy repair card")
+    {
+        return Err(
+            "the repair card action must fail closed when the head cannot be resolved"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// #4668: inside a real repository the seam actions carry the same
+/// RepairCardV1 the CLI `ripr agent card` handoff assembles — canonical
+/// identity, live-head snapshot binding, the ratified detail budget, and the
+/// fail-closed route gate all ride on the wire unchanged.
+#[test]
+fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace(
+) -> Result<(), String> {
+    let root = unique_lsp_test_root("repair-card-action")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(root.path(), &["config", "user.email", "ripr@example.invalid"])?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    let Some((_, command, arguments)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Agent handoff: copy repair card")
+    else {
+        return Err(format!(
+            "repair card action missing; commands: {:?}",
+            commands
+                .iter()
+                .map(|(title, _, _)| title)
+                .collect::<Vec<_>>()
+        ));
+    };
+    if command.as_str() != COPY_CONTEXT_COMMAND {
+        return Err(format!(
+            "repair card must ride the advertised copy command, got {command}"
+        ));
+    }
+    let Some(target) = arguments.first() else {
+        return Err("repair card action carries no target".to_string());
+    };
+    if target["label"] != serde_json::json!("repair_card") {
+        return Err(format!("unexpected repair card label: {target:?}"));
+    }
+    if target["seam_id"] != serde_json::json!(seam.seam.id().as_str()) {
+        return Err(format!("repair card seam identity drifted: {target:?}"));
+    }
+    let Some(packet) = target["packet"].as_str() else {
+        return Err("repair card target carries no wire card".to_string());
+    };
+    let wire: crate::domain::RepairCardV1 = serde_json::from_str(packet)
+        .map_err(|error| format!("repair card wire shape drifted: {error}"))?;
+    if wire.schema_version != crate::domain::REPAIR_CARD_SCHEMA_VERSION {
+        return Err("repair card schema version drifted".to_string());
+    }
+    if wire.subject.seam_id != seam.seam.id().as_str() {
+        return Err("repair card subject does not name the seam".to_string());
+    }
+    let head_output = lsp_scope_git_output(root.path(), &["rev-parse", "HEAD"])?;
+    let head = String::from_utf8_lossy(&head_output.stdout).trim().to_string();
+    if wire.snapshot.repository_head != head {
+        return Err(
+            "repair card must bind the live repository head like the CLI producer".to_string(),
+        );
+    }
+    if wire.detail_references.len() != 9 {
+        return Err(format!(
+            "expected nine detail references, got {}",
+            wire.detail_references.len()
+        ));
+    }
+    // No finding names this seam in the fixture snapshot, so the shared
+    // instruction authority projects unavailable and the route gate stays
+    // closed: the wire card must not present a next action.
+    if wire.instruction.state != crate::domain::FixInstructionState::Unavailable {
+        return Err("missing witness must project an unavailable instruction".to_string());
+    }
+    if wire.next_action.is_some() {
+        return Err("a closed route gate must not surface a next action".to_string());
+    }
+    if wire.detail_summary.selected_bytes
+        > crate::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES
+        || wire.detail_references.len() > crate::domain::DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS
+    {
+        return Err("the projected card exceeded the ratified default budget".to_string());
+    }
+    Ok(())
+}
+
+/// #4668: a seam diagnostic the current snapshot no longer carries suppresses
+/// the repair card action with the rest of the seam surface — a stale card
+/// route is never offered as current.
+#[test]
+fn repair_card_action_suppressed_for_stale_seam_diagnostic() -> Result<(), String> {
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    // The snapshot publishes no diagnostics for the URI, so the cited seam
+    // diagnostic is stale against it.
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if commands
+        .iter()
+        .any(|(title, _, _)| title == "Agent handoff: copy repair card")
+    {
+        return Err("a stale seam diagnostic must suppress the repair card action".to_string());
+    }
+    Ok(())
+}
+
+/// #4668: the seam hover projects a bounded repair-card summary — identity,
+/// instruction state, next-action presence, and detail availability — while
+/// the complete card rides behind the copy action.
+#[test]
+fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Result<(), String> {
+    let root = unique_lsp_test_root("repair-card-hover")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(root.path(), &["config", "user.email", "ripr@example.invalid"])?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let markdown = match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot))
+        .contents
+    {
+        HoverContents::Markup(markup) => markup.value,
+        other => return Err(format!("expected markdown hover, got {other:?}")),
+    };
+    for needle in [
+        "## Repair card",
+        "Instruction: `unavailable`",
+        "Next action: none (no producer-owned route)",
+        "3 current · 0 stale · 6 unavailable · 0 other of 9 families",
+    ] {
+        if !markdown.contains(needle) {
+            return Err(format!("missing {needle:?} in seam hover:\n{markdown}"));
+        }
+    }
+    Ok(())
+}
+
+/// #4668: without a resolvable producer fact the hover section fails closed
+/// to omission instead of weakening the card it describes.
+#[test]
+fn seam_hover_omits_repair_card_section_outside_a_git_workspace() -> Result<(), String> {
+    let markdown = seam_hover_markdown_for(&sample_classified_seam())?;
+    if markdown.contains("## Repair card") {
+        return Err(
+            "the repair card section must fail closed when the head cannot be resolved"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Result<(), String> {
     // #3906 outcome 3: the editor offers `ripr agent repair ... --phase
