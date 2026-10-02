@@ -1330,7 +1330,9 @@ are scoped or reviewed.
 - Rust indexing: source-role normalization borrows full-identity keys and
   per-file tests instead of retaining extra owned body/test copies. Parse workers
   inherit and restore request cancellation; index construction and normalization
-  check cancellation before retaining or publishing work. Opt-in phase tracing
+  check cancellation before retaining or publishing work. Parallel joins preserve
+  the first collected source/worker error before observing a later deadline,
+  keeping source failures distinct from timeout receipts. Opt-in phase tracing
   separates parsing and role passes. Whole-corpus facts still scale with input,
   and a single parser call is not preemptible (#4388).
 - PR review guidance retains unresolved headline-eligible recommendations

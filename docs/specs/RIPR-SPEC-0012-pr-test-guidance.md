@@ -82,7 +82,10 @@ and scoped command contexts restore the caller's token.
 Index parse workers install the owning request's captured cancellation context
 for each job and restore the prior pool-thread context afterward, including
 unwind. They check before/after each file; the caller checks before cache stores,
-index insertion, and post-parse role phases. Source-role normalization checks
+index insertion, and post-parse role phases. At a parallel batch join, the first
+collected error in input order (source failure or worker cancellation) is
+preserved before observing a later deadline; successful siblings are not stored
+or inserted after that failed batch. Source-role normalization checks
 per file and function, including whole-index identity-map construction. A
 cancelled partial index is returned as an error, never as complete guidance.
 Already completed per-file cache entries remain reusable parser facts, not

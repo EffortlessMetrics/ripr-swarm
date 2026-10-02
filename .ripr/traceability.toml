@@ -1156,6 +1156,8 @@ tests = [
   "crates/ripr/src/analysis/cancellation.rs::tests::optional_worker_context_clears_and_restores_an_outer_request",
   "crates/ripr/src/analysis/cancellation.rs::tests::optional_worker_context_restores_after_unwind",
   "crates/ripr/src/analysis/facts/build.rs::tests::cached_parse_workers_observe_request_cancellation_before_cache_store",
+  "crates/ripr/src/analysis/facts/build.rs::tests::cached_source_failure_precedes_join_deadline",
+  "crates/ripr/src/analysis/facts/build.rs::tests::uncached_source_failure_precedes_join_deadline",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::normalization_observes_cancellation_inside_function_walk",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_canonical_deadline_cancellation_records_timeout",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_source_error_wins_over_later_clock_expiry",

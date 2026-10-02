@@ -134,6 +134,11 @@ fn build_index_with_file_fact_cache(
                 (position, result)
             })
             .collect();
+        // An already-observed source/worker failure wins in input order.
+        // Do not replace it with a deadline noticed only after joining.
+        if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
+            return Err(error.clone());
+        }
         cancellation::checkpoint()?;
         for (position, result) in results {
             parsed[position] = Some(result);
@@ -232,6 +237,9 @@ fn build_index_with_adapters(
                 })
             })
             .collect();
+        if let Some(error) = results.iter().find_map(|result| result.as_ref().err()) {
+            return Err(error.clone());
+        }
         cancellation::checkpoint()?;
         // Insert sequentially in original input order: `RustIndex.tests`
         // and `RustIndex.functions` are extended per file, so this drain
@@ -1543,5 +1551,132 @@ pub fn check(x: i32) -> bool {
         assert_eq!(cached.index.functions, uncached.functions);
         assert_eq!(cached.index.files.len(), uncached.files.len());
         Ok(())
+    }
+
+    fn source_failure_precedes_join_deadline(cached: bool) -> Result<(), Box<dyn Error>> {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::time::{Duration, Instant};
+
+        struct FailingBeforeDeadline {
+            expired: Arc<AtomicBool>,
+        }
+        impl RustSyntaxAdapter for FailingBeforeDeadline {
+            fn summarize_file(
+                &self,
+                path: &Path,
+                text: &str,
+            ) -> Result<super::super::FileFacts, String> {
+                if path.ends_with("first.rs") {
+                    // Produce an ordinary source failure, then make the clock
+                    // expire before the collecting thread can inspect it.
+                    let error = "controlled first-file source failure".to_string();
+                    self.expired.store(true, Ordering::SeqCst);
+                    return Err(error);
+                }
+                Ok(super::super::FileFacts {
+                    path: path.to_path_buf(),
+                    source: text.to_string(),
+                    ..super::super::FileFacts::default()
+                })
+            }
+            fn changed_nodes(
+                &self,
+                _: &super::super::FileFacts,
+                _: &[TextRange],
+            ) -> Vec<SyntaxNodeFact> {
+                Vec::new()
+            }
+        }
+        let fixture = CacheInventoryFixture::new(if cached {
+            "cached_error_deadline"
+        } else {
+            "uncached_error_deadline"
+        })?;
+        let files = [
+            (PathBuf::from("src/first.rs"), b"fn first() {}".to_vec()),
+            (PathBuf::from("src/second.rs"), b"fn second() {}".to_vec()),
+        ];
+        for (path, bytes) in &files {
+            fs::write(fixture.root.join(path), bytes)?;
+        }
+        let expired = Arc::new(AtomicBool::new(false));
+        let clock_expired = Arc::clone(&expired);
+        let started = Instant::now();
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if clock_expired.load(Ordering::SeqCst) {
+                    started + Duration::from_secs(1)
+                } else {
+                    started
+                }
+            }),
+        );
+        let adapter = FailingBeforeDeadline {
+            expired: Arc::clone(&expired),
+        };
+        let paths = files
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build()?;
+        let error = pool.install(|| {
+            with_token(&token, || {
+                if cached {
+                    build_index_with_file_fact_cache(
+                        &fixture.root,
+                        &files,
+                        &adapter,
+                        &adapter,
+                        &fixture.cache,
+                        HashSet::new,
+                    )
+                    .err()
+                } else {
+                    build_index_with_adapters(&fixture.root, &paths, &adapter, &adapter).err()
+                }
+            })
+        });
+        assert!(
+            expired.load(Ordering::SeqCst),
+            "fixture must cross the deadline"
+        );
+        assert_eq!(
+            error.as_deref(),
+            Some("controlled first-file source failure")
+        );
+        assert_eq!(
+            with_token(&token, cancellation::checkpoint)
+                .err()
+                .as_deref(),
+            Some("analysis cancelled: DeadlineExceeded")
+        );
+        for (path, bytes) in &files {
+            assert!(
+                matches!(
+                    fixture
+                        .cache
+                        .load_file_facts(&RepoFileFactCacheKey::new(path, bytes)),
+                    CacheLoad::Miss
+                ),
+                "failed batch must not store successful sibling facts"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cached_source_failure_precedes_join_deadline() -> Result<(), Box<dyn Error>> {
+        source_failure_precedes_join_deadline(true)
+    }
+
+    #[test]
+    fn uncached_source_failure_precedes_join_deadline() -> Result<(), Box<dyn Error>> {
+        source_failure_precedes_join_deadline(false)
     }
 }
