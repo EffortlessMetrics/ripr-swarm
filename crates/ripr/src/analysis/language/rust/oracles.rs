@@ -180,7 +180,15 @@ pub(super) fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, i
 /// by copying a function/body. Empty inputs make every later lookup constant
 /// time; no-path findings do not rescan all files or macro token trees.
 pub(super) struct PropertyMacroMentionIndex<'a> {
-    by_identifier: std::collections::BTreeMap<&'a str, PropertyMacroLocation<'a>>,
+    captured_root: Option<&'a std::path::Path>,
+    selected_root: &'a std::path::Path,
+    by_identifier: std::collections::BTreeMap<&'a str, Vec<PropertyMacroLocation<'a>>>,
+    package_authority: Option<
+        &'a std::collections::BTreeMap<
+            std::path::PathBuf,
+            crate::analysis::facts::WorkspaceFileAuthority,
+        >,
+    >,
 }
 
 struct PropertyMacroLocation<'a> {
@@ -189,21 +197,51 @@ struct PropertyMacroLocation<'a> {
 }
 
 impl<'a> PropertyMacroMentionIndex<'a> {
-    pub(super) fn new(index: &'a RustIndex) -> Self {
+    pub(super) fn new(index: &'a RustIndex, selected_root: &'a std::path::Path) -> Self {
         let mut by_identifier = std::collections::BTreeMap::new();
         for (file, facts) in &index.files {
             for witness in &facts.unresolved_property_macros {
                 for identifier in &witness.mentioned_identifiers {
                     by_identifier
                         .entry(identifier.as_str())
-                        .or_insert(PropertyMacroLocation {
+                        .or_insert_with(Vec::new)
+                        .push(PropertyMacroLocation {
                             file: file.as_path(),
                             witness,
                         });
                 }
             }
         }
-        Self { by_identifier }
+        Self {
+            by_identifier,
+            selected_root,
+            captured_root: index
+                .workspace_authority
+                .as_ref()
+                .map(|authority| authority.root.as_path()),
+            package_authority: index
+                .workspace_authority
+                .as_ref()
+                .map(|authority| &authority.files),
+        }
+    }
+
+    fn known_package(&self, indexed_file: &std::path::Path) -> Option<&str> {
+        self.package_authority?
+            .get(indexed_file)
+            .filter(|authority| authority.valid)
+            .map(|authority| authority.package_identity.as_str())
+    }
+
+    fn owner_package(&self, probe_file: &std::path::Path) -> Option<&str> {
+        // Probe paths are constructed from the selected analysis root, unlike
+        // the root-relative witness keys. Strip that exact prefix first so a
+        // decoy indexed path beginning with the same root text cannot win.
+        let relative = probe_file
+            .strip_prefix(self.selected_root)
+            .ok()
+            .or_else(|| probe_file.strip_prefix(self.captured_root?).ok())?;
+        self.known_package(relative)
     }
 }
 
@@ -212,12 +250,37 @@ impl<'a> PropertyMacroMentionIndex<'a> {
 pub(super) fn apply_unresolved_property_macro_limit(
     finding: &mut Finding,
     owner_name: &str,
+    owner_file: &std::path::Path,
     mentions: &PropertyMacroMentionIndex<'_>,
 ) -> bool {
-    let Some(PropertyMacroLocation { file, witness }) = mentions.by_identifier.get(owner_name)
-    else {
+    let Some(locations) = mentions.by_identifier.get(owner_name) else {
         return false;
     };
+    // This is retained manifest/source authority, not a path-layout guess.
+    // No per-finding filesystem reads or manifest resolution are performed.
+    let owner_package = mentions.owner_package(owner_file);
+    let Some(PropertyMacroLocation { file, witness }) = locations.iter().find(|location| {
+        match (owner_package, mentions.known_package(location.file)) {
+            (Some(owner), Some(mentioned)) => owner == mentioned,
+            // An unresolved package identity cannot prove unrelatedness.
+            _ => true,
+        }
+    }) else {
+        return false;
+    };
+    // A lexical mention supplies no runtime edge. Keep all affected stages
+    // explicitly unresolved instead of inheriting discarded argument values.
+    for stage in [
+        &mut finding.ripr.reach,
+        &mut finding.ripr.infect,
+        &mut finding.ripr.propagate,
+    ] {
+        let old_summary = stage.summary.clone();
+        stage.state = crate::domain::StageState::Unknown;
+        stage.confidence = crate::domain::Confidence::Low;
+        stage.summary = "Property macro expansion and owner execution are unresolved".to_string();
+        finding.evidence.retain(|evidence| evidence != &old_summary);
+    }
     finding.static_limit_kind = Some(StaticLimitKind::RustMacroReachUnresolved);
     finding
         .stop_reasons
@@ -482,6 +545,99 @@ fn rust_macro_assertion_limitation_detail_lines(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn property_scope_uses_only_valid_retained_package_authority() {
+        use crate::analysis::facts::{UnresolvedPropertyMacroFact, WorkspaceFileAuthority};
+        use std::collections::BTreeMap;
+        use std::path::{Path, PathBuf};
+        let owner = Path::new("crates/owner/src/lib.rs");
+        let witness_file = Path::new("custom/nested/src/property.rs");
+        let absolute_owner = Path::new("/captured").join(owner);
+        let selected_owner = Path::new("selected/root").join(owner);
+        let witness = UnresolvedPropertyMacroFact {
+            name: "proptest".into(),
+            line: 1,
+            mentioned_identifiers: vec!["gate".into()],
+        };
+        for (package, valid, limited) in [
+            ("owner-manifest", true, true),
+            ("other-manifest", true, false),
+            ("other-manifest", false, true),
+        ] {
+            let authorities = BTreeMap::from([
+                (
+                    owner.to_path_buf(),
+                    WorkspaceFileAuthority {
+                        source_digest: String::new(),
+                        package_identity: "owner-manifest".into(),
+                        valid: true,
+                    },
+                ),
+                (
+                    selected_owner.clone(),
+                    WorkspaceFileAuthority {
+                        source_digest: String::new(),
+                        package_identity: "decoy".into(),
+                        valid: true,
+                    },
+                ),
+                (
+                    witness_file.to_path_buf(),
+                    WorkspaceFileAuthority {
+                        source_digest: String::new(),
+                        package_identity: package.into(),
+                        valid,
+                    },
+                ),
+            ]);
+            let mentions = super::PropertyMacroMentionIndex {
+                captured_root: Some(Path::new("/captured")),
+                selected_root: Path::new("selected/root"),
+                by_identifier: BTreeMap::from([(
+                    "gate",
+                    vec![super::PropertyMacroLocation {
+                        file: witness_file,
+                        witness: &witness,
+                    }],
+                )]),
+                package_authority: Some(&authorities),
+            };
+            for owner_path in [&absolute_owner, &selected_owner] {
+                let mut finding = no_static_path_finding();
+                assert_eq!(
+                    super::apply_unresolved_property_macro_limit(
+                        &mut finding,
+                        "gate",
+                        owner_path,
+                        &mentions
+                    ),
+                    limited
+                );
+            }
+        }
+        let absent = BTreeMap::<PathBuf, WorkspaceFileAuthority>::new();
+        for package_authority in [None, Some(&absent)] {
+            let mentions = super::PropertyMacroMentionIndex {
+                captured_root: Some(Path::new("/captured")),
+                selected_root: Path::new("selected/root"),
+                by_identifier: BTreeMap::from([(
+                    "gate",
+                    vec![super::PropertyMacroLocation {
+                        file: witness_file,
+                        witness: &witness,
+                    }],
+                )]),
+                package_authority,
+            };
+            assert!(super::apply_unresolved_property_macro_limit(
+                &mut no_static_path_finding(),
+                "gate",
+                &absolute_owner,
+                &mentions
+            ));
+        }
+    }
+
     use super::{
         apply_cross_language_limit, apply_rust_macro_wrapped_assertion_limit,
         apply_wrapper_error_binding_limit, attr_is_ffi_binding, cross_language_limit_kind,

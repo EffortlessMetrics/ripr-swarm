@@ -822,6 +822,7 @@ fn apply_rust_no_static_path_limit(
     } else if oracles::apply_unresolved_property_macro_limit(
         finding,
         &owner_name,
+        &probe.location.file,
         property_macro_mentions,
     ) {
         replace_witnessed_no_path_infection_summary(finding);
@@ -1322,7 +1323,8 @@ impl RustAdapter {
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         let mut related_test_candidate_index = None;
-        let property_macro_mentions = oracles::PropertyMacroMentionIndex::new(&index);
+        let property_macro_mentions =
+            oracles::PropertyMacroMentionIndex::new(&index, &options.root);
 
         let rust_changed_for_presence = analyzable_changed_files
             .iter()
@@ -1885,7 +1887,8 @@ impl RustAdapter {
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         let mut related_test_candidate_index = None;
-        let property_macro_mentions = oracles::PropertyMacroMentionIndex::new(&index);
+        let property_macro_mentions =
+            oracles::PropertyMacroMentionIndex::new(&index, &options.root);
 
         let mut findings = Vec::new();
         let mut parser_spans = BTreeMap::new();

@@ -23,3 +23,7 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## #5051 review correction
+
+Opaque property-only call arguments and lexical fallback bodies provide no reach, infection or propagation proof. Known unrelated-package mentions cannot suppress a real gap.

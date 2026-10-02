@@ -30,7 +30,10 @@ pub(super) fn unresolved_property_macros(
             }
             let path = call.path()?;
             let leaf = path.segment()?.name_ref()?;
-            if leaf.text() != "proptest" && leaf.text() != "quickcheck" {
+            if !matches!(
+                &*leaf.text(),
+                "proptest" | "quickcheck" | "prop_assert" | "prop_assert_eq" | "prop_assert_ne"
+            ) {
                 return None;
             }
             let name = path

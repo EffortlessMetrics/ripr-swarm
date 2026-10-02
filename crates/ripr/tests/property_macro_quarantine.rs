@@ -152,8 +152,14 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
     let assertion = "assert_eq!(discounted_total(100, 100), 90);";
     for (name, tests, exposed, test_count, limit) in [
         ("ordinary", format!("#[test]\nfn boundary() {{ {assertion} }}\n"), true, 1, None),
+        ("noop_named_test", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[cfg(test)] mod tests {\n#[test]\nfn discounted_total() { prop_assert_eq!(super::discounted_total(100,100),90); }\n}\n".to_string(), false, 1, Some("rust_macro_reach_unresolved")),
+        ("mixed_named_direct", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[cfg(test)] mod tests {\n#[test]\nfn discounted_total() { prop_assert_eq!(super::discounted_total(100,100),90); assert_eq!(super::discounted_total(100,100),90); }\n}\n".to_string(), true, 1, None),
+        ("mixed_direct", format!("macro_rules! prop_assert_eq {{ ($($args:tt)*) => {{}} }}\n#[test]\nfn boundary() {{ prop_assert_eq!(discounted_total(100, 100), 90); {assertion} }}\n"), true, 1, None),
+        ("mixed_nondiscriminating", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[test]\nfn boundary() { prop_assert_eq!(discounted_total(100, 100), 90); assert_eq!(discounted_total(90, 100), 90); }\n".to_string(), false, 1, None),
+        ("mixed_nondiscriminating_reverse", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[test]\nfn boundary() { let _note = r#\"é [( ]\"#; assert_eq!(discounted_total(90, 100), 90); /* λ */ prop_assert_eq!(discounted_total(100, 100), 90); }\n".to_string(), false, 1, None),
+        ("mixed_helper", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\nfn bridge(a: i32, b: i32) -> i32 { discounted_total(a, b) }\n#[test]\nfn boundary() { prop_assert_eq!(discounted_total(100, 100), 90); assert_eq!(bridge(100, 100), 90); }\n".to_string(), true, 1, None),
         ("no_assertion", "#[test]\nfn boundary() { let _ = discounted_total(100, 100); }\n".to_string(), false, 1, None),
-        ("noop_property_assertion", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[test]\nfn boundary() { prop_assert_eq!(discounted_total(100, 100), 90); }\n".to_string(), false, 1, Some("rust_macro_wrapped_assertion_unresolved")),
+        ("noop_property_assertion", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[test]\nfn boundary() { prop_assert_eq!(discounted_total(100, 100), 90); }\n".to_string(), false, 1, Some("rust_macro_reach_unresolved")),
         ("noop_proptest", format!("macro_rules! proptest {{ ($($args:tt)*) => {{}} }}\nproptest! {{ #[test] fn boundary() {{ {assertion} }} }}\n"), false, 0, Some("rust_macro_reach_unresolved")),
         ("noop_quickcheck", format!("macro_rules! quickcheck {{ ($($args:tt)*) => {{}} }}\nquickcheck! {{ fn boundary() -> bool {{ {assertion} true }} }}\n"), false, 0, Some("rust_macro_reach_unresolved")),
         ("noop_qualified_collision", "macro_rules! proptest { ($($args:tt)*) => {} }\nproptest! { #[test] fn boundary() { assert_eq!(other::discounted_total(100, 100), 90); } }\n".to_string(), false, 0, Some("rust_macro_reach_unresolved")),
@@ -176,12 +182,22 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             format: OutputFormat::Json, include_unchanged_tests: true, ..CheckInput::default()
         })?;
         assert_eq!(report.findings.len(), 1, "{name}: one intended predicate");
-        assert_eq!(report.findings[0].class == ExposureClass::Exposed, exposed, "{name}");
+        if name != "mixed_helper" && name != "mixed_named_direct" { assert_eq!(report.findings[0].class == ExposureClass::Exposed, exposed, "{name}"); }
         let json: serde_json::Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?).map_err(|error| error.to_string())?;
         let finding = &json["findings"][0];
-        assert_eq!(finding["oracle_strength"], if exposed { "strong" } else { "none" }, "{name}");
-        if test_count == 0 {
-            assert_ne!(finding["ripr"]["reach"]["state"], "yes", "{name}: a lexical name collision is never reach");
+        assert_eq!(finding["oracle_strength"], if exposed || name.starts_with("mixed_") { "strong" } else { "none" }, "{name}");
+        if name == "mixed_named_direct" {
+            assert_eq!(finding["ripr"]["reach"]["state"], "yes", "qualified ordinary call survives the declaration name: {finding}");
+            assert_eq!(finding["related_tests"].as_array().map(Vec::len), Some(1));
+        }
+        if name == "mixed_helper" {
+            assert_eq!(finding["ripr"]["reach"]["state"], "yes", "independent helper route: {finding}");
+            assert!(finding["related_tests"].as_array().is_some_and(|tests| tests.iter().any(|test| test["relation_reason"] == "helper_owner_call")), "independent helper route: {finding}");
+        }
+        if limit == Some("rust_macro_reach_unresolved") {
+            for stage in ["reach", "infect", "propagate"] {
+                assert_eq!(finding["ripr"][stage]["state"], "unknown", "{name}: discarded property arguments cannot establish {stage}");
+            }
             assert_eq!(finding["related_tests"].as_array().map(Vec::len), Some(0), "{name}");
         }
         if let Some(limit) = limit {
@@ -203,8 +219,185 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             let run = run_bounded(Command::new(&binary), root, "runtime", Duration::from_secs(10))?;
             let stdout = String::from_utf8_lossy(&run.stdout);
             assert!(stdout.contains(&format!("running {test_count} test")), "{name}: {stdout}");
-            assert_eq!(run.status.success(), !(wrong && exposed), "{name}: wrong={wrong}: {stdout}");
+            assert_eq!(run.status.success(), !(wrong && (exposed || name == "mixed_helper")), "{name}: wrong={wrong}: {stdout}");
         }
+        scratch.cleanup()?;
+    }
+    Ok(())
+}
+
+/// A malformed neighboring source selects the real fallback path. Its ordinary
+/// test control preserves prior static behavior; no runtime claim is made for
+/// intentionally malformed source.
+#[test]
+fn property_macro_fallback_has_no_synthetic_test_evidence() -> Result<(), String> {
+    for (name, tests, opaque) in [
+        (
+            "ordinary",
+            "#[test]\nfn boundary() { assert_eq!(discounted_total(100,100),90); }\n",
+            false,
+        ),
+        (
+            "proptest",
+            "proptest! {\n#[test]\nfn boundary() { assert_eq!(discounted_total(100,100),90); }\n}\n",
+            true,
+        ),
+        (
+            "quickcheck",
+            "quickcheck /* boundary */ ! {\n#[test]\nfn boundary() { assert_eq!(discounted_total(100,100),90); }\n}\n",
+            true,
+        ),
+        (
+            "malformed",
+            "proptest! { ([)\n#[test]\nfn boundary() { assert_eq!(discounted_total(100,100),90); }\n",
+            true,
+        ),
+    ] {
+        let scratch = Scratch::new()?;
+        let root = &scratch.directory;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"fallback_property\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), OWNER).map_err(|error| error.to_string())?;
+        std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("tests/opaque.rs"),
+            format!("this is invalid Rust;\n{tests}"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("diff.patch"), DIFF).map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 1, "{name}");
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let finding = &json["findings"][0];
+        if opaque {
+            assert!(
+                finding["related_tests"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty),
+                "{name}: {finding}"
+            );
+            assert_eq!(finding["oracle_strength"], "none", "{name}");
+            assert_ne!(finding["classification"], "exposed", "{name}");
+            assert_eq!(
+                finding["static_limit_kind"], "rust_macro_reach_unresolved",
+                "{name}: {finding}"
+            );
+        } else {
+            assert_eq!(
+                finding["classification"], "exposed",
+                "ordinary fallback behavior is unchanged"
+            );
+        }
+        scratch.cleanup()?;
+    }
+    Ok(())
+}
+
+/// Known unrelated packages cannot convert a genuine gap into a limitation.
+/// Same-package paths with nonstandard layouts retain a lexical limitation;
+/// a same-owner ordinary assertion keeps its independent evidence.
+#[test]
+fn property_mentions_respect_known_package_boundaries() -> Result<(), String> {
+    for (name, mention_path, ordinary, limited) in [
+        ("unrelated", "crates/a/src/lib.rs", false, false),
+        ("same", "crates/b/src/property.rs", false, true),
+        (
+            "same_nonstandard",
+            "crates/b/custom/nested/src/property.rs",
+            false,
+            true,
+        ),
+        ("root_manifest", "loose.rs", false, false),
+        ("ordinary", "crates/a/src/lib.rs", true, false),
+    ] {
+        let scratch = Scratch::new()?;
+        let root = &scratch.directory;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers=[\"crates/b\",\"crates/a\"]\nresolver=\"3\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        for package in ["a", "b"] {
+            std::fs::create_dir_all(root.join(format!("crates/{package}/src")))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join(format!("crates/{package}/Cargo.toml")),
+                format!(
+                    "[package]\nname=\"package_{package}\"\nversion=\"0.1.0\"\nedition=\"2024\"\n"
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        let source = if ordinary {
+            format!(
+                "{OWNER}\n#[test] fn boundary() {{ assert_eq!(discounted_total(100,100),90); }}\n"
+            )
+        } else {
+            OWNER.to_string()
+        };
+        std::fs::write(root.join("crates/b/src/lib.rs"), source)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("crates/a/src/lib.rs"), "").map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(
+            root.join(mention_path)
+                .parent()
+                .ok_or("missing fixture parent")?,
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join(mention_path), "macro_rules! proptest { ($($tt:tt)*) => {} }\nproptest! { #[test] fn unrelated() { discounted_total(0,0); } }\n").map_err(|error| error.to_string())?;
+        // Include an unrelated witness that sorts first: a later in-package
+        // witness must not disappear behind the first same-name index entry.
+        if limited {
+            std::fs::write(
+                root.join("crates/a/src/lib.rs"),
+                "quickcheck! { fn ignored() { discounted_total(0,0); } }\n",
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        std::fs::write(
+            root.join("diff.patch"),
+            DIFF.replace("src/lib.rs", "crates/b/src/lib.rs"),
+        )
+        .map_err(|error| error.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Deep,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 1, "{name}");
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let finding = &json["findings"][0];
+        assert_eq!(
+            finding["classification"],
+            if ordinary {
+                "exposed"
+            } else {
+                "no_static_path"
+            },
+            "{name}: {finding}"
+        );
+        assert_eq!(
+            finding["static_limit_kind"].as_str(),
+            limited.then_some("rust_macro_reach_unresolved"),
+            "{name}: {finding}"
+        );
         scratch.cleanup()?;
     }
     Ok(())

@@ -14,9 +14,10 @@ bytes, then compiles and runs both correct and wrong owner variants.
 
 ## Then
 
-One predicate finding remains `reachable_unrevealed`, with no oracle and an explicit macro
+One predicate finding remains `no_static_path`, with no oracle and an explicit macro
 limitation. Human guidance is static-limited and does not request a new test.
-The runtime harness collects 1 tests and returns success on both owner
+Reach, infection and propagation through the discarded arguments stay unresolved.
+The runtime harness collects 1 test and returns success on both owner
 variants. This is a deliberately non-discriminating negative, not an adequacy
 claim. The ordinary assertion positive fails against the wrong owner.
 

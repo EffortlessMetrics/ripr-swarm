@@ -1,5 +1,8 @@
 # Learnings
 
+This log captures repo knowledge that should survive individual PRs and chat
+sessions. It is intentionally short and actionable.
+
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
 
 The #4835 overlay indexed token-tree functions as tests and accepted
@@ -10,16 +13,14 @@ tests. Indexing-only goldens did not discriminate these failures.
 
 The corrective quarantine restores opaque parser authority. Property blocks
 retain only source-level macro/identifier mentions to name the existing macro-reach
-limitation; these are not function, test, call or oracle evidence. Property
-assertion names in ordinary tests receive the existing unresolved-assertion
-limitation. No broad macro resolver or role migration is introduced. The old
-blank overlay is removed, including its allocation and second parse on files
+limitation; these are not function, test, call or oracle evidence. Calls
+appearing only inside property assertions remain unresolved too; an independent
+ordinary call or helper path keeps its own evidence. Parser-failure fallback
+cannot synthesize tests from opaque token trees, and known unrelated packages
+cannot use a shared identifier to suppress a real gap. No broad macro resolver
+or role migration is introduced. The old blank overlay is removed, including its allocation and second parse on files
 with no property macros. Framework execution and static support remain separate
 claims; a syntax-only fixture cannot establish the former.
-
-
-This log captures repo knowledge that should survive individual PRs and chat
-sessions. It is intentionally short and actionable.
 
 ## 2026-10-02: Assertion diagnostics are not error observers (#4748)
 
