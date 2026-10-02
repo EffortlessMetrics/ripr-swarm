@@ -460,12 +460,17 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
                 "SETUP: neither actual A commit nor unchanged prior refusal reached; {detail}"
             ));
         }
-        let report = pull_document_json(backend, &uri, None).await?;
-        if report_kind_and_items(&report).1 != 0 {
-            return Err(format!(
-                "BEHAVIORAL: refused A preparation still serves stale diagnostics for B; {detail}"
-            ));
-        }
+    }
+    // Both a retained A commit and conservative refusal must withhold A's
+    // line-local evidence from B. Quarantine bookkeeping alone is not proof
+    // that the real pull route and committed push baseline honor it.
+    let stale_report = pull_document_json(backend, &uri, None).await?;
+    if report_kind_and_items(&stale_report).1 != 0
+        || backend.last_diagnostics_for_uri_for_test(&uri) != Some(Vec::new())
+    {
+        return Err(format!(
+            "BEHAVIORAL: completed A still serves stale diagnostics for B; {detail}"
+        ));
     }
     // A later real analysis of the persisted B input must recover currentness.
     // No test-owned commitment, forced snapshot or didSave digest supplies it.
