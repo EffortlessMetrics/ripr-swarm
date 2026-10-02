@@ -451,7 +451,7 @@ kind = "blind_journey_execute_evidence"
 owner = "test-infra"
 surface = "repo"
 classification = "metadata"
-reason = "Committed blind-journey executor decision receipt (RIPR-SPEC-0204, #4604); ratification stays scoped to the scripted fixture corpus, drifted schema versions or receipts without limitations fail closed, and synthetic success claims no installed usefulness or candidate qualification."
+reason = "Committed blind-journey executor decision receipt (RIPR-SPEC-0205, #4604); ratification stays scoped to the scripted fixture corpus, drifted schema versions or receipts without limitations fail closed, and synthetic success claims no installed usefulness or candidate qualification."
 covered_by = ["cargo xtask blind-journey-execute", "cargo xtask check-file-policy"]
 
 [[allow]]

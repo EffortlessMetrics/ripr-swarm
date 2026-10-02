@@ -10918,9 +10918,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0204"
+id = "RIPR-SPEC-0205"
 name = "Blind journey execution consumer"
-spec = "docs/specs/RIPR-SPEC-0204-blind-journey-execute-consumer.md"
+spec = "docs/specs/RIPR-SPEC-0205-blind-journey-execute-consumer.md"
 tests = [
   "xtask/src/blind_journey_execute.rs::tests::positive_journey_emits_a_stamped_validated_receipt",
   "xtask/src/blind_journey_execute.rs::tests::file_edit_without_output_bytes_refuses_before_any_receipt",

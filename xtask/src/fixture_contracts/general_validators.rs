@@ -1809,9 +1809,9 @@ pub(crate) fn validate_blind_journey_execute_fixture_corpus(
     let spec_path = root.join("SPEC.md");
     if spec_path.exists() {
         let body = read_text_lossy(&spec_path)?;
-        if !body.contains("RIPR-SPEC-0204") {
+        if !body.contains("RIPR-SPEC-0205") {
             violations.push(
-                "blind journey execute SPEC.md must name its RIPR-SPEC-0204 decision".to_string(),
+                "blind journey execute SPEC.md must name its RIPR-SPEC-0205 decision".to_string(),
             );
         }
         for heading in ["## Given", "## When", "## Then", "## Must Not"] {

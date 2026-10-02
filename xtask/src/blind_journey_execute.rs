@@ -1,4 +1,4 @@
-//! Blind-journey execution consumer (#4604, RIPR-SPEC-0204).
+//! Blind-journey execution consumer (#4604, RIPR-SPEC-0205).
 //!
 //! The named execution consumer of the RIPR-SPEC-0200 blind-journey contract
 //! (#4603): a deterministic, offline executor that turns one scripted journey
@@ -66,7 +66,7 @@ pub(crate) const BLIND_JOURNEY_EXECUTE_CLAIM_BOUNDARY: &str = "Static blind-jour
  consumer: executor success defines that one scripted journey deterministically produces one \
  stamped, validator-accepted blind-journey receipt; it claims no installed usefulness, no \
  candidate qualification, no blind acceptance and no release verdict.";
-pub(crate) const BLIND_JOURNEY_EXECUTE_DECISION: &str = "RIPR-SPEC-0204";
+pub(crate) const BLIND_JOURNEY_EXECUTE_DECISION: &str = "RIPR-SPEC-0205";
 
 /// One scripted observable action. The script records what was observed
 /// (subject and, where the per-kind presence rule requires it, the exact
@@ -168,7 +168,7 @@ pub(crate) struct BlindJourneyExecuteCorpusV1 {
     pub scenarios: Vec<BlindJourneyExecuteScenarioV1>,
 }
 
-/// The executor fixture scenarios RIPR-SPEC-0204 requires; the committed
+/// The executor fixture scenarios RIPR-SPEC-0205 requires; the committed
 /// corpus must cover all of them and the live executor decides each outcome
 /// independently of the committed expectation.
 pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 24] = [
