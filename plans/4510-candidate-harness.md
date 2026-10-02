@@ -378,3 +378,42 @@ overflow drops the reader pipe immediately but can surface after the existing
 child deadline/cleanup; it does not promise immediate cancellation. Independent
 full review, owning policy/hosted checks and actual installed-candidate proof
 remain separate publication/qualification gates.
+
+### 2026-10-02 publication review and noncompiling inventories
+
+The full carrier was reviewed through manifest/registry admission, actual Git
+source custody, Cargo archive attribution, isolated installation, installed
+execution, authentic fixture/corpus routing, report projections, shared process
+ownership, tests, traceability and release-control documentation. Native #4915
+remained draft at the preserved `b7b4b6d` head. Its two new source review findings
+are addressed by the source-owner repair above; the older report/retention/
+workspace-extraction findings remain addressed in that published history.
+
+Sixteen affected noncompiling inventories ran against the current candidate
+worktree using retained xtask controller `5b452d9f` (executable SHA256
+`a93b4212f811d82760d5c5e63bcd807836e12ca988511919555a9ac43b8176d0`).
+Static language, no-panic, allow-attributes, local context, covered-by, executable
+files, spec format/numbering, traceability, doc artifacts/index, release targets,
+network, output contracts and support tiers passed. Process policy initially
+found the new test-only cancellation `Command::new` without a count entry. The
+single owned test entry was added and the actual process inventory passed.
+This controller/data run does not claim an exact-current-source xtask build.
+The current file-policy gate invokes Cargo test enumeration, so it was not run
+during this noncompiling batch. Native pinned CI remains required.
+
+Current native main was read back as `66b67c62`; read-only merge-tree composition
+was conflict-free. Published `b7b4b6d` and integrated `b5b75658` remain ancestors;
+behind-only main movement does not justify rewriting or restacking this carrier.
+The source/code/tests are unchanged from the selected proof above; this final
+correction changes only the process-policy declaration and this record.
+
+Candidate-review disposition is `REVIEW_INCOMPLETE`: no remaining blocking
+source finding in the inspected scoped carrier, but current published-head CI,
+full native package/install/doctor/corpus qualification and the actual final
+accepted #1609 candidate remain unestablished. Archive/executable memory and
+uncapped legacy output are not covered by the source-specific resource budget.
+Owner acceptance envelopes bind independently reviewed packets; they do not
+authenticate GitHub decisions or re-prove human audit judgments. The direct
+adapter does not complete #1609, #4510's entire reusable packet contract, the
+#4604 consumer, or any real 35-scenario/human blind campaign. Publication keeps
+this same PR draft while those native review/proof dimensions are obtained.
