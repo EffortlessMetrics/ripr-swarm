@@ -10180,6 +10180,7 @@ fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -
             "- Recommended first command: {}",
             first_command_at(&physical, "")
         ))
+        || !stdout.contains("- The selected root does not exist; rerun with `--root <path>` naming an existing repository directory")
         || stderr.contains("working-tree change probe failed")
     {
         return Err(format!(

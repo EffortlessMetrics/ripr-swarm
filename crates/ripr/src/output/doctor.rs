@@ -35,9 +35,14 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
 /// recommended when the `tool_git` check actually passed (#4735). A root Git
 /// refuses gets the repository-free scan instead of a command that cannot run
 /// there (#4531); a missing root keeps a runnable recovery command naming its
-/// lossless root spelling (#5010), and is never probed for work-tree changes.
+/// lossless root spelling (#5010) plus the `--root` guidance (#4606 review),
+/// and is never probed for work-tree changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DoctorFirstCommand {
+    /// `root_directory` failed while git runs: render the runnable recovery
+    /// command with its lossless root spelling, plus the rerun-with-`--root`
+    /// guidance, and never probe the work tree (#4531, #5010).
+    MissingRoot,
     /// `git_repository` failed while git itself runs: the repository-free scan
     /// is the only route that can run here.
     OutsideGit,
@@ -82,8 +87,14 @@ impl DoctorFirstCommand {
         };
         if !passed("root_directory") {
             // #5010 renders the lossless root spelling for recovery, so the
-            // route stays runnable; only the work-tree probe is withheld.
-            Self::resolve(git_tool_can_run(report), || false)
+            // route stays runnable; only the work-tree probe is withheld
+            // (#4531). Gitless hosts keep the `--diff` route, which does not
+            // need the root to exist.
+            if git_tool_can_run(report) {
+                Self::MissingRoot
+            } else {
+                Self::SavedDiff
+            }
         } else if !git_tool_can_run(report) {
             Self::SavedDiff
         } else if !passed("git_repository") {
@@ -101,7 +112,7 @@ impl DoctorFirstCommand {
             Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
             Self::Worktree => Some(Self::WORKTREE_LINE),
             Self::DefaultCheck => Some(Self::DEFAULT_LINE),
-            Self::OutsideGit => None,
+            Self::MissingRoot | Self::OutsideGit => None,
         }
     }
 
@@ -134,6 +145,20 @@ impl DoctorFirstCommand {
     /// variant renders its own line.
     pub(crate) fn recommendation_lines_for(self, root: &Path) -> Vec<String> {
         match self {
+            // The recovery command names the lossless spelling of the missing
+            // root exactly as the runnable variants do (#5010); the guidance
+            // line says what to replace it with, since the path it names does
+            // not exist yet (#4606 review).
+            Self::MissingRoot => {
+                let mut lines =
+                    Self::recommendation_lines(Self::DefaultCheck.command_line_for_root(root));
+                lines.push(
+                    "- The selected root does not exist; rerun with `--root <path>` naming an \
+                     existing repository directory"
+                        .to_string(),
+                );
+                lines
+            }
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
                 // The repository-free scan is a runnable command, so its root
@@ -2787,6 +2812,16 @@ mod tests {
                 ],
                 "the repository-free route quotes and translates like the runnable ones"
             );
+            assert_eq!(
+                DoctorFirstCommand::MissingRoot
+                    .recommendation_lines_for(Path::new("/work/missing")),
+                [
+                    "- Recommended first command: ripr check --root /work/missing",
+                    "- The selected root does not exist; rerun with `--root <path>` naming an \
+                     existing repository directory",
+                ],
+                "the missing-root recovery names the runnable command and the --root guidance"
+            );
         }
         // An unavailable relative root is bound to the producing directory,
         // but `..` must retain filesystem traversal rather than lexical cleanup.
@@ -2873,8 +2908,8 @@ mod tests {
                 probed = true;
                 true
             }),
-            DoctorFirstCommand::DefaultCheck,
-            "a missing root renders its lossless spelling without probing"
+            DoctorFirstCommand::MissingRoot,
+            "a missing root renders its lossless spelling plus --root guidance, without probing"
         );
         assert!(!probed, "a missing root must not probe the work tree");
 

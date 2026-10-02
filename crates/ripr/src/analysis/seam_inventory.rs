@@ -1731,12 +1731,20 @@ fn seam_limit_from_env(
 }
 
 fn parse_seam_limit(env_name: &str, value: &str) -> Result<Option<usize>, String> {
-    match value.trim().parse::<usize>() {
-        Ok(0) => Ok(None),
+    let trimmed = value.trim();
+    let invalid = |value: &str| {
+        format!(
+            "{env_name} `{value}` is not a seam count: set a positive integer, or 0 to remove \
+             the cap"
+        )
+    };
+    match trimmed.parse::<usize>() {
+        // Only the exact spelling `0` is the opt-out: `+0` and `00` also parse
+        // as zero, but the documented opt-out form is `0` (#4606 review).
+        Ok(0) if trimmed == "0" => Ok(None),
+        Ok(0) => Err(invalid(value)),
         Ok(limit) => Ok(Some(limit)),
-        Err(_) => Err(format!(
-            "{env_name} `{value}` is not a seam count: set a positive integer, or 0 to remove the cap"
-        )),
+        Err(_) => Err(invalid(value)),
     }
 }
 
@@ -3141,8 +3149,9 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     #[test]
     fn seam_limit_parser_refuses_values_that_are_not_a_count() -> Result<(), String> {
         // #4529: before, every unparseable value fell into the `0` opt-out
-        // and silently removed the memory guard.
-        for value in ["-1", "not-a-number", "1k", "", "1.5"] {
+        // and silently removed the memory guard. `+0` and `00` parse as zero
+        // too, but only the exact spelling `0` is the opt-out (#4606 review).
+        for value in ["-1", "not-a-number", "1k", "", "1.5", "+0", "00"] {
             let Err(error) = parse_seam_limit(REPO_EXPOSURE_SEAM_LIMIT_ENV, value) else {
                 return Err(format!(
                     "`{value}` must be refused, not read as a cap or the opt-out"

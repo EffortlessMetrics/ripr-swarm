@@ -299,7 +299,8 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
             // repository's own default (`analysis::diff::load::resolve_default_base`).
         }
         output::doctor::DoctorFirstCommand::SavedDiff => {}
-        output::doctor::DoctorFirstCommand::OutsideGit => {}
+        output::doctor::DoctorFirstCommand::MissingRoot
+        | output::doctor::DoctorFirstCommand::OutsideGit => {}
     }
     // A detected preview language that is not enabled is skipped by `ripr
     // check`, so in a TypeScript-only repository the recommended command is a
