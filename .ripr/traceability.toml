@@ -259,8 +259,8 @@ tests = [
   "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_exact_scope_keeps_stronger_exclusions_and_repo_parity",
   "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_root_vendor_marker_retains_precedence",
   "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_root_vendor_marker_in_diff_retains_precedence",
-  "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_diff_recovery_indexes_effective_test_without_renaming",
-  "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_recovery_serializes_bounded_ascii_and_unicode_paths",
+  "crates/ripr/src/app/tests/handwritten_recovery.rs::handwritten_files_diff_recovery_indexes_effective_test_without_renaming",
+  "crates/ripr/src/app/tests/handwritten_recovery.rs::handwritten_files_recovery_serializes_bounded_ascii_and_unicode_paths",
   "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_corpus_identity_tracks_included_bytes_and_restores_exclusion",
   "crates/ripr/src/config/tests.rs::rust_handwritten_files_accepts_scoped_recovery_configuration",
   "crates/ripr/src/config/tests.rs::handwritten_files_rejects_ambiguous_or_escaping_paths",
@@ -2257,8 +2257,8 @@ id = "RIPR-SPEC-0026"
 name = "Language adapter contract"
 spec = "docs/specs/RIPR-SPEC-0026-language-adapter-contract.md"
 tests = [
-  "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_diff_recovery_indexes_effective_test_without_renaming",
-  "crates/ripr/src/analysis/language/rust/handwritten_files_tests.rs::handwritten_files_recovery_serializes_bounded_ascii_and_unicode_paths",
+  "crates/ripr/src/app/tests/handwritten_recovery.rs::handwritten_files_diff_recovery_indexes_effective_test_without_renaming",
+  "crates/ripr/src/app/tests/handwritten_recovery.rs::handwritten_files_recovery_serializes_bounded_ascii_and_unicode_paths",
   "crates/ripr/src/config/tests.rs::rust_handwritten_files_accepts_scoped_recovery_configuration",
   "crates/ripr/src/config/tests.rs::handwritten_files_rejects_ambiguous_or_escaping_paths",
   "crates/ripr/src/domain/language.rs",
