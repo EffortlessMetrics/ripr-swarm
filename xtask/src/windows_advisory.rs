@@ -1761,6 +1761,48 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn bounded_failure_lists_keep_distinct_full_keys_and_each_reason() -> Result<(), String> {
+        let mut log = format!("{XTASK_HEADER}running 26 tests\n");
+        for index in 0..26 {
+            log.push_str(&format!(
+                "test {}_{index:02} ... FAILED\n",
+                "界".repeat(300)
+            ));
+        }
+        log.push_str("failures:\n");
+        for index in 0..26 {
+            log.push_str(&format!(
+                "---- {}_{index:02} stdout ----\nError: reason_{index:02}\n",
+                "界".repeat(300)
+            ));
+        }
+        log.push_str("failures:\ntest result: FAILED. 0 passed; 26 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n");
+        let parsed = load_synthetic(&log)?;
+        assert_eq!(parsed.state, RunState::NonZeroWithObservedTestFailures);
+        assert_eq!(parsed.failed.len(), 26);
+        assert_eq!(parsed.reasons.len(), 26);
+        for index in 0..26 {
+            let key = TestIdentity {
+                target: target("src/main.rs", "xtask-1111111111111111"),
+                name: format!("{}_{index:02}", "界".repeat(300)),
+            };
+            assert!(parsed.failed.contains(&key));
+            assert_eq!(
+                parsed.reasons.get(&key),
+                Some(&format!("Error: reason_{index:02}"))
+            );
+        }
+        let rendered = render(&parsed, &parsed);
+        assert!(rendered.contains("**repeated_failure (26)**"));
+        assert!(rendered.contains("6 additional repeated_failure subjects omitted (26 total)."));
+        assert!(rendered.contains("6 additional failed subjects omitted (26 total)."));
+        assert_eq!(rendered.matches("- `").count(), 40);
+        assert!(rendered.contains("Run 1: Error: reason_19\n  - Run 2: Error: reason_19"));
+        assert!(!rendered.contains("reason_20"));
+        Ok(())
+    }
+
     /// Real failure-section shapes from a Windows lane run: a returned
     /// `Error:`, a panic with its message on the next line, and a block whose
     /// only content is printed output.

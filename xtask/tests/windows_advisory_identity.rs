@@ -964,3 +964,58 @@ fn provenance_report_bounds_admitted_unicode_subjects_on_every_surface() -> Resu
     assert!(report.len() < 20_000);
     Ok(())
 }
+
+#[test]
+fn provenance_report_caps_distinct_failure_subjects_without_merging_excerpt_collisions()
+-> Result<(), String> {
+    for label in ["repeated_failure", "unstable", "masked_unknown"] {
+        let mut first = controls(None);
+        let mut second = controls(None);
+        for index in 0..26 {
+            let source = format!("tests/{}_{index:02}.rs", "界".repeat(300));
+            let reason = format!("reason_{index:02}");
+            first.push_str(&target(&source, "long_names", &[(NAME, "FAILED", &reason)]));
+            if label != "masked_unknown" {
+                second.push_str(&target(
+                    &source,
+                    "long_names",
+                    &[(
+                        NAME,
+                        if label == "unstable" { "ok" } else { "FAILED" },
+                        &reason,
+                    )],
+                ));
+            }
+        }
+        let output = invoke(&first, &second)?;
+        assert_eq!(output.status.code(), Some(0));
+        let report = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        assert!(report.contains(&format!("**{label} (26)**")));
+        assert!(report.contains(&format!(
+            "6 additional {label} subjects omitted (26 total)."
+        )));
+        assert!(report.contains("6 additional failed subjects omitted (26 total)."));
+        let excerpt = format!("tests/{}", "界".repeat(300))
+            .chars()
+            .take(240)
+            .collect::<String>()
+            + "… [truncated]";
+        assert_eq!(
+            report.matches(&format!("- `{excerpt}`\n")).count(),
+            40,
+            "each section must keep 20 rows even when their excerpts coincide"
+        );
+        for index in 0..20 {
+            assert!(report.contains(&format!("Run 1: Error: reason_{index:02}\n")));
+            if label == "repeated_failure" {
+                assert!(report.contains(&format!("Run 2: Error: reason_{index:02}\n")));
+            }
+        }
+        assert!(!report.contains("reason_20"));
+        assert!(
+            report.contains("Run 1: observed 15 pass, 26 fail across 30 reported result line(s)")
+        );
+        assert!(!report.contains("incomplete_evidence"));
+    }
+    Ok(())
+}
