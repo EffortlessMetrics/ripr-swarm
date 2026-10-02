@@ -78,7 +78,7 @@ pub(crate) fn bounded_read_limit_limitations(
             .with_affected_items(
                 u64::try_from(total)
                     .map_err(|err| format!("read-limit refusal count overflows u64: {err}"))?,
-            )
+            )?
             .with_detail(format!(
                 "{adapter}_read_limit_sampled: {total} workspace file(s) refused by read caps; \
                  the first {MAX_READ_LIMIT_SAMPLE_PATHS} sample paths (sorted) are listed above; \
