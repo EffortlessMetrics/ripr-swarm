@@ -100,8 +100,7 @@ fn cache_help_is_positional_free_and_prints_the_subcommand_help() -> Result<(), 
             clear_help.status
         ));
     }
-    if !(family_help.status.success()
-        && family_help_stdout.contains("ripr cache status [--json]"))
+    if !(family_help.status.success() && family_help_stdout.contains("ripr cache status [--json]"))
     {
         return Err(format!(
             "cache --help status must print the family usage and exit 0\nstatus: {}\nstdout:\n{family_help_stdout}",
