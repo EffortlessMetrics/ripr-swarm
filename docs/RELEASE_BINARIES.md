@@ -57,7 +57,9 @@ compatibility evidence is copied from `policy/distribution.toml`; it remains
 
 `release-server-archive` archives only this staged directory. The qualification
 workflow extracts the resulting archive and runs the same Rust verifier over
-the extracted bytes before recording `archive_readback_verified: true`. It
+the extracted bytes before recording `archive_readback_verified: true` in that
+target's build identity; the aggregate receipt repeats the field only after an
+all-targets gate asserts every per-target readback flag. It
 retains the exact JSON/Markdown identities with each target's build identity,
 then requires five selected, five executed, zero failed, and zero not-run
 targets before writing the aggregate receipt. This proves payload and archive

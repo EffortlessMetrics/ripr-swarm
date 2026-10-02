@@ -370,6 +370,7 @@ jobs:
             version = $version
             archive_file = [IO.Path]::GetFileName($archivePath)
             archive_sha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+            archive_readback_verified = $true
             cargo_lock_sha256 = (Get-FileHash -Algorithm SHA256 Cargo.lock).Hash.ToLowerInvariant()
             qualification_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/server-archive-qualification.yml).Hash.ToLowerInvariant()
             rehearsal_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/release-server-binaries.yml).Hash.ToLowerInvariant()
@@ -531,6 +532,7 @@ jobs:
                (.rustc_verbose_version | length > 0) and
                (.cargo_verbose_version | length > 0) and
                (.archive_sha256 == $manifest[0].assets[.target].sha256) and
+               (.archive_readback_verified == true) and
                (.payload_identity_sha256 == $payload.identity_sha256) and
                (.producer_build_sha256 == $producer.producer_build_sha256) and
                (.payload_aggregate_sha256 == $payload.payload_aggregate_sha256) and
@@ -565,7 +567,7 @@ jobs:
             --slurpfile payload_identities payload-identities.json \
             --slurpfile producer_builds producer-builds.json \
             --argjson targets '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]' \
-            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \
+            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, archive_readback_verified: true, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \
             > dist/server-archive-qualification-receipt.json
           cp payload-identities.json dist/final-native-payload-identities.json
           cp producer-builds.json dist/final-native-producer-builds.json
@@ -613,11 +615,16 @@ jobs:
     steps:
       - name: Fetch receipt instrument without credentials
         shell: bash
+        env:
+          RECEIPT_INSTRUMENT_REPOSITORY: ${{ job.workflow_repository }}
+          RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
+          test "${RECEIPT_INSTRUMENT_REPOSITORY}" = "EffortlessMetrics/ripr-swarm"
+          [[ "${RECEIPT_INSTRUMENT_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
           git init "${GITHUB_WORKSPACE}"
           git -C "${GITHUB_WORKSPACE}" remote add origin "https://github.com/EffortlessMetrics/ripr-swarm.git"
-          git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${RECEIPT_INSTRUMENT_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # v1
@@ -640,7 +647,7 @@ jobs:
           done
           jq -e '.jobs | type == "array"' "${response}" >/dev/null
           for target in x86_64-pc-windows-msvc x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin; do
-            conclusion="$(jq -r --arg name "build and qualify ${target}" '[.jobs[] | select(.name == $name)] | if length == 1 then .[0].conclusion // "unknown" elif length == 0 then "missing" else "duplicate" end' "${response}")"
+            conclusion="$(jq -r --arg suffix "build and qualify ${target}" '[.jobs[] | select(.name == $suffix or (.name | endswith(" / " + $suffix)))] | if length == 1 then .[0].conclusion // "unknown" elif length == 0 then "missing" else "duplicate" end' "${response}")"
             case "${conclusion}" in
               success) outcome=success ;;
               failure|timed_out|action_required|startup_failure|stale) outcome=failure ;;

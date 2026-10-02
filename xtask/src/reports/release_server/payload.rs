@@ -741,7 +741,7 @@ fn aggregate_payload_digest(files: &[PayloadFileIdentity]) -> Result<String, Str
 
 fn hash_field(hasher: &mut Sha256, value: &[u8]) -> Result<(), String> {
     let length = u64::try_from(value.len())
-        .map_err(|_| "payload digest field length exceeds u64".to_string())?;
+        .map_err(|_overflow| "payload digest field length exceeds u64".to_string())?;
     hasher.update(length.to_le_bytes());
     hasher.update(value);
     Ok(())

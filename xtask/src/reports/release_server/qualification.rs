@@ -173,7 +173,10 @@ fn collect_json_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(),
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "terminal receipt classification takes the full fail-closed receipt input set in one call"
+)]
 fn classify_terminal_receipt(
     expected_targets: &[String],
     rows: Vec<TargetExecutionRow>,
