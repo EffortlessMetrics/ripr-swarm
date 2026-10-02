@@ -3,7 +3,7 @@ id = "ripr.slice.rust-judged-panel-feedback-ledger.v1"
 generation = 1
 
 source_issue = "issue:4796"
-design_reference = "RIPR-SPEC-0180"
+design_reference = "RIPR-SPEC-0199"
 change_class = "behavior_change"
 
 claim_boundary = """
@@ -45,7 +45,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0180"
+requirement_id = "RIPR-SPEC-0199"
 requirement_generation = 1
 
 [implementation_claim]

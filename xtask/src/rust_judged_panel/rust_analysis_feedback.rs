@@ -1,5 +1,5 @@
 //! Governed analyzer-feedback ledger for independently judged Rust cases
-//! (#4796 / RIPR-SPEC-0180).
+//! (#4796 / RIPR-SPEC-0199).
 //!
 //! This adapter turns the frozen #3806 judgment packet into one checked
 //! feedback row per terminal case. It does not repair the analyzer, rewrite

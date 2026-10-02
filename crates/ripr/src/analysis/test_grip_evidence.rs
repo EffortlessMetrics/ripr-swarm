@@ -11,6 +11,7 @@
 //! confidence, relation reason, oracle strength, activation overlap,
 //! then stable file/name/line tie-breakers.
 
+mod owner_result_binding;
 mod related_tests;
 
 pub(crate) use related_tests::CompactGripContext;
@@ -21,7 +22,9 @@ use related_tests::{
     test_assertion_mentions_any_target_token,
 };
 
+use super::classify::{assertion_observes_direct_collection, direct_collection_mutation_receiver};
 use super::facts::CallFact;
+use super::new_test_target::{self, NewTestTargetAdmission};
 use super::rust_index::{
     self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
     extract_identifier_tokens,
@@ -52,6 +55,12 @@ pub(crate) struct TestGripEvidence {
     pub(crate) discriminate: StageEvidence,
     pub(crate) observed_values: Vec<ValueFact>,
     pub(crate) missing_discriminators: Vec<MissingDiscriminatorFact>,
+    /// Producer-owned Integration or InlineUnit proposal, or the typed
+    /// blocker that kept the target `Missing`. Compact evidence leaves this
+    /// empty so the compact classified-seam cache does not need a generation
+    /// bump.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) new_test_target: Option<NewTestTargetAdmission>,
 }
 
 const COMPACT_RELATED_TEST_LIMIT: usize = 12;
@@ -137,12 +146,24 @@ impl TestTargetEvidence {
         &self.symbol_id
     }
 
-    #[cfg(test)]
+    /// Projection accessors for the RepairCard builder (#4663): the card
+    /// copies these facts verbatim and never re-derives them.
+    pub(crate) fn relation(&self) -> RelationReason {
+        self.relation
+    }
+
+    pub(crate) fn test_kind(&self) -> TestKind {
+        self.test_kind
+    }
+
+    pub(crate) fn workspace_identity(&self) -> &str {
+        &self.workspace_identity
+    }
+
     pub(crate) fn file(&self) -> &Path {
         &self.file
     }
 
-    #[cfg(test)]
     pub(crate) fn line(&self) -> usize {
         self.line
     }
@@ -167,6 +188,10 @@ impl TestTargetEvidence {
             workspace_identity: "fixture".to_string(),
             currentness: TestTargetCurrentness::Current,
         }
+    }
+
+    pub(crate) fn provenance(&self) -> TestTargetProvenance {
+        self.provenance
     }
 }
 
@@ -209,6 +234,14 @@ impl<'index> EvidencePass<'index> {
             context_started.elapsed(),
         );
         Self { context }
+    }
+
+    /// Drop memoized owner/AST detail at a window boundary. Immutable test
+    /// indexes and file-bounded scalar/line facts stay reusable.
+    pub(crate) fn clear_window_memos(&self) {
+        if let Some(context) = &self.context {
+            context.clear_window_memos();
+        }
     }
 
     /// Evidence for `seams`, sorted by `seam_id`; empty when the context
@@ -262,7 +295,7 @@ fn evidence_for_seam_with_context(
 
     let reach = reach_evidence(seam, &related);
     let (activate, observed_values, missing_discriminators) =
-        activate_evidence(seam, &related_indexed, context.index, owner_fn);
+        activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related);
@@ -271,6 +304,7 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context))
         .collect();
+    let new_test_target = new_test_target_admission(seam, context.index);
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -282,6 +316,18 @@ fn evidence_for_seam_with_context(
         discriminate,
         observed_values,
         missing_discriminators,
+        new_test_target,
+    }
+}
+
+fn new_test_target_admission(seam: &RepoSeam, index: &RustIndex) -> Option<NewTestTargetAdmission> {
+    match seam.kind() {
+        SeamKind::PredicateBoundary
+        | SeamKind::ErrorVariant
+        | SeamKind::ReturnValue
+        | SeamKind::FieldConstruction
+        | SeamKind::MatchArm => Some(new_test_target::admit_new_test_target(seam, index)),
+        SeamKind::SideEffect | SeamKind::CallPresence => None,
     }
 }
 
@@ -312,7 +358,7 @@ pub(crate) fn compact_evidence_for_seam(
 
     let reach = reach_evidence(seam, &related);
     let (activate, missing_discriminators) =
-        compact_activate_evidence(seam, &related_indexed, context.index, owner_fn);
+        compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related);
@@ -327,6 +373,7 @@ pub(crate) fn compact_evidence_for_seam(
         discriminate,
         observed_values: Vec::new(),
         missing_discriminators,
+        new_test_target: None,
     }
 }
 
@@ -362,9 +409,10 @@ fn reach_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidence {
 fn activate_evidence(
     seam: &RepoSeam,
     related: &[&CompactTest<'_>],
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
 ) -> (StageEvidence, Vec<ValueFact>, Vec<MissingDiscriminatorFact>) {
+    let index = context.index;
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let mut observed: Vec<ValueFact> = Vec::new();
     let observed_argument_selection =
@@ -435,7 +483,7 @@ fn activate_evidence(
                     && observed.is_empty()
                     && !boundary_equality_observed)
             });
-    let missing = missing_discriminators_for(
+    let mut missing = missing_discriminators_for(
         seam,
         &observed,
         boundary_activation_operands_unresolved,
@@ -566,6 +614,13 @@ fn activate_evidence(
             )
         },
     );
+    missing.extend(owner_result_binding::missing_field_value_facts(
+        seam,
+        related,
+        context,
+        owner_fn,
+        &stage.state,
+    ));
     (stage, observed, missing)
 }
 
@@ -1204,11 +1259,11 @@ fn resolved_argument_values(
 fn compact_activate_evidence(
     seam: &RepoSeam,
     related: &[&CompactTest<'_>],
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
 ) -> (StageEvidence, Vec<MissingDiscriminatorFact>) {
-    if seam.kind() == SeamKind::PredicateBoundary {
-        let (stage, _observed, missing) = activate_evidence(seam, related, index, owner_fn);
+    if seam.kind() == SeamKind::PredicateBoundary || seam.kind() == SeamKind::FieldConstruction {
+        let (stage, _observed, missing) = activate_evidence(seam, related, context, owner_fn);
         return (stage, missing);
     }
 
@@ -1603,7 +1658,7 @@ fn propagate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidenc
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
     let any_matching_sink = related
         .iter()
-        .any(|t| oracles_match_sink(&t.assertions, seam.expected_sink()));
+        .any(|t| oracles_match_sink(seam, &t.assertions));
     let state = match (any_oracle, any_matching_sink) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
@@ -1617,8 +1672,8 @@ fn propagate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidenc
     StageEvidence::new(state, Confidence::Low, summary)
 }
 
-fn oracles_match_sink(oracles: &[OracleFact], sink: ExpectedSink) -> bool {
-    oracles.iter().any(|oracle| match sink {
+fn oracles_match_sink(seam: &RepoSeam, oracles: &[OracleFact]) -> bool {
+    oracles.iter().any(|oracle| match seam.expected_sink() {
         ExpectedSink::ReturnValue | ExpectedSink::OutputField => matches!(
             oracle.kind,
             OracleKind::ExactValue
@@ -1630,7 +1685,13 @@ fn oracles_match_sink(oracles: &[OracleFact], sink: ExpectedSink) -> bool {
             oracle.kind,
             OracleKind::ExactErrorVariant | OracleKind::BroadError
         ),
-        ExpectedSink::SideEffect => matches!(oracle.kind, OracleKind::MockExpectation),
+        ExpectedSink::SideEffect => {
+            if direct_collection_mutation_receiver(seam.expression()).is_some() {
+                oracle_discriminates_seam(seam, oracle)
+            } else {
+                matches!(oracle.kind, OracleKind::MockExpectation)
+            }
+        }
     })
 }
 
@@ -1728,6 +1789,10 @@ fn discriminate_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvid
 /// This is the over-credit guard: a test that pins `MyError::Negative` does
 /// NOT discriminate a `MyError::TooLarge` seam.
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
+    if let Some(receiver) = direct_collection_mutation_receiver(seam.expression()) {
+        return collection_state_write_oracle_kind(&oracle.kind)
+            && assertion_observes_direct_collection(&oracle.text, receiver);
+    }
     if !oracle_kind_matches_seam(seam, &oracle.kind) {
         return false;
     }
@@ -1751,6 +1816,16 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
     }
     // ErrorVariant seam: require variant-level structural match.
     error_variant_oracle_matches_seam_variant(seam, &oracle.text)
+}
+
+fn collection_state_write_oracle_kind(kind: &OracleKind) -> bool {
+    matches!(
+        kind,
+        OracleKind::ExactValue
+            | OracleKind::WholeObjectEquality
+            | OracleKind::Snapshot
+            | OracleKind::RelationalCheck
+    )
 }
 
 /// The scrutinee callee embedded in a synthesized guarded-Result-match

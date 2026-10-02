@@ -4,13 +4,13 @@
       "base_revision": null,
       "command": "ripr check --format repo-exposure-json",
       "format": "repo-exposure-json",
-      "input_identity": "input:v4:fnv1a64:0c7604c5d914d175",
+      "input_identity": "input:v4:fnv1a64:f6ea76b8a783ac5f",
       "mode": "draft",
       "profile": "draft",
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:7794d054af09f0cc3942e5e909ddc06377781ee6ffe429dfd4d83a778f08b80c",
+    "content_sha256": "sha256:166ff53d3248bab277f82d129a86a9281916cfafd57bfbb399490a1c24747b98",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -21,7 +21,7 @@
       "root": "."
     },
     "schema_version": "1",
-    "snapshot_identity": "snapshot:input:v4:fnv1a64:0c7604c5d914d175;revision:8a00693e680c8ad5172d5191bbb08484cbd5e300"
+    "snapshot_identity": "snapshot:input:v4:fnv1a64:f6ea76b8a783ac5f;revision:8a00693e680c8ad5172d5191bbb08484cbd5e300"
   },
   "metrics": {
     "activation_unknown": 0,
@@ -394,5 +394,18 @@
       "related_tests_total": 2,
       "seam_id": "67fc764ba37d77bd"
     }
-  ]
+  ],
+  "source_subject": {
+    "digest_algorithm": "sha256",
+    "files": [
+      {
+        "digest": "sha256:0656ec79def352524409bf600a1a57abc4a7a096c73059ee4de3c00376cd3392",
+        "path": "src/lib.rs"
+      },
+      {
+        "digest": "sha256:2409d6fc3d51d11f0b17d5dcd51b10e3217f9d8b6b5652987b7c043d16833b39",
+        "path": "tests/pricing.rs"
+      }
+    ]
+  }
 }
