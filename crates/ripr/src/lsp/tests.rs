@@ -4645,6 +4645,109 @@ fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace() -> R
     Ok(())
 }
 
+/// #4668 review follow-up: a finding that names the seam's canonical gap
+/// binds the witness through the same owner-match authority the CLI card
+/// uses, so the editor wire card carries the finding identity, the
+/// witness-derived instruction, and the `ripr explain` detail route — and
+/// the next-action gate stays coupled to the shared route-exposition flip
+/// instead of the editor re-deciding it.
+#[test]
+fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), String> {
+    let root = unique_lsp_test_root("repair-card-witness")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let seam = sample_classified_seam();
+    let gap = crate::analysis::canonical_gap::canonical_gap_identity(&seam)
+        .ok_or_else(|| "sample seam must own a canonical gap identity".to_string())?;
+    let diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut finding = sample_finding();
+    finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+        id: gap.id.clone(),
+        language: "rust".to_string(),
+        file: "src/pricing.rs".to_string(),
+        owner: seam.seam.owner().to_string(),
+        behavior_kind: seam.seam.kind().as_str().to_string(),
+        probe_kind: "predicate".to_string(),
+        normalized_discriminator: gap.missing_discriminator.clone(),
+    });
+    finding.related_tests = vec![crate::domain::RelatedTest {
+        name: "below_threshold_has_no_discount".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        oracle: Some("assert_eq!(discounted_total(100, 100), 90)".to_string()),
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
+        relation_confidence: Some(crate::domain::RelationConfidence::High),
+    }];
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        vec![finding.clone()],
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    let Some((_, _, arguments)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Agent handoff: copy repair card")
+    else {
+        return Err("repair card action missing for a witness-bearing seam".to_string());
+    };
+    let Some(target) = arguments.first() else {
+        return Err("repair card action carries no target".to_string());
+    };
+    let Some(packet) = target["packet"].as_str() else {
+        return Err("repair card target carries no wire card".to_string());
+    };
+    let wire: crate::domain::RepairCardV1 = serde_json::from_str(packet)
+        .map_err(|error| format!("repair card wire shape drifted: {error}"))?;
+    if wire.subject.finding_id.as_deref() != Some(finding.id.as_str()) {
+        return Err("the witness-bound card must name the finding identity".to_string());
+    }
+    if !wire.instruction.has_fix_site {
+        return Err("the witness fix site must bind on the editor card".to_string());
+    }
+    let explain_route = format!("ripr explain {}", finding.id);
+    let fix_instruction_current = wire
+        .detail_references
+        .iter()
+        .any(|reference| {
+            reference.family == crate::domain::RepairCardDetailFamily::FixInstruction
+                && reference.state == crate::domain::RepairCardDetailState::Current
+                && reference.route.as_deref() == Some(explain_route.as_str())
+        });
+    if !fix_instruction_current {
+        return Err("the witness detail family must ride as a current explain route".to_string());
+    }
+    // The next-action gate is the shared flip's job, not the editor's: its
+    // presence must equal the route-exposition decision over the typed card.
+    let route_open = crate::domain::repair_card_route_exposable(
+        wire.instruction.state,
+        wire.readiness.repair_ready,
+    );
+    if wire.next_action.is_some() != route_open {
+        return Err("the editor card must not re-decide the next-action gate".to_string());
+    }
+    Ok(())
+}
+
 /// #4668: a seam diagnostic the current snapshot no longer carries suppresses
 /// the repair card action with the rest of the seam surface — a stale card
 /// route is never offered as current.

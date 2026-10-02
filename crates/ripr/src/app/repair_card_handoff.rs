@@ -377,6 +377,11 @@ fn witness_for_seam(
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
 ) -> Result<Option<(String, DiagnosticWitness)>, String> {
+    // The expensive workspace check only feeds the canonical-gap match; with
+    // no gap id the match cannot bind, so skip the analysis entirely.
+    if canonical_gap_id.is_none() {
+        return Ok(None);
+    }
     let output = check_workspace_with_config(
         CheckInput {
             root: root.to_path_buf(),

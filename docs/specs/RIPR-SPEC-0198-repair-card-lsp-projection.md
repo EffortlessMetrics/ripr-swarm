@@ -113,12 +113,42 @@ producer.
   omission outside a git workspace, the assembled wire card inside a real
   repository (schema version, seam subject, live-head binding matching
   `git rev-parse HEAD`, nine detail references, unavailable instruction with
-  `next_action: null`, and the ratified item/byte bounds), stale-diagnostic
+  `next_action: null`, and the ratified item/byte bounds), the
+  witness-bound card (finding identity, fix-site instruction, `ripr explain`
+  detail route, and the shared next-action gate), stale-diagnostic
   suppression, and the bounded hover section in both repository and
   non-repository workspaces.
 - `npm --prefix editors/vscode test` covers the `repair_card` direct-copy
   label: the card copies from the target without an LSP fallback and names
   the repair card in the confirmation.
+
+## Known Limitations / Residuals
+
+- **Live-head binding window.** The card's semantic identity binds the head
+  resolved at request time, but the completed snapshot does not retain the
+  analyzed HEAD as producer-owned provenance (its input identity records the
+  resolved *base*, not the analyzed head). Between a HEAD move and the
+  completed refresh (`.git/HEAD` is already a watched diagnostics input,
+  #4896) the card can therefore bind new-head identity to snapshot evidence.
+  Closing this exactly needs analyzed-head provenance plumbed through the
+  refresh pipeline — a new snapshot field and a suppression comparison —
+  recorded here as residual for that authority change, not papered over by a
+  renderer-side guess.
+- **Witness scope: editor vs CLI input sets.** Both surfaces bind the witness
+  through the same owner-discriminated `witness_from_findings` matcher, but
+  the input sets differ by design: the LSP snapshot's findings come from the
+  worktree-aware saved-workspace check, while the CLI card gathers its
+  witness from the committed-diff check. A worktree-only finding that names
+  the seam can therefore produce an editor witness the CLI card would not.
+  The matcher is one authority; aligning the input sets (or recording the
+  scope on the wire card) is residual work owned by the witness producer.
+- **Request-path assembly cost.** Card assembly resolves the repository head
+  and the attempt inventory synchronously. The code-action path already
+  clones the snapshot `Arc` and releases the state lock before building
+  actions; the hover path now does the same (the lock is not held across the
+  Git/attempt I/O). Moving assembly onto a blocking task or caching it keyed
+  by snapshot + head + attempt state remains available headroom, not a
+  correctness gap.
 
 ## Non-Goals
 
@@ -164,11 +194,13 @@ producer.
   rendering contract over an assembled card fixture.
 - `crates/ripr/src/lsp/tests.rs`
   `seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace`,
+  `seam_repair_card_binds_a_finding_witness_in_a_git_workspace`,
   `repair_card_action_fails_closed_outside_a_git_workspace`,
   `repair_card_action_suppressed_for_stale_seam_diagnostic`,
   `seam_hover_projects_bounded_repair_card_section_in_a_git_workspace`, and
   `seam_hover_omits_repair_card_section_outside_a_git_workspace` cover the
-  projection, its fail-closed degradation, and its stale suppression.
+  projection, its fail-closed degradation, its stale suppression, and the
+  witness-bound card with the shared next-action gate.
 - `editors/vscode/test/suite/extension.test.ts`
   `copyContext copies repair cards without LSP fallback for active workspace
   file` covers the direct-copy label.
