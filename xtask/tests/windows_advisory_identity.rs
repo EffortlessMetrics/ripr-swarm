@@ -653,10 +653,11 @@ fn temp_root_refuses_existing_directories_files_and_failed_creation()
     fs::create_dir(&directory)?;
     let sentinel = directory.join("sentinel");
     fs::write(&sentinel, "belongs to the previous owner")?;
-    let collision = TempRoot::create(directory.clone());
-    let refused = collision.is_err();
-    drop(collision);
-    assert!(refused, "an existing directory must never grant ownership");
+    let collision = expect_fixture_refusal(
+        TempRoot::create(directory.clone()),
+        "an existing directory must never grant ownership",
+    )?;
+    assert_eq!(collision.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(
         fs::read_to_string(&sentinel)?,
         "belongs to the previous owner"
@@ -664,11 +665,14 @@ fn temp_root_refuses_existing_directories_files_and_failed_creation()
 
     let file = parent.0.join("existing-file");
     fs::write(&file, "preserve this file")?;
-    assert!(TempRoot::create(file.clone()).is_err());
-    assert!(TempRoot::create(file.join("child")).is_err());
+    expect_fixture_refusal(TempRoot::create(file.clone()), "existing file")?;
+    expect_fixture_refusal(TempRoot::create(file.join("child")), "file as parent")?;
     assert_eq!(fs::read_to_string(&file)?, "preserve this file");
     let missing_parent = parent.0.join("missing");
-    assert!(TempRoot::create(missing_parent.join("child")).is_err());
+    expect_fixture_refusal(
+        TempRoot::create(missing_parent.join("child")),
+        "missing parent",
+    )?;
     assert!(
         !missing_parent.exists(),
         "creation must not claim missing ancestors"
@@ -744,9 +748,24 @@ fn temp_root_cleans_owned_directories_on_success_and_later_error()
         fs::create_dir(file.join("child"))?;
         Ok(())
     })();
-    assert!(failed.is_err());
+    expect_fixture_refusal(failed, "intentional failure after acquiring the root")?;
     assert!(!failing_path.exists());
     Ok(())
+}
+
+fn expect_fixture_refusal<T>(
+    result: std::io::Result<T>,
+    context: &str,
+) -> Result<std::io::Error, String> {
+    match result {
+        Err(error) => Ok(error),
+        Ok(value) => {
+            drop(value);
+            Err(format!(
+                "{context}: fixture operation unexpectedly succeeded"
+            ))
+        }
+    }
 }
 
 fn evidence_report(log: &str) -> Result<String, String> {
