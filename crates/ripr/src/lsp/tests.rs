@@ -4725,14 +4725,11 @@ fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), S
         return Err("the witness fix site must bind on the editor card".to_string());
     }
     let explain_route = format!("ripr explain {}", finding.id);
-    let fix_instruction_current = wire
-        .detail_references
-        .iter()
-        .any(|reference| {
-            reference.family == crate::domain::RepairCardDetailFamily::FixInstruction
-                && reference.state == crate::domain::RepairCardDetailState::Current
-                && reference.route.as_deref() == Some(explain_route.as_str())
-        });
+    let fix_instruction_current = wire.detail_references.iter().any(|reference| {
+        reference.family == crate::domain::RepairCardDetailFamily::FixInstruction
+            && reference.state == crate::domain::RepairCardDetailState::Current
+            && reference.route.as_deref() == Some(explain_route.as_str())
+    });
     if !fix_instruction_current {
         return Err("the witness detail family must ride as a current explain route".to_string());
     }
