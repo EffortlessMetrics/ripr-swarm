@@ -22,7 +22,14 @@
 //!    script can never misrecord a digest. Observation bindings follow the
 //!    same law: a declared verification exit without a verification
 //!    execution, or a declared static/receipt movement without the matching
-//!    execution, refuses the journey.
+//!    execution, refuses the journey. Each execution kind also owns one
+//!    canonical output record (`exit:<n>`, `static:<movement>`,
+//!    `receipt:<state>`); the last execution of the kind governs the axis and
+//!    a declared observation that disagrees with the recorded bytes refuses
+//!    the journey, so no script can declare an exit the transcript did not
+//!    record. A retained accepted review must likewise arrive with both digest
+//!    bindings present; blank bindings would let stamping bind changed content
+//!    to an old accepted verdict.
 //! 3. **Derived terminals**: the receipt terminal is never claimed by the
 //!    script. The executor derives it in one fixed precedence from the closed
 //!    intervention taxonomy and the answer-key comparison, derives every
@@ -45,9 +52,9 @@ use crate::blind_journey::{
     BlindJourneyAssistanceStateV1, BlindJourneyCandidateRefV1, BlindJourneyContaminationResultV1,
     BlindJourneyCurrentnessV1, BlindJourneyEditCageVerdictV1, BlindJourneyEventKindV1,
     BlindJourneyEventV1, BlindJourneyEvidenceAxesV1, BlindJourneyInterventionV1,
-    BlindJourneyPacketV1, BlindJourneyPromptReviewV1, BlindJourneyPromptV1,
-    BlindJourneyReceiptStatusV1, BlindJourneyReceiptV1, BlindJourneyResultV1,
-    BlindJourneySelectionCorrectnessV1, BlindJourneyStaticMovementV1,
+    BlindJourneyPacketV1, BlindJourneyPromptReviewV1, BlindJourneyPromptReviewVerdictV1,
+    BlindJourneyPromptV1, BlindJourneyReceiptStatusV1, BlindJourneyReceiptV1,
+    BlindJourneyResultV1, BlindJourneySelectionCorrectnessV1, BlindJourneyStaticMovementV1,
     BlindJourneyVerificationStatusV1, assess_blind_journey_packet, sha256_hex,
     stamp_blind_journey_packet,
 };
@@ -117,8 +124,8 @@ pub(crate) struct BlindJourneyJourneyV1 {
     pub ordinary_permissions: Vec<String>,
     pub prohibited_hints: Vec<String>,
     pub prompt_bytes: String,
-    /// The retained reviewer verdict; empty digest bindings are stamped, a
-    /// present divergent binding refuses the run.
+    /// The retained reviewer verdict; an accepted verdict must carry both
+    /// digest bindings, and a present divergent binding refuses the run.
     pub review: BlindJourneyPromptReviewV1,
     pub answer_key: BlindJourneyAnswerKeyV1,
     pub actions: Vec<BlindJourneyActionV1>,
@@ -164,7 +171,7 @@ pub(crate) struct BlindJourneyExecuteCorpusV1 {
 /// The executor fixture scenarios RIPR-SPEC-0203 requires; the committed
 /// corpus must cover all of them and the live executor decides each outcome
 /// independently of the committed expectation.
-pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 20] = [
+pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 24] = [
     "executor_positive_journey_emits_receipt",
     "executor_positive_second_eligible_item_selects_b",
     "executor_instrument_watchdog_stays_positive",
@@ -185,6 +192,10 @@ pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 20] = [
     "executor_refuses_positive_without_accepted_review",
     "executor_refuses_stale_review_binding",
     "executor_refuses_honest_limitation_without_limitations",
+    "executor_refuses_contradictory_verification_output",
+    "executor_refuses_contradictory_static_output",
+    "executor_refuses_receipt_not_applicable_with_execution",
+    "executor_refuses_unbound_accepted_review",
 ];
 
 /// Required scenario ids absent from one committed executor corpus id set.
@@ -335,13 +346,54 @@ fn last_subject(events: &[BlindJourneyEventV1], kind: BlindJourneyEventKindV1) -
         .map(|event| event.subject.clone())
 }
 
+/// The exact recorded output bytes of the last action of one kind; the script
+/// records bytes, never digests, and the per-kind presence rule already
+/// guaranteed the bytes exist for execution-bearing kinds.
+fn last_recorded_output<'a>(
+    journey: &'a BlindJourneyJourneyV1,
+    kind: BlindJourneyEventKindV1,
+) -> Option<&'a str> {
+    journey
+        .actions
+        .iter()
+        .rev()
+        .find(|action| action.kind == kind)
+        .and_then(|action| action.output_bytes.as_deref())
+}
+
+/// Canonical `static:<movement>` record of one static analysis execution.
+fn parse_recorded_static_movement(bytes: &str) -> Option<BlindJourneyStaticMovementV1> {
+    match bytes.strip_prefix("static:")?.trim() {
+        "improved" => Some(BlindJourneyStaticMovementV1::Improved),
+        "unchanged" => Some(BlindJourneyStaticMovementV1::Unchanged),
+        "regressed" => Some(BlindJourneyStaticMovementV1::Regressed),
+        _ => None,
+    }
+}
+
+/// Canonical `receipt:<state>` record of one receipt execution.
+fn parse_recorded_receipt_status(bytes: &str) -> Option<BlindJourneyReceiptStatusV1> {
+    match bytes.strip_prefix("receipt:")?.trim() {
+        "movement-improved" => Some(BlindJourneyReceiptStatusV1::ReceiptMovementImproved),
+        "movement-unchanged" => Some(BlindJourneyReceiptStatusV1::ReceiptMovementUnchanged),
+        "found" => Some(BlindJourneyReceiptStatusV1::ReceiptFound),
+        "gap-mismatch" => Some(BlindJourneyReceiptStatusV1::ReceiptGapMismatch),
+        "missing" => Some(BlindJourneyReceiptStatusV1::ReceiptMissing),
+        "not-applicable" => Some(BlindJourneyReceiptStatusV1::ReceiptNotApplicable),
+        _ => None,
+    }
+}
+
 fn derive_axes(
     journey: &BlindJourneyJourneyV1,
     events: &[BlindJourneyEventV1],
 ) -> Result<BlindJourneyEvidenceAxesV1, String> {
     // A field must not claim more than the transcript enforces: the declared
-    // observations bind to execution events exactly like the contract axis
-    // rules, and the executor refuses an unbound observation before any
+    // observations bind to the recorded execution outputs, not only to the
+    // presence of an execution event. Each execution kind owns one canonical
+    // output record (`exit:<n>`, `static:<movement>`, `receipt:<state>`); the
+    // last execution of the kind governs the axis, and a declared observation
+    // that disagrees with the recorded bytes refuses the journey before any
     // receipt exists.
     let verification_executions = kind_count(
         events,
@@ -361,53 +413,127 @@ fn derive_axes(
         }
         (count, None) => {
             return Err(format!(
-                "observation_unbound:event {} executed project verification but no exit \
-                 is recorded",
-                count
+                "observation_unbound:{count} project verification executions recorded no \
+                 exit observation"
             ));
         }
-        (_count, Some(0)) => BlindJourneyVerificationStatusV1::Passed,
-        (_count, Some(_exit)) => BlindJourneyVerificationStatusV1::Failed,
+        (_count, Some(declared)) => {
+            let recorded = last_recorded_output(
+                journey,
+                BlindJourneyEventKindV1::ProjectVerificationExecution,
+            )
+            .and_then(|bytes| bytes.strip_prefix("exit:"))
+            .and_then(|code| code.trim().parse::<i64>().ok());
+            match recorded {
+                None => {
+                    return Err(
+                        "observation_unbound:project verification output is not a canonical \
+                         `exit:<n>` record"
+                            .to_string(),
+                    );
+                }
+                Some(recorded) if recorded != declared => {
+                    return Err(format!(
+                        "observation_unbound:verification_exit {declared} disagrees with the \
+                         recorded exit {recorded}"
+                    ));
+                }
+                Some(_) => {}
+            }
+            if declared == 0 {
+                BlindJourneyVerificationStatusV1::Passed
+            } else {
+                BlindJourneyVerificationStatusV1::Failed
+            }
+        }
     };
     let static_executions = kind_count(events, BlindJourneyEventKindV1::StaticAnalysisExecution);
-    if journey.observations.static_movement != BlindJourneyStaticMovementV1::Unknown
-        && static_executions == 0
-    {
+    if static_executions > 0 {
+        let recorded = last_recorded_output(
+            journey,
+            BlindJourneyEventKindV1::StaticAnalysisExecution,
+        )
+        .and_then(parse_recorded_static_movement);
+        let recorded = match recorded {
+            Some(recorded) => recorded,
+            None => {
+                return Err(
+                    "observation_unbound:static analysis output is not a canonical \
+                     `static:<movement>` record"
+                        .to_string(),
+                );
+            }
+        };
+        if journey.observations.static_movement == BlindJourneyStaticMovementV1::Unknown {
+            return Err(
+                "observation_unbound:a static analysis execution recorded no movement observation"
+                    .to_string(),
+            );
+        }
+        if journey.observations.static_movement != recorded {
+            return Err(format!(
+                "observation_unbound:static_movement {:?} disagrees with the recorded \
+                 static output",
+                journey.observations.static_movement
+            ));
+        }
+    } else if journey.observations.static_movement != BlindJourneyStaticMovementV1::Unknown {
         return Err(
             "observation_unbound:static_movement is recorded without a static analysis execution"
                 .to_string(),
         );
     }
-    if journey.observations.static_movement == BlindJourneyStaticMovementV1::Unknown
-        && static_executions > 0
-    {
-        return Err(
-            "observation_unbound:a static analysis execution recorded no movement observation"
-                .to_string(),
-        );
-    }
     let receipt_executions = kind_count(events, BlindJourneyEventKindV1::ReceiptExecution);
-    let receipt_observation_requires_execution = matches!(
-        journey.observations.receipt_status,
-        BlindJourneyReceiptStatusV1::ReceiptFound
-            | BlindJourneyReceiptStatusV1::ReceiptGapMismatch
-            | BlindJourneyReceiptStatusV1::ReceiptMissing
-            | BlindJourneyReceiptStatusV1::ReceiptMovementImproved
-            | BlindJourneyReceiptStatusV1::ReceiptMovementUnchanged
-    );
-    if receipt_observation_requires_execution && receipt_executions == 0 {
-        return Err(
-            "observation_unbound:receipt_status is recorded without a receipt execution"
-                .to_string(),
+    if receipt_executions > 0 {
+        let recorded = last_recorded_output(journey, BlindJourneyEventKindV1::ReceiptExecution)
+            .and_then(parse_recorded_receipt_status);
+        match recorded {
+            None => {
+                return Err(
+                    "observation_unbound:receipt output is not a canonical `receipt:<state>` \
+                     record"
+                        .to_string(),
+                );
+            }
+            Some(BlindJourneyReceiptStatusV1::ReceiptNotApplicable) => {
+                return Err(
+                    "observation_unbound:a receipt execution cannot record \
+                     receipt_not_applicable; no applicable receipt observation exists"
+                        .to_string(),
+                );
+            }
+            Some(recorded) => {
+                if journey.observations.receipt_status == BlindJourneyReceiptStatusV1::Unknown {
+                    return Err(
+                        "observation_unbound:a receipt execution recorded no receipt state \
+                         observation"
+                            .to_string(),
+                    );
+                }
+                if journey.observations.receipt_status != recorded {
+                    return Err(format!(
+                        "observation_unbound:receipt_status {:?} disagrees with the recorded \
+                         receipt output",
+                        journey.observations.receipt_status
+                    ));
+                }
+            }
+        }
+    } else {
+        let receipt_observation_requires_execution = matches!(
+            journey.observations.receipt_status,
+            BlindJourneyReceiptStatusV1::ReceiptFound
+                | BlindJourneyReceiptStatusV1::ReceiptGapMismatch
+                | BlindJourneyReceiptStatusV1::ReceiptMissing
+                | BlindJourneyReceiptStatusV1::ReceiptMovementImproved
+                | BlindJourneyReceiptStatusV1::ReceiptMovementUnchanged
         );
-    }
-    if journey.observations.receipt_status == BlindJourneyReceiptStatusV1::Unknown
-        && receipt_executions > 0
-    {
-        return Err(
-            "observation_unbound:a receipt execution recorded no receipt state observation"
-                .to_string(),
-        );
+        if receipt_observation_requires_execution {
+            return Err(
+                "observation_unbound:receipt_status is recorded without a receipt execution"
+                    .to_string(),
+            );
+        }
     }
     let key = &journey.answer_key;
     let selection_correctness = match last_subject(
@@ -573,6 +699,21 @@ pub(crate) fn execute_blind_journey(
             "unsupported_schema:answer_key:{}",
             journey.answer_key.schema_version
         ));
+    }
+    // A retained accepted review describes a human judgment over exact prompt
+    // and answer-key content. Blank digest bindings would let stamping bind
+    // today's content to a previously accepted verdict, so an accepted review
+    // must arrive with both bindings present; stamping then refuses any
+    // binding that does not match the exact content.
+    if journey.review.verdict == BlindJourneyPromptReviewVerdictV1::Accepted
+        && (journey.review.prompt_digest.is_empty()
+            || journey.review.answer_key_digest.is_empty())
+    {
+        return Err(
+            "review_binding_missing:an accepted review must bind the exact reviewed prompt \
+             and answer key digests"
+                .to_string(),
+        );
     }
     let events = build_events(journey)?;
     let axes = derive_axes(journey, &events)?;
@@ -749,7 +890,7 @@ mod tests {
         observations: BlindJourneyObservedAxesV1,
     ) -> BlindJourneyJourneyV1 {
         let key = answer_key();
-        BlindJourneyJourneyV1 {
+        let mut journey = BlindJourneyJourneyV1 {
             schema_version: BLIND_JOURNEY_JOURNEY_SCHEMA_VERSION.to_string(),
             candidate: candidate_ref(),
             operator_goal: "improve one test through the installed product".to_string(),
@@ -768,6 +909,38 @@ mod tests {
             observations,
             limitations: Vec::new(),
             non_claims: Vec::new(),
+        };
+        bind_review(&mut journey);
+        journey
+    }
+
+    /// Bind the review digests to the exact journey content, as a retained
+    /// accepted review must. The answer-key digest serialization of this
+    /// struct cannot fail; a failure would leave the binding blank and every
+    /// positive test below would refuse with `review_binding_missing`.
+    fn bind_review(journey: &mut BlindJourneyJourneyV1) {
+        let prompt = BlindJourneyPromptV1 {
+            schema_version: BLIND_JOURNEY_PROMPT_SCHEMA_VERSION.to_string(),
+            candidate: journey.candidate.clone(),
+            operator_goal: journey.operator_goal.clone(),
+            public_inputs: journey.public_inputs.clone(),
+            ordinary_permissions: journey.ordinary_permissions.clone(),
+            prohibited_hints: journey.prohibited_hints.clone(),
+            prompt_bytes: journey.prompt_bytes.clone(),
+            prompt_digest: String::new(),
+            review: BlindJourneyPromptReviewV1 {
+                reviewer: journey.review.reviewer.clone(),
+                verdict: journey.review.verdict,
+                prompt_digest: String::new(),
+                answer_key_digest: String::new(),
+            },
+            contamination_result: BlindJourneyContaminationResultV1::MechanicallyClean,
+        };
+        journey.review.prompt_digest = crate::blind_journey::prompt_digest(&prompt);
+        if let Ok(digest) = crate::blind_journey::blind_journey_answer_key_digest(
+            &journey.answer_key,
+        ) {
+            journey.review.answer_key_digest = digest;
         }
     }
 
@@ -973,6 +1146,11 @@ mod tests {
     fn failed_verification_derives_verification_failure_visible() -> Result<(), String> {
         let mut journey = positive_journey();
         journey.observations.verification_exit = Some(17);
+        for step in &mut journey.actions {
+            if step.kind == BlindJourneyEventKindV1::ProjectVerificationExecution {
+                step.output_bytes = Some("exit:17".to_string());
+            }
+        }
         let packet = execute_blind_journey(&journey)?;
         if packet.receipt.terminal_result != BlindJourneyResultV1::VerificationFailureVisible {
             return Err(format!(
@@ -1067,6 +1245,9 @@ mod tests {
     fn contaminated_prompt_refuses_with_the_validator_reason() -> Result<(), String> {
         let mut journey = positive_journey();
         journey.prompt_bytes = "Improve the tests for gap-042 as intended.".to_string();
+        // The review binds the exact reviewed content, including the
+        // contaminated bytes; the contamination scan, not the binding, refuses.
+        bind_review(&mut journey);
         refused_reason(execute_blind_journey(&journey), "mechanically_contaminated")
     }
 
@@ -1193,5 +1374,86 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn contradictory_verification_output_refuses() -> Result<(), String> {
+        // exit:1 was recorded; declaring exit 0 must not derive a passed axis.
+        let mut journey = positive_journey();
+        for step in &mut journey.actions {
+            if step.kind == BlindJourneyEventKindV1::ProjectVerificationExecution {
+                step.output_bytes = Some("exit:1".to_string());
+            }
+        }
+        refused_reason(
+            execute_blind_journey(&journey),
+            "observation_unbound:verification_exit 0 disagrees",
+        )
+    }
+
+    #[test]
+    fn non_canonical_verification_output_refuses() -> Result<(), String> {
+        let mut journey = positive_journey();
+        for step in &mut journey.actions {
+            if step.kind == BlindJourneyEventKindV1::ProjectVerificationExecution {
+                step.output_bytes = Some("all tests passed".to_string());
+            }
+        }
+        refused_reason(execute_blind_journey(&journey), "observation_unbound")
+    }
+
+    #[test]
+    fn contradictory_static_output_refuses() -> Result<(), String> {
+        let mut journey = positive_journey();
+        for step in &mut journey.actions {
+            if step.kind == BlindJourneyEventKindV1::StaticAnalysisExecution {
+                step.output_bytes = Some("static:unchanged".to_string());
+            }
+        }
+        refused_reason(execute_blind_journey(&journey), "observation_unbound")
+    }
+
+    #[test]
+    fn contradictory_receipt_output_refuses() -> Result<(), String> {
+        let mut journey = positive_journey();
+        for step in &mut journey.actions {
+            if step.kind == BlindJourneyEventKindV1::ReceiptExecution {
+                step.output_bytes = Some("receipt:missing".to_string());
+            }
+        }
+        refused_reason(execute_blind_journey(&journey), "observation_unbound")
+    }
+
+    #[test]
+    fn receipt_not_applicable_with_an_execution_refuses() -> Result<(), String> {
+        let mut journey = positive_journey();
+        journey.observations.receipt_status =
+            BlindJourneyReceiptStatusV1::ReceiptNotApplicable;
+        for step in &mut journey.actions {
+            if step.kind == BlindJourneyEventKindV1::ReceiptExecution {
+                step.output_bytes = Some("receipt:not-applicable".to_string());
+            }
+        }
+        refused_reason(execute_blind_journey(&journey), "observation_unbound")
+    }
+
+    #[test]
+    fn unbound_accepted_review_refuses() -> Result<(), String> {
+        let mut journey = positive_journey();
+        journey.review.prompt_digest = String::new();
+        journey.review.answer_key_digest = String::new();
+        refused_reason(execute_blind_journey(&journey), "review_binding_missing")
+    }
+
+    #[test]
+    fn changed_answer_key_with_a_retained_binding_refuses() -> Result<(), String> {
+        // The review bound the old answer key; changing the key afterwards
+        // must refuse at stamping instead of re-binding the old verdict.
+        let mut journey = positive_journey();
+        journey.answer_key.eligible_items.push("item-c".to_string());
+        refused_reason(
+            execute_blind_journey(&journey),
+            "prompt review binds a different answer key",
+        )
     }
 }

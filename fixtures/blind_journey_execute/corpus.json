@@ -34,8 +34,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -184,8 +184,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -334,8 +334,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -494,8 +494,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -644,8 +644,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -764,8 +764,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -918,8 +918,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -1022,8 +1022,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -1182,8 +1182,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -1342,8 +1342,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -1502,8 +1502,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -1662,8 +1662,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -1812,8 +1812,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -1962,8 +1962,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -2112,8 +2112,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -2262,8 +2262,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -2402,8 +2402,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "cd9c29383688c90940ec0f9b50f50ff51e96a9774b85cf5f92780fe28e740878",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -2703,7 +2703,7 @@
      "reviewer": "reviewer-1",
      "verdict": "accepted",
      "prompt_digest": "0000000000000000000000000000000000000000000000000000000000000000",
-     "answer_key_digest": ""
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -2852,8 +2852,8 @@
     "review": {
      "reviewer": "reviewer-1",
      "verdict": "accepted",
-     "prompt_digest": "",
-     "answer_key_digest": ""
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
     },
     "answer_key": {
      "schema_version": "blind_journey_answer_key.v1",
@@ -2962,6 +2962,606 @@
      "candidate_currentness": "current",
      "verification_exit": 0,
      "static_movement": "unchanged",
+     "receipt_status": "receipt_movement_improved",
+     "external_runtime_mutation_evidence": null
+    },
+    "limitations": [],
+    "non_claims": []
+   }
+  },
+  {
+   "id": "executor_refuses_contradictory_verification_output",
+   "expected": {
+    "outcome": "refused",
+    "terminal": null,
+    "reason_contains": "observation_unbound:verification_exit 0 disagrees"
+   },
+   "journey": {
+    "schema_version": "blind_journey_journey.v1",
+    "candidate": {
+     "repository": "https://example.invalid/operator/target",
+     "base": "base-commit-sha",
+     "head": "head-commit-sha",
+     "tree": "tree-object-sha",
+     "root": "/srv/executor-journey",
+     "package": "ripr",
+     "binary": "ripr",
+     "binary_digest": "abababababababababababababababababababababababababababababababab"
+    },
+    "operator_goal": "improve one test through the installed product",
+    "public_inputs": [
+     "docs/cli.md"
+    ],
+    "ordinary_permissions": [
+     "run public product entrypoints"
+    ],
+    "prohibited_hints": [
+     "no intended change hints"
+    ],
+    "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+    "review": {
+     "reviewer": "reviewer-1",
+     "verdict": "accepted",
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+    },
+    "answer_key": {
+     "schema_version": "blind_journey_answer_key.v1",
+     "eligible_items": [
+      "item-a",
+      "item-b"
+     ],
+     "quiet_neighbors": [
+      "quiet-neighbor"
+     ],
+     "expected_edit_cage": [
+      "src/lib.rs"
+     ],
+     "discriminator_family": "boundary-constant",
+     "known_product_limitations": [
+      "no-network"
+     ],
+     "forbidden_edits": [
+      "src/main.rs"
+     ],
+     "answer_key_digest": ""
+    },
+    "actions": [
+     {
+      "kind": "public_documentation_lookup",
+      "subject": "docs:cli-check",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "ordinary_target_source_read",
+      "subject": "src/lib.rs",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "product_command_invocation",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check",
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "operator_product_option_selection",
+      "subject": "item-a",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "file_edit",
+      "subject": "src/lib.rs",
+      "input_bytes": "fn lib() -> bool { false }\n",
+      "output_bytes": "fn lib() -> bool { true }\n",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "project_verification_execution",
+      "subject": "project verification command",
+      "input_bytes": "argv:project verification command",
+      "output_bytes": "exit:1",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "static_analysis_execution",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check --after",
+      "output_bytes": "static:improved",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "receipt_execution",
+      "subject": "ripr receipts",
+      "input_bytes": "argv:ripr receipts",
+      "output_bytes": "receipt:movement-improved",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     }
+    ],
+    "observations": {
+     "candidate_currentness": "current",
+     "verification_exit": 0,
+     "static_movement": "improved",
+     "receipt_status": "receipt_movement_improved",
+     "external_runtime_mutation_evidence": null
+    },
+    "limitations": [],
+    "non_claims": []
+   }
+  },
+  {
+   "id": "executor_refuses_contradictory_static_output",
+   "expected": {
+    "outcome": "refused",
+    "terminal": null,
+    "reason_contains": "observation_unbound"
+   },
+   "journey": {
+    "schema_version": "blind_journey_journey.v1",
+    "candidate": {
+     "repository": "https://example.invalid/operator/target",
+     "base": "base-commit-sha",
+     "head": "head-commit-sha",
+     "tree": "tree-object-sha",
+     "root": "/srv/executor-journey",
+     "package": "ripr",
+     "binary": "ripr",
+     "binary_digest": "abababababababababababababababababababababababababababababababab"
+    },
+    "operator_goal": "improve one test through the installed product",
+    "public_inputs": [
+     "docs/cli.md"
+    ],
+    "ordinary_permissions": [
+     "run public product entrypoints"
+    ],
+    "prohibited_hints": [
+     "no intended change hints"
+    ],
+    "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+    "review": {
+     "reviewer": "reviewer-1",
+     "verdict": "accepted",
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+    },
+    "answer_key": {
+     "schema_version": "blind_journey_answer_key.v1",
+     "eligible_items": [
+      "item-a",
+      "item-b"
+     ],
+     "quiet_neighbors": [
+      "quiet-neighbor"
+     ],
+     "expected_edit_cage": [
+      "src/lib.rs"
+     ],
+     "discriminator_family": "boundary-constant",
+     "known_product_limitations": [
+      "no-network"
+     ],
+     "forbidden_edits": [
+      "src/main.rs"
+     ],
+     "answer_key_digest": ""
+    },
+    "actions": [
+     {
+      "kind": "public_documentation_lookup",
+      "subject": "docs:cli-check",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "ordinary_target_source_read",
+      "subject": "src/lib.rs",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "product_command_invocation",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check",
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "operator_product_option_selection",
+      "subject": "item-a",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "file_edit",
+      "subject": "src/lib.rs",
+      "input_bytes": "fn lib() -> bool { false }\n",
+      "output_bytes": "fn lib() -> bool { true }\n",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "project_verification_execution",
+      "subject": "project verification command",
+      "input_bytes": "argv:project verification command",
+      "output_bytes": "exit:0",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "static_analysis_execution",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check --after",
+      "output_bytes": "static:unchanged",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "receipt_execution",
+      "subject": "ripr receipts",
+      "input_bytes": "argv:ripr receipts",
+      "output_bytes": "receipt:movement-improved",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     }
+    ],
+    "observations": {
+     "candidate_currentness": "current",
+     "verification_exit": 0,
+     "static_movement": "improved",
+     "receipt_status": "receipt_movement_improved",
+     "external_runtime_mutation_evidence": null
+    },
+    "limitations": [],
+    "non_claims": []
+   }
+  },
+  {
+   "id": "executor_refuses_receipt_not_applicable_with_execution",
+   "expected": {
+    "outcome": "refused",
+    "terminal": null,
+    "reason_contains": "observation_unbound"
+   },
+   "journey": {
+    "schema_version": "blind_journey_journey.v1",
+    "candidate": {
+     "repository": "https://example.invalid/operator/target",
+     "base": "base-commit-sha",
+     "head": "head-commit-sha",
+     "tree": "tree-object-sha",
+     "root": "/srv/executor-journey",
+     "package": "ripr",
+     "binary": "ripr",
+     "binary_digest": "abababababababababababababababababababababababababababababababab"
+    },
+    "operator_goal": "improve one test through the installed product",
+    "public_inputs": [
+     "docs/cli.md"
+    ],
+    "ordinary_permissions": [
+     "run public product entrypoints"
+    ],
+    "prohibited_hints": [
+     "no intended change hints"
+    ],
+    "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+    "review": {
+     "reviewer": "reviewer-1",
+     "verdict": "accepted",
+     "prompt_digest": "b17cb0a5314c18d2d42f737f28da875694b49c2b66dfbd8bc742ffeaa2b34e77",
+     "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+    },
+    "answer_key": {
+     "schema_version": "blind_journey_answer_key.v1",
+     "eligible_items": [
+      "item-a",
+      "item-b"
+     ],
+     "quiet_neighbors": [
+      "quiet-neighbor"
+     ],
+     "expected_edit_cage": [
+      "src/lib.rs"
+     ],
+     "discriminator_family": "boundary-constant",
+     "known_product_limitations": [
+      "no-network"
+     ],
+     "forbidden_edits": [
+      "src/main.rs"
+     ],
+     "answer_key_digest": ""
+    },
+    "actions": [
+     {
+      "kind": "public_documentation_lookup",
+      "subject": "docs:cli-check",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "ordinary_target_source_read",
+      "subject": "src/lib.rs",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "product_command_invocation",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check",
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "operator_product_option_selection",
+      "subject": "item-a",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "file_edit",
+      "subject": "src/lib.rs",
+      "input_bytes": "fn lib() -> bool { false }\n",
+      "output_bytes": "fn lib() -> bool { true }\n",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "project_verification_execution",
+      "subject": "project verification command",
+      "input_bytes": "argv:project verification command",
+      "output_bytes": "exit:0",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "static_analysis_execution",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check --after",
+      "output_bytes": "static:improved",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "receipt_execution",
+      "subject": "ripr receipts",
+      "input_bytes": "argv:ripr receipts",
+      "output_bytes": "receipt:not-applicable",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     }
+    ],
+    "observations": {
+     "candidate_currentness": "current",
+     "verification_exit": 0,
+     "static_movement": "improved",
+     "receipt_status": "receipt_not_applicable",
+     "external_runtime_mutation_evidence": null
+    },
+    "limitations": [],
+    "non_claims": []
+   }
+  },
+  {
+   "id": "executor_refuses_unbound_accepted_review",
+   "expected": {
+    "outcome": "refused",
+    "terminal": null,
+    "reason_contains": "review_binding_missing"
+   },
+   "journey": {
+    "schema_version": "blind_journey_journey.v1",
+    "candidate": {
+     "repository": "https://example.invalid/operator/target",
+     "base": "base-commit-sha",
+     "head": "head-commit-sha",
+     "tree": "tree-object-sha",
+     "root": "/srv/executor-journey",
+     "package": "ripr",
+     "binary": "ripr",
+     "binary_digest": "abababababababababababababababababababababababababababababababab"
+    },
+    "operator_goal": "improve one test through the installed product",
+    "public_inputs": [
+     "docs/cli.md"
+    ],
+    "ordinary_permissions": [
+     "run public product entrypoints"
+    ],
+    "prohibited_hints": [
+     "no intended change hints"
+    ],
+    "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+    "review": {
+     "reviewer": "reviewer-1",
+     "verdict": "accepted",
+     "prompt_digest": "",
+     "answer_key_digest": ""
+    },
+    "answer_key": {
+     "schema_version": "blind_journey_answer_key.v1",
+     "eligible_items": [
+      "item-a",
+      "item-b"
+     ],
+     "quiet_neighbors": [
+      "quiet-neighbor"
+     ],
+     "expected_edit_cage": [
+      "src/lib.rs"
+     ],
+     "discriminator_family": "boundary-constant",
+     "known_product_limitations": [
+      "no-network"
+     ],
+     "forbidden_edits": [
+      "src/main.rs"
+     ],
+     "answer_key_digest": ""
+    },
+    "actions": [
+     {
+      "kind": "public_documentation_lookup",
+      "subject": "docs:cli-check",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "ordinary_target_source_read",
+      "subject": "src/lib.rs",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "product_command_invocation",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check",
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "operator_product_option_selection",
+      "subject": "item-a",
+      "input_bytes": null,
+      "output_bytes": null,
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "file_edit",
+      "subject": "src/lib.rs",
+      "input_bytes": "fn lib() -> bool { false }\n",
+      "output_bytes": "fn lib() -> bool { true }\n",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "project_verification_execution",
+      "subject": "project verification command",
+      "input_bytes": "argv:project verification command",
+      "output_bytes": "exit:0",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "static_analysis_execution",
+      "subject": "ripr check",
+      "input_bytes": "argv:ripr check --after",
+      "output_bytes": "static:improved",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     },
+     {
+      "kind": "receipt_execution",
+      "subject": "ripr receipts",
+      "input_bytes": "argv:ripr receipts",
+      "output_bytes": "receipt:movement-improved",
+      "operator_visible": true,
+      "intervention": null,
+      "actor": null,
+      "reason": null
+     }
+    ],
+    "observations": {
+     "candidate_currentness": "current",
+     "verification_exit": 0,
+     "static_movement": "improved",
      "receipt_status": "receipt_movement_improved",
      "external_runtime_mutation_evidence": null
     },

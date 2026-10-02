@@ -33,6 +33,10 @@ pub(crate) struct BlindJourneyExecuteRowV1 {
     pub observed_outcome: BlindJourneyExecuteOutcomeV1,
     pub observed_terminal: Option<BlindJourneyResultV1>,
     pub refusal_reason: Option<String>,
+    /// How far the transcript reached: the scripted action count, so a late
+    /// packet rejection is distinguishable from an empty script.
+    pub attempted_action_count: usize,
+    /// Emitted event count; `0` for a refused journey by definition.
     pub event_count: usize,
     pub portable_identity: Option<String>,
     pub matches_expectation: bool,
@@ -98,6 +102,7 @@ pub(crate) fn assess_blind_journey_execute_corpus(
                     None,
                 ),
             };
+        let attempted_action_count = scenario.journey.actions.len();
         let outcome_matches = observed_outcome == scenario.expected.outcome;
         let terminal_matches = scenario
             .expected
@@ -132,6 +137,7 @@ pub(crate) fn assess_blind_journey_execute_corpus(
             observed_outcome,
             observed_terminal,
             refusal_reason,
+            attempted_action_count,
             event_count,
             portable_identity,
             matches_expectation,
@@ -190,6 +196,13 @@ fn validate_executor_receipt(receipt: &Value, corpus_scenario_count: usize) -> R
         return Err(format!(
             "executor receipt must name the {BLIND_JOURNEY_EXECUTE_DECISION} decision"
         ));
+    }
+    if receipt.get("claim_boundary").and_then(Value::as_str)
+        != Some(BLIND_JOURNEY_EXECUTE_CLAIM_BOUNDARY)
+    {
+        return Err(
+            "executor receipt claim_boundary drifted from the consumer claim boundary".to_string(),
+        );
     }
     let schema_versions = receipt
         .get("consumer_schema_versions")
@@ -325,7 +338,10 @@ pub(crate) fn blind_journey_execute_report_markdown(
     }
     for row in &report.scenarios {
         if let Some(reason) = &row.refusal_reason {
-            body.push_str(&format!("\n## {}\n\n- refusal: {reason}\n", row.scenario));
+            body.push_str(&format!(
+                "\n## {}\n\n- refusal: {reason}\n- attempted actions: {}\n",
+                row.scenario, row.attempted_action_count
+            ));
         }
     }
     body
@@ -387,6 +403,22 @@ mod tests {
             )),
             Ok(()) => Err(
                 "an executor receipt with a drifted schema version must be rejected".to_string(),
+            ),
+        }
+    }
+
+    #[test]
+    fn receipt_with_a_drifted_claim_boundary_is_rejected() -> Result<(), String> {
+        let mut receipt = committed_receipt()?;
+        receipt["claim_boundary"] =
+            serde_json::json!("executor success qualifies the installed candidate");
+        match validate_executor_receipt(&receipt, live_report()?.scenarios.len()) {
+            Err(message) if message.contains("claim_boundary") => Ok(()),
+            Err(message) => Err(format!(
+                "expected a claim-boundary drift error, got: {message}"
+            )),
+            Ok(()) => Err(
+                "an executor receipt with a drifted claim boundary must be rejected".to_string(),
             ),
         }
     }

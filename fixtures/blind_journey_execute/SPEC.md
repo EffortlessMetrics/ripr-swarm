@@ -38,7 +38,15 @@ by the contract is enforced here: `file_edit`,
 `product_command_invocation` events must carry their argv input bytes. A
 declared verification exit without a verification execution, or a declared
 static or receipt movement without the matching execution, refuses the
-journey.
+journey. Each execution kind also owns one canonical output record:
+`exit:<n>` for project verification, `static:<movement>` for static analysis
+and `receipt:<state>` for receipt inspection, with the last execution of the
+kind governing the axis. A declared observation that disagrees with the
+recorded canonical output, a non-canonical output record, or a receipt
+execution recording `receipt:not-applicable` refuses the journey, so no
+script can declare an exit the transcript did not record. A retained accepted
+review must arrive with both digest bindings present: blank bindings would let
+stamping bind changed prompt or answer-key content to an old accepted verdict.
 
 ## Then
 
@@ -56,9 +64,10 @@ journey.
   their own terminal result; a quiet-neighbor selection derives
   `wrong_or_stale_subject` and a forbidden edit derives `unsafe_or_wrong_edit`.
 - A journey whose events miss a required per-kind digest, whose observations
-  are unbound, whose prompt is mechanically contaminated, whose review is
-  missing or stale, or whose honest terminal lacks exact limitations refuses
-  with the exact violated rule; no receipt exists for those journeys.
+  are unbound or contradict the recorded canonical execution outputs, whose
+  prompt is mechanically contaminated, whose accepted review is unbound or
+  stale, or whose honest terminal lacks exact limitations refuses with the
+  exact violated rule; no receipt exists for those journeys.
 
 ## Must Not
 

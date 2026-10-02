@@ -66,9 +66,20 @@ executor in `xtask/src/blind_journey_execute.rs`:
   verification exit without a project-verification execution, a declared
   static movement without a static analysis execution, and a declared receipt
   state without a receipt execution refuse the journey, as does an execution
-  without its recorded observation. Candidate currentness remains a declared
-  admission observation (#4510 in real runs) that the executor records
-  without strengthening.
+  without its recorded observation. Each execution kind owns one canonical
+  output record — `exit:<n>` for project verification, `static:<movement>`
+  for static analysis, `receipt:<state>` for receipt inspection — and the
+  last execution of the kind governs the axis: a declared observation that
+  disagrees with the recorded canonical output, a non-canonical output record,
+  or a receipt execution recording `receipt:not-applicable` refuses the
+  journey, so no script can declare an exit the transcript did not record.
+  Candidate currentness remains a declared admission observation (#4510 in
+  real runs) that the executor records without strengthening.
+- A retained accepted review must arrive with both digest bindings present.
+  Blank bindings would let stamping bind today's prompt or answer-key content
+  to a previously accepted verdict, so an accepted review without exact
+  bindings refuses with `review_binding_missing` before any receipt exists;
+  a present divergent binding keeps refusing at stamping.
 - Intervention classification is closed at construction: harness and
   process-control actions must carry one taxonomy class, every classified
   action names its actor, every disqualifying action names its exact basis,
@@ -95,8 +106,9 @@ executor in `xtask/src/blind_journey_execute.rs`:
 JSON and Markdown derive from one evaluated DTO. The committed decision
 receipt `metrics/blind-journey-execute/executor-receipt.json` ratifies the
 fixture scope and is rejected when it drifts from the consumer schema
-versions, no longer binds the assessed corpus scenario count, carries no
-exact limitations, or claims more than the scripted evidence supports.
+versions or the consumer claim boundary, no longer binds the assessed corpus
+scenario count, carries no exact limitations, or claims more than the
+scripted evidence supports.
 
 ## Required Evidence
 
@@ -135,7 +147,10 @@ exact limitations, or claims more than the scripted evidence supports.
    refuses with `digest_presence_violation` before any receipt exists.
 3. A declared verification exit without a verification execution refuses
    with `observation_unbound`; so does a declared static movement without a
-   static analysis execution.
+   static analysis execution. A declared exit that contradicts the recorded
+   canonical output (declared `exit 0` over recorded `exit:1`), a
+   non-canonical output record, or a receipt execution recording
+   `receipt:not-applicable` refuses with `observation_unbound` as well.
 4. A classified private hint after a fully passing journey derives
    `hidden_operator_assistance`; the receipt stays accepted and non-positive.
 5. A quiet-neighbor selection derives `wrong_or_stale_subject`; a forbidden
@@ -143,8 +158,9 @@ exact limitations, or claims more than the scripted evidence supports.
    `verification_failure_visible`; and an honest limitation without exact
    limitations refuses instead of emitting a blank receipt.
 6. A mechanically contaminated prompt, a positive journey without an
-   accepted review, or a stale review binding refuses with the validator's
-   or stamper's own reason.
+   accepted review, an accepted review whose digest bindings are blank, or a
+   stale review binding refuses with the executor's, the stamper's or the
+   validator's own reason.
 7. A hand-edited executor decision receipt that drifts from the consumer
    schema versions, drops its limitations or stops binding the assessed
    corpus scenario count fails the report gate.
