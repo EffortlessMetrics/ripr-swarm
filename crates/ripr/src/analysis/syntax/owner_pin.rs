@@ -8,7 +8,7 @@ use super::parse_clean_source_file;
 use super::ra::{LineIndex, slice_macro_call_text, slice_text};
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
-    AstNode, SyntaxNode,
+    AstNode, SyntaxNode, TextSize,
     ast::{self, HasArgList, HasAttrs, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -244,13 +244,22 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .filter_map(|call| call.path())
             .map(|path| path.syntax().text().to_string())
             .collect();
+        // Compute the conservative prefix boundary once per function, rather
+        // than rescanning its body for every candidate assertion/invocation.
+        let first_return = body
+            .syntax()
+            .descendants()
+            .filter_map(ast::ReturnExpr::cast)
+            .map(|expression| expression.syntax().text_range().start())
+            .min();
         let assertions = candidates
             .into_iter()
             .filter_map(|(key, calls)| {
                 // OracleFact has line/text, not an offset. No identical spelling
                 // on the same line may borrow another invocation's context.
-                (calls.len() == 1 && eager_path(calls[0].syntax().clone(), &function, false))
-                    .then_some(key)
+                (calls.len() == 1
+                    && eager_path(calls[0].syntax().clone(), &function, false, first_return))
+                .then_some(key)
             })
             .collect();
         // Duplicate function identities are ambiguous too.
@@ -356,7 +365,12 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     trusted.contains(&path)
 }
 
-fn eager_path(mut node: SyntaxNode, function: &ast::Fn, through_closure: bool) -> bool {
+fn eager_path(
+    mut node: SyntaxNode,
+    function: &ast::Fn,
+    through_closure: bool,
+    first_return: Option<TextSize>,
+) -> bool {
     // When this query follows a bound closure, recursion below resets this
     // coordinate to the real invocation, not the earlier closure definition.
     let execution_start = node.text_range().start();
@@ -373,20 +387,17 @@ fn eager_path(mut node: SyntaxNode, function: &ast::Fn, through_closure: bool) -
         if parent == *function.syntax() {
             return function.body().is_some_and(|body| {
                 body.syntax() == &node
-                    && !body.syntax().descendants().any(|candidate| {
-                        ast::ReturnExpr::can_cast(candidate.kind())
-                            && candidate.text_range().start() < execution_start
-                    })
+                    && first_return.is_none_or(|position| position >= execution_start)
             });
         }
         if let Some(closure) = ast::ClosureExpr::cast(parent.clone()) {
             if through_closure {
                 return false;
             }
-            let Some(call) = closure_invocation(&closure, function) else {
+            let Some(call) = closure_invocation(&closure, function, first_return) else {
                 return false;
             };
-            return eager_path(call.syntax().clone(), function, true);
+            return eager_path(call.syntax().clone(), function, true, first_return);
         }
         if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
             if block.async_token().is_some()
@@ -416,7 +427,11 @@ fn eager_path(mut node: SyntaxNode, function: &ast::Fn, through_closure: bool) -
     }
 }
 
-fn closure_invocation(closure: &ast::ClosureExpr, function: &ast::Fn) -> Option<ast::CallExpr> {
+fn closure_invocation(
+    closure: &ast::ClosureExpr,
+    function: &ast::Fn,
+    first_return: Option<TextSize>,
+) -> Option<ast::CallExpr> {
     if closure.async_token().is_some()
         || closure.const_token().is_some()
         || closure.gen_token().is_some()
@@ -454,7 +469,7 @@ fn closure_invocation(closure: &ast::ClosureExpr, function: &ast::Fn) -> Option<
     {
         return None;
     }
-    if !eager_path(binding.syntax().clone(), function, true) {
+    if !eager_path(binding.syntax().clone(), function, true, first_return) {
         return None;
     }
     let scope = binding.syntax().parent()?;
