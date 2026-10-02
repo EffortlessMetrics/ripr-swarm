@@ -158,9 +158,9 @@ fn beta(result: &str) -> String {
 struct TempRoot(PathBuf);
 impl TempRoot {
     fn create(path: PathBuf) -> std::io::Result<Self> {
-        let root = Self(path);
-        fs::create_dir_all(&root.0)?;
-        Ok(root)
+        // Existing directories do not grant ownership to this cleanup guard.
+        fs::create_dir(&path)?;
+        Ok(Self(path))
     }
 }
 impl Drop for TempRoot {

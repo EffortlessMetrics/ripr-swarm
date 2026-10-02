@@ -346,6 +346,12 @@ and single-platform CI was the root cause enabling both.
   test rows are `incomplete_evidence` with actionable provenance reasons.
   Recollect both complete logs from one build rather than mixing histories.
   The summary still counts observed subjects rather than failure-section echoes.
+- **Diagnostic presentation.** The provenance-error section and raw-header
+  display each show at most 20 entries per run, with exact omitted and total
+  counts. Each displayed entry retains at most 240 Unicode scalar values,
+  followed by an explicit `… [truncated]` marker when shortened. Parsing retains
+  every error and raw header; these display limits do not change evidence
+  refusal, observed totals or verdicts. Full original text remains in the logs.
 
 - **Console provenance limit.** This is a bounded parser for the lane's Cargo
   text, not universal authentication of test origin. Target completion expires

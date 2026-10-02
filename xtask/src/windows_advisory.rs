@@ -1244,6 +1244,25 @@ fn render_failure_reasons(
     out.push('\n');
 }
 
+// Keep diagnostic presentation bounded without discarding parsed evidence.
+// Unicode scalar counts avoid cutting a UTF-8 code point in a long raw header.
+const MAX_EVIDENCE_LINES: usize = 20;
+const MAX_EVIDENCE_CHARS: usize = 240;
+
+fn evidence_excerpt(text: &str) -> String {
+    let plain = strip_ansi(text);
+    let mut chars = plain.chars();
+    let mut excerpt: String = chars
+        .by_ref()
+        .take(MAX_EVIDENCE_CHARS)
+        .map(|ch| if ch == '`' { '\'' } else { ch })
+        .collect();
+    if chars.next().is_some() {
+        excerpt.push_str("… [truncated]");
+    }
+    excerpt
+}
+
 fn render(first: &RunOutcome, second: &RunOutcome) -> String {
     let mut out = String::from("### Run states\n\n");
     for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
@@ -1267,10 +1286,27 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
         out.push_str("**Infrastructure failure.** A run exited non-zero with no parsed test failure, which indicates a compile, link, harness, or runner problem rather than a product regression.\n\n");
     }
 
-    for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
-        for error in &outcome.provenance_errors {
-            out.push_str(&format!("- {label} provenance: {error}\n"));
+    if !first.provenance_errors.is_empty() || !second.provenance_errors.is_empty() {
+        out.push_str("### Provenance errors\n\n");
+        for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
+            for error in outcome.provenance_errors.iter().take(MAX_EVIDENCE_LINES) {
+                out.push_str(&format!(
+                    "- {label} provenance: {}\n",
+                    evidence_excerpt(error)
+                ));
+            }
+            let omitted = outcome
+                .provenance_errors
+                .len()
+                .saturating_sub(MAX_EVIDENCE_LINES);
+            if omitted > 0 {
+                out.push_str(&format!(
+                    "- {label}: {omitted} additional provenance errors omitted ({} total).\n",
+                    outcome.provenance_errors.len()
+                ));
+            }
         }
+        out.push('\n');
     }
     out.push_str("### Verdicts\n\n");
     let mut verdicts: BTreeMap<&'static str, Vec<TestIdentity>> = BTreeMap::new();
@@ -1358,10 +1394,17 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
                 .join(", ")
         };
         out.push_str(&format!("- {label}: {targets}\n"));
-        for header in &outcome.raw_headers {
+        for header in outcome.raw_headers.iter().take(MAX_EVIDENCE_LINES) {
             out.push_str(&format!(
                 "  - Header text: `{}`\n",
-                strip_ansi(header).replace('`', "'")
+                evidence_excerpt(header)
+            ));
+        }
+        let omitted = outcome.raw_headers.len().saturating_sub(MAX_EVIDENCE_LINES);
+        if omitted > 0 {
+            out.push_str(&format!(
+                "  - {omitted} additional raw headers omitted ({} total).\n",
+                outcome.raw_headers.len()
             ));
         }
     }
@@ -2373,7 +2416,7 @@ mod tests {
             .map_err(|error| error.to_string())?
             .as_nanos();
         let directory = transition_root(nonce);
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        std::fs::create_dir(&directory).map_err(|error| error.to_string())?;
         let log_path = directory.join("run.log");
         let status_path = directory.join("run.status");
         std::fs::write(&log_path, log).map_err(|error| error.to_string())?;
