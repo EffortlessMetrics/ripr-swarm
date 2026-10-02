@@ -35,3 +35,20 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_transitive_reach_negative (4)
+
+Reason:
+Reconcile the human Summary header with RIPR-SPEC-0122 and the shared
+renderer merged in #5049 (Refs #5017, #5021). Exact-main output comparison
+shows only `1 of 1 finding(s) shown` becoming `1 of 1 finding(s)
+unsuppressed`; all remaining human bytes and the complete JSON output are
+unchanged. Both fixtures retain `no_static_path` with no related tests;
+only the positive fixture retains `python_transitive_reach_unresolved`.
+
+Method:
+Manually reconcile the single header word after comparing full generated
+human and JSON outputs; verify with `cargo xtask goldens check`.
+
+Updated:
+- `expected/human.txt`
