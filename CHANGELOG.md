@@ -9,8 +9,29 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Changed
+
+- LSP: identity-law tests pin that `action_id` excludes title, range,
+  message, snapshot handles, client capability, and disabled reason; build
+  and parse share one fingerprint; analysis input identity excludes
+  deadlines and position encoding; diagnostic result IDs ignore refresh
+  clock and attempt handles. (#1932)
+
 ### Added
 
+- LSP: the seam code actions and seam hover project the compact RepairCard
+  (RIPR-SPEC-0198, #4668). "Agent handoff: copy repair card" copies the same
+  versioned `repair_card.v1` document the CLI `ripr agent card` handoff
+  assembles — built from the completed snapshot's own authorities through the
+  shared `app::repair_card_handoff` projection, under the ratified default
+  budget — over the already-advertised `ripr.copyContext` command, and the
+  seam hover gains a bounded `## Repair card` section naming the canonical
+  card identity, the typed instruction state, next-action presence, and
+  per-state detail availability. Both surfaces fail closed to omission when a
+  producer fact cannot be bound and inherit the existing stale-diagnostic
+  suppression; the VS Code extension copies the `repair_card` label directly
+  without an LSP round trip. The MCP half of #4668 stays deferred on the
+  open #1898/#3089/#3090 authorities under ADR 0022.
 - Domains: RepairCard budget ratification (RIPR-SPEC-0196, #4669) measures
   the default-field card against its canonical packet on four deterministic
   synthetic corpus profiles (boundary without/with witness, witness with a
@@ -111,9 +132,36 @@ are scoped or reviewed.
   reveals the active stage and heartbeats; producer `completed` is held until
   the command actually succeeds. Unknown totals stay unknown; `--quiet`
   suppresses the stream. This does not make analysis faster (#4810).
+- `cargo xtask rust-judged-panel feedback` and `check` now retain one
+  checked feedback ledger over the frozen #3806 Rust judgments. Every
+  terminal case gets a disposition; confirmed defects stay replay-only
+  unless a producer-path fixture can keep the exact mechanism; JSON and
+  Markdown reports carry denominators without an overall analyzer score,
+  analyzer repair, #4795 calibration, GitHub mutation, or #3164 closure
+  (#4796).
 
 ### Fixed
 
+- Review guidance: admit workspace and changed-owner inputs before either
+  index build, with file/byte limits and a `review_guidance_oversized` failed
+  receipt instead of silently truncated guidance (#4388, RIPR-SPEC-0012).
+  The default file limit is 1200, matching the current diff/repo family;
+  required runner lanes no longer override it to 2000. Malformed overrides
+  still reject execution but no longer hide `review-comments --help`.
+  Admission is not an RSS/completion guarantee; large-workspace completed
+  guidance and hosted replay remain separate acceptance work.
+
+- Rust: a changed `?` error path no longer reads `exposed` because a
+  success-value assertion shares a variable name with it. ripgrep's
+  `rdr.read(buf)?` was credited to a test asserting `rdr.bstr()`, and the
+  `?` → `unwrap_or(0)` mutant survives the suite. An `error_path` probe is now
+  confirmed only by an assertion that observes an error. A deleted call on a
+  binding the changed function introduces (regex `dfa.accels.validate()?`,
+  whose deletion survives the suite) is no longer confirmed by a test's
+  same-named local; field, method and parameter names still confirm. Both
+  read `weakly_exposed` now.
+- Rust: a `pub(crate) struct Name<'a> {` line is no longer probed as a call
+  deletion and reported `no_static_path`.
 - A changed source file that is not in the working tree (sparse checkout
   or a local delete) is now a named `changed_file_absent_from_worktree`
   limitation and a partial analysis outcome. Before, `ripr check` treated
@@ -121,8 +169,14 @@ are scoped or reviewed.
   reported `scoped production files: 0/0` with no disclosure. Probes for
   that file are withheld. The repair is to check the file out or disable
   sparse checkout for it.
-- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
-  others) are no longer called non-source files. A Go-only diff reported
+- Rust `return_value` evidence from bare `assert_eq!` now shares execution
+  and macro-binding admission across token matching and owner-return pins.
+  Refused deferred/conditional/no-op assertions contribute no oracle credit;
+  when no admitted oracle remains, the finding reads `reachable_unrevealed`
+  with execution/binding guidance. Direct assertions and directly invoked
+  immutable closures retain credit. Uncollected/cfg-unestablished test items
+  and singleton credit manufactured by filtering are refused. Twenty matched
+  correct/wrong-library controls pin this boundary (RIPR-SPEC-0197, #4478).
 - Rust: a test that pins the changed owner's whole return value now
   confirms a changed `return_value` expression, including through a method
   call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
@@ -153,6 +207,14 @@ are scoped or reviewed.
   long as the stage stays active, so worst-case silence is ~8s and
   non-TTY output grows one line per 8s of stage time. Custom policies keep
   their hard count ceiling (#4957).
+- Doctor's current/stale packet refresh and rooted first-check recommendation
+  keep the diagnosed physical repository when a root traverses a symlink before
+  `..`. The refresh retains the root-bound,
+  shell-quoted refresh and default-base/HEAD scope from #4991; unresolved roots
+  now withhold that refresh rather than guess another destination. A lossless
+  alias preserves non-UTF-8 physical roots; no lossy replacement-character path is
+  offered as a rooted command. Missing-root recovery also preserves the input
+  traversal instead of selecting an existing lexical decoy (#4000).
 - CLI argument errors now name the fix on every command. `ripr context`
   no-finding errors carry `ripr explain`'s remediation suffix on both the
   fresh and `--from` paths; `ripr check --format`, `ripr outcome`, and
@@ -165,6 +227,11 @@ are scoped or reviewed.
   typed value, and `ripr context --max-related-tests 0` parses again — zero
   suppresses related tests, matching the config surface
   ([#4318](https://github.com/EffortlessMetrics/ripr-swarm/issues/4318)).
+- Agent repair cards now apply the actual transaction's edit-cage admission
+  to readiness and next actions. An inline test whose production file is
+  not an allowed repair surface carries the exact refusal instead of
+  claiming repair readiness; separate-test routes stay available
+  (EffortlessMetrics/ripr#1810, RIPR-SPEC-0192/0194).
 - Perl preview findings with an unavailable test runner now disclose that
   limitation and ask for runner verification instead of saying no test change
   is needed solely because static evidence aligns with the changed sink
@@ -1293,6 +1360,10 @@ are scoped or reviewed.
   follow-ups. Matching `.ripr/allow-attributes.txt` rows were dropped
   ([#3801](https://github.com/EffortlessMetrics/ripr-swarm/issues/3801)).
 
+- Review guidance: evaluate full seam evidence in bounded windows and retain
+  only the canonical top-ten full payloads between windows (#4691). Preserve
+  rankings, omission disclosure and evaluated/unevaluated counts; interrupted
+  windows remain incomplete. Whole-index and per-test facts remain corpus-sized.
 - PR review guidance retains unresolved headline-eligible recommendations
   when the nearby recommended test file changes. Test-file proximity no
   longer erases these cards; evidence limitations and output caps remain
@@ -1688,6 +1759,7 @@ are scoped or reviewed.
   ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
   [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
+
 - On the Python and TypeScript preview route, `ripr first-pr` now shows how to
   see whether the gap moved after the test edit. A `ripr receipt write`
   receipt records only the verify status it is given and re-checks nothing,
@@ -1893,6 +1965,23 @@ are scoped or reviewed.
   instead of reading as a green empty result. Genuinely empty input stays
   `no_scope` complete, and unparseable garbage keeps its existing
   `unsupported_input` contract (#4375).
+
+- TypeScript repair packets no longer call a non-boundary test complete
+  when the threshold is a parameter. For `if (amount >= threshold)` with
+  tests calling `discount(50, 100)`, `ripr check` said the packet was
+  complete, shaped like `expect(discount(50, 100)).toBe(expected)`, which
+  cannot tell `>` from `>=`. The analysis side now records when both sides
+  are read-only owner parameters, and the packet derives
+  `expect(discount(100, 100)).toBe(expected)`. When the parameters are not
+  shown read-only, or the observed arguments are not integer literals, the
+  packet is not ready and uses the boundary placeholder. (#4759)
+- CLI: `ripr plus` and the compatibility `cargo xtask ripr-plus` receipt
+  composition no longer turn exposure-only zero into complete RIPR+ quality
+  authority. Legacy inputs remain informational and `indeterminate`, preserving
+  known counts separately while total unresolved debt and qualified head are
+  unknown. `--check` now refuses incomplete evidence; invalid input replaces
+  an old receipt with an indeterminate error receipt and returns nonzero.
+  See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary.
 
 ### Added
 
