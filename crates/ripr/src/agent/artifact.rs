@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 pub(crate) const ARTIFACT_IDENTITY_SCHEMA_VERSION: &str = "1";
 /// Version of the repo-exposure analysis input-identity algorithm (#2823).
@@ -612,7 +612,7 @@ fn display_root(root: &Path) -> String {
     root.to_string_lossy().replace('\\', "/")
 }
 
-fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_spawn(root, args)?;
     if !output.status.success() {
         return Err(format!(
@@ -627,14 +627,20 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|err| format!("git {args:?} returned non-UTF-8 output: {err}"))
 }
 
+/// Cooperative deadline for every git adapter spawn in this module (#2303,
+/// #4363). The adapters answer artifact identity and verify questions
+/// (`rev-parse`, `status`, `cat-file`, `merge-base`) on bounded repair/verify
+/// flows: a hung git must not block the flow past the deadline. One minute
+/// matches the `GIT_DEADLINE` family used by the other bounded git consumers.
+const ARTIFACT_GIT_DEADLINE: Duration = Duration::from_mins(1);
+
 /// The single process-spawn site for every git adapter in this module: the
-/// process-policy gate allows exactly one command spawn here.
+/// process-policy gate allows exactly one command spawn here. The spawn goes
+/// through the shared `crate::git` deadline/process-owner authority (#4363);
+/// the adapter-level `Output` contract (exit status inspected by the caller)
+/// is unchanged.
 fn git_spawn(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new("git")
-        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
-        .args(args)
-        .current_dir(root)
-        .output()
+    crate::git::run_git_output_with_deadline(root, args, Some(ARTIFACT_GIT_DEADLINE))
         .map_err(|err| format!("run git {:?} in {} failed: {err}", args, root.display()))
 }
 
@@ -2625,6 +2631,64 @@ mod tests {
                 Err(error) if error.contains("analysis input identities differ") => Ok(()),
                 other => Err(format!(
                     "pattern-changed pair must be incomparable, got {other:?}"
+                )),
+            }
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+    #[test]
+    fn repo_exposure_input_identity_tracks_handwritten_files() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let config = crate::config::RiprConfig::default();
+            let baseline = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &config,
+            )?;
+            let moved = crate::config::tests_only_parse(
+                "[languages.rust]\nhandwritten_files = [\"src/schema.rs\"]\n",
+            )?;
+            if crate::config::check_artifact_config_identity_hash(&moved)
+                == crate::config::check_artifact_config_identity_hash(&config)
+            {
+                return Err(
+                    "handwritten_files fixture must move the diff-check config hash".to_string(),
+                );
+            }
+            if crate::config::repo_exposure_config_identity_hash(&moved)
+                == crate::config::repo_exposure_config_identity_hash(&config)
+            {
+                return Err(
+                    "handwritten_files is consumed by seam inventory and must move the repo-exposure config identity"
+                        .to_string(),
+                );
+            }
+            let moved_context = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &moved,
+            )?;
+            if moved_context.input_identity == baseline.input_identity {
+                return Err(
+                    "handwritten_files must move the repo-exposure input identity".to_string(),
+                );
+            }
+            let mut before = comparable_artifact();
+            before.input_identity = baseline.input_identity.clone();
+            let mut after = before.clone();
+            after.input_identity = moved_context.input_identity.clone();
+            match validate_comparable_pair(&before, &after) {
+                Err(error) if error.contains("analysis input identities differ") => Ok(()),
+                other => Err(format!(
+                    "inclusion-changed pair must be incomparable, got {other:?}"
                 )),
             }
         })();

@@ -92,7 +92,8 @@ Additive optional fields:
   `cross_language_oracle_visibility_unresolved`,
   `rust_transitive_reach_unresolved`,
   `rust_integration_public_api_path_unresolved`,
-  `rust_macro_reach_unresolved`).
+  `rust_macro_reach_unresolved`,
+  `python_transitive_reach_unresolved`).
 
 Reports gaining these fields:
 
@@ -153,6 +154,17 @@ an actionable message naming the missing Cargo feature, such as
 `lang-typescript`, `lang-python`, or `lang-perl`. The editor and other projection
 surfaces must treat that as unavailable adapter state, not as a reason to
 invent diagnostics.
+
+### Exact handwritten Rust recovery
+
+`[languages.rust] handwritten_files` declares exact normalized repository-relative
+`.rs` files that should be analyzed despite conventional generated names or
+directories. The default is empty. It does not override explicit generated globs,
+generator headers or vendor markers. Diff, worktree and repository consumers
+must reuse the generated-source authority and selected config. Inclusion changes
+discovery only: an ineffective test must not gain exposure from its filename
+being admitted. Skipped-source recovery must name this bounded opt-in and its
+precedence, while preserving honest limitations for sources still excluded.
 
 ## Required Evidence
 

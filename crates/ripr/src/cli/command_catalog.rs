@@ -596,6 +596,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
         DiscoveryPosture::Advanced,
     ),
     nested(
+        "cmd:agent.card",
+        "agent card",
+        CommandClass::Advanced,
+        CommandDispatch::Agent,
+        AGENT,
+        DiscoveryPosture::Advanced,
+    ),
+    nested(
         "cmd:agent.verify",
         "agent verify",
         CommandClass::Advanced,
@@ -687,6 +695,12 @@ const CATALOG: &[CommandCatalogEntry] = &[
     public_top("cmd:rerun", "rerun", CommandDispatch::Rerun),
     public_top("cmd:mcp", "mcp", CommandDispatch::Mcp),
 ];
+
+/// Versioned contract identity of the governed catalog tables (C1 command
+/// catalog, C2 metadata, C3 workflow catalog). A material shape change to any
+/// projected row bumps this; it ships in the `help --json` document
+/// (RIPR-SPEC-0190 / #4825) so machine consumers can pin the contract.
+pub(crate) const CATALOG_CONTRACT_VERSION: &str = "1";
 
 /// The governed catalog of public command identity and aliases.
 pub(crate) fn catalog() -> &'static [CommandCatalogEntry] {

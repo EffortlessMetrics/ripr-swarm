@@ -11,6 +11,7 @@
 //! confidence, relation reason, oracle strength, activation overlap,
 //! then stable file/name/line tie-breakers.
 
+mod owner_result_binding;
 mod related_tests;
 
 pub(crate) use related_tests::CompactGripContext;
@@ -145,12 +146,24 @@ impl TestTargetEvidence {
         &self.symbol_id
     }
 
-    #[cfg(test)]
+    /// Projection accessors for the RepairCard builder (#4663): the card
+    /// copies these facts verbatim and never re-derives them.
+    pub(crate) fn relation(&self) -> RelationReason {
+        self.relation
+    }
+
+    pub(crate) fn test_kind(&self) -> TestKind {
+        self.test_kind
+    }
+
+    pub(crate) fn workspace_identity(&self) -> &str {
+        &self.workspace_identity
+    }
+
     pub(crate) fn file(&self) -> &Path {
         &self.file
     }
 
-    #[cfg(test)]
     pub(crate) fn line(&self) -> usize {
         self.line
     }
@@ -175,6 +188,10 @@ impl TestTargetEvidence {
             workspace_identity: "fixture".to_string(),
             currentness: TestTargetCurrentness::Current,
         }
+    }
+
+    pub(crate) fn provenance(&self) -> TestTargetProvenance {
+        self.provenance
     }
 }
 
@@ -217,6 +234,14 @@ impl<'index> EvidencePass<'index> {
             context_started.elapsed(),
         );
         Self { context }
+    }
+
+    /// Drop memoized owner/AST detail at a window boundary. Immutable test
+    /// indexes and file-bounded scalar/line facts stay reusable.
+    pub(crate) fn clear_window_memos(&self) {
+        if let Some(context) = &self.context {
+            context.clear_window_memos();
+        }
     }
 
     /// Evidence for `seams`, sorted by `seam_id`; empty when the context
@@ -270,7 +295,7 @@ fn evidence_for_seam_with_context(
 
     let reach = reach_evidence(seam, &related);
     let (activate, observed_values, missing_discriminators) =
-        activate_evidence(seam, &related_indexed, context.index, owner_fn);
+        activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related);
@@ -333,7 +358,7 @@ pub(crate) fn compact_evidence_for_seam(
 
     let reach = reach_evidence(seam, &related);
     let (activate, missing_discriminators) =
-        compact_activate_evidence(seam, &related_indexed, context.index, owner_fn);
+        compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
     let observe = observe_evidence(&related);
     let discriminate = discriminate_evidence(seam, &related);
@@ -384,9 +409,10 @@ fn reach_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidence {
 fn activate_evidence(
     seam: &RepoSeam,
     related: &[&CompactTest<'_>],
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
 ) -> (StageEvidence, Vec<ValueFact>, Vec<MissingDiscriminatorFact>) {
+    let index = context.index;
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let mut observed: Vec<ValueFact> = Vec::new();
     let observed_argument_selection =
@@ -457,7 +483,7 @@ fn activate_evidence(
                     && observed.is_empty()
                     && !boundary_equality_observed)
             });
-    let missing = missing_discriminators_for(
+    let mut missing = missing_discriminators_for(
         seam,
         &observed,
         boundary_activation_operands_unresolved,
@@ -588,6 +614,13 @@ fn activate_evidence(
             )
         },
     );
+    missing.extend(owner_result_binding::missing_field_value_facts(
+        seam,
+        related,
+        context,
+        owner_fn,
+        &stage.state,
+    ));
     (stage, observed, missing)
 }
 
@@ -1226,11 +1259,11 @@ fn resolved_argument_values(
 fn compact_activate_evidence(
     seam: &RepoSeam,
     related: &[&CompactTest<'_>],
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
 ) -> (StageEvidence, Vec<MissingDiscriminatorFact>) {
-    if seam.kind() == SeamKind::PredicateBoundary {
-        let (stage, _observed, missing) = activate_evidence(seam, related, index, owner_fn);
+    if seam.kind() == SeamKind::PredicateBoundary || seam.kind() == SeamKind::FieldConstruction {
+        let (stage, _observed, missing) = activate_evidence(seam, related, context, owner_fn);
         return (stage, missing);
     }
 

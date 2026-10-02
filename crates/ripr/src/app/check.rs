@@ -1,8 +1,11 @@
+use super::progress::{
+    AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage, ProgressRun,
+};
 use super::{CheckInput, CheckOutput};
 use crate::analysis::{
-    AnalysisResult, run_analysis_with_oracle_policy_and_generated_file_patterns,
-    run_repo_analysis_with_oracle_policy_and_generated_file_patterns,
-    run_worktree_analysis_with_oracle_policy_and_generated_file_patterns,
+    AnalysisResult, run_analysis_with_oracle_policy_and_rust_config,
+    run_repo_analysis_with_oracle_policy_and_rust_config,
+    run_worktree_analysis_with_oracle_policy_and_rust_config,
 };
 use crate::config::RiprConfig;
 use crate::domain::LanguageId;
@@ -37,14 +40,67 @@ pub fn check_workspace_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Diff)
+    check_with_progress(input, config, AnalysisProgressScope::Diff, None)
 }
 
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Worktree)
+    check_with_progress(input, config, AnalysisProgressScope::Worktree, None)
+}
+
+#[cfg(test)]
+pub(crate) fn check_workspace_worktree_with_origins(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    ),
+    String,
+> {
+    check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)
+        .map(|(output, origins, _)| (output, origins))
+}
+
+pub(crate) fn check_workspace_worktree_with_sources(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+    ),
+    String,
+> {
+    check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)
+}
+
+pub(crate) fn check_workspace_worktree_with_sources_and_open_rust_paths(
+    input: CheckInput,
+    config: &RiprConfig,
+    open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+    ),
+    String,
+> {
+    if open_rust_index_paths.is_empty() {
+        return check_workspace_worktree_with_sources(input, config);
+    }
+    check_with_progress_and_origins_with_open_rust_paths(
+        input,
+        config,
+        AnalysisProgressScope::Worktree,
+        None,
+        open_rust_index_paths,
+    )
 }
 
 /// Runs the repo-baseline static exposure analysis for a workspace. This
@@ -65,51 +121,72 @@ pub fn check_workspace_repo_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    run_check(input, config, AnalysisMode::Repo)
+    check_with_progress(input, config, AnalysisProgressScope::Repo, None)
 }
 
-/// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
-///
-/// The seam inventory, repo exposure, agent packet, SARIF seam, and
-/// seam-native badge renderers read only `output.root` plus auxiliary
-/// disk artifacts as needed, so this avoids running `run_repo_analysis`
-/// to compute legacy `Findings` those formats discard. The rest of the
-/// fields are populated for schema-consistency only.
-///
-/// This helper performs no analysis, so a [`crate::GitCandidateSubject`]
-/// on the input is not consumed or validated here (#3276): callers reach
-/// the subject's fail-closed boundary only through the `check_workspace*`
-/// entry points.
-pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
-    output_builder::check_output_from_analysis(
+#[cfg(test)]
+pub(crate) fn check_workspace_repo_with_origins(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    ),
+    String,
+> {
+    check_with_progress_and_origins(input, config, AnalysisProgressScope::Repo, None)
+        .map(|(output, origins, _)| (output, origins))
+}
+
+/// Run a check while observing producer-owned progress boundaries.
+pub(crate) fn check_with_progress(
+    input: CheckInput,
+    config: &RiprConfig,
+    scope: AnalysisProgressScope,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<CheckOutput, String> {
+    Ok(check_with_progress_and_origins(input, config, scope, sink)?.0)
+}
+
+fn check_with_progress_and_origins(
+    input: CheckInput,
+    config: &RiprConfig,
+    scope: AnalysisProgressScope,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+    ),
+    String,
+> {
+    check_with_progress_and_origins_with_open_rust_paths(
         input,
-        AnalysisResult {
-            harness_projections: Vec::new(),
-            analysis_outcome: None,
-            summary: Summary::default(),
-            findings: Vec::new(),
-            preview_language_advisories: Vec::new(),
-            language_runs: Vec::new(),
-            partial_scope: None,
-            // No analysis ran, so no loader chose a base (#3940).
-            effective_base: None,
-            uncommitted_source_paths: Vec::new(),
-        },
+        config,
+        scope,
+        sink,
+        &Default::default(),
     )
 }
 
-#[derive(Debug)]
-enum AnalysisMode {
-    Diff,
-    Worktree,
-    Repo,
-}
-
-fn run_check(
+fn check_with_progress_and_origins_with_open_rust_paths(
     mut input: CheckInput,
     config: &RiprConfig,
-    mode: AnalysisMode,
-) -> Result<CheckOutput, String> {
+    scope: AnalysisProgressScope,
+    sink: Option<&dyn AnalysisProgressSink>,
+    open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
+) -> Result<
+    (
+        CheckOutput,
+        crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+        crate::analysis::consumed_source::ConsumedRustSources,
+    ),
+    String,
+> {
+    let mut progress = ProgressRun::new(sink, scope);
+    progress.emit(AnalysisProgressStage::LoadingInput);
     // Immutable Git candidate subjects (#3237 / #3276): bind-and-validate
     // only in this build. Validate first, before any subprocess or diff
     // acquisition, so a subject input can never fall through to worktree
@@ -144,7 +221,10 @@ fn run_check(
         }
     }
 
-    let options = options_builder::analysis_options_from_input_and_config(&input, config);
+    let mut options = options_builder::analysis_options_from_input_and_config(&input, config);
+    options
+        .open_rust_index_paths
+        .clone_from(open_rust_index_paths);
 
     // Build the language list from config. When --perl-facts is provided,
     // automatically add Perl to the enabled list (the user explicitly opted in
@@ -164,29 +244,30 @@ fn run_check(
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        eprintln!("ripr: mode = {:?}", mode);
+        eprintln!("ripr: mode = {:?}", scope);
     }
 
-    let analysis = match mode {
-        AnalysisMode::Diff => run_analysis_with_oracle_policy_and_generated_file_patterns(
+    progress.emit(AnalysisProgressStage::Analyzing);
+    let mut analysis = match scope {
+        AnalysisProgressScope::Diff => run_analysis_with_oracle_policy_and_rust_config(
             &options,
             config.oracles(),
             &languages,
-            config.languages().generated_file_patterns(),
+            &config.languages().rust,
         )?,
-        AnalysisMode::Worktree => {
-            run_worktree_analysis_with_oracle_policy_and_generated_file_patterns(
+        AnalysisProgressScope::Worktree => {
+            run_worktree_analysis_with_oracle_policy_and_rust_config(
                 &options,
                 config.oracles(),
                 &languages,
-                config.languages().generated_file_patterns(),
+                &config.languages().rust,
             )?
         }
-        AnalysisMode::Repo => run_repo_analysis_with_oracle_policy_and_generated_file_patterns(
+        AnalysisProgressScope::Repo => run_repo_analysis_with_oracle_policy_and_rust_config(
             &options,
             config.oracles(),
             &languages,
-            config.languages().generated_file_patterns(),
+            &config.languages().rust,
         )?,
     };
 
@@ -196,12 +277,48 @@ fn run_check(
         eprintln!("ripr: analysis complete — {probe_count} probes, {finding_count} findings");
     }
 
+    progress.emit(AnalysisProgressStage::BuildingOutput);
     let suppression_policy = input.suppression_policy.clone();
+    let origins = analysis.rust_diagnostic_origins.clone();
+    let consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
     if let Some(policy) = suppression_policy {
         apply_suppression_policy(&mut output, &policy)?;
     }
-    Ok(output)
+    progress.complete();
+    Ok((output, origins, consumed_sources))
+}
+
+/// Build a minimal [`CheckOutput`] for repo seam-driven rendering.
+///
+/// The seam inventory, repo exposure, agent packet, SARIF seam, and
+/// seam-native badge renderers read only `output.root` plus auxiliary
+/// disk artifacts as needed, so this avoids running `run_repo_analysis`
+/// to compute legacy `Findings` those formats discard. The rest of the
+/// fields are populated for schema-consistency only.
+///
+/// This helper performs no analysis, so a [`crate::GitCandidateSubject`]
+/// on the input is not consumed or validated here (#3276): callers reach
+/// the subject's fail-closed boundary only through the `check_workspace*`
+/// entry points.
+pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
+    output_builder::check_output_from_analysis(
+        input,
+        AnalysisResult {
+            harness_projections: Vec::new(),
+            analysis_outcome: None,
+            summary: Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            partial_scope: None,
+            // No analysis ran, so no loader chose a base (#3940).
+            effective_base: None,
+            uncommitted_source_paths: Vec::new(),
+            rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
+        },
+    )
 }
 
 /// Applies an explicit `--suppression-policy` file to check findings (#1441).
@@ -733,6 +850,8 @@ mod tests {
             partial_scope: None,
             effective_base,
             uncommitted_source_paths: Vec::new(),
+            rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         }
     }
 

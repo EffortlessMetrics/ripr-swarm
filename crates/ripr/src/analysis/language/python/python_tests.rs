@@ -1137,6 +1137,8 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1582,6 +1584,8 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1635,6 +1639,8 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1710,6 +1716,8 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1752,6 +1760,8 @@ fn same_stem_related_handles_missing_stems() {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let test = PythonTest {
         constant_rebinding: Default::default(),
@@ -1764,6 +1774,7 @@ fn same_stem_related_handles_missing_stems() {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -1833,6 +1844,7 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -1925,6 +1937,7 @@ fn analyze_diff_suppresses_multiline_docstring_interior_change() -> Result<(), S
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_files = vec![ChangedFile {
         path: production_rel,
@@ -1977,6 +1990,7 @@ fn analyze_diff_does_not_hide_behavior_after_same_line_docstring() -> Result<(),
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_files = vec![ChangedFile {
         path: production_rel,
@@ -2026,6 +2040,7 @@ fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_files = vec![ChangedFile {
         path: production_rel,
@@ -2118,6 +2133,7 @@ def test_encode_status():\n    assert encode_status('paid')['status'] == 'paid'\
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2292,6 +2308,7 @@ fn analyze_diff_does_not_count_vendor_subtree_changes() -> Result<(), String> {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2350,6 +2367,7 @@ fn analyze_diff_does_not_count_environment_subtree_changes() -> Result<(), Strin
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2408,6 +2426,7 @@ fn analyze_diff_still_counts_regular_source_changes() -> Result<(), String> {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2750,6 +2769,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         decorators: vec!["mock.patch".to_string()],
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -2765,6 +2785,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         decorators: vec!["patch".to_string()],
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -2780,6 +2801,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         decorators: vec!["pytest.mark.skip".to_string()],
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -3106,6 +3128,7 @@ fn analyze_diff_counts_python_file_but_skips_unreadable_workspace_source() -> Re
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -3179,6 +3202,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -3245,6 +3270,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -3277,6 +3304,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -3305,6 +3333,8 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
+        class_path: String::new(),
     }
 }
 
@@ -3341,6 +3371,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     }
@@ -3383,6 +3414,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         decorators: Vec::new(),
         fixtures: Vec::new(),
         parametrized: false,
+        parametrize: None,
         framework: "pytest",
         assertions: Vec::new(),
     };
@@ -3492,6 +3524,7 @@ fn probed_lines_for_python_rewrite(
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let line = |(line, text): &(usize, &str)| crate::analysis::diff::ChangedLine {
         line: *line,

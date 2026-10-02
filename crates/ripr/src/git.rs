@@ -43,9 +43,12 @@ pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
     "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
 
 /// True when `error` is the named git invocation timeout error (#2303).
-/// Matchable in the style of `analysis::cancellation::is_cancellation_error`.
+/// Matchable in the style of `analysis::cancellation::is_cancellation_error`:
+/// require the exact raw tag and its colon delimiter, without wrapper text.
 pub(crate) fn is_git_invocation_timeout(error: &str) -> bool {
-    error.starts_with(GIT_INVOCATION_TIMEOUT_PREFIX)
+    error
+        .strip_prefix(GIT_INVOCATION_TIMEOUT_PREFIX)
+        .is_some_and(|suffix| suffix.starts_with(':'))
 }
 
 /// True when `error` is the named missing-git spawn failure (#4735).
@@ -198,6 +201,49 @@ impl SpawnSite {
     }
 }
 
+/// The repair for Git's refusal of a repository another user owns
+/// (`safe.directory`, #4530), or `None` when `stderr` is not that refusal.
+///
+/// Git answers every command in such a repository with `detected dubious
+/// ownership`, so a caller that reads only the exit status mistakes it for
+/// "not a repository" and sends the user somewhere the repository already is.
+/// The path comes from Git's own message when present: it is the top-level
+/// directory Git wants trusted, which can differ from the analyzed root.
+/// `outcome` follows the ownership clause, for callers that must say what
+/// did not happen (for example " (the analysis did not run)").
+pub(crate) fn dubious_ownership_message(
+    root: &Path,
+    stderr: &[u8],
+    outcome: &str,
+) -> Option<String> {
+    let stderr = String::from_utf8_lossy(stderr);
+    let line = stderr
+        .lines()
+        .find(|line| line.contains("detected dubious ownership in repository"))?;
+    let repository = line
+        .split_once(" at '")
+        .and_then(|(_, rest)| rest.strip_suffix('\''))
+        .map_or_else(|| root.display().to_string(), str::to_string);
+    // Only a path made of shell-inert characters is rendered inside a
+    // command to paste: a space splits the `--add` value, and `$()` or a
+    // quote would run or break in the user's shell (#4606 review). Any other
+    // path names the setting instead of a command.
+    let repair = if repository
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '\\' | '.' | '_' | '-' | ':'))
+    {
+        format!("run `git config --global --add safe.directory {repository}`")
+    } else {
+        "add that exact path to Git's `safe.directory` setting (`git config --global --add \
+         safe.directory <path>`, quoted for your shell)"
+            .to_string()
+    };
+    Some(format!(
+        "Git refuses the repository at `{repository}` because another user owns it{outcome}. \
+         If you trust it, {repair} and retry."
+    ))
+}
+
 /// `NotFound` is also what a missing working directory produces, so only a
 /// missing git program with a usable cwd becomes the PATH diagnosis. A
 /// non-git program (the doctor Perl-exporter probe) keeps its own spawn text.
@@ -264,6 +310,23 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
         .args(UNTRUSTED_REPOSITORY_CONFIG)
         .args(args);
     command
+}
+
+/// [`run_git_output_with_deadline`] with extra environment variables set on
+/// the child, for probes that must scope repository discovery (for example
+/// `GIT_CEILING_DIRECTORIES`).
+pub(crate) fn run_git_output_with_deadline_and_env(
+    root: &Path,
+    args: &[&str],
+    envs: &[(&str, &std::ffi::OsStr)],
+    timeout: Option<Duration>,
+) -> Result<Output, String> {
+    let describe = format!("git -C {} {:?}", root.display(), args);
+    let mut command = git_command(root, args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    collect_output_with_deadline(command, timeout, &describe)
 }
 
 /// Run Git through the shared deadline/process-tree authority while retaining
@@ -623,7 +686,12 @@ pub(crate) fn poll_child(
                         describe,
                         "timeout",
                         ChildWait::TimedOut(format!(
-                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
+                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the \
+                             {timeout_ms}ms deadline (process terminated). Repair route: \
+                             raise or disable the git deadline (0 disables it) — \
+                             --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI \
+                             runs, the gitTimeoutMs initialization option for editor \
+                             sessions — then re-run."
                         )),
                         || child.terminate_tree(),
                     );
@@ -724,6 +792,74 @@ mod tests {
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
     use serial_test::serial;
+
+    #[test]
+    fn dubious_ownership_names_the_safe_directory_repair() -> Result<(), String> {
+        // #4530: Git's own refusal text, as 2.43 prints it.
+        let stderr = b"fatal: detected dubious ownership in repository at '/srv/repo'\n\
+To add an exception for this directory, call:\n\n\tgit config --global --add safe.directory /srv/repo\n";
+        let message =
+            dubious_ownership_message(Path::new("sub"), stderr, " (the analysis did not run)")
+                .ok_or("the refusal must be recognized")?;
+        if !message.starts_with(
+            "Git refuses the repository at `/srv/repo` because another user owns it (the analysis did not run).",
+        ) || !message.contains("git config --global --add safe.directory /srv/repo")
+        {
+            return Err(format!("expected Git's path and the repair, got {message}"));
+        }
+        // A path with shell syntax is never rendered inside a pasteable
+        // command (#4606 review): a space splits the value and `$()` runs.
+        for path in ["/tmp/ripr repo", "/tmp/$(touch x)", "/tmp/it's"] {
+            let stderr = format!("fatal: detected dubious ownership in repository at '{path}'\n");
+            let message = dubious_ownership_message(Path::new("sub"), stderr.as_bytes(), "")
+                .ok_or("the refusal must be recognized")?;
+            if message.contains(&format!("safe.directory {path}"))
+                || !message.contains(&format!("repository at `{path}`"))
+                || !message.contains("quoted for your shell")
+            {
+                return Err(format!("unsafe path must not be pasteable: {message}"));
+            }
+        }
+        if dubious_ownership_message(
+            Path::new("sub"),
+            b"fatal: not a git repository (or any of the parent directories): .git\n",
+            "",
+        )
+        .is_some()
+        {
+            return Err("an ordinary non-repository must not read as an ownership refusal".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn git_timeout_tag_requires_exact_raw_error_prefix() {
+        for error in [
+            "git_invocation_timeout: git command exceeded its deadline",
+            "git_invocation_timeout:	git command exceeded its deadline",
+            "git_invocation_timeout:\ngit command exceeded its deadline",
+        ] {
+            assert!(is_git_invocation_timeout(error), "missed {error:?}");
+        }
+        for error in [
+            "git_invocation_timeout",
+            "git_invocation_timeoutness: unrelated failure",
+            "git_invocation_timeout_metadata: unrelated failure",
+            "git_invocation_timeout : invalid delimiter",
+            "git_invocation_timeout\n: invalid delimiter",
+            "git_invocation_timeout\r\n: invalid delimiter",
+            " git_invocation_timeout: not raw",
+            "\ngit_invocation_timeout: not raw",
+            "ripr: git_invocation_timeout: wrapped",
+            "outer: git_invocation_timeout: wrapped",
+            "diff_scope_oversized: a different guard",
+            "repo_scope_oversized: a different guard",
+            "review_guidance_oversized: a different guard",
+            "analysis cancelled: DeadlineExceeded",
+        ] {
+            assert!(!is_git_invocation_timeout(error), "misclassified {error:?}");
+        }
+    }
 
     /// Drive letter kept apart from its separator so the local-context gate
     /// does not read these synthetic roots as a committed machine path.
@@ -1288,6 +1424,27 @@ mod tests {
         if !err.contains("exceeded the 50ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
+            ));
+        }
+        // #4946(b): the timeout message names both deadline knobs and the
+        // 0-disables escape, matching diff_scope_oversized's in-message
+        // repair-route pattern — the error alone must be repairable. The
+        // same shared wait also serves the editor sidecar, whose deadline is
+        // configured by `gitTimeoutMs`, so the route names that knob too
+        // (#4946 review).
+        if !err.contains("--git-timeout") || !err.contains("RIPR_GIT_TIMEOUT") {
+            return Err(format!(
+                "timeout error should name the deadline knobs, got: {err}"
+            ));
+        }
+        if !err.contains("0 disables it") {
+            return Err(format!(
+                "timeout error should name the 0-disables escape, got: {err}"
+            ));
+        }
+        if !err.contains("gitTimeoutMs") {
+            return Err(format!(
+                "timeout error should name the editor-session deadline knob, got: {err}"
             ));
         }
         // Kill+reap proof without a wall-clock bound: drive the same

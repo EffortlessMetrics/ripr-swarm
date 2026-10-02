@@ -39,6 +39,7 @@ use crate::output::first_pr::FIRST_PR_HELP;
 #[cfg(test)]
 const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "agent brief",
+    "agent card",
     "agent packet",
     "agent repair",
     "agent receipt",
@@ -109,6 +110,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
 /// suggestions; callers fall back to naming `ripr <path> --help`.
 pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
     let help_text = match command {
+        "agent card" => AGENT_CARD_HELP,
         "agent brief" => AGENT_BRIEF_HELP,
         "agent packet" => AGENT_PACKET_HELP,
         "agent repair" => AGENT_REPAIR_HELP,
@@ -184,6 +186,19 @@ pub(super) fn print_help() {
 
 pub(super) fn print_help_all() {
     println!("{HELP_ALL}");
+}
+
+/// `ripr help workflow [name]`: bounded, non-executing workflow guidance
+/// (RIPR-SPEC-0189). The render is pure static text from the typed workflow
+/// catalog; it performs no repository discovery, analysis, compilation, test,
+/// child-process, network, mutation, or product-artifact work.
+pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
+    let rendered = match name {
+        Some(name) => crate::cli::workflow_catalog::render_workflow(name)?,
+        None => crate::cli::workflow_catalog::render_workflow_listing(),
+    };
+    println!("{rendered}");
+    Ok(())
 }
 
 pub(super) fn print_check_help() {
@@ -282,6 +297,10 @@ pub(super) fn print_agent_packet_help() {
     println!("{AGENT_PACKET_HELP}");
 }
 
+pub(super) fn print_agent_card_help() {
+    println!("{AGENT_CARD_HELP}");
+}
+
 pub(super) fn print_agent_verify_help() {
     println!("{AGENT_VERIFY_HELP}");
 }
@@ -338,6 +357,13 @@ pub(super) fn print_rerun_help() {
     println!("{RERUN_HELP}");
 }
 
+/// Test-only access to the two rendered human discovery surfaces, for the
+/// projection-agreement checks in `command_metadata` (issue #4823).
+#[cfg(test)]
+pub(crate) fn discovery_surfaces() -> (&'static str, &'static str) {
+    (overview::HELP, overview::HELP_ALL)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -356,7 +382,7 @@ mod tests {
         Ok(())
     }
     use super::{
-        AGENT_BRIEF_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
+        AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
         ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
         CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
@@ -365,17 +391,17 @@ mod tests {
         IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, PLUS_HELP,
         POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
         PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
-        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help, print_agent_help,
-        print_agent_packet_help, print_agent_receipt_help, print_agent_repair_help,
-        print_agent_review_summary_help, print_agent_start_help, print_agent_status_help,
-        print_agent_verify_help, print_assistant_loop_help, print_baseline_help,
-        print_calibrate_help, print_check_help, print_config_help, print_context_help,
-        print_coverage_grip_help, print_diff_help, print_doctor_help, print_evidence_health_help,
-        print_explain_help, print_first_action_help, print_gate_help, print_help, print_help_all,
-        print_init_help, print_lsp_help, print_outcome_help, print_pilot_help, print_policy_help,
-        print_pr_comments_help, print_pr_ledger_help, print_pr_review_help, print_reports_help,
-        print_rerun_help, print_review_comments_help, print_swarm_help, print_swarm_ingest_help,
-        print_swarm_queue_help, print_zero_help,
+        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
+        print_agent_card_help, print_agent_help, print_agent_packet_help, print_agent_receipt_help,
+        print_agent_repair_help, print_agent_review_summary_help, print_agent_start_help,
+        print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
+        print_baseline_help, print_calibrate_help, print_check_help, print_config_help,
+        print_context_help, print_coverage_grip_help, print_diff_help, print_doctor_help,
+        print_evidence_health_help, print_explain_help, print_first_action_help, print_gate_help,
+        print_help, print_help_all, print_init_help, print_lsp_help, print_outcome_help,
+        print_pilot_help, print_policy_help, print_pr_comments_help, print_pr_ledger_help,
+        print_pr_review_help, print_reports_help, print_rerun_help, print_review_comments_help,
+        print_swarm_help, print_swarm_ingest_help, print_swarm_queue_help, print_zero_help,
     };
     use crate::cli::command::known_commands;
 
@@ -518,8 +544,28 @@ mod tests {
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));
+        assert!(CHECK_HELP.contains("--quiet"));
+        assert!(CHECK_HELP.contains("ripr progress:"));
+        assert!(CHECK_HELP.contains("percentage or ETA"));
+        assert!(CHECK_HELP.contains("does not mean analysis is faster"));
+        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
+    }
+
+    #[test]
+    fn check_help_names_the_latency_trace_env_and_mode_cost_class() {
+        // #4946(d): every repo-exposure env var a check user can set is
+        // documented on the same "Environment variables:" surface; this one
+        // was the last omission.
+        assert!(CHECK_HELP.contains("RIPR_REPO_EXPOSURE_LATENCY_TRACE"));
+        assert!(CHECK_HELP.contains("emits diagnostic phase/cache"));
+        assert!(CHECK_HELP.contains("Presence enables tracing"));
+        // #4946(c): the --mode entry orients on the cost class, not only the
+        // index scope, so a caller can predict the wall-clock difference.
+        assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
+        assert!(CHECK_HELP.contains("order of magnitude longer"));
     }
 
     #[test]
@@ -657,6 +703,11 @@ mod tests {
         assert!(AGENT_PACKET_HELP.starts_with("Write a per-change handoff packet"));
         assert!(AGENT_PACKET_HELP.contains("Usage: ripr agent packet"));
         assert!(AGENT_PACKET_HELP.contains("agent-seam-packets-json"));
+        assert!(
+            AGENT_CARD_HELP.starts_with("Hand off one seam as the compact default repair card")
+        );
+        assert!(AGENT_CARD_HELP.contains("Usage: ripr agent card"));
+        assert!(AGENT_CARD_HELP.contains("repair_card.v1"));
         assert!(AGENT_VERIFY_HELP.starts_with("Verify static-evidence movement"));
         assert!(AGENT_VERIFY_HELP.contains("Usage: ripr agent verify"));
         assert!(AGENT_VERIFY_HELP.contains("repo-exposure-json"));
@@ -823,6 +874,7 @@ mod tests {
         print_agent_start_help();
         print_agent_brief_help();
         print_agent_packet_help();
+        print_agent_card_help();
         print_agent_verify_help();
         print_agent_receipt_help();
         print_agent_status_help();
@@ -837,6 +889,48 @@ mod tests {
         print_context_help();
         print_doctor_help();
         print_lsp_help();
+    }
+
+    /// #5009: the global `-v`/`--verbose` flag is extracted before every
+    /// command parser, so the per-command parity gate below cannot see it.
+    /// Pin its disclosure against the extraction owner itself: every
+    /// spelling the single stripping pass accepts must appear on the
+    /// `ripr help --all` reference, which also discloses what verbose mode
+    /// adds and the any-position contract. A new global spelling therefore
+    /// cannot land without a help disclosure in the same PR.
+    #[test]
+    fn global_verbose_spellings_are_documented_on_help_all() -> Result<(), String> {
+        let parse_rs = include_str!("parse.rs");
+        let (skeleton, literals) = scan_rust_source(parse_rs);
+        let (body_start, body_end) = function_body_span(&skeleton, "extract_global_verbose")
+            .ok_or_else(|| "extract_global_verbose body not found in parse.rs".to_string())?;
+        let mut accepted: Vec<&str> = Vec::new();
+        for (at, literal) in &literals {
+            if *at >= body_start && *at < body_end && !accepted.contains(&literal.as_str()) {
+                accepted.push(literal.as_str());
+            }
+        }
+        if accepted != ["--verbose", "-v"] {
+            return Err(format!(
+                "extract_global_verbose accepts {accepted:?}; update the owner and this \
+                 gate together with the help --all disclosure"
+            ));
+        }
+        for spelling in accepted {
+            if !HELP_ALL.contains(spelling) {
+                return Err(format!(
+                    "help --all omits the global flag spelling {spelling:?}"
+                ));
+            }
+        }
+        for required in ["any position", "stderr"] {
+            if !HELP_ALL.contains(required) {
+                return Err(format!(
+                    "help --all global-flags entry omits the disclosure {required:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     // ── flag/help parity gate (#2342, revived by #4317) ──────────────────────
@@ -892,6 +986,7 @@ mod tests {
             AGENT_PARSER_RS,
             &["parse_agent_packet_options"],
         ),
+        ("agent card", AGENT_PARSER_RS, &["parse_agent_card_options"]),
         (
             "agent repair",
             AGENT_PARSER_RS,
@@ -1566,7 +1661,7 @@ mod tests {
             (
                 "check",
                 CHECK_HELP,
-                &["--base", "--diff", "--mode", "--json"],
+                &["--base", "--diff", "--mode", "--json", "--quiet"],
             ),
             (
                 "explain",

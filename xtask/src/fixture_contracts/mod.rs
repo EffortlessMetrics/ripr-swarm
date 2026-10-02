@@ -82,6 +82,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_release_control_fixture_corpus(&mut violations)?;
     validate_release_scope_fixture_corpus(&mut violations)?;
     validate_intervention_study_fixture_corpus(&mut violations)?;
+    validate_blind_journey_contract_fixture_corpus(&mut violations)?;
     for entry in
         fs::read_dir(fixtures_dir).map_err(|err| format!("failed to read fixtures: {err}"))?
     {
@@ -161,10 +162,10 @@ fn validate_intervention_study_fixture_corpus(violations: &mut Vec<String>) -> R
         let text = read_text_lossy(&spec)?;
         if !text
             .lines()
-            .any(|line| line.starts_with("Spec: RIPR-SPEC-0185"))
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0205"))
         {
             violations.push(format!(
-                "{} is missing `Spec: RIPR-SPEC-0185`",
+                "{} is missing `Spec: RIPR-SPEC-0205`",
                 normalize_path(&spec)
             ));
         }

@@ -243,6 +243,8 @@ impl LanguageAdapter for PerlAdapter {
             // for every non-Rust adapter (#3532).
             harness_projections: Vec::new(),
             limitations,
+            rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 
@@ -291,6 +293,8 @@ impl LanguageAdapter for PerlAdapter {
             // for every non-Rust adapter (#3532).
             harness_projections: Vec::new(),
             partial_reason,
+            rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 }
@@ -541,6 +545,12 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             "perl_target_test_shape: {}",
             change.behavior_hint.default_assertion_shape()
         ));
+        if static_limit_projection.missing_test_runner {
+            evidence.push(
+                "perl_missing_test_runner: the related Perl test runner is unavailable; static sink alignment does not verify execution"
+                    .to_string(),
+            );
+        }
         if is_already_observed && let Some(aligned) = sink_aligned_evidence.as_ref() {
             // The sink-aligned evidence explains the observation: which test +
             // oracle observes which changed sink. This is the "already-observed
@@ -679,7 +689,15 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             },
             stop_reasons: Vec::new(),
             related_tests: related,
-            recommended_next_step: Some(if is_already_observed {
+            recommended_next_step: Some(if static_limit_projection.missing_test_runner {
+                if is_already_observed {
+                    "Make the related Perl test runner available and run the sink-aligned test to verify the static observation."
+                        .to_string()
+                } else {
+                    "Make the related Perl test runner available, then add a focused assertion for the changed behavior and verify it."
+                        .to_string()
+                }
+            } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
                 // No new test is needed; this is maintainer end-state outcome #2.
                 "No test change needed — an existing test already observes the \

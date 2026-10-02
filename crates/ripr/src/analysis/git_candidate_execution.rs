@@ -704,16 +704,16 @@ mod tests {
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
         };
-        let error =
-            crate::analysis::run_worktree_analysis_with_oracle_policy_and_generated_file_patterns(
-                &options,
-                &crate::config::OraclePolicy::default(),
-                &[crate::analysis::language::LanguageId::Rust],
-                &[],
-            )
-            .err()
-            .ok_or("worktree mode must fail closed on a subject")?;
+        let error = crate::analysis::run_worktree_analysis_with_oracle_policy_and_rust_config(
+            &options,
+            &crate::config::OraclePolicy::default(),
+            &[crate::analysis::language::LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+        )
+        .err()
+        .ok_or("worktree mode must fail closed on a subject")?;
         assert!(
             error.contains("git candidate subject"),
             "worktree rejection must name the subject: {error}"
@@ -763,6 +763,7 @@ mod tests {
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
         };
         let result = crate::analysis::run_analysis_with_oracle_policy(
             &options,

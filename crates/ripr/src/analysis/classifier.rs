@@ -68,6 +68,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     )
     .with_helper_chain(helper_chain)
     .with_file_use_statements(candidate_index.file_use_statements())
+    .with_owner_pin_syntax(candidate_index.owner_pin_syntax())
     .with_test_value_facts(candidate_index.test_value_facts());
     let reveal_expression = parser_expression_for_probe(
         index,
@@ -2128,6 +2129,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         }
     }

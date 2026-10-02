@@ -3,10 +3,13 @@ pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
+pub(crate) mod consumed_source;
+pub(crate) mod diagnostic_origin;
 mod diff;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
+pub(crate) use generated_rust_corpus::generated_rust_recovery;
 pub(crate) mod harness_projection;
 mod language;
 pub(crate) mod new_test_target;
@@ -26,6 +29,7 @@ mod summary;
 mod syntax;
 pub(crate) mod test_grip_evidence;
 mod value_resolution;
+mod witness;
 mod workspace;
 
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
@@ -49,6 +53,7 @@ pub(crate) use diff::{
 pub use diff::{load_diff_range, resolve_default_base_commit};
 pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
+pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
     TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
@@ -68,14 +73,14 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
-    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages,
-    ScopedClassifiedSeamInventory, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
+    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
     apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_staged_at_with_config, inventory_seams_at_with_config,
-    workspace_cache_key_at_with_config,
+    inventory_diff_scoped_streamed_seams_at_with_config, inventory_seams_at_with_config,
+    pilot_seam_budget, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::parse_clean_source_file;
@@ -217,6 +222,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         diff_file: None,
         mode: AnalysisMode::Draft,
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
         include_unchanged_tests: config.analysis().include_unchanged_tests().unwrap_or(true),
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
@@ -497,6 +503,9 @@ pub enum AnalysisMode {
 #[derive(Clone, Debug)]
 pub struct AnalysisOptions {
     pub root: PathBuf,
+    /// LSP-only, index-only paths admitted from open saved Rust documents.
+    /// These never seed changed-file probes or public analysis input.
+    pub(crate) open_rust_index_paths: std::collections::BTreeSet<PathBuf>,
     pub base: Option<String>,
     pub diff_file: Option<PathBuf>,
     pub mode: AnalysisMode,
@@ -630,6 +639,25 @@ impl PreviewLanguageAdvisory {
         }
         why
     }
+
+    /// Single-line `why` for a detected-but-not-analyzed advisory: not
+    /// enabled (or not compiled into this binary), adapter run failed, or
+    /// enabled but nothing routed. Shared by the JSON check report and the
+    /// GitHub annotation stream so the machine surfaces cannot drift; the
+    /// analyzed arm stays owned by each renderer's own caveat.
+    pub(crate) fn unaudited_why(&self, language_runs: &[LanguageRun]) -> String {
+        if !self.enabled {
+            return self.not_enabled_why();
+        }
+        if let Some(run) = self.non_success_run(language_runs) {
+            return format!(
+                "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
+                run.status.as_str()
+            );
+        }
+        "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean"
+            .to_string()
+    }
 }
 
 /// Per-language run status for one language adapter invocation.
@@ -725,6 +753,10 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// Crate-private numeric diagnostic origins for Rust findings (#4464).
+    pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    /// Raw per-path Rust producer observations, separate from decoded geometry.
+    pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
 }
 
 /// Default language list when callers do not pass `[languages]` config.
@@ -758,31 +790,31 @@ pub(crate) fn run_analysis_with_oracle_policy(
     pipeline::run_diff_pipeline_with_oracle_policy(options, oracle_policy, languages)
 }
 
-pub(crate) fn run_analysis_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
-    pipeline::run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
+    pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        generated_file_patterns,
+        rust_config,
     )
 }
 
-pub(crate) fn run_worktree_analysis_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
-    pipeline::run_worktree_pipeline_with_oracle_policy_and_generated_file_patterns(
+    pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        generated_file_patterns,
+        rust_config,
     )
 }
 
@@ -799,17 +831,17 @@ pub(crate) fn run_repo_analysis_with_oracle_policy(
     pipeline::run_repo_pipeline_with_oracle_policy(options, oracle_policy, languages)
 }
 
-pub(crate) fn run_repo_analysis_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_repo_analysis_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
-    pipeline::run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+    pipeline::run_repo_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        generated_file_patterns,
+        rust_config,
     )
 }
 
@@ -1025,15 +1057,17 @@ mod tests {
     }
 
     #[test]
-    fn analyzes_simple_predicate_gap() {
+    fn analyzes_simple_predicate_gap() -> Result<(), String> {
         let root = temp_dir("simple");
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("failed to create src directory: {error}"))?;
+        fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("failed to create tests directory: {error}"))?;
         fs::write(
             root.join("Cargo.toml"),
             "[package]\nname='x'\nversion='0.1.0'\nedition='2024'\n",
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write Cargo.toml: {error}"))?;
         fs::write(
             root.join("src/lib.rs"),
             r#"
@@ -1042,7 +1076,7 @@ pub fn price(amount: i32, threshold: i32) -> i32 {
 }
 "#,
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write src/lib.rs: {error}"))?;
         fs::write(
             root.join("tests/pricing.rs"),
             r#"
@@ -1053,7 +1087,7 @@ fn premium_customer_gets_discount() {
 }
 "#,
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write tests/pricing.rs: {error}"))?;
         fs::write(
             root.join("diff.patch"),
             r#"diff --git a/src/lib.rs b/src/lib.rs
@@ -1066,7 +1100,7 @@ index 0000000..1111111 100644
  }
 "#,
         )
-        .unwrap();
+        .map_err(|error| format!("failed to write diff.patch: {error}"))?;
         let out = run_analysis(&AnalysisOptions {
             root: root.clone(),
             base: None,
@@ -1078,10 +1112,10 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
-        })
-        .unwrap();
+        })?;
         assert!(!out.findings.is_empty());
         assert!(
             out.findings
@@ -1101,14 +1135,15 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
-        })
-        .unwrap();
+        })?;
         assert!(instant.findings.iter().any(|finding| {
             finding.class == crate::domain::ExposureClass::NoStaticPath
                 && finding.related_tests.is_empty()
         }));
+        Ok(())
     }
 
     #[test]
@@ -1155,6 +1190,7 @@ fn premium_customer_gets_discount() {
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1370,6 +1406,7 @@ fn test_with_predicate() {
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1439,6 +1476,7 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1458,6 +1496,7 @@ index 0000000..1111111 100644
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })?;
@@ -1487,6 +1526,7 @@ mod git_candidate_entry_tests {
                 .map_err(|error| error.to_string())?,
             )),
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             ..default_options_for_entry_test()?
         })
     }
@@ -1503,6 +1543,7 @@ mod git_candidate_entry_tests {
             git_timeout: None,
             git_candidate: None,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
         })

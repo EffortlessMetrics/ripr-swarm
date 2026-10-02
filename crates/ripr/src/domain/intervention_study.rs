@@ -1,4 +1,4 @@
-//! Matched RIPR intervention-study preregistration (RIPR-SPEC-0185 / #4649).
+//! Matched RIPR intervention-study preregistration (RIPR-SPEC-0205 / #4649).
 //!
 //! This module owns the frozen protocol object and the study-law validator.
 //! It does not execute agents, grade repairs, or emit an intervention-value
