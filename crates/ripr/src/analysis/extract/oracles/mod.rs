@@ -3,7 +3,7 @@ mod classify;
 mod patterns;
 mod scan;
 
-pub(crate) use arguments::equality_assertion_arguments;
+pub(crate) use arguments::{assertion_oracle_text, equality_assertion_arguments};
 pub(crate) use classify::classify_assertion;
 #[cfg(test)]
 pub(crate) use patterns::contains_macro_invocation;
@@ -47,6 +47,26 @@ mod tests {
             OracleKind::BroadError,
             OracleStrength::Weak,
         );
+    }
+
+    #[test]
+    fn diagnostic_operands_cannot_create_typed_error_oracles() {
+        for text in [
+            r#"assert_eq!(rdr.len(), 10, "Err(ReadError::Closed)");"#,
+            r#"assert_eq!(rdr.len(), 10, "{}", unrelated.is_err());"#,
+            r#"assert_eq!(rdr.len(), 10, "{:?}", matches!(unrelated, Err(ReadError::Closed)));"#,
+        ] {
+            assert_classification(text, OracleKind::ExactValue, OracleStrength::Strong);
+        }
+        let variables = std::collections::BTreeSet::from(["failure".to_string()]);
+        assert!(!is_unwrap_err_bound_error_assertion(
+            r#"assert_eq!(rdr.len(), 10, "failure ReadError::Closed");"#,
+            &variables,
+        ));
+        assert!(is_unwrap_err_bound_error_assertion(
+            r#"assert_eq!(failure, ReadError::Closed, "context");"#,
+            &variables,
+        ));
     }
 
     #[test]
