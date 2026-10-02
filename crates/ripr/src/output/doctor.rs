@@ -107,63 +107,89 @@ impl DoctorFirstCommand {
     /// `command_line` for the diagnosed `root`. `ripr check` defaults to
     /// `.`, so a doctor run with `--root` from another directory must name
     /// the root, or the recommended command analyzes the caller's directory.
-    /// Any other root is bound once against this process's directory
-    /// (`bound_root`), so the line still names it after a `cd`. Empty for the
-    /// state variants; render those through `recommendation_lines`.
-    pub(crate) fn command_line_for_root(self, root: &Path) -> String {
-        use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
+    /// Existing directories use filesystem resolution, matching diagnosis
+    /// even when a root traverses a symlink before `..`. Unresolved paths
+    /// keep an absolute, uncollapsed spelling for error-recovery guidance.
+    /// Empty for the state variants; render those through
+    /// `recommendation_lines_for`.
+    pub(crate) fn command_line_for_root(self, root: &Path) -> Result<String, String> {
+        use crate::agent::loop_commands::shell_arg;
         let Some(line) = self.command_line() else {
-            return String::new();
+            return Ok(String::new());
         };
         if root == Path::new(".") {
-            return line.to_string();
+            return Ok(line.to_string());
         }
         let flags = line.strip_prefix("ripr check").unwrap_or_default();
-        let bound = root_path_display(&bound_root_path(root));
-        format!("ripr check --root {}{flags}", shell_arg(&bound))
+        let bound = match root.canonicalize() {
+            Ok(resolved) => doctor_command_root_display(root, &resolved)?,
+            Err(_) => absolute_doctor_root_display(root)?,
+        };
+        Ok(format!("ripr check --root {}{flags}", shell_arg(&bound)))
     }
 
-    /// The printed recommendation for `root`: the Bash line, then a labeled
-    /// PowerShell form only when the shared translator rewrites it (a root
-    /// with an apostrophe, which Bash and PowerShell escape differently).
-    pub(crate) fn recommendation_lines(self, root: &Path) -> Vec<String> {
-        // The repository-free scan is a runnable command, so its root is
-        // bound and quoted exactly like the git-backed recommendations: a
-        // spaced or quoted root must survive the paste (#4606 review). The
-        // translator reads bare commands only, so the prose wrapper is
-        // applied around each shell form, never handed to it.
-        if self == Self::OutsideGit {
-            use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
-            let bash = format!(
-                "ripr check --root {} --format repo-exposure-md",
-                shell_arg(&root_path_display(&bound_root_path(root)))
-            );
-            let mut lines = vec![format!(
-                "- Recommended first command: fix the Git check above, or scan without Git \
-                 history: `{bash}`"
-            )];
-            if let crate::output::markdown::PowershellForm::Translated(powershell) =
-                crate::output::markdown::powershell_form(&bash)
-            {
-                lines.push(format!(
-                    "- Recommended first command (PowerShell): fix the Git check above, or scan \
-                     without Git history: `{powershell}`"
-                ));
-            }
-            return lines;
-        }
-        let line = match self {
+    /// The full recommendation for `root`: the runnable variants render
+    /// through the shared physical-root command line, and the #4531 state
+    /// variants render their own lines.
+    pub(crate) fn recommendation_lines_for(self, root: &Path) -> Vec<String> {
+        match self {
             Self::MissingRoot => {
-                return vec![
+                vec![
                     "- Recommended first command: none yet; pass `--root <path>` naming your \
                      repository directory"
                         .to_string(),
-                ];
+                ]
+            }
+            Self::OutsideGit => {
+                use crate::agent::loop_commands::shell_arg;
+                // The repository-free scan is a runnable command, so its root
+                // follows the same physical-root rule as the git-backed
+                // recommendations (#5010): a spaced, quoted, or aliased root
+                // must still analyze the diagnosed directory after the paste.
+                // The translator reads bare commands only, so the prose
+                // wrapper wraps each shell form, never enters it.
+                let bound = match root.canonicalize() {
+                    Ok(resolved) => doctor_command_root_display(root, &resolved),
+                    Err(_) => absolute_doctor_root_display(root),
+                };
+                let bash = bound.map(|bound| {
+                    format!(
+                        "ripr check --root {} --format repo-exposure-md",
+                        shell_arg(&bound)
+                    )
+                });
+                match bash {
+                    Ok(bash) => {
+                        let mut lines = vec![format!(
+                            "- Recommended first command: fix the Git check above, or scan \
+                             without Git history: `{bash}`"
+                        )];
+                        if let crate::output::markdown::PowershellForm::Translated(powershell) =
+                            crate::output::markdown::powershell_form(&bash)
+                        {
+                            lines.push(format!(
+                                "- Recommended first command (PowerShell): fix the Git check \
+                                 above, or scan without Git history: `{powershell}`"
+                            ));
+                        }
+                        lines
+                    }
+                    Err(error) => Self::recommendation_lines(Err(error)),
+                }
             }
             Self::SavedDiff | Self::Worktree | Self::DefaultCheck => {
-                self.command_line_for_root(root)
+                Self::recommendation_lines(self.command_line_for_root(root))
             }
-            Self::OutsideGit => String::new(),
+        }
+    }
+
+    /// Render the selected recommendation: the Bash line, then a labeled
+    /// PowerShell form only when the shared translator rewrites it (a root
+    /// with an apostrophe, which Bash and PowerShell escape differently).
+    pub(crate) fn recommendation_lines(command: Result<String, String>) -> Vec<String> {
+        let line = match command {
+            Ok(line) => line,
+            Err(error) => return vec![format!("- Recommended first command unavailable: {error}")],
         };
         let mut lines = vec![format!("- Recommended first command: {line}")];
         if let crate::output::markdown::PowershellForm::Translated(powershell) =
@@ -175,6 +201,34 @@ impl DoctorFirstCommand {
         }
         lines
     }
+}
+
+/// A valid user-supplied alias can resolve to non-UTF-8 filesystem bytes.
+/// Keep a lossless absolute alias in that case, without collapsing `..`:
+/// its filesystem traversal still selects the diagnosed physical directory.
+pub(crate) fn doctor_command_root_display(root: &Path, resolved: &Path) -> Result<String, String> {
+    if resolved.to_str().is_some() {
+        return Ok(human_path(resolved));
+    }
+    absolute_doctor_root_display(root)
+}
+
+fn absolute_doctor_root_display(root: &Path) -> Result<String, String> {
+    let path = if root.is_absolute() {
+        std::borrow::Cow::Borrowed(root)
+    } else {
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("cannot bind the selected root to its directory: {error}"))?;
+        std::borrow::Cow::Owned(cwd.join(root))
+    };
+    require_lossless_command_path(&path)?;
+    Ok(human_path(&path))
+}
+
+fn require_lossless_command_path(path: &Path) -> Result<(), String> {
+    path.to_str().map(|_| ()).ok_or_else(|| {
+        "selected root cannot be represented losslessly in a command; rerun doctor from a UTF-8 parent using a UTF-8 alias".to_string()
+    })
 }
 
 /// Fail closed: only an explicit passing `tool_git` check means git can run.
@@ -2669,7 +2723,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() {
+    fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() -> Result<(), String> {
         let mut probed = false;
         assert_eq!(
             DoctorFirstCommand::resolve(false, || {
@@ -2702,27 +2756,33 @@ mod tests {
             "a refused repository recommends no git-backed command"
         );
         assert_eq!(
-            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new(".")),
+            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("."))?,
             "ripr check"
         );
         // `/work/...` is absolute only on Unix; Windows needs a drive.
         #[cfg(unix)]
         {
             assert_eq!(
-                DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app")),
+                DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app"))?,
                 "ripr check --root /work/app --diff PATH"
             );
             assert_eq!(
-                DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app")),
+                DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app"))?,
                 "ripr check --root '/work/my app' --base HEAD --worktree"
             );
             assert_eq!(
-                DoctorFirstCommand::DefaultCheck.recommendation_lines(Path::new("/work/my app")),
+                DoctorFirstCommand::recommendation_lines(
+                    DoctorFirstCommand::DefaultCheck
+                        .command_line_for_root(Path::new("/work/my app"))
+                ),
                 ["- Recommended first command: ripr check --root '/work/my app'"],
                 "a form PowerShell reads unchanged prints once"
             );
             assert_eq!(
-                DoctorFirstCommand::SavedDiff.recommendation_lines(Path::new("/work/it's app")),
+                DoctorFirstCommand::recommendation_lines(
+                    DoctorFirstCommand::SavedDiff
+                        .command_line_for_root(Path::new("/work/it's app"))
+                ),
                 [
                     r"- Recommended first command: ripr check --root '/work/it'\''s app' --diff PATH",
                     "- Recommended first command (PowerShell): ripr check --root '/work/it''s app' --diff PATH",
@@ -2730,7 +2790,8 @@ mod tests {
                 "an apostrophe escapes differently in PowerShell"
             );
             assert_eq!(
-                DoctorFirstCommand::OutsideGit.recommendation_lines(Path::new("/work/it's app")),
+                DoctorFirstCommand::OutsideGit
+                    .recommendation_lines_for(Path::new("/work/it's app")),
                 [
                     r"- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root '/work/it'\''s app' --format repo-exposure-md`",
                     "- Recommended first command (PowerShell): fix the Git check above, or scan without Git history: `ripr check --root '/work/it''s app' --format repo-exposure-md`",
@@ -2738,16 +2799,27 @@ mod tests {
                 "the repository-free route quotes and translates like the runnable ones"
             );
         }
-        // A relative root is bound to this process's directory, so the
-        // printed command survives a `cd` before it is pasted.
-        let relative = DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("../app"));
-        assert!(
-            !relative.contains(".."),
-            "a relative root must be bound, not printed verbatim: {relative}"
-        );
-        assert!(
-            relative.ends_with("/app") || relative.ends_with("/app'"),
-            "the bound root still names the diagnosed directory: {relative}"
+        // An unavailable relative root is bound to the producing directory,
+        // but `..` must retain filesystem traversal rather than lexical cleanup.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let relative_root = Path::new("..").join(format!(
+            "ripr-doctor-missing-{}-{nonce}",
+            std::process::id()
+        ));
+        let bound = std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(&relative_root);
+        assert!(!bound.exists(), "fixture root must remain unavailable");
+        let relative = DoctorFirstCommand::DefaultCheck.command_line_for_root(&relative_root)?;
+        assert_eq!(
+            relative,
+            format!(
+                "ripr check --root {}",
+                crate::agent::loop_commands::shell_arg(&human_path(&bound))
+            )
         );
 
         let mut missing_git = DoctorReport::new(".");
@@ -2771,6 +2843,7 @@ mod tests {
         );
         assert!(git_tool_can_run(&git_ok));
         assert!(!git_tool_can_run(&DoctorReport::new(".")));
+        Ok(())
     }
 
     /// The #4531 report states decide before any probe runs, and a missing

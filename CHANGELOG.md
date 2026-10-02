@@ -132,6 +132,13 @@ are scoped or reviewed.
   reveals the active stage and heartbeats; producer `completed` is held until
   the command actually succeeds. Unknown totals stay unknown; `--quiet`
   suppresses the stream. This does not make analysis faster (#4810).
+- `cargo xtask rust-judged-panel feedback` and `check` now retain one
+  checked feedback ledger over the frozen #3806 Rust judgments. Every
+  terminal case gets a disposition; confirmed defects stay replay-only
+  unless a producer-path fixture can keep the exact mechanism; JSON and
+  Markdown reports carry denominators without an overall analyzer score,
+  analyzer repair, #4795 calibration, GitHub mutation, or #3164 closure
+  (#4796).
 
 ### Fixed
 
@@ -175,6 +182,14 @@ are scoped or reviewed.
   reported `scoped production files: 0/0` with no disclosure. Probes for
   that file are withheld. The repair is to check the file out or disable
   sparse checkout for it.
+- Rust `return_value` evidence from bare `assert_eq!` now shares execution
+  and macro-binding admission across token matching and owner-return pins.
+  Refused deferred/conditional/no-op assertions contribute no oracle credit;
+  when no admitted oracle remains, the finding reads `reachable_unrevealed`
+  with execution/binding guidance. Direct assertions and directly invoked
+  immutable closures retain credit. Uncollected/cfg-unestablished test items
+  and singleton credit manufactured by filtering are refused. Twenty matched
+  correct/wrong-library controls pin this boundary (RIPR-SPEC-0197, #4478).
 - Rust: a test that pins the changed owner's whole return value now
   confirms a changed `return_value` expression, including through a method
   call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
@@ -205,6 +220,14 @@ are scoped or reviewed.
   long as the stage stays active, so worst-case silence is ~8s and
   non-TTY output grows one line per 8s of stage time. Custom policies keep
   their hard count ceiling (#4957).
+- Doctor's current/stale packet refresh and rooted first-check recommendation
+  keep the diagnosed physical repository when a root traverses a symlink before
+  `..`. The refresh retains the root-bound,
+  shell-quoted refresh and default-base/HEAD scope from #4991; unresolved roots
+  now withhold that refresh rather than guess another destination. A lossless
+  alias preserves non-UTF-8 physical roots; no lossy replacement-character path is
+  offered as a rooted command. Missing-root recovery also preserves the input
+  traversal instead of selecting an existing lexical decoy (#4000).
 - CLI argument errors now name the fix on every command. `ripr context`
   no-finding errors carry `ripr explain`'s remediation suffix on both the
   fresh and `--from` paths; `ripr check --format`, `ripr outcome`, and

@@ -10006,9 +10006,14 @@ fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -
     let output = run_ripr(&["doctor", "--root", &root]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // The recommendation names the physical root (#5010): the canonicalized
+    // root minus its Windows verbatim prefix, so the pasted command analyzes
+    // the diagnosed directory without an `//?/` spelling a paste would not
+    // resolve. `first_command_at` reproduces the same quoting.
+    let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
     let result = if !stdout.contains(&format!(
         "- Recommended first command: fix the Git check above, or scan without Git history: `{}`",
-        first_command_at(&root, " --format repo-exposure-md")
+        first_command_at(&physical, " --format repo-exposure-md")
     )) || stdout.contains("- Recommended first command: ripr check\n")
         || stderr.contains("working-tree change probe failed")
     {
