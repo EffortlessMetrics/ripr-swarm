@@ -393,10 +393,18 @@ mod tests {
         validate_receipt(&report, &receipt)?;
         // Keep the measured report in the retained CI artifact so the actual
         // normalized byte counts are readable without rerunning the command.
+        // Tests run with the xtask crate as CWD, so anchor at the workspace
+        // root; `crate::write_report` is CWD-relative and would land in
+        // xtask/target where the artifact upload never looks.
         let json_body = serde_json::to_string_pretty(&report)
             .map_err(|error| format!("serialize committed-evidence report: {error}"))?;
-        crate::write_report("repair-card-usability.json", &format!("{json_body}\n"))?;
-        crate::write_report("repair-card-usability.md", &markdown_report(&report))
+        let reports_dir = workspace_path("target/ripr/reports");
+        fs::create_dir_all(&reports_dir)
+            .map_err(|error| format!("create {}: {error}", reports_dir.display()))?;
+        fs::write(reports_dir.join("repair-card-usability.json"), format!("{json_body}\n"))
+            .map_err(|error| format!("write usability JSON report: {error}"))?;
+        fs::write(reports_dir.join("repair-card-usability.md"), markdown_report(&report))
+            .map_err(|error| format!("write usability Markdown report: {error}"))
     }
 
     #[test]
