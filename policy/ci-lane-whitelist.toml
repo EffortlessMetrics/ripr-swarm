@@ -233,11 +233,11 @@ description = "Scheduled Droid security scan signal."
 id = "windows-advisory"
 posture = "advisory"
 workflow = ".github/workflows/windows-advisory.yml"
-jobs = ["windows-advisory"]
-commands = ["cargo test --workspace"]
-estimated_lem = 24
+jobs = ["windows-advisory", "windows-advisory-subset"]
+commands = ["cargo test --workspace", "cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings"]
+estimated_lem = 30
 artifact_families = []
-description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Test outcomes are advisory; missing evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
+description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 an always-on subset job (windows-advisory-subset) also runs a fast gap_artifacts/cache-warning/Windows-clippy filter on every subscribed pull_request action (opened, synchronize, reopened, labeled) with no labels required, advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
 
 [[lane]]
 id = "future-clippy"
@@ -308,6 +308,16 @@ commands = []
 estimated_lem = 60
 artifact_families = ["release-readiness"]
 description = "Cross-platform server archive and manifest proof. Actual build commands come from the workflow matrix."
+
+[[lane]]
+id = "python-wheelhouse"
+posture = "on_demand_release"
+workflow = ".github/workflows/python-wheelhouse-qualification.yml"
+jobs = ["qualify"]
+commands = ["cargo xtask qualify-python-wheelhouse --receipts <dir>"]
+estimated_lem = 20
+artifact_families = ["release-readiness"]
+description = "Dispatch-only local-wheelhouse pip/uv qualification (#4631). Fail-closed aggregate; no registry write."
 
 [[lane]]
 id = "release-readiness-proof"

@@ -35,10 +35,12 @@ Any off-the-shelf LSP client (Neovim, Helix, Eglot, etc.) that implements
 the base LSP specification.
 
 Consumes:
-- full document sync advertised as `{openClose: true, change: 1, save: true}`,
-  so every conforming client sends `textDocument/didSave` (saved content is
-  the analysis input; the bare numeric kind does not request save
-  notifications)
+- incremental document sync advertised as
+  `{openClose: true, change: 2, willSave: false, willSaveWaitUntil: false,
+  save: {includeText: false}}` (#1746), so every conforming client sends
+  `textDocument/didSave` (saved content is the analysis input; the options
+  form's `save` member requests save notifications and `includeText: false`
+  avoids resending the whole document on each save)
 - `MethodNotFound` (`-32601`, method named in `data`) for any unhandled
   request whose method starts with `$/`; unhandled `$/` notifications stay
   silent (LSP 3.17 "$ Notifications and Requests", #4456)
@@ -247,9 +249,9 @@ qualified as static analysis results; diagnostic codes and data remain stable.
 
 - `capabilities.rs` tests verify the capability advertisement shape
   (pull diagnostics, code action kinds, riprAgent capability).
-- `tests/lsp_lifecycle.rs::initialize_advertises_full_sync_with_save_notifications`
+- `tests/lsp_lifecycle.rs::initialize_advertises_incremental_sync_with_save_notifications`
   verifies over the real wire that the document-sync advertisement requests
-  `didSave`.
+  incremental changes and `didSave` without resending the document (#1746).
 - `tests/lsp_lifecycle.rs::dollar_request_is_answered_method_not_found`
   verifies over the real wire that a `$/` request gets `-32601` naming the
   method, while the same `$/` notification gets no response.
@@ -293,8 +295,12 @@ qualified as static analysis results; diagnostic codes and data remain stable.
 - `tests.rs::capabilities_advertise_code_lens_provider` plus
   `code_lens_refresh_is_not_attempted_for_unsupported_clients` and
   `code_lens_refresh_tracks_semantic_view_changes_for_supported_clients`
-  verify the advisory codeLens surface (display-only, `resolve_provider:
-  false`) and its refresh negotiation.
+  verify the cached advisory codeLens surface and its refresh negotiation.
+  `lens.rs::tests::code_lens_wire_advertises_an_honest_registered_refresh` and
+  `tests.rs::framed_code_lens_refresh_follows_semantic_lens_view_changes` verify
+  that clicking invokes the registered `ripr.refresh` saved-workspace action;
+  `resolve_provider: false` means no deferred lens resolution, not an inert
+  command. The action does not run tests or apply repairs (SPEC-0100).
 - `tests.rs` hover tests (`hover_response_keeps_current_guidance_text`,
   `hover_for_position_uses_latest_matching_diagnostic`,
   `hover_for_position_shows_snapshot_age_and_refresh_duration`,

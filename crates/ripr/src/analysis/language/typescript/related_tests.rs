@@ -1,6 +1,6 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
-use super::tsconfig::TsAliasMap;
+use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -514,12 +514,22 @@ fn push_declaration_export_names(declaration: &Declaration<'_>, names: &mut Vec<
 /// does NOT perform full `PackageDiscovery`. It is used only for the
 /// package-local ownership filter.
 pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
+    package_root_for_dir(&file_parent_dir(file, workspace_root)?, workspace_root)
+}
+
+/// The directory `package_root_for_file_path` starts its walk from; `None`
+/// when the file has no parent.
+fn file_parent_dir(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let absolute_file = if file.is_absolute() {
         file.to_path_buf()
     } else {
         workspace_root.join(file)
     };
-    let start = absolute_file.parent()?;
+    absolute_file.parent().map(Path::to_path_buf)
+}
+
+/// The walk behind `package_root_for_file_path`, from the file's directory.
+fn package_root_for_dir(start: &Path, workspace_root: &Path) -> Option<PathBuf> {
     let mut current = start.to_path_buf();
     loop {
         if current.join("package.json").is_file() {
@@ -547,6 +557,49 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
     None
 }
 
+/// `same_package_root` for one owner file against many test files. The
+/// owner's root is resolved once and each test directory's root at most
+/// once, instead of two filesystem walks per test: an owner is checked
+/// against every test in the workspace, and those walks were ~64% of a
+/// `ripr check` on a vite commit. Answers match `same_package_root` as long
+/// as no `package.json` appears or disappears while the scope lives.
+pub(crate) struct OwnerPackageScope<'r> {
+    workspace_root: &'r Path,
+    owner_package: Option<PathBuf>,
+    package_by_dir: std::cell::RefCell<std::collections::BTreeMap<PathBuf, Option<PathBuf>>>,
+}
+
+impl<'r> OwnerPackageScope<'r> {
+    pub(crate) fn new(owner_file: &Path, workspace_root: &'r Path) -> Self {
+        Self {
+            workspace_root,
+            owner_package: package_root_for_file_path(owner_file, workspace_root),
+            package_by_dir: std::cell::RefCell::default(),
+        }
+    }
+
+    /// `same_package_root(owner_file, test_file, workspace_root)`.
+    pub(crate) fn contains(&self, test_file: &Path) -> bool {
+        let Some(owner_package) = &self.owner_package else {
+            return true;
+        };
+        let Some(dir) = file_parent_dir(test_file, self.workspace_root) else {
+            return true;
+        };
+        if let Some(test_package) = self.package_by_dir.borrow().get(&dir) {
+            return test_package
+                .as_ref()
+                .is_none_or(|test| test == owner_package);
+        }
+        let test_package = package_root_for_dir(&dir, self.workspace_root);
+        let same = test_package
+            .as_ref()
+            .is_none_or(|test| test == owner_package);
+        self.package_by_dir.borrow_mut().insert(dir, test_package);
+        same
+    }
+}
+
 /// Return `true` when `owner_file` and `test_file` both resolve to the same
 /// package root under `workspace_root`, or when either file's package root
 /// cannot be determined (fail-open: preserve existing behaviour when no
@@ -555,6 +608,7 @@ pub(crate) fn package_root_for_file_path(file: &Path, workspace_root: &Path) -> 
 /// A cross-package candidate is one where the owner lives in
 /// `packages/a/` and the test lives in `packages/b/`.  Such a candidate
 /// MUST NOT be selected as an owned relation.
+#[cfg(test)]
 pub(crate) fn same_package_root(
     owner_file: &Path,
     test_file: &Path,
@@ -573,10 +627,14 @@ pub(crate) fn same_package_root(
 /// Collect related test candidates for `owner` from `all_tests`.
 ///
 /// `workspace_root` enables package-local ownership filtering when `Some`:
-/// tests in different packages are excluded from the candidate set so that a
-/// test in `packages/b/` cannot be selected as an owner relation for a source
-/// file in `packages/a/`.  Pass `None` to preserve the previous behaviour
-/// (used in unit tests that do not have a real filesystem).
+/// a test in `packages/b/` that only shares the owner's name or path tokens
+/// cannot be selected as a relation for a source file in `packages/a/`.
+/// Owner-call relations are exempt (#4552): every `owner_call_relation` arm
+/// is anchored to the owner's own file (same file, an import whose specifier
+/// resolves to it, or a resolved re-export chain), so a sibling-package test
+/// that imports the changed file is file identity, not a name guess.  Pass
+/// `None` to preserve the previous behaviour (used in unit tests that do not
+/// have a real filesystem).
 ///
 /// `reexport_index` enables bounded re-export tracing: tests that import
 /// the owner through a barrel file are credited when the chain resolves
@@ -592,26 +650,38 @@ pub(crate) fn related_test_candidates<'a>(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
+    let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
+    let in_owner_package = |test: &&TypeScriptTest| {
+        package_scope
+            .as_ref()
+            .is_none_or(|scope| scope.contains(&test.file))
+    };
     let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = all_tests
         .iter()
-        .filter(|test| {
-            workspace_root
-                .map(|root| same_package_root(&owner.file, &test.file, root))
-                .unwrap_or(true)
-        })
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| TypeScriptRelatedCandidate { test, relation })
         })
         .collect();
+    // Same-module entry reach is admitted only when no test calls the owner
+    // itself, so a direct relation's oracle alone decides exposure.
+    if candidates.is_empty() && !owner.module_entries.is_empty() {
+        candidates = all_tests
+            .iter()
+            .filter(in_owner_package)
+            .filter(|test| {
+                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
+            })
+            .map(|test| TypeScriptRelatedCandidate {
+                test,
+                relation: TypeScriptRelationKind::ModuleEntryCall,
+            })
+            .collect();
+    }
     if candidates.is_empty() {
         candidates = all_tests
             .iter()
-            .filter(|test| {
-                workspace_root
-                    .map(|root| same_package_root(&owner.file, &test.file, root))
-                    .unwrap_or(true)
-            })
+            .filter(in_owner_package)
             .filter_map(|test| {
                 heuristic_relation(test, owner, alias_map, workspace_root)
                     .map(|relation| TypeScriptRelatedCandidate { test, relation })
@@ -687,6 +757,7 @@ pub(crate) fn owner_call_relation(
         // property binding of the name) calls the local declaration, not the
         // imported owner — do not credit DirectOwnerCall.
         && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        && !enclosing_scope_shadows(test, &owner.name)
         && !owner_name_destructured_from_unrelated_source(test, owner, alias_map, workspace_root)
         // #4103 shape 1: a bare `ownerName(...)` only counts when a
         // declaration anchors the name to the owner (same file, or an import
@@ -706,6 +777,7 @@ pub(crate) fn owner_call_relation(
             && import.local != owner.name
             && contains_call_name(&test.body_text, &import.local)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !enclosing_scope_shadows(test, &import.local)
     }) {
         return Some(TypeScriptRelationKind::ImportAliasOwnerCall);
     }
@@ -720,7 +792,9 @@ pub(crate) fn owner_call_relation(
         if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
             return false;
         }
-        if local_identifier_declared_in_test_body(&test.body_text, &import.local) {
+        if local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            || enclosing_scope_shadows(test, &import.local)
+        {
             return false;
         }
         if !import.namespace
@@ -776,11 +850,7 @@ pub(crate) fn owner_call_relation(
         }
         // An enclosing `describe`/`beforeEach` binding of the local name
         // shadows the import for every test in that scope.
-        if test
-            .scope_bindings
-            .iter()
-            .any(|binding| &binding.name == local)
-        {
+        if enclosing_scope_shadows(test, local) {
             return false;
         }
         reexport_index.resolve_to_owner(
@@ -795,6 +865,53 @@ pub(crate) fn owner_call_relation(
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
     None
+}
+
+/// Whether the test calls an exported name of the owner's module that reaches
+/// the owner (`TypeScriptOwner::module_entries`). Each entry is checked as if
+/// it were the changed owner, so the test must satisfy every identity gate a
+/// direct or imported owner call does (declaration anchor, shadowing, mocks,
+/// spy fabrication, import source). The stand-in owner carries no entries of
+/// its own, so reach through entries is never chained across modules.
+fn module_entry_relation(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    owner.module_entries.iter().any(|entry| {
+        let entry_owner = module_entry_owner(owner, entry);
+        owner_call_relation(
+            test,
+            &entry_owner,
+            reexport_index,
+            alias_map,
+            workspace_root,
+        )
+        .is_some_and(TypeScriptRelationKind::uses_oracle)
+    })
+}
+
+/// The owner as a test of `entry` sees it: same module, the entry's exported
+/// name, a plain callable, and no entries of its own.
+pub(crate) fn module_entry_owner(
+    owner: &TypeScriptOwner,
+    entry: &TypeScriptModuleEntry,
+) -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: entry.name.clone(),
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        exported_as_default: entry.exported_as_default,
+        class_default_export: false,
+        method_kind: TypeScriptMethodKind::Ordinary,
+        module_entries: Vec::new(),
+        params: Vec::new(),
+        arity: None,
+        source_text: None,
+        ..owner.clone()
+    }
 }
 
 pub(crate) fn module_initializer_observer_relation(
@@ -842,6 +959,18 @@ pub(crate) fn receiver_owner_call_relation(
     // construction, so a test that executes `new ClassName(...)` exercises it
     // directly — there is no member-call needle for a `constructor` name.
     if owner.method_kind == TypeScriptMethodKind::Constructor {
+        // The bare class name below is a name match, not file identity. It
+        // is kept inside the owner's package; a test in another workspace
+        // package must construct the class through a same-file or resolved
+        // import binding, or a same-named class there would lend it its
+        // oracle (#4552 review).
+        if workspace_root
+            .is_some_and(|root| !OwnerPackageScope::new(&owner.file, root).contains(&test.file))
+        {
+            return constructor_names_for_method_owner(test, owner, alias_map, workspace_root)
+                .iter()
+                .any(|candidate| contains_new_expression_call(&test.body_text, candidate));
+        }
         let mut constructor_names = Vec::new();
         if let Some(class_name) = owner.class_name.as_deref() {
             constructor_names.push(class_name.to_string());
@@ -931,6 +1060,16 @@ pub(crate) fn class_method_owner_call_relation(
         .any(|class_name| contains_member_call_name(&test.body_text, class_name, &owner.name))
 }
 
+/// `true` when a binding outside the test body but inside the file-level
+/// scope (a `describe` body or parameter, a loop header, a hook write, a
+/// test callback parameter) rebinds `name` for this test, so a call through
+/// `name` reaches that binding rather than an import or owner of the name.
+fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+    test.scope_bindings
+        .iter()
+        .any(|binding| binding.name == name && !binding.file_level)
+}
+
 pub(crate) fn class_names_for_class_method_owner(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -943,6 +1082,7 @@ pub(crate) fn class_names_for_class_method_owner(
     let mut names = Vec::new();
     if normalized_module_path(&test.file) == normalized_module_path(&owner.file)
         && !local_identifier_declared_in_test_body(&test.body_text, class_name)
+        && !enclosing_scope_shadows(test, class_name)
     {
         push_unique_string(&mut names, class_name.to_string());
     }
@@ -954,6 +1094,7 @@ pub(crate) fn class_names_for_class_method_owner(
         }
         if import.imported.as_deref() == Some(class_name)
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+            && !enclosing_scope_shadows(test, &import.local)
         {
             push_unique_string(&mut names, import.local.clone());
         }
@@ -1856,6 +1997,9 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ReExportChainFollowed => RelationReason::ReExportChainFollowed,
+        // The test calls a same-module export that calls the owner: the
+        // TypeScript form of a production helper that delegates to the owner.
+        TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
         TypeScriptRelationKind::SameFileProximity
@@ -1869,7 +2013,8 @@ fn ts_relation_to_domain(
         | TypeScriptRelationKind::ReceiverOwnerCall
         | TypeScriptRelationKind::ClassMethodCall => RelationConfidence::High,
         TypeScriptRelationKind::ImportedOwnerCall
-        | TypeScriptRelationKind::ReExportChainFollowed => RelationConfidence::Medium,
+        | TypeScriptRelationKind::ReExportChainFollowed
+        | TypeScriptRelationKind::ModuleEntryCall => RelationConfidence::Medium,
         TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
         | TypeScriptRelationKind::TestName => RelationConfidence::Low,
@@ -1988,7 +2133,11 @@ pub(crate) fn import_source_matches_owner(
 /// Resolve an import specifier relative to `test_file` to a normalized module
 /// path string (no extension, forward-slash separated).
 ///
-/// For relative specifiers (`./` or `../`), performs the usual path-join.
+/// For relative specifiers (`./`, `../`, or exactly `.` / `..`), performs the
+/// usual path-join. When `workspace_root` is known and the joined path names
+/// an in-root directory with no sibling file module, the directory resolves
+/// through [`resolve_directory_module`] (package.json `main`, else `index`),
+/// mirroring the Node/TypeScript lookup order (#4546).
 ///
 /// For non-relative specifiers, consults `alias_map` when provided:
 /// - If the alias map successfully resolves the specifier to a unique workspace
@@ -2000,7 +2149,9 @@ pub(crate) fn normalized_relative_import_module(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<String> {
-    if source.starts_with("./") || source.starts_with("../") {
+    // `.` and `..` name the current / parent directory module
+    // (`require('..')`, #4546) exactly like `./` and `../` prefixes do.
+    if is_relative_specifier(source) {
         // Standard relative resolution.
         let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
             .split('/')
@@ -2008,16 +2159,44 @@ pub(crate) fn normalized_relative_import_module(
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         let normalized_source = source.replace('\\', "/");
+        let mut escaped_root = false;
         for part in normalized_source.split('/') {
             match part {
                 "" | "." => {}
                 ".." => {
-                    parts.pop();
+                    escaped_root |= parts.pop().is_none();
                 }
                 _ => parts.push(part.to_string()),
             }
         }
-        return Some(strip_typescript_module_extension(&parts.join("/")));
+        let joined = parts.join("/");
+        let module = strip_typescript_module_extension(&joined);
+        // Directory resolution only for an extensionless specifier whose
+        // join stayed inside the workspace root; otherwise the historical
+        // lexical module is kept.
+        if let Some(root) = workspace_root
+            && !escaped_root
+            && module == joined
+            && let Some(resolved) = resolve_directory_module(root, &module)
+        {
+            return Some(resolved);
+        }
+        // A relative import of `tsc` build output whose target does not
+        // exist maps back to its TypeScript source through the root
+        // tsconfig.json `outDir`/`rootDir` (#4551). Any entry at the join
+        // wins and keeps the lexical module: a real emitted file, a
+        // directory, or a symlink to something else (#4800 review).
+        if let Some(root) = workspace_root
+            && !escaped_root
+            && let Some(out_dir_map) = out_dir_map_for(root)
+            && out_dir_map.contains(&joined)
+            && std::fs::symlink_metadata(root.join(&joined)).is_err()
+            && !file_module_exists(root, &module)
+            && let Some(source_module) = out_dir_map.source_module_for(root, &joined)
+        {
+            return Some(source_module);
+        }
+        return Some(module);
     }
 
     // Non-relative specifier — consult alias map if available.
@@ -2028,6 +2207,220 @@ pub(crate) fn normalized_relative_import_module(
     // Normalize the resolved workspace-relative path to a module string.
     let normalized = normalized_path(&resolved_path);
     Some(strip_typescript_module_extension(&normalized))
+}
+
+/// Extensions probed for a file module, in the TypeScript/Node lookup order.
+const DIRECTORY_MODULE_EXTENSIONS: [&str; 8] =
+    ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
+
+/// Resolve a workspace-relative module path that names a DIRECTORY to the
+/// module the directory loads (#4546): the directory's `package.json` `main`
+/// when present, else its `index` file.
+///
+/// Returns `None` (the caller keeps the lexical module) when the path is not
+/// a real in-root directory (symlinks are not followed), when a sibling file
+/// module (`<module>.<ext>`) exists and wins the lookup, or when nothing in
+/// the directory resolves. A `package.json` that is unreadable (over the
+/// config cap, not a regular file), is not valid JSON, or names a `main`
+/// that is absolute, escapes the workspace root, or does not resolve to a
+/// supported source file also yields `None`: the specifier stays unresolved
+/// rather than being credited to a guessed module (fail-closed).
+///
+/// Memoized per analysis run by [`DirectoryModuleCacheScope`] (#4638
+/// review): the owners x tests x imports loop asks the same question for
+/// the same `(root, module)` many times, and each uncached answer costs
+/// several filesystem probes.
+fn resolve_directory_module(root: &Path, module: &str) -> Option<String> {
+    let key = (root.to_path_buf(), module.to_string());
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.directory_modules.get(&key).cloned())
+        })
+    });
+    if let Some(resolved) = cached {
+        return resolved;
+    }
+    let resolved = resolve_directory_module_uncached(root, module);
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            cache.directory_modules.insert(key, resolved.clone());
+        }
+    });
+    resolved
+}
+
+/// The root tsconfig.json `outDir` mapping (#4551), read once per analysis
+/// run while a [`DirectoryModuleCacheScope`] is open and on every call
+/// outside one, so a config edit is seen by the next run (#4800 review).
+fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
+    let cached = RUN_RESOLVER_CACHE.with(|cache| {
+        cache.try_borrow().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.out_dir_maps.get(root).cloned())
+        })
+    });
+    if let Some(map) = cached {
+        return map;
+    }
+    let map = load_out_dir_map(root);
+    RUN_RESOLVER_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut()
+            && let Some(cache) = cache.as_mut()
+        {
+            cache.out_dir_maps.insert(root.to_path_buf(), map.clone());
+        }
+    });
+    map
+}
+
+/// Per-run resolver answers, alive only while a [`DirectoryModuleCacheScope`]
+/// is open on this thread: directory-module answers keyed by
+/// `(workspace root, module)` and the outDir mapping keyed by root. Outside
+/// a scope nothing is cached, so no answer outlives the run that computed it
+/// (an LSP session sees filesystem changes on its next run).
+#[derive(Default)]
+struct RunResolverCache {
+    directory_modules: HashMap<(PathBuf, String), Option<String>>,
+    out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+}
+
+thread_local! {
+    static RUN_RESOLVER_CACHE: std::cell::RefCell<Option<RunResolverCache>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// One analysis run's resolver memo: opening it installs a fresh, empty
+/// cache on this thread; dropping it restores whatever was there before
+/// (normally nothing). The cache is an explicit per-run scope rather than a
+/// parameter because `workspace_root` reaches the resolver through ~30
+/// signatures in the related-test and classifier walks.
+pub(crate) struct DirectoryModuleCacheScope {
+    previous: Option<RunResolverCache>,
+}
+
+impl DirectoryModuleCacheScope {
+    pub(crate) fn open() -> Self {
+        let previous = RUN_RESOLVER_CACHE.with(|cache| {
+            cache
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut cache| cache.replace(RunResolverCache::default()))
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for DirectoryModuleCacheScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        RUN_RESOLVER_CACHE.with(|cache| {
+            if let Ok(mut cache) = cache.try_borrow_mut() {
+                *cache = previous;
+            }
+        });
+    }
+}
+
+fn resolve_directory_module_uncached(root: &Path, module: &str) -> Option<String> {
+    let directory = if module.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(module)
+    };
+    if !is_real_directory(&directory) || file_module_exists(root, module) {
+        return None;
+    }
+    let manifest = directory.join("package.json");
+    match std::fs::symlink_metadata(&manifest) {
+        // No package.json at all: plain directory index lookup.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return index_module(root, module);
+        }
+        Err(_) => return None,
+        Ok(_) => {}
+    }
+    let text = read_config_capped(&manifest).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    match value.get("main") {
+        Some(serde_json::Value::String(main)) => package_main_module(root, module, main),
+        // No `main`: the directory falls back to its index file.
+        None => index_module(root, module),
+        // A non-string `main` is not a path Node would honour.
+        Some(_) => None,
+    }
+}
+
+/// The module a directory `package.json` `main` names, resolved inside the
+/// workspace root: a file module (with or without a supported extension), or
+/// the `index` of a directory it names.
+fn package_main_module(root: &Path, module: &str, main: &str) -> Option<String> {
+    let main = main.replace('\\', "/");
+    if main.is_empty() || main.starts_with('/') || main.contains(':') {
+        return None;
+    }
+    let mut parts = module
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    for part in main.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                // Escaping the workspace root fails closed.
+                parts.pop()?;
+            }
+            _ => parts.push(part.to_string()),
+        }
+    }
+    let target = parts.join("/");
+    if target.is_empty() {
+        return None;
+    }
+    let stripped = strip_typescript_module_extension(&target);
+    if stripped != target {
+        // `main` carries a supported extension: it must name that file.
+        return is_real_file(&root.join(&target)).then_some(stripped);
+    }
+    if file_module_exists(root, &target) {
+        return Some(target);
+    }
+    if is_real_directory(&root.join(&target)) {
+        return index_module(root, &target);
+    }
+    None
+}
+
+/// `<module>/index` when the directory holds an index file module.
+fn index_module(root: &Path, module: &str) -> Option<String> {
+    let index = if module.is_empty() {
+        "index".to_string()
+    } else {
+        format!("{module}/index")
+    };
+    file_module_exists(root, &index).then_some(index)
+}
+
+/// Whether `<module>.<ext>` exists as a regular file for a supported
+/// extension.
+fn file_module_exists(root: &Path, module: &str) -> bool {
+    !module.is_empty()
+        && DIRECTORY_MODULE_EXTENSIONS
+            .iter()
+            .any(|extension| is_real_file(&root.join(format!("{module}.{extension}"))))
+}
+
+fn is_real_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+}
+
+fn is_real_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
 }
 
 fn normalized_module_path(path: &Path) -> String {

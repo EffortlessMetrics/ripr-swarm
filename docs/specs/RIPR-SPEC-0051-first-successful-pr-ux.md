@@ -101,6 +101,23 @@ The packet must answer these reviewer questions in stable, user-facing terms:
 The Markdown packet is the human first screen. The JSON packet is the stable
 machine-readable form consumed by generated CI, LSP orchestration, and agents.
 
+The JSON packet records `ripr_version` as the producing package version. That
+field is additive on schema `0.1`. `ripr first-pr --check` and `ripr doctor`
+treat a packet whose `ripr_version` is missing or different from the running
+binary as `stale_evidence` and name the `ripr first-pr` refresh command. They
+must not present that packet as current first-screen evidence. A packet without
+the field is a pre-0.11 artifact, not a contract-invalid document.
+
+Doctor's packet-refresh command binds the diagnosed repository to an absolute
+root, including when diagnosis used a relative root or `.`. It quotes that
+root for Bash and prints a labeled PowerShell form when the spelling differs.
+The generic refresh recomposes against the repository's default base and
+`HEAD`, through first-pr's existing resolver; it does not recover a historical
+custom comparison from packet metadata. Doctor names that scope and explains
+that a custom comparison needs explicit `--base REF` and `--head REF`. If no
+default base resolves, first-pr reports its existing actionable error without
+rewriting the packet. Missing-packet diagnosis still recommends analysis first.
+
 ### Selection rules
 
 The packet should select at most one top item for the first screen:
@@ -341,6 +358,13 @@ Stale or wrong-root artifact:
 
 - Given a stale or wrong-root gap ledger, the packet suppresses repair
   interruption and shows a refresh or rerun command.
+
+Version-mismatched start-here packet:
+
+- Given a start-here packet written without `ripr_version` or with a different
+  producing version, `ripr first-pr --check` and `ripr doctor` report
+  `stale_evidence` and the `ripr first-pr` refresh command rather than treating
+  the packet as current first-screen evidence.
 
 Static limitation only:
 

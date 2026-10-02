@@ -77,8 +77,8 @@ use super::{
     REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
     ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
     RepoExposureLatencyTrace, ReportIndexEntry, ReportIndexRepoOpsArtifact,
-    RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult,
-    SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
+    RiprSwarmReadinessNextActionSources, RoutedRustEventRoute, SUPPORT_TIERS_PATH, SarifPolicyMode,
+    SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
     TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
@@ -191,6 +191,7 @@ use super::{
     ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
     ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
     ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions, ripr_swarm_readiness_summary,
+    routed_rust_event_route, routed_rust_label_event_contract_violations,
     routed_rust_workflow_contract_violations,
     routed_rust_workflow_contract_violations_with_reusable, run_ci_full_evidence_gates,
     run_repo_badge_artifact_command, sarif_policy_report_json, sarif_policy_report_markdown,
@@ -1723,6 +1724,79 @@ fn evidence_promotion_semantic_assertions_reject_contradictory_packet_messaging(
     assert!(
         report.contains("$.findings[0].evidence[3]:blocked why-not-actionable evidence"),
         "{report}"
+    );
+}
+
+#[test]
+fn evidence_promotion_probe_family_selector_scopes_findings_and_refuses_empty_match() {
+    let assertions = vec![super::EvidencePromotionSemanticAssertion::MaximumClass {
+        class: "weakly_exposed".to_string(),
+    }];
+    let check_json = serde_json::json!({
+        "summary": {"findings": 2},
+        "findings": [
+            {
+                "id": "probe:src_lib.rs:predicate:fa1d51d0",
+                "classification": "weakly_exposed",
+                "probe": {"id": "probe:src_lib.rs:predicate:fa1d51d0", "family": "predicate"}
+            },
+            {
+                "id": "probe:src_lib.rs:return_value:c71d52af",
+                "classification": "exposed",
+                "probe": {"id": "probe:src_lib.rs:return_value:c71d52af", "family": "return_value"}
+            }
+        ]
+    });
+
+    let scoped = super::evidence_promotion_semantic_violations_scoped(
+        "scoped_predicate_control",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+        Some("predicate"),
+    );
+    assert!(scoped.is_empty(), "{scoped:?}");
+
+    let promoted_family = super::evidence_promotion_semantic_violations_scoped(
+        "scoped_wrong_family",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+        Some("return_value"),
+    );
+    assert_eq!(promoted_family.len(), 1, "{promoted_family:?}");
+    assert!(
+        promoted_family[0].contains("probe:src_lib.rs:return_value:c71d52af"),
+        "{promoted_family:?}"
+    );
+
+    let unscoped = super::evidence_promotion_semantic_violations(
+        "unscoped_fixture_wide",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+    );
+    assert_eq!(unscoped.len(), 1, "{unscoped:?}");
+
+    let empty_match = super::evidence_promotion_semantic_violations_scoped(
+        "scoped_empty_match",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+        Some("call_deletion"),
+    );
+    assert_eq!(empty_match.len(), 1, "{empty_match:?}");
+    assert!(
+        empty_match[0].contains("matched no findings"),
+        "{empty_match:?}"
     );
 }
 
@@ -8520,6 +8594,10 @@ fn non_rust_programming_policy_requires_retention_rule() {
             .is_some()
     );
     assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+    assert!(
+        non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
+            .is_some()
+    );
 }
 
 #[test]
@@ -8554,6 +8632,19 @@ fn rust_conversion_candidates_retains_fixture_and_editor_boundaries() -> Result<
     assert_eq!(fixture.kind, "retained_fixture_input");
     assert_eq!(editor.priority, "retained");
     assert_eq!(editor.kind, "retained_external_runtime");
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_retain_the_portable_consumer_python_runtime() -> Result<(), String> {
+    let Some(consumer) =
+        super::non_rust_source_conversion_candidate("tools/python/portable-ripr-consumer/run.py")
+    else {
+        return Err("portable consumer python should be assessed".to_string());
+    };
+
+    assert_eq!(consumer.priority, "retained");
+    assert_eq!(consumer.kind, "retained_external_runtime");
     Ok(())
 }
 
@@ -10683,6 +10774,183 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
     assert!(violations.iter().any(|violation| {
         violation.contains("must set an explicit `timeout-minutes` job deadline")
     }));
+}
+
+#[test]
+fn routed_rust_label_event_matrix_rejects_unrelated_full_gates() {
+    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+    let cases = [
+        (
+            "pull_request",
+            Some("opened"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("reopened"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("synchronize"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
+        (
+            "workflow_dispatch",
+            None,
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("unlabeled"),
+            Some("windows-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("unlabeled"),
+            Some("full-ci"),
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("windows-ci"),
+            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("coverage"),
+            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("release-check"),
+            RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        ),
+    ];
+    for (event_name, action, label, expected) in cases {
+        let actual = routed_rust_event_route(workflow, event_name, action, label);
+        assert_eq!(
+            actual, expected,
+            "event={event_name} action={action:?} label={label:?}"
+        );
+    }
+
+    let unlabeled_restored = workflow.replace(
+        "types: [opened, synchronize, reopened, labeled]",
+        "types: [opened, synchronize, reopened, labeled, unlabeled]",
+    );
+    assert_eq!(
+        routed_rust_event_route(
+            &unlabeled_restored,
+            "pull_request",
+            Some("unlabeled"),
+            Some("windows-ci"),
+        ),
+        RoutedRustEventRoute::IgnoreWithoutRequiredResult,
+        "re-subscribing to unlabeled while keeping the route filter must not be classified as untriggered"
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&unlabeled_restored)
+            .iter()
+            .any(|violation| violation.contains("must not subscribe to unlabeled")),
+        "restoring unlabeled must fail the workflow contract even if jobs would skip"
+    );
+
+    let unlabeled_unconditional = unlabeled_restored.replace(
+        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "",
+    );
+    assert_eq!(
+        routed_rust_event_route(
+            &unlabeled_unconditional,
+            "pull_request",
+            Some("unlabeled"),
+            Some("windows-ci"),
+        ),
+        RoutedRustEventRoute::LaunchFullGate,
+        "the old unlabeled subscription without a filter must still classify as a full-gate launch so the matrix cannot pass by ignoring YAML"
+    );
+
+    let missing_filter = workflow.replace(
+        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "",
+    );
+    assert_eq!(
+        routed_rust_event_route(
+            &missing_filter,
+            "pull_request",
+            Some("labeled"),
+            Some("windows-ci"),
+        ),
+        RoutedRustEventRoute::LaunchFullGate
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&missing_filter)
+            .iter()
+            .any(|violation| violation.contains("job `route` must launch only")),
+        "dropping the proof-event filter must fail the workflow contract: {:?}",
+        routed_rust_label_event_contract_violations(&missing_filter)
+    );
+
+    let always_required_name = workflow.replace(
+        "name: ${{ github.event_name == 'pull_request' && (github.event.action == 'unlabeled' || (github.event.action == 'labeled' && github.event.label.name != 'full-ci')) && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+        "name: Ripr Rust Small Result",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&always_required_name)
+            .iter()
+            .any(|violation| violation.contains("Ignored Label Event")),
+        "posting the required result name on unrelated labeled events must fail"
+    );
+
+    let decoy_if = workflow.replace(
+        "if: github.event_name != 'pull_request' || contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')",
+        "if: always()\n    # contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action) github.event.action == 'labeled' && github.event.label.name == 'full-ci'",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&decoy_if)
+            .iter()
+            .any(|violation| violation.contains("job `route` must launch only")),
+        "comment decoys must not satisfy the proof-event if contract: {:?}",
+        routed_rust_label_event_contract_violations(&decoy_if)
+    );
+
+    let missing_types =
+        workflow.replace("    types: [opened, synchronize, reopened, labeled]\n", "");
+    assert!(
+        routed_rust_label_event_contract_violations(&missing_types)
+            .iter()
+            .any(|violation| violation.contains("inline pull_request types array")),
+        "removing types must fail closed: {:?}",
+        routed_rust_label_event_contract_violations(&missing_types)
+    );
+
+    let shared_group = workflow.replace(
+        "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore' || '' }}",
+        "",
+    );
+    assert!(
+        routed_rust_label_event_contract_violations(&shared_group)
+            .iter()
+            .any(|violation| violation.contains("-label-ignore")),
+        "sharing the proof concurrency group with ignored labels must fail: {:?}",
+        routed_rust_label_event_contract_violations(&shared_group)
+    );
 }
 
 #[test]
@@ -24666,6 +24934,58 @@ fn slice_test_repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+fn python_marker_auto_docs_passing_copy() -> (&'static str, &'static str, &'static str) {
+    (
+        "with no `ripr.toml` keep Python preview off",
+        r#"With no `ripr.toml` enables Python preview enabled = ["rust"] keeps Python off"#,
+        r#"with no `ripr.toml` Python project markers enabled = ["rust"]"#,
+    )
+}
+
+#[test]
+fn python_marker_auto_docs_accept_required_phrases() {
+    let (configuration, readme, support) = python_marker_auto_docs_passing_copy();
+    assert!(
+        super::python_marker_auto_docs_violations(configuration, readme, support).is_empty(),
+        "required marker-auto phrases should pass"
+    );
+}
+
+#[test]
+fn python_marker_auto_docs_reject_opt_in_python_lumping() {
+    let (_configuration, readme, support) = python_marker_auto_docs_passing_copy();
+    let violations = super::python_marker_auto_docs_violations(
+        "with no `ripr.toml` keep Python preview off; opt-in TypeScript, JavaScript, and Python evidence",
+        readme,
+        support,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("must not lump Python")),
+        "lumping Python with opt-in TypeScript/JavaScript must fail: {violations:?}"
+    );
+}
+
+/// #4395(a): live workspace pin. Lives in unpublished xtask so `cargo test -p ripr`
+/// from a crates.io package does not try to read workspace docs.
+#[test]
+fn public_docs_state_python_marker_auto_when_no_ripr_toml() -> Result<(), String> {
+    let root = slice_test_repo_root();
+    let configuration = std::fs::read_to_string(root.join("docs/CONFIGURATION.md"))
+        .map_err(|err| format!("read CONFIGURATION.md: {err}"))?;
+    let readme = std::fs::read_to_string(root.join("README.md"))
+        .map_err(|err| format!("read README.md: {err}"))?;
+    let support = std::fs::read_to_string(root.join("docs/status/SUPPORT_TIERS.md"))
+        .map_err(|err| format!("read SUPPORT_TIERS.md: {err}"))?;
+    let violations = super::python_marker_auto_docs_violations(&configuration, &readme, &support);
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(violations.join("\n"))
+    }
+}
+
 #[test]
 fn spec_system_profile_is_current_v2_without_goal_root() -> Result<(), String> {
     let profile =
@@ -25899,11 +26219,16 @@ fn error_ripr_plus_receipt_timeout_has_indeterminate_status_and_null_unresolved(
         warnings > 0,
         "warnings must be non-empty on an error receipt"
     );
-    let head = receipt.get("head").and_then(Value::as_str).unwrap_or("");
     assert!(
-        !head.is_empty(),
-        "head must be non-empty on an error receipt"
+        receipt["head"].is_null(),
+        "error receipt cannot qualify a candidate"
     );
+    assert_eq!(
+        receipt["observed_repository_head"],
+        "abc1234def5678abc1234def5678abc1234def5678"
+    );
+    assert_eq!(receipt["candidate_binding"], "not_established");
+    assert_eq!(receipt["zero_unresolved_established"], false);
     assert_eq!(receipt["schema_version"], "0.1");
     Ok(())
 }
@@ -25932,7 +26257,7 @@ fn ripr_plus_receipt_markdown_indeterminate_does_not_claim_zero_unresolved() -> 
 }
 
 #[test]
-fn ripr_plus_receipt_happy_path_regression_pass_status() -> Result<(), String> {
+fn ripr_plus_partial_happy_path_cannot_establish_zero() -> Result<(), String> {
     let fixture = r#"{
             "schema_version": "0.1",
             "format": "repo-exposure-summary-json",
@@ -25966,17 +26291,16 @@ fn ripr_plus_receipt_happy_path_regression_pass_status() -> Result<(), String> {
         }"#;
     let receipt = ripr_plus_receipt_from_repo_exposure_summary_json(fixture, "abc1234")?;
 
-    let status = receipt["status"].as_str().unwrap_or("");
-    assert!(
-        status == "pass" || status == "warn",
-        "happy-path receipt must have pass or warn status, got {status:?}"
-    );
-    let unresolved = receipt.get("unresolved").and_then(Value::as_u64);
-    assert!(
-        unresolved.is_some(),
-        "happy-path receipt must have a concrete unresolved count, not null"
-    );
-    assert_eq!(unresolved, Some(0));
+    // Preserve the raw composition counter, then exercise the final shared
+    // boundary used by both public command surfaces.
+    assert_eq!(receipt["unresolved"], 0);
+    let receipt = ripr::app::qualify_legacy_ripr_plus_receipt(receipt)?;
+    assert_eq!(receipt["status"], "indeterminate");
+    assert!(receipt["unresolved"].is_null());
+    assert!(receipt["head"].is_null());
+    assert_eq!(receipt["known_actionable_unresolved"], 0);
+    assert_eq!(receipt["observed_repository_head"], "abc1234");
+    assert_eq!(receipt["zero_unresolved_established"], false);
     Ok(())
 }
 
@@ -29350,6 +29674,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"repo-seam-inventory"));
     assert!(commands.contains(&"repo-exposure-report"));
     assert!(commands.contains(&"repo-exposure-latency-report"));
+    assert!(commands.contains(&"lsp-performance-report"));
     assert!(commands.contains(&"lane1-evidence-audit"));
     assert!(commands.contains(&"evidence-quality-audit"));
     assert!(commands.contains(&"evidence-quality-scorecard"));
@@ -29374,6 +29699,9 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"badges [--check] [--gap-ledger <path>]"));
     assert!(commands.contains(&"pr-triage-report"));
     assert!(commands.contains(&"gh-pr-status --pr <number>"));
+    assert!(commands.contains(
+        &"merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]"
+    ));
     assert!(commands.contains(&"check-badge-diff-policy"));
     assert!(commands.contains(&"check-command-catalog"));
     assert!(commands.contains(&"worktree doctor"));

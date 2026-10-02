@@ -5,7 +5,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 
 | Task | Command | Result |
 | --- | --- | --- |
-| Inspect one change | `ripr check` | Static findings, or an explicit no-action or limited result. |
+| Inspect one change | `ripr check` | Static findings, or an explicit no-action or limited result. Analysis stages go to stderr; `--quiet` suppresses them. Machine stdout is unchanged. |
 | Inspect a finding | The `ripr explain` command printed by `check` | Evidence for that finding, using the same root, diff, mode, and ID. |
 | Hand off a finding | The `ripr context` command printed by `check` | Context for a human or coding agent. |
 | Explore the repository | `ripr pilot --root .` | Broader analysis, pilot reports, and a supported next action. |
@@ -14,10 +14,11 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Compose PR evidence | `ripr first-pr` with the inputs described in [First PR workflow](FIRST_PR_WORKFLOW.md) | A summary of existing artifacts, not a new analysis or repair. |
 | Add advisory CI | `ripr init --ci github` | A non-blocking GitHub workflow to review and commit. |
 | Diagnose setup | `ripr doctor` | Tooling and configuration checks with recovery guidance. Not required before every run. |
+| Record result usefulness | `ripr feedback record` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
 | Check configuration | `ripr config validate` | Validation of `ripr.toml` without analysis. |
 | Start the LSP sidecar | `ripr lsp --stdio` | Saved-workspace feedback for an LSP client. |
 | Serve MCP status | `ripr mcp --stdio` | [Read-only workspace status](interop/mcp.md), not analysis or execution. |
-| Read detailed help | `ripr help <command>` or `ripr help --all` | Options for one command or the full reference. |
+| Read detailed help | `ripr help <command>`, `ripr help workflow [name]`, or `ripr help --all` | Options for one command, one bounded workflow's steps, or the full reference. |
 
 ## Repair transaction
 
@@ -76,12 +77,28 @@ establish static improvement or acceptance.
 debugging. Use their help and the [LLM operator guide](LLM_OPERATOR_GUIDE.md) rather than
 assembling them as mandatory first-run steps.
 
+`feedback record` and `feedback export` record local usefulness judgments
+against an immutable snapshot and join them onto existing route-quality rows.
+They do not change diagnostics, classification, baselines, suppressions, gates,
+or gap closure, and they do not open a network, editor, LSP, or MCP write
+surface.
+
 ## Drift rule
 
 README, Quickstart, editor onboarding, and CLI help should agree on each
 command's job. Keep detailed options in command help and the relevant reference;
-do not copy them into every introduction. The typed discovery catalog is tracked
-in [#1613](https://github.com/EffortlessMetrics/ripr-swarm/issues/1613).
+do not copy them into every introduction. The typed command-identity catalog lives in
+`crates/ripr/src/cli/command_catalog.rs` ([RIPR-SPEC-0184](specs/RIPR-SPEC-0184-public-command-catalog.md),
+[#4822](https://github.com/EffortlessMetrics/ripr-swarm/issues/4822)).
+The richer discovery surfaces this guide once deferred are now shipped and
+serve as its validation authority: the typed command metadata table validates
+the human help and hierarchy documentation, and `help --all` exposes the
+advanced and compatibility class markers
+([RIPR-SPEC-0187](specs/RIPR-SPEC-0187-command-metadata-human-projection.md)),
+`ripr help workflow` lists the bounded task workflows
+([RIPR-SPEC-0189](specs/RIPR-SPEC-0189-workflow-catalog-help-workflow.md)), and
+`help --json` emits the versioned machine-readable catalog
+([RIPR-SPEC-0190](specs/RIPR-SPEC-0190-help-json-machine-discovery.md)).
 
 ## Non-claims
 

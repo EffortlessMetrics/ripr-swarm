@@ -533,6 +533,123 @@ fn generated_status_command_runs_from_a_foreign_working_directory() -> Result<()
     Ok(())
 }
 
+/// #4000: doctor's current/stale packet refresh binds its selected root and
+/// survives literal Bash replay after the user changes working directory.
+#[cfg(unix)]
+#[test]
+fn doctor_packet_refresh_runs_from_a_foreign_working_directory() -> Result<(), Box<dyn Error>> {
+    for tool in ["bash", "git"] {
+        if !replay::tool_available(tool) {
+            return Err(format!("`{tool}` is required for doctor refresh replay").into());
+        }
+    }
+    let base = replay::unique_temp_dir("doctor-refresh-foreign-cwd")?;
+    let parent = base.join("selected parent");
+    let name = "repo é's $notes";
+    let repo = parent.join(name);
+    let foreign = base.join("foreign cwd");
+    let decoy = foreign.join(name);
+    replay::write_pr_fixture(&repo)?;
+    replay::write_pr_fixture(&decoy)?;
+    // No origin: the real resolver must select the local master branch;
+    // neither origin/main nor a shell <ref> placeholder can stand in for it.
+    replay::git(&repo, &["branch", "-m", "trunk", "master"])?;
+    replay::git(&repo, &["update-ref", "-d", "refs/remotes/origin/trunk"])?;
+    let produced = replay::ripr(&repo, &["first-pr", "--base", "master"])?;
+    assert!(
+        produced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&produced.stderr)
+    );
+    let reports = repo.join("target/ripr/reports");
+    let json_path = reports.join("start-here.json");
+    let markdown_path = reports.join("start-here.md");
+
+    for stale in [false, true] {
+        for (cwd, root) in [(&parent, name), (&repo, ".")] {
+            let mut before: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&json_path)?)?;
+            before["ripr_version"] = if stale {
+                "0.0.0"
+            } else {
+                env!("CARGO_PKG_VERSION")
+            }
+            .into();
+            fs::write(&json_path, serde_json::to_string_pretty(&before)?)?;
+            let doctor = replay::ripr(cwd, &["doctor", "--root", root])?;
+            assert!(
+                doctor.status.success(),
+                "{}",
+                String::from_utf8_lossy(&doctor.stderr)
+            );
+            let stdout = String::from_utf8(doctor.stdout)?;
+            assert_eq!(stdout.contains("stale_evidence"), stale, "{stdout}");
+            let command = stdout
+                .lines()
+                .find(|line| line.starts_with("- Safe next action:"))
+                .and_then(|line| line.split('`').nth(1))
+                .ok_or("doctor emitted no packet refresh command")?;
+
+            // Force the pasted command to recreate the selected packet. An
+            // old artifact under A cannot mask a command that refreshed B.
+            fs::remove_file(&markdown_path)?;
+            let refreshed = replay::bash(&foreign, command, &[])?;
+            assert!(
+                refreshed.status.success(),
+                "doctor refresh failed (stale={stale}, root={root}): {command}\nstdout={}\nstderr={}",
+                String::from_utf8_lossy(&refreshed.stdout),
+                String::from_utf8_lossy(&refreshed.stderr)
+            );
+            assert!(
+                markdown_path.is_file(),
+                "refresh must recreate the selected packet"
+            );
+            let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json_path)?)?;
+            let refreshed_root = after["root"].as_str().ok_or("packet omitted root")?;
+            assert_eq!(
+                std::path::Path::new(refreshed_root).canonicalize()?,
+                repo.canonicalize()?
+            );
+            assert_eq!(after["inputs"]["base"], "master", "{after}");
+            assert_eq!(after["inputs"]["head"], "HEAD", "{after}");
+            assert_eq!(after["ripr_version"], env!("CARGO_PKG_VERSION"));
+            assert!(
+                !foreign.join("target").exists() && !decoy.join("target").exists(),
+                "refresh must not write under the paste directory or its decoy"
+            );
+            let powershell_root = repo.to_string_lossy().replace('\'', "''");
+            assert!(stdout.contains(&format!(
+                "- Refresh command (PowerShell): ripr first-pr --root '{powershell_root}' --head HEAD"
+            )), "apostrophe path needs the shared PowerShell spelling: {stdout}");
+        }
+    }
+    // When the selected repository no longer has a default base, the same
+    // generic command must retain first-pr's refusal and preserve the packet.
+    replay::git(&repo, &["branch", "-m", "master", "topic-base"])?;
+    let doctor = replay::ripr(&parent, &["doctor", "--root", name])?;
+    assert!(doctor.status.success());
+    let stdout = String::from_utf8(doctor.stdout)?;
+    let command = stdout
+        .lines()
+        .find(|line| line.starts_with("- Safe next action:"))
+        .and_then(|line| line.split('`').nth(1))
+        .ok_or("doctor emitted no packet refresh command")?;
+    let before_json = fs::read(&json_path)?;
+    let before_markdown = fs::read(&markdown_path)?;
+    let refused = replay::bash(&foreign, command, &[])?;
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("could not resolve a default base"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(fs::read(&json_path)?, before_json);
+    assert_eq!(fs::read(&markdown_path)?, before_markdown);
+    assert!(!foreign.join("target").exists() && !decoy.join("target").exists());
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
 /// #3948/#4287: the artifact regeneration commands `first-pr` renders for
 /// repository A, pasted into Bash from an unrelated directory B, read and
 /// write A. `first-action`, `review-comments`, `agent packet`, `gate
@@ -1138,13 +1255,14 @@ fn far_above_threshold_discounts() {
         Ok(format!("{}:{inherited}", bin.display()))
     }
 
-    /// Run a script the way a GitHub-hosted Linux step does without a
-    /// `shell:` key (`bash -e {0}`), with the freshly built `ripr` first on
-    /// PATH.
+    /// Run a script the way a GitHub-hosted Linux step does under the
+    /// generated workflow's `defaults.run.shell: bash`
+    /// (`bash --noprofile --norc -eo pipefail {0}`), with the freshly built
+    /// `ripr` first on PATH.
     pub(super) fn bash(dir: &Path, script: &str, env: &[(String, String)]) -> TestResult<Output> {
         let mut command = Command::new("bash");
         command
-            .args(["--noprofile", "--norc", "-e", "-c", script])
+            .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", script])
             .current_dir(dir)
             .env("PATH", path_with_ripr()?)
             .stdin(Stdio::null());
@@ -1983,12 +2101,20 @@ fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box
     // fail the step.
     let unmarked_body = "LGTM, but see ripr:dedupe docs";
     let unclosed_body = "<!-- ripr:dedupe=ripr:seam-3:src/x.rs:1";
+    // Forged markers: a well-formed RIPR marker from a person, and one from
+    // another bot. The workflow posts only as github-actions[bot], so
+    // neither may suppress a card or become a PATCH target.
+    let forged_user_body = "<!-- ripr:dedupe=ripr:seam-4:src/lib.rs:5 -->";
+    let forged_bot_body = "<!-- ripr:dedupe=ripr:seam-5:src/lib.rs:6 -->";
+    let actions_bot = r#"{"login":"github-actions[bot]","type":"Bot"}"#;
     let raw = format!(
-        "[[{{\"id\":1,\"body\":{},\"path\":\"src/we ird/pricing.rs\",\"line\":12}},{{\"id\":2,\"body\":{},\"path\":\"src/lib.rs\",\"line\":3}},{{\"id\":3,\"body\":{},\"path\":\"src/lib.rs\",\"line\":4}},{{\"id\":4,\"body\":{},\"path\":\"src/x.rs\",\"line\":1}}]]",
+        "[[{{\"id\":1,\"user\":{actions_bot},\"body\":{},\"path\":\"src/we ird/pricing.rs\",\"line\":12}},{{\"id\":2,\"user\":{actions_bot},\"body\":{},\"path\":\"src/lib.rs\",\"line\":3}},{{\"id\":3,\"user\":{actions_bot},\"body\":{},\"path\":\"src/lib.rs\",\"line\":4}},{{\"id\":4,\"user\":{actions_bot},\"body\":{},\"path\":\"src/x.rs\",\"line\":1}}],[{{\"id\":5,\"user\":{{\"login\":\"mallory\",\"type\":\"User\"}},\"body\":{},\"path\":\"src/lib.rs\",\"line\":5}},{{\"id\":6,\"user\":{{\"login\":\"other-app[bot]\",\"type\":\"Bot\"}},\"body\":{},\"path\":\"src/lib.rs\",\"line\":6}}]]",
         json_string(&compact_body),
         json_string(&legacy_body),
         json_string(unmarked_body),
-        json_string(unclosed_body)
+        json_string(unclosed_body),
+        json_string(forged_user_body),
+        json_string(forged_bot_body)
     );
     fs::create_dir_all(root.join("target/ripr/review"))?;
     fs::write(
@@ -2016,6 +2142,79 @@ fn generated_existing_comment_capture_reads_keys_with_spaces() -> Result<(), Box
         .unwrap_or_default();
     assert_eq!(keys, vec![compact_key, legacy_key], "{captured}");
     assert_eq!(captured["comments"][0]["body"], "card", "{captured}");
+    Ok(())
+}
+
+/// A pull request can commit files under `target/ripr` or `target/ci`
+/// (`git add -f`) that later gate, ledger, and policy steps read when
+/// present. The generated cleanup step must remove them, and only them,
+/// before the first RIPR step.
+#[cfg(unix)]
+#[test]
+fn generated_cleanup_step_removes_checked_in_ripr_artifacts() -> Result<(), Box<dyn Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-cleanup-forged-inputs-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let output = run_ripr_init(&root)?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&root);
+        return Err(format!(
+            "ripr init failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let marker = "      - name: Remove checked-in RIPR artifacts\n        run: ";
+    let at = workflow.find(marker).ok_or("missing cleanup step")?;
+    let script = workflow[at + marker.len()..]
+        .lines()
+        .next()
+        .ok_or("empty cleanup step")?
+        .to_string();
+    let first_ripr = workflow
+        .find("      - name: Generate RIPR pilot packet")
+        .ok_or("missing pilot step")?;
+    assert!(at < first_ripr, "cleanup must precede the first RIPR step");
+
+    let forged = [
+        "target/ripr/reports/sarif-policy.json",
+        "target/ripr/reports/agent-receipt.json",
+        "target/ripr/workflow/agent-verify.json",
+        "target/ci/labels.json",
+    ];
+    for path in forged {
+        let path = root.join(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, "{}")?;
+    }
+    // Unrelated build output stays: the step is not a cache purge.
+    fs::create_dir_all(root.join("target/debug"))?;
+    fs::write(root.join("target/debug/keep"), "")?;
+
+    let run = run_sh(&script, &root)?;
+    let remaining = forged
+        .iter()
+        .filter(|path| root.join(path).exists())
+        .collect::<Vec<_>>();
+    let kept = root.join("target/debug/keep").exists();
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        run.status.success(),
+        "cleanup failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        remaining.is_empty(),
+        "forged inputs remained: {remaining:?}"
+    );
+    assert!(kept, "cleanup removed unrelated target output");
     Ok(())
 }
 
@@ -2545,14 +2744,15 @@ fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn
 }
 
 /// One spawn site for executing extracted capture-step shell (process-policy
-/// bound). GitHub Actions runs a `run:` step without `shell:` as `bash -e`
-/// on ubuntu-latest, so the helper mirrors that invocation instead of a
-/// bare `sh -c`, which would not enable errexit. Unix-only, so Windows
-/// builds never see a dead helper.
+/// bound). The generated workflow pins `defaults.run.shell: bash`, which
+/// GitHub Actions runs as `bash --noprofile --norc -eo pipefail {0}`, so the
+/// helper mirrors that invocation instead of a bare `sh -c`, which would
+/// enable neither errexit nor pipefail. Unix-only, so Windows builds never
+/// see a dead helper.
 #[cfg(unix)]
 fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new("bash")
-        .args(["-e", "-c", script])
+        .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", script])
         .current_dir(cwd)
         .output()?)
 }

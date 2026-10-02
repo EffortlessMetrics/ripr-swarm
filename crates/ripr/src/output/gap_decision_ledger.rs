@@ -1,6 +1,7 @@
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::shell_arg;
 use crate::domain::{CommandRole, CommandSpec};
+use crate::output::gap_source_subject::{self, GapSourceSubject};
 use crate::output::receipt_write::receipt_write_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,6 +52,16 @@ pub(crate) struct GapDecisionLedgerReport {
     inputs: GapDecisionLedgerInputs,
     summary: GapDecisionLedgerSummary,
     analysis_outcome: Option<Value>,
+    /// The analysis input's `source_subject` stamp and root, kept so a writer
+    /// can derive the ledger stamp from them (#4544). Never rendered.
+    input_source_subject: Option<Value>,
+    input_root: Option<String>,
+    /// Content digests the analysis saw for the files the records name,
+    /// copied from the input stamp. `None` until a writer derives it.
+    source_subject: Option<GapSourceSubject>,
+    /// Why the writer could not derive a stamp (for example the input carried
+    /// none). Editor consumers then report `unverifiable_subject`.
+    source_subject_unavailable: Option<&'static str>,
     records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
@@ -413,11 +424,25 @@ pub(crate) fn build_gap_decision_ledger_report(
 ) -> GapDecisionLedgerReport {
     let mut warnings = Vec::new();
     let mut analysis_outcome = None;
+    let mut input_source_subject = None;
+    let mut input_root = None;
     let mut records = match input.records_json {
         Ok(contents) => {
-            analysis_outcome = serde_json::from_str::<Value>(&contents)
-                .ok()
+            let source_value = serde_json::from_str::<Value>(&contents).ok();
+            analysis_outcome = source_value
+                .as_ref()
                 .and_then(|value| value.get("analysis_outcome").cloned());
+            // #4544: the ledger's stamp is derived from the stamp the analysis
+            // output (or an earlier ledger) carries, never from the workspace
+            // as it is when this ledger is written.
+            if let Some(value) = source_value.as_ref() {
+                input_source_subject = value.get("source_subject").cloned();
+                input_root = value
+                    .get("root")
+                    .or_else(|| value.pointer("/artifact/repository/root"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+            }
             match parse_gap_decision_source(input.source_kind, &contents) {
                 Ok(records) => records,
                 Err(err) => {
@@ -468,6 +493,10 @@ pub(crate) fn build_gap_decision_ledger_report(
         },
         summary,
         analysis_outcome,
+        input_source_subject,
+        input_root,
+        source_subject: None,
+        source_subject_unavailable: None,
         records,
         warnings,
         limits: vec![
@@ -498,6 +527,10 @@ pub(crate) fn render_gap_decision_ledger_json(
         summary: &'a GapDecisionLedgerSummary,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_outcome: Option<&'a Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_subject: Option<&'a GapSourceSubject>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_subject_unavailable: Option<&'a str>,
         records: &'a [Value],
         warnings: &'a [String],
         limits: &'a [String],
@@ -513,11 +546,69 @@ pub(crate) fn render_gap_decision_ledger_json(
         inputs: &report.inputs,
         summary: &report.summary,
         analysis_outcome: report.analysis_outcome.as_ref(),
+        source_subject: report.source_subject.as_ref(),
+        source_subject_unavailable: report.source_subject_unavailable,
         records: &records,
         warnings: &report.warnings,
         limits: &report.limits,
     })
     .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}"))
+}
+
+/// Derive the ledger's `source_subject` for the selected `root` (#4544).
+/// Every file a record names must appear in the analysis input's stamp, whose
+/// digest is copied; nothing is hashed here. So a ledger written after a
+/// checkout or an edit still describes the bytes the analysis saw, and the
+/// editor discloses it as stale. When the input carries no usable stamp, or
+/// omits a named file, the ledger gets no stamp and records why in
+/// `source_subject_unavailable`; editors then report `unverifiable_subject`.
+pub(crate) fn stamp_gap_decision_ledger_source_subject(
+    report: &mut GapDecisionLedgerReport,
+    root: &Path,
+) -> Result<(), String> {
+    let mut required = BTreeSet::new();
+    for record in &report.records {
+        required.extend(gap_source_subject::gap_record_subject_paths(
+            root,
+            &gap_record_json_value(record)?,
+        ));
+    }
+    let input_root = report.input_root.as_deref().map_or(root, Path::new);
+    match gap_source_subject::derive_source_subject(
+        report.input_source_subject.as_ref(),
+        input_root,
+        root,
+        &required,
+    ) {
+        Ok(subject) => {
+            report.source_subject = Some(subject);
+            report.source_subject_unavailable = None;
+        }
+        Err(reason) => {
+            report.source_subject = None;
+            report.source_subject_unavailable = Some(reason);
+        }
+    }
+    Ok(())
+}
+
+/// Every workspace file a ledger derived from this analysis output would
+/// name, spelled relative to `root`. The `ripr check` JSON producer stamps
+/// exactly these files so the ledger writer can copy their digests.
+pub(crate) fn check_output_subject_paths(
+    contents: &str,
+    root: &Path,
+) -> Result<BTreeSet<String>, String> {
+    let mut records = gap_records_from_check_output_json(contents)?;
+    attach_check_output_preview_receipt_routes(&mut records, &root.to_string_lossy());
+    let mut paths = BTreeSet::new();
+    for record in &records {
+        paths.extend(gap_source_subject::gap_record_subject_paths(
+            root,
+            &gap_record_json_value(record)?,
+        ));
+    }
+    Ok(paths)
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
@@ -3728,6 +3819,67 @@ mod tests {
         Ok(())
     }
 
+    /// #4307 (written non-claim fork): the repo-exposure → gap-record bridge
+    /// must carry the record's canonical verify and receipt identity verbatim
+    /// — the advisory Direct pilot-snapshot verify and the receipt reading the
+    /// workflow loop's verify artifact — so the gate carry pinned by
+    /// `gap_record_carry_keeps_the_direct_verify_and_the_receipt_input` cannot
+    /// be reentered from the bridge side (a redirect, a snapshot-family swap,
+    /// or a dropped receipt input). The ends alone are pinned at the record
+    /// owner and the gate; this pins the seam between them.
+    #[test]
+    fn repo_exposure_seam_carries_the_record_verify_and_receipt_identity() -> Result<(), String> {
+        let verify = "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json";
+        let receipt = crate::agent::loop_commands::agent_receipt_command(
+            ".",
+            crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
+            "seam-pricing-threshold",
+            Some(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+        );
+        let mut seam =
+            make_repo_exposure_seam("actionable", "add_focused_test", "predicate_boundary");
+        seam["evidence_record"]["canonical_item"]["verify_command"] =
+            Value::String(verify.to_string());
+        seam["evidence_record"]["canonical_item"]["receipt_command"] =
+            Value::String(receipt.clone());
+        let payload = serde_json::json!({"seams": [seam]});
+        let records = gap_records_from_repo_exposure_json(&payload.to_string())
+            .map_err(|error| format!("bridge parse failed: {error}"))?;
+        let record = records
+            .first()
+            .ok_or_else(|| "seam with canonical commands did not produce a record".to_string())?;
+
+        assert_eq!(
+            record.verification_commands,
+            vec![verify.to_string()],
+            "bridge must carry the record verify identity verbatim"
+        );
+        assert!(
+            !record.verification_commands[0].contains('>'),
+            "bridged verify must stay Direct (no redirect): {}",
+            record.verification_commands[0]
+        );
+        let carried_receipt = record
+            .receipt_command
+            .as_deref()
+            .ok_or_else(|| "bridge must carry the record receipt command".to_string())?;
+        assert_eq!(
+            carried_receipt, receipt,
+            "bridge must carry the record receipt identity verbatim"
+        );
+        let verify_json_at = carried_receipt
+            .split("--verify-json ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .ok_or_else(|| "carried receipt must name its verify-json input".to_string())?;
+        assert_eq!(
+            verify_json_at,
+            crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT,
+            "bridged receipt must keep reading the workflow verify artifact"
+        );
+        Ok(())
+    }
+
     #[test]
     fn repo_exposure_json_error_paths() -> Result<(), String> {
         // invalid JSON
@@ -4354,8 +4506,10 @@ mod tests {
         // named-constant thresholds adds two more direct-aligned boundary cards
         // (`python_named_constant_boundary_repair_gap` and the
         // `DISCOUNT_THRESHOLD` boundary in
-        // `python_same_stem_sibling_owner_not_related`).
-        if (direct, no_strong, orthogonal) != (5, 28, 11) {
+        // `python_same_stem_sibling_owner_not_related`). A returned relational
+        // comparison read as a predicate adds one more direct-aligned boundary
+        // card (`python_return_comparison_boundary`).
+        if (direct, no_strong, orthogonal) != (6, 28, 11) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));
