@@ -157,6 +157,19 @@ reason = "xtask package manifest."
 covered_by = ["cargo check -p xtask --locked"]
 
 # ---------------------------------------------------------------------------
+# Distribution adapters
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "packaging/python/pyproject.toml"
+kind = "python_package_manifest"
+owner = "release/distribution"
+surface = "config"
+classification = "config"
+reason = "PEP 517/621 and Maturin authoring manifest for the wheel-only ripr-rs adapter (#4490)."
+covered_by = ["cargo xtask check-release-targets"]
+
+# ---------------------------------------------------------------------------
 # CI / GitHub workflows
 # ---------------------------------------------------------------------------
 
@@ -381,8 +394,8 @@ kind = "judged_panel_metadata"
 owner = "ripr/evidence-quality"
 surface = "repo"
 classification = "metadata"
-reason = "Selected Rust behavior-panel denominator, including rolling production-quiet and canonical actionability observation; null labels remain non-results."
-covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check", "cargo test -p xtask --locked --offline rust_judged_panel::rolling_observation"]
+reason = "Selected Rust behavior-panel denominator, including rolling production-quiet observation and the #4795 calibration scorecard; null labels and not_run remain non-results."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check", "cargo test -p xtask --locked --offline rust_judged_panel::rolling_observation", "cargo test -p xtask --locked --offline rust_judged_panel::calibration"]
 
 [[allow]]
 glob = "metrics/rust-judged-behavior-panel/subjects/**"
@@ -411,6 +424,15 @@ surface = "repo"
 classification = "metadata"
 reason = "Governed receipt-backed Rust repair-trust corpus input; empty or incomplete input remains limited."
 covered_by = ["cargo xtask rust-repair-trust-report", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/repair-card-usability/*.json"
+kind = "repair_card_usability_evidence"
+owner = "ripr/repair-card"
+surface = "repo"
+classification = "metadata"
+reason = "Committed RepairCard synthetic usability expectations and versioned budget-ratification decision receipt (RIPR-SPEC-0196); real-attempt ratification stays pending on the governed #1702/#1579 corpus, and drifted bounds or receipts without limitations fail closed."
+covered_by = ["cargo xtask repair-card-usability-report", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "policy/*.toml"
@@ -519,6 +541,64 @@ reason = "Names the wasm32-wasip2 target so rustup installs it when Zed builds t
 covered_by = ["cd editors/zed && cargo build --locked --release --target wasm32-wasip2"]
 
 # ---------------------------------------------------------------------------
+# npm distribution adapter
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "packaging/npm/launcher/package.json"
+kind = "npm_distribution_manifest"
+owner = "release/distribution"
+surface = "repo"
+classification = "config"
+reason = "Source manifest for the script-free scoped npm launcher."
+covered_by = ["cargo xtask check-release-targets", "npm test --prefix packaging/npm/launcher", "npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts"]
+
+[[allow]]
+glob = "packaging/npm/launcher/bin/*.cjs"
+kind = "npm_distribution_launcher"
+owner = "release/distribution"
+surface = "repo"
+classification = "production"
+reason = "Small Node entrypoint for the scoped npm launcher; it delegates to the reviewed launcher library without installation-time code."
+covered_by = ["cargo xtask check-release-targets", "npm test --prefix packaging/npm/launcher"]
+
+[[allow]]
+glob = "packaging/npm/launcher/lib/*.cjs"
+kind = "npm_distribution_launcher"
+owner = "release/distribution"
+surface = "repo"
+classification = "production"
+reason = "Dependency-free runtime adapter that validates and launches one exact native payload."
+covered_by = ["cargo xtask check-release-targets", "npm test --prefix packaging/npm/launcher"]
+
+[[allow]]
+glob = "packaging/npm/launcher/test/*.cjs"
+kind = "npm_distribution_test"
+owner = "release/distribution"
+surface = "repo"
+classification = "test"
+reason = "Dependency-free launcher behavior and package-content controls."
+covered_by = ["npm test --prefix packaging/npm/launcher"]
+
+[[allow]]
+glob = "packaging/npm/launcher/*.md"
+kind = "npm_distribution_docs"
+owner = "release/distribution"
+surface = "docs"
+classification = "docs"
+reason = "Package-page source documentation for the npm launcher."
+covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts"]
+
+[[allow]]
+glob = "packaging/npm/launcher/LICENSE-*"
+kind = "npm_distribution_license"
+owner = "release/distribution"
+surface = "repo"
+classification = "metadata"
+reason = "License notices included in the npm launcher tarball."
+covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts"]
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -566,6 +646,22 @@ surface = "fixtures"
 classification = "fixture"
 reason = "Fixture-backed base/head attribution rules for canonical evidence comparison."
 covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask check-file-policy"]
+
+# ---------------------------------------------------------------------------
+# Portable consumer (Python stdlib packet transport)
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "tools/python/portable-ripr-consumer/**/*.py"
+kind = "portable_native_consumer"
+owner = "agent/portable-consumer"
+surface = "repo"
+classification = "tooling"
+reason = "Stdlib Python 3.11+ packet consumer for agent environments that have a qualified native ripr payload but no Cargo/rustc or execution-kernel network; packet staging and oracles stay in Rust/xtask (#4713)."
+covered_by = [
+    "cargo test -p xtask --locked --offline portable_consumer",
+    "cargo test -p ripr --locked --offline --test portable_consumer_packet",
+]
 
 # ---------------------------------------------------------------------------
 # Brand / assets
