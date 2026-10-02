@@ -1913,6 +1913,13 @@ are scoped or reviewed.
   `expect(discount(100, 100)).toBe(expected)`. When the parameters are not
   shown read-only, or the observed arguments are not integer literals, the
   packet is not ready and uses the boundary placeholder. (#4759)
+- CLI: `ripr plus` and the compatibility `cargo xtask ripr-plus` receipt
+  composition no longer turn exposure-only zero into complete RIPR+ quality
+  authority. Legacy inputs remain informational and `indeterminate`, preserving
+  known counts separately while total unresolved debt and qualified head are
+  unknown. `--check` now refuses incomplete evidence; invalid input replaces
+  an old receipt with an indeterminate error receipt and returns nonzero.
+  See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary.
 
 ### Added
 
