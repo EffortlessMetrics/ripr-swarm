@@ -9,8 +9,29 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Changed
+
+- LSP: identity-law tests pin that `action_id` excludes title, range,
+  message, snapshot handles, client capability, and disabled reason; build
+  and parse share one fingerprint; analysis input identity excludes
+  deadlines and position encoding; diagnostic result IDs ignore refresh
+  clock and attempt handles. (#1932)
+
 ### Added
 
+- LSP: the seam code actions and seam hover project the compact RepairCard
+  (RIPR-SPEC-0198, #4668). "Agent handoff: copy repair card" copies the same
+  versioned `repair_card.v1` document the CLI `ripr agent card` handoff
+  assembles — built from the completed snapshot's own authorities through the
+  shared `app::repair_card_handoff` projection, under the ratified default
+  budget — over the already-advertised `ripr.copyContext` command, and the
+  seam hover gains a bounded `## Repair card` section naming the canonical
+  card identity, the typed instruction state, next-action presence, and
+  per-state detail availability. Both surfaces fail closed to omission when a
+  producer fact cannot be bound and inherit the existing stale-diagnostic
+  suppression; the VS Code extension copies the `repair_card` label directly
+  without an LSP round trip. The MCP half of #4668 stays deferred on the
+  open #1898/#3089/#3090 authorities under ADR 0022.
 - Domains: RepairCard budget ratification (RIPR-SPEC-0196, #4669) measures
   the default-field card against its canonical packet on four deterministic
   synthetic corpus profiles (boundary without/with witness, witness with a
@@ -1728,6 +1749,7 @@ are scoped or reviewed.
   ([#3999](https://github.com/EffortlessMetrics/ripr-swarm/issues/3999),
   [#4000](https://github.com/EffortlessMetrics/ripr-swarm/issues/4000),
   [#4287](https://github.com/EffortlessMetrics/ripr-swarm/pull/4287)).
+
 - On the Python and TypeScript preview route, `ripr first-pr` now shows how to
   see whether the gap moved after the test edit. A `ripr receipt write`
   receipt records only the verify status it is given and re-checks nothing,
@@ -1934,6 +1956,15 @@ are scoped or reviewed.
   `no_scope` complete, and unparseable garbage keeps its existing
   `unsupported_input` contract (#4375).
 
+- TypeScript repair packets no longer call a non-boundary test complete
+  when the threshold is a parameter. For `if (amount >= threshold)` with
+  tests calling `discount(50, 100)`, `ripr check` said the packet was
+  complete, shaped like `expect(discount(50, 100)).toBe(expected)`, which
+  cannot tell `>` from `>=`. The analysis side now records when both sides
+  are read-only owner parameters, and the packet derives
+  `expect(discount(100, 100)).toBe(expected)`. When the parameters are not
+  shown read-only, or the observed arguments are not integer literals, the
+  packet is not ready and uses the boundary placeholder. (#4759)
 - CLI: `ripr plus` and the compatibility `cargo xtask ripr-plus` receipt
   composition no longer turn exposure-only zero into complete RIPR+ quality
   authority. Legacy inputs remain informational and `indeterminate`, preserving

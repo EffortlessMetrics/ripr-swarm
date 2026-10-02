@@ -169,6 +169,7 @@ pub(crate) struct ClassifiedSeamsReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
+    pub(crate) naming_only_skips: Vec<PathBuf>,
 }
 
 pub(crate) fn inventory_classified_seams_at_with_config(
@@ -205,6 +206,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     let rust_files = corpus.analyzable;
     let fingerprint = corpus.fingerprint;
     let skipped_generated = corpus.skipped_generated;
+    let naming_only_skips = corpus.naming_only_skips;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
@@ -237,6 +239,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                     classified: cached,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
+                    naming_only_skips,
                 });
             }
             CacheLoad::Miss => {
@@ -292,6 +295,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 classified: cached,
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
+                naming_only_skips,
             });
         }
         CacheLoad::Miss => {
@@ -351,6 +355,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
         classified,
         limit_info,
         skipped_generated,
+        naming_only_skips,
     })
 }
 
@@ -5858,10 +5863,9 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
     }
 
     #[test]
-    fn given_generator_header_only_ffi_when_repo_inventory_runs_then_file_stays_a_seam()
+    fn given_generator_header_only_ffi_when_repo_inventory_runs_then_file_is_not_a_seam()
     -> Result<(), String> {
-        // #4756's header/vendor predicate is not on this main. Aligning with
-        // `ripr check` must not invent that skip here.
+        // #4756 is now landed: inventory must share its generated-source authority.
         let root = make_tempdir("generated-header-not-absorbed")?;
         write_predicate_file(&root, "src/lib.rs")?;
         write_file(
@@ -5877,10 +5881,13 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
             &root,
             &RiprConfig::default(),
         )?);
-        if !files.contains("src/ffi.rs") {
+        if files.contains("src/ffi.rs") {
             return Err(format!(
-                "header-only src/ffi.rs must stay inventoried until #4756 lands, got {files:?}"
+                "header-only src/ffi.rs must share the diff exclusion, got {files:?}"
             ));
+        }
+        if !files.contains("src/lib.rs") {
+            return Err("the non-generated positive control must remain inventoried".to_string());
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
