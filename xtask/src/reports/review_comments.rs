@@ -1780,6 +1780,9 @@ mod tests {
         assert!(is_review_guidance_oversized(
             "ripr: warning: working tree has uncommitted changes\nripr: review_guidance_oversized: 3 closure input files"
         ));
+        assert!(is_review_guidance_oversized(
+            " \tripr: warning: before guard\r\n\t ripr: review_guidance_oversized: 3 files \t\r\n"
+        ));
         // The category is an exact colon-terminated tag, not a namespace
         // prefix that can reclassify an unrelated producer failure.
         for lookalike in [
@@ -1787,6 +1790,14 @@ mod tests {
             "ripr: review_guidance_oversized_metadata: unrelated failure",
             "review_guidance_oversized",
             "review_guidance_oversized without a tag delimiter",
+            "review_guidance_oversized : invalid delimiter",
+            "review_guidance_oversized\n: invalid delimiter",
+            "review_guidance_oversized\r\n: invalid delimiter",
+            "review_guidance_oversized\t: invalid delimiter",
+            "diff_scope_oversized: a different guard",
+            "repo_scope_oversized: a different guard",
+            "git_invocation_timeout: a different guard",
+            "analysis cancelled: DeadlineExceeded",
         ] {
             assert!(
                 !is_review_guidance_oversized(lookalike),

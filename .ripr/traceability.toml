@@ -8521,6 +8521,7 @@ id = "RIPR-SPEC-0136"
 name = "lsp configuration pull"
 spec = "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md"
 tests = [
+  "crates/ripr/src/git.rs::tests::git_timeout_tag_requires_exact_raw_error_prefix",
   "crates/ripr/src/lsp/capabilities.rs::tests::configuration_mode_follows_workspace_capabilities",
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_wrong_item_count",
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_non_object_item_and_bad_values",
