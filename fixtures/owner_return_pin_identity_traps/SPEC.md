@@ -1,6 +1,6 @@
 # Fixture: owner_return_pin_identity_traps
 
-Spec: RIPR-SPEC-0196
+Spec: RIPR-SPEC-0197
 
 ## Given
 
@@ -34,7 +34,7 @@ ripr check --root fixtures/owner_return_pin_identity_traps/input \
 ## Then
 
 No finding reads `exposed`. Each assertion fails one owner-return pin gate
-of RIPR-SPEC-0196: call identity (associated versus free, overridden
+of RIPR-SPEC-0197: call identity (associated versus free, overridden
 default, local binding) or the return path (the early-exit input).
 
 ## Must Not

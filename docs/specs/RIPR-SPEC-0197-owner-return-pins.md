@@ -1,4 +1,4 @@
-# RIPR-SPEC-0196: Owner-return pins through calls that name the owner
+# RIPR-SPEC-0197: Owner-return pins through calls that name the owner
 
 Status: proposed
 

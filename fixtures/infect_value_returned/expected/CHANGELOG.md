@@ -253,7 +253,7 @@ Updated:
 ## Pending — infect_value_returned (22)
 
 Reason:
-RIPR-SPEC-0196 (#4478) merged with main: the test's assert_eq pins the free owner's whole return value on its unconditional tail, so the return_value discriminator is confirmed (weakly_exposed to exposed); rendered in main's #4520 exposure-word and Evidence-line format
+RIPR-SPEC-0197 (#4478) merged with main: the test's assert_eq pins the free owner's whole return value on its unconditional tail, so the return_value discriminator is confirmed (weakly_exposed to exposed); rendered in main's #4520 exposure-word and Evidence-line format
 
 Command:
 `cargo xtask goldens bless infect_value_returned --reason "..."`
