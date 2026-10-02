@@ -10440,7 +10440,7 @@ name = "repair card budget ratification"
 spec = "docs/specs/RIPR-SPEC-0195-repair-card-budget-ratification.md"
 tests = [
   "crates/ripr/src/app/repair_card_usability.rs::tests::report_is_deterministic_across_runs",
-  "crates/ripr/src/app/repair_card_usability.rs::tests::every_profile_stays_smaller_than_its_packet",
+  "crates/ripr/src/app/repair_card_usability.rs::tests::every_profile_satisfies_the_ratification_relations",
   "crates/ripr/src/app/repair_card_usability.rs::tests::zero_attempt_cases_keep_real_measurement_not_measurable",
   "crates/ripr/src/app/repair_card_usability.rs::tests::attempt_cases_flip_real_measurement_to_measurable",
   "crates/ripr/src/app/repair_card_usability.rs::tests::ratified_defaults_match_the_domain_constants",

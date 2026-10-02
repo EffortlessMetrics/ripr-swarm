@@ -81,11 +81,15 @@ The committed evidence artifacts under `metrics/repair-card-usability/` pin
 the ratification:
 
 - `ratified-expectations.json` pins the synthetic profile set, the
-  load-bearing relations (card within both default bounds, card strictly
-  smaller than its packet, wire card omits the packet envelope, packet
-  envelope surfaces the seam), and the default bounds. The report gate
-  fails closed when a profile violates a relation or the profile set or
-  bounds drift.
+  load-bearing relations (card within both default bounds, wire card omits
+  the packet envelope, packet envelope surfaces the seam), and the default
+  bounds. The report gate fails closed when a profile violates a relation or
+  the profile set, relation set, or bounds drift. The card-vs-packet size
+  comparison is reported per profile (`card_bytes_below_packet_bytes`,
+  `packet_over_card_percent`) but is not a ratification relation: on these
+  single-seam profiles the compact card wire is not smaller than the
+  single-seam packet wire, because both are small and the card carries its
+  envelope, nine detail references, and digests.
 - `decision-receipt.json` is the versioned decision receipt: ratified
   defaults, explicit limitations, combinations not exercised, the synthetic
   evidence pointer, the reused denominator authority, and

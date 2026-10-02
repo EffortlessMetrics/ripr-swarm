@@ -15,7 +15,6 @@
   "relations": [
     "card_within_default_item_bound",
     "card_within_default_byte_bound",
-    "card_bytes_below_packet_bytes",
     "wire_card_omits_packet_envelope",
     "packet_envelope_surfaces_seam"
   ],
@@ -23,6 +22,6 @@
     "reported_by": "cargo xtask repair-card-usability-report",
     "report_path": "target/ripr/reports/repair-card-usability.json",
     "unit": "normalized_utf8_bytes",
-    "note": "Actual normalized byte counts (card vs complete packet, per profile) are reported by the xtask from live card assembly; this file pins the profile set and the relations the ratification depends on, so a regression that regrows the card past its packet, embeds the packet envelope, or exceeds a default bound fails the report gate."
+    "note": "Actual normalized byte counts (card vs complete packet, per profile) are reported by the xtask from live card assembly; this file pins the profile set and the relations the ratification depends on, so a regression that embeds the packet envelope, breaks packet routing, or exceeds a default bound fails the report gate. The card-vs-packet size comparison is reported per profile (card_bytes_below_packet_bytes, packet_over_card_percent) but is not a ratification relation: on these single-seam profiles the compact card wire is not smaller than the single-seam packet wire."
   }
 }

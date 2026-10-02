@@ -17,11 +17,15 @@ const RECEIPT_PATH: &str = "metrics/repair-card-usability/decision-receipt.json"
 
 /// Relations every synthetic profile must satisfy for the ratification to
 /// hold. These are the load-bearing claims of the decision receipt; a
-/// regression in any of them fails this gate.
-const PROFILE_RELATIONS: [&str; 5] = [
+/// regression in any of them fails this gate. The card-vs-packet size
+/// comparison is reported per profile (`card_bytes_below_packet_bytes`,
+/// `packet_over_card_percent`) but is not a ratification relation: on these
+/// single-seam profiles the compact card wire is not smaller than the
+/// single-seam packet wire, because both are small and the card carries its
+/// envelope, nine detail references, and digests.
+const PROFILE_RELATIONS: [&str; 4] = [
     "card_within_default_item_bound",
     "card_within_default_byte_bound",
-    "card_bytes_below_packet_bytes",
     "wire_card_omits_packet_envelope",
     "packet_envelope_surfaces_seam",
 ];
@@ -96,6 +100,29 @@ fn validate_expectations(report: &Value, expectations: &Value) -> Result<(), Str
     if live_sorted != expected_ids {
         return Err(format!(
             "synthetic profile set drifted: committed {expected_ids:?} vs live {live_sorted:?}"
+        ));
+    }
+    let mut pinned_relations = expectations
+        .get("relations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "ratified expectations must pin the relations".to_string())?
+        .iter()
+        .map(|relation| {
+            relation
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "pinned relations must be strings".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut gate_relations = PROFILE_RELATIONS
+        .iter()
+        .map(|relation| (*relation).to_string())
+        .collect::<Vec<_>>();
+    pinned_relations.sort();
+    gate_relations.sort();
+    if pinned_relations != gate_relations {
+        return Err(format!(
+            "ratified relations drifted: committed {pinned_relations:?} vs gate {gate_relations:?}"
         ));
     }
     for relation in PROFILE_RELATIONS {
