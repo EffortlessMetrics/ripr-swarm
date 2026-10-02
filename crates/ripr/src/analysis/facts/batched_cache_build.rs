@@ -1,8 +1,6 @@
+use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
 use super::build::CachedRustIndex;
 use super::model::{RustIndex, WorkspaceRootAuthority};
-use super::super::syntax::{
-    LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter,
-};
 use crate::analysis::cancellation;
 use crate::analysis::seam_cache::{
     CacheLoad, FileFactCacheStats, RepoFileFactCache, RepoFileFactCacheKey,
@@ -63,11 +61,7 @@ fn build_index_with_file_fact_cache(
         let mut pending = Vec::with_capacity(batch.len());
         for (file, bytes) in batch {
             if let Err(error) = cancellation::checkpoint() {
-                return fail_with_corrupt_warning(
-                    &stats,
-                    first_corrupt_reason.as_deref(),
-                    error,
-                );
+                return fail_with_corrupt_warning(&stats, first_corrupt_reason.as_deref(), error);
             }
             let key = RepoFileFactCacheKey::new(file, bytes);
             match cache.load_file_facts(&key) {
@@ -142,10 +136,7 @@ fn build_index_with_file_fact_cache(
                             return fail_with_corrupt_warning(
                                 &stats,
                                 first_corrupt_reason.as_deref(),
-                                format!(
-                                    "missing parse result for {}",
-                                    root.join(file).display()
-                                ),
+                                format!("missing parse result for {}", root.join(file).display()),
                             );
                         }
                     };
@@ -158,11 +149,7 @@ fn build_index_with_file_fact_cache(
             };
             insert_file_summary(&mut index, file.clone(), summary);
             if let Err(error) = cancellation::checkpoint() {
-                return fail_with_corrupt_warning(
-                    &stats,
-                    first_corrupt_reason.as_deref(),
-                    error,
-                );
+                return fail_with_corrupt_warning(&stats, first_corrupt_reason.as_deref(), error);
             }
         }
     }
@@ -191,9 +178,7 @@ fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
         if count == 1 {
             eprintln!("ripr: repo file fact cache entry ignored ({reason})");
         } else {
-            eprintln!(
-                "ripr: {count} repo file fact cache entries ignored; first: ({reason})"
-            );
+            eprintln!("ripr: {count} repo file fact cache entries ignored; first: ({reason})");
         }
     }
 }
