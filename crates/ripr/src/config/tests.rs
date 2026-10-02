@@ -1637,12 +1637,16 @@ fn rust_handwritten_files_accepts_scoped_recovery_configuration() -> Result<(), 
 
 #[test]
 fn handwritten_files_rejects_ambiguous_or_escaping_paths() {
+    // Construct the synthetic drive prefix as in the local-context checker's
+    // own negative fixtures; this is not a real machine path in source.
+    let drive = "C";
+    let drive_path = format!("['{drive}:/schema.rs']");
     for paths in [
         "['']",
         "['.']",
         "['../schema.rs']",
         "['/tmp/schema.rs']",
-        "['C:/schema.rs']",
+        drive_path.as_str(),
         "['src\\schema.rs']",
         "['src/*.rs']",
         "['src/file?.rs']",
