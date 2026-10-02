@@ -776,5 +776,91 @@ async fn real_saved_refresh_admits_canonical_uri_under_symlinked_root() -> Resul
         snapshot.findings.len(),
         report_kind_and_items(&report).1
     );
+    let stored_uri = file_uri_for_path(&fixture.alias.join("src/lib.rs"))?;
+    let expected_count = snapshot.served_diagnostics_for_uri(&stored_uri).len();
+    if expected_count == 0 || report_kind_and_items(&report).1 != expected_count {
+        return Err(
+            "BEHAVIORAL: current canonical URI did not receive its actual B diagnostics".into(),
+        );
+    }
+    backend
+        .did_change(quarantine_change_params(&uri, 3, SOURCE_A))
+        .await;
+    let dirty = pull_document_json(backend, &uri, None).await?;
+    if report_kind_and_items(&dirty).1 != 0 {
+        return Err("alias lookup bypassed per-document quarantine after a new edit".into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("consumed-alias-lookup")?;
+    let canonical_uri = file_uri_for_path(&fixture.file)?;
+    let lexical_uri = file_uri_for_path(&fixture.alias.join("src/lib.rs"))?;
+    let first = tower_lsp_server::ls_types::Diagnostic::new_simple(
+        Default::default(),
+        "first stored identity".to_string(),
+    );
+    let second = tower_lsp_server::ls_types::Diagnostic::new_simple(
+        Default::default(),
+        "second stored identity".to_string(),
+    );
+    let mut snapshot = sample_analysis_snapshot(
+        fixture.alias.clone(),
+        lexical_uri.clone(),
+        vec![first.clone()],
+        Vec::new(),
+    );
+    if snapshot.diagnostics_for_uri(&canonical_uri) != Some([first.clone()].as_slice())
+        || snapshot.served_diagnostics_for_uri(&canonical_uri) != vec![first.clone()]
+    {
+        return Err(
+            "BEHAVIORAL: unique admitted root alias did not resolve stored diagnostics".into(),
+        );
+    }
+    snapshot
+        .diagnostics_by_uri
+        .insert(canonical_uri.clone(), vec![second.clone()]);
+    for (uri, expected) in [(&lexical_uri, &first), (&canonical_uri, &second)] {
+        let actual = snapshot
+            .diagnostics_for_uri(uri)
+            .and_then(|items| items.first());
+        if actual != Some(expected) {
+            return Err("exact URI lost precedence to a different stored alias".into());
+        }
+    }
+    let second_alias = fixture._temp.path().join("second-alias");
+    std::os::unix::fs::symlink(&fixture.root, &second_alias)
+        .map_err(|error| format!("create second root alias: {error}"))?;
+    let ambiguous_uri = file_uri_for_path(&second_alias.join("src/lib.rs"))?;
+    if snapshot.diagnostics_for_uri(&ambiguous_uri).is_some()
+        || !snapshot
+            .served_diagnostics_for_uri(&ambiguous_uri)
+            .is_empty()
+    {
+        return Err(
+            "ambiguous root-relative fallback selected an arbitrary stored identity".into(),
+        );
+    }
+    let outside_uri = file_uri_for_path(&fixture._temp.path().join("outside/src/lib.rs"))?;
+    if snapshot.diagnostics_for_uri(&outside_uri).is_some() {
+        return Err("outside-root request borrowed a stored relative identity".into());
+    }
+    let inner_link = fixture.root.join("src/linked.rs");
+    std::os::unix::fs::symlink(&fixture.file, &inner_link)
+        .map_err(|error| format!("create in-workspace lexical alias: {error}"))?;
+    let inner_uri = file_uri_for_path(&fixture.alias.join("src/linked.rs"))?;
+    snapshot.diagnostics_by_uri.clear();
+    snapshot
+        .diagnostics_by_uri
+        .insert(inner_uri.clone(), vec![first.clone()]);
+    if snapshot.diagnostics_for_uri(&canonical_uri).is_some() {
+        return Err("distinct in-workspace lexical source keys were collapsed".into());
+    }
+    if snapshot.diagnostics_for_uri(&inner_uri) != Some([first].as_slice()) {
+        return Err("the exact in-workspace lexical identity was lost".into());
+    }
     Ok(())
 }
