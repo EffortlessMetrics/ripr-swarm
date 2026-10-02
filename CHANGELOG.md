@@ -11,6 +11,22 @@ are scoped or reviewed.
 
 ### Added
 
+- Domains: RepairCard budget ratification (RIPR-SPEC-0196, #4669) measures
+  the default-field card against its canonical packet on four deterministic
+  synthetic corpus profiles (boundary without/with witness, witness with a
+  current attempt, witness with a stale attempt) and records a versioned
+  `repair_card_budget_decision_receipt` that ratifies the 16-item /
+  64 KiB / 4 KiB defaults as `ratified_synthetic_scope`. Four load-bearing
+  relations (both default bounds plus the packet-envelope boundaries) hold
+  per profile; the card-vs-packet size comparison is reported as a
+  measurement — on the single-seam profiles the compact card wire is not
+  smaller than the single-seam packet wire — and is not a ratification
+  claim. Real-attempt usability stays `pending` while the governed
+  #1702/#1579 corpus carries zero attempt cases, and the gate accepts no
+  ratification value once attempt cases appear until per-opportunity real
+  measurement lands; committed expectations and receipt artifacts are
+  re-validated by a fail-closed
+  `cargo xtask repair-card-usability-report` gate on every run.
 - CLI: `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194, #4667) makes
   the compact `RepairCardV1` the default bounded agent handoff. The card is
   assembled verbatim from the shared authorities — the check finding's
@@ -34,7 +50,7 @@ are scoped or reviewed.
   budgeting never changes canonical identity, readiness, target selection or
   actionability, and oversized compact fields or root-specific route
   spellings fail closed instead of truncating silently.
-- Domains: `RepairCardV1` (`repair_card.v1`, RIPR-SPEC-0192) is the compact
+- Domains: `RepairCardV1` (`repair_card.v1`, RIPR-SPEC-0195) is the compact
   provider-neutral repair work object projected from the shared repair
   authorities: fix-instruction summary, repair-route readiness, typed target
   selection, typed command references and optional repair-attempt state. One
@@ -107,6 +123,20 @@ are scoped or reviewed.
   sparse checkout for it.
 - Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
   others) are no longer called non-source files. A Go-only diff reported
+- Rust: a test that pins the changed owner's whole return value now
+  confirms a changed `return_value` expression, including through a method
+  call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
+  7930d93 change to `Buf::try_get_int` now reads `exposed`; before, it read
+  `weakly_exposed` with "Discriminator unconfirmed". The call must name the
+  owner, and ripr fails closed when it cannot tell: a bare `name(..)` counts
+  only for a module-level function; a method call counts only when the
+  test binds the receiver to a type that dispatches to the owner, the trait
+  is imported, and no other method of that name exists in the workspace.
+  The changed expression must also be the owner's tail, and when the owner
+  can exit early through `?` or `return`, the pinned value must be the
+  changed `Ok(..)` or `Some(..)`, so an `Err(..)` pin on that owner does
+  not count (RIPR-SPEC-0197). `use ::crate_name::..` imports now read as
+  the named crate.
 - A changed Rust file whose only route into its crate is a `mod` with an
   unresolved `#[path]` target (`#[cfg_attr(unix, path = "unix.rs")] mod sys;`,
   including that declaration's default `sys.rs` and the target's own child
