@@ -2116,6 +2116,42 @@ mod tests {
         .err()
         .ok_or("changed generated input escaped admission")?;
         assert!(err.starts_with(REVIEW_GUIDANCE_OVERSIZED_PREFIX));
+        // Also exercise the real dispatch wiring: counting the union only
+        // in this helper would not protect a caller passing no owner files.
+        let out = root.join("target/ripr/review/comments.json");
+        let owner_calls = std::cell::Cell::new(0usize);
+        let result = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Ok(ceiling_diff().replace("unit_1.rs", "bindings.rs")),
+            Instant::now,
+            || {
+                Ok(GuidancePayloadCeiling {
+                    max_index_files: 3,
+                    max_payload_bytes: u64::MAX,
+                })
+            },
+            |root, lines| {
+                owner_calls.set(owner_calls.get() + 1);
+                agent_brief_owner_attribution_for_lines(root, lines)
+            },
+        );
+        assert_eq!(
+            owner_calls.get(),
+            0,
+            "generated owner input escaped dispatch admission"
+        );
+        assert!(result.is_err_and(|error| error.starts_with(REVIEW_GUIDANCE_OVERSIZED_PREFIX)));
+        assert_eq!(read_receipt(&out)?["status"], "failed");
+        assert!(!out.exists() && !out.with_extension("md").exists());
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
         Ok(())
     }
