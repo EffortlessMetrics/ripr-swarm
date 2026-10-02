@@ -106,7 +106,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(&card.oracle_strength);
             message.push_str(", suggested shape `");
             message.push_str(&card.suggested_assertion_shape);
-            message.push_str("`");
+            message.push('`');
             message.push_str(advisory_packet_suffix(card.repair_packet_ready));
             for (index, grip) in card.bun_cross_language_grips.iter().enumerate() {
                 if card.bun_cross_language_grips.len() == 1 {
