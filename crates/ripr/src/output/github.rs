@@ -106,7 +106,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(&card.oracle_strength);
             message.push_str(", suggested shape `");
             message.push_str(&card.suggested_assertion_shape);
-            message.push_str("` ");
+            message.push_str("`");
             message.push_str(advisory_packet_suffix(card.repair_packet_ready));
             for (index, grip) in card.bun_cross_language_grips.iter().enumerate() {
                 if card.bun_cross_language_grips.len() == 1 {
@@ -289,17 +289,8 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
         if advisory.analyzed(&output.language_runs) {
             continue;
         }
-        let why = if !advisory.enabled {
-            advisory.not_enabled_why()
-        } else if let Some(run) = advisory.non_success_run(&output.language_runs) {
-            format!(
-                "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
-                run.status.as_str()
-            )
-        } else {
-            "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean"
-                .to_string()
-        };
+        let why = advisory.unaudited_why(&output.language_runs);
+        let (_language, file_language) = crate::output::human::advisory_language_names(advisory);
         let file_label = if advisory.file_count == 1 {
             "file"
         } else {
@@ -307,7 +298,7 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
         };
         let message = format!(
             "{} {} {} in scope: {}",
-            advisory.file_count, advisory.language, file_label, why
+            advisory.file_count, file_language, file_label, why
         );
         warnings.push(format!(
             "::warning title=ripr preview advisory::{}\n",
@@ -874,7 +865,8 @@ mod tests {
     fn render_discloses_unanalyzed_working_tree_instead_of_clean_notice() {
         // #5011: the human surface prints UNANALYZED_WORKING_TREE_NOTE and
         // JSON emits "unanalyzed_working_tree": true; the GitHub stream must
-        // not read as clean for the same CheckOutput.
+        // not read as clean for the same CheckOutput. The full stream is
+        // pinned by the fixtures/github_unanalyzed_states golden.
         let mut output = output_with_unknown_finding();
         output.findings.clear();
         output.unanalyzed_working_tree = true;
@@ -885,22 +877,20 @@ mod tests {
             !rendered.contains("No static exposure findings found"),
             "{rendered}"
         );
-        assert!(
-            rendered.starts_with("::warning title=ripr unanalyzed working tree::"),
-            "{rendered}"
-        );
-        assert!(rendered.contains("not analyzed"), "{rendered}");
-        assert!(rendered.contains("--worktree"), "{rendered}");
-        assert!(
-            rendered.contains("does NOT mean those changes are covered"),
-            "{rendered}"
+        assert_eq!(
+            rendered,
+            include_str!(
+                "../../../../fixtures/github_unanalyzed_states/expected/unanalyzed_working_tree.txt"
+            )
         );
     }
 
     #[test]
     fn render_discloses_no_scope_provided_instead_of_clean_notice() {
         // #5011: mirror the human no-scope note; the empty-range variant
-        // (#4012) names the compared base instead.
+        // (#4012) names the compared base instead. The full stream for the
+        // no-base case is pinned by the fixtures/github_unanalyzed_states
+        // golden.
         let mut output = output_with_unknown_finding();
         output.findings.clear();
         output.no_scope_provided = true;
@@ -911,14 +901,11 @@ mod tests {
             !rendered.contains("No static exposure findings found"),
             "{rendered}"
         );
-        assert!(
-            rendered.starts_with("::warning title=ripr no analysis scope::"),
-            "{rendered}"
-        );
-        assert!(rendered.contains("ripr check --base BASE"), "{rendered}");
-        assert!(
-            rendered.contains("does NOT mean your changed behavior is covered"),
-            "{rendered}"
+        assert_eq!(
+            rendered,
+            include_str!(
+                "../../../../fixtures/github_unanalyzed_states/expected/no_scope_provided.txt"
+            )
         );
 
         let mut ranged = output_with_unknown_finding();
@@ -940,16 +927,21 @@ mod tests {
     }
 
     #[test]
-    fn render_discloses_not_enabled_preview_advisory_instead_of_clean_notice() {
-        // #5011: a not-enabled preview adapter records no LanguageRun, so the
-        // outcome stays "complete" — but the files were not analyzed and the
-        // human/JSON/badge surfaces all say the result is NOT clean.
+    fn render_discloses_not_analyzed_preview_advisory_instead_of_clean_notice() {
+        // #5011: a detected-but-not-analyzed preview advisory records no
+        // successful LanguageRun, so the outcome stays "complete" — but the
+        // files were not analyzed and the human/JSON/badge surfaces all say
+        // the result is NOT clean. The wire string is deliberately
+        // unregistered so the recovery text is identical in every
+        // feature-lane build (real adapters vary with compile-time
+        // features); the full stream is pinned by the
+        // fixtures/github_unanalyzed_states golden.
         let mut output = output_with_unknown_finding();
         output.findings.clear();
         output.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
-            language: "typescript".to_string(),
+            language: "cobol".to_string(),
             file_count: 2,
-            sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
+            sample_paths: vec!["src/a.cobol".to_string(), "src/b.cobol".to_string()],
             javascript_file_count: 0,
             enabled: false,
         }];
@@ -960,20 +952,61 @@ mod tests {
             !rendered.contains("No static exposure findings found"),
             "{rendered}"
         );
+        assert_eq!(
+            rendered,
+            include_str!(
+                "../../../../fixtures/github_unanalyzed_states/expected/preview_advisory.txt"
+            )
+        );
+
+        // Real-language arms: file labels follow the human surface's prose
+        // names (#4555), and the recovery text is feature-dependent, so these
+        // assert feature-independent fragments only.
+        let mut typescript = output_with_unknown_finding();
+        typescript.findings.clear();
+        typescript.preview_language_advisories =
+            vec![crate::analysis::PreviewLanguageAdvisory {
+                language: "typescript".to_string(),
+                file_count: 2,
+                sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            }];
+
+        let rendered = render(&typescript);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
         assert!(
             rendered.starts_with("::warning title=ripr preview advisory::"),
             "{rendered}"
         );
-        assert!(rendered.contains("2 typescript files"), "{rendered}");
+        assert!(rendered.contains("2 TypeScript files"), "{rendered}");
         assert!(
             rendered.contains("files detected but not analyzed"),
             "{rendered}"
         );
         assert!(rendered.contains("not Rust-grade clean"), "{rendered}");
-        // The recovery text is feature-dependent: a binary with the adapter
-        // compiled in names the ripr.toml route, a lang-rust-only binary
-        // names the Cargo feature. Both name the typescript adapter.
-        assert!(rendered.contains("typescript"), "{rendered}");
+
+        let mut javascript = output_with_unknown_finding();
+        javascript.findings.clear();
+        javascript.preview_language_advisories =
+            vec![crate::analysis::PreviewLanguageAdvisory {
+                language: "typescript".to_string(),
+                file_count: 1,
+                sample_paths: vec!["src/a.js".to_string()],
+                javascript_file_count: 1,
+                enabled: false,
+            }];
+
+        let rendered = render(&javascript);
+
+        assert!(
+            rendered.contains("1 JavaScript file in scope"),
+            "JavaScript-only files take the JavaScript label: {rendered}"
+        );
     }
 
     #[test]
