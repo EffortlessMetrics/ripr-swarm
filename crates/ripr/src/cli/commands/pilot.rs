@@ -306,7 +306,7 @@ fn run_pilot_inventory(
     app::repo_inventory_with_progress(
         sink.map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
         || analysis::inventory_classified_seams_report_at_with_config(root, config),
-        |report| Ok(report),
+        Ok,
     )
 }
 
@@ -589,7 +589,7 @@ mod tests {
                         std::thread::sleep(Duration::from_millis(10));
                     }
                 },
-                |report| Ok(report),
+                Ok,
             );
             let _ignored = done_tx.send(());
             result
@@ -649,7 +649,7 @@ mod tests {
                         std::thread::sleep(Duration::from_millis(5));
                     }
                 },
-                |report| Ok(report),
+                Ok,
             )
         });
         assert!(
