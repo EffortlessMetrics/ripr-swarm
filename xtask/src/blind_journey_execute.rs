@@ -349,10 +349,10 @@ fn last_subject(events: &[BlindJourneyEventV1], kind: BlindJourneyEventKindV1) -
 /// The exact recorded output bytes of the last action of one kind; the script
 /// records bytes, never digests, and the per-kind presence rule already
 /// guaranteed the bytes exist for execution-bearing kinds.
-fn last_recorded_output<'a>(
-    journey: &'a BlindJourneyJourneyV1,
+fn last_recorded_output(
+    journey: &BlindJourneyJourneyV1,
     kind: BlindJourneyEventKindV1,
-) -> Option<&'a str> {
+) -> Option<&str> {
     journey
         .actions
         .iter()
