@@ -176,6 +176,68 @@ pub(super) fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, i
     finding.static_limit_kind = Some(limit);
 }
 
+/// Borrowed, pass-local lookup. Each source identifier is indexed once, never
+/// by copying a function/body. Empty inputs make every later lookup constant
+/// time; no-path findings do not rescan all files or macro token trees.
+pub(super) struct PropertyMacroMentionIndex<'a> {
+    by_identifier: std::collections::BTreeMap<&'a str, PropertyMacroLocation<'a>>,
+}
+
+struct PropertyMacroLocation<'a> {
+    file: &'a std::path::Path,
+    witness: &'a crate::analysis::facts::UnresolvedPropertyMacroFact,
+}
+
+impl<'a> PropertyMacroMentionIndex<'a> {
+    pub(super) fn new(index: &'a RustIndex) -> Self {
+        let mut by_identifier = std::collections::BTreeMap::new();
+        for (file, facts) in &index.files {
+            for witness in &facts.unresolved_property_macros {
+                for identifier in &witness.mentioned_identifiers {
+                    by_identifier
+                        .entry(identifier.as_str())
+                        .or_insert(PropertyMacroLocation {
+                            file: file.as_path(),
+                            witness,
+                        });
+                }
+            }
+        }
+        Self { by_identifier }
+    }
+}
+
+/// A suffix/name match is a possible lexical mention, never resolved reach.
+/// A property block may generate tests, or may discard all its tokens.
+pub(super) fn apply_unresolved_property_macro_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    mentions: &PropertyMacroMentionIndex<'_>,
+) -> bool {
+    let Some(PropertyMacroLocation { file, witness }) = mentions.by_identifier.get(owner_name)
+    else {
+        return false;
+    };
+    finding.static_limit_kind = Some(StaticLimitKind::RustMacroReachUnresolved);
+    finding
+        .stop_reasons
+        .push(crate::domain::StopReason::MacroReachUnresolved);
+    finding.evidence.push(format!(
+        "Opaque property macro `{}!` at {}:{} lexically mentions `{owner_name}`; macro provenance, test collection and execution are unresolved.",
+        witness.name, file.display().to_string().replace('\\', "/"), witness.line,
+    ));
+    finding.evidence.extend([
+        format!("limitation_last_established_edge: source invocation `{}!` at {}:{}", witness.name, file.display().to_string().replace('\\', "/"), witness.line),
+        "limitation_first_unresolved_edge: property macro expansion, executable-test collection and owner reach".to_string(),
+        "limitation_analyzer_route: analysis/rust-property-macro-provenance".to_string(),
+        "limitation_non_claim: lexical mention only; no test existence, absence, execution, reach or assertion discrimination is established".to_string(),
+    ]);
+    finding.recommended_next_step = Some(
+        "Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.".to_string(),
+    );
+    true
+}
+
 pub(super) fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, index: &RustIndex) {
     if !(finding.class == ExposureClass::ReachableUnrevealed
         && !finding.related_tests.is_empty()
@@ -194,6 +256,14 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, in
     };
 
     finding.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    if matches!(
+        witness.macro_name.rsplit("::").next(),
+        Some("prop_assert" | "prop_assert_eq" | "prop_assert_ne")
+    ) {
+        finding.recommended_next_step = Some(
+            "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string(),
+        );
+    }
     finding.evidence.push(
         "A related Rust test uses an assertion-like macro that ripr does not classify as an oracle."
             .to_string(),
@@ -348,7 +418,9 @@ fn is_unresolved_assertion_like_macro(macro_name: &str) -> bool {
         return false;
     }
     let base = macro_name.rsplit("::").next().unwrap_or(macro_name);
-    base == "assert" || base.starts_with("assert_")
+    base == "assert"
+        || base.starts_with("assert_")
+        || matches!(base, "prop_assert" | "prop_assert_eq" | "prop_assert_ne")
 }
 
 fn is_known_rust_assertion_macro(macro_name: &str) -> bool {

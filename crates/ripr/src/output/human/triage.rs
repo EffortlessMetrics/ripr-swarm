@@ -594,13 +594,16 @@ fn has_repair_route(finding: &Finding) -> bool {
 }
 
 fn is_static_limited(finding: &Finding) -> bool {
-    matches!(
-        finding.class,
-        ExposureClass::NoStaticPath
-            | ExposureClass::InfectionUnknown
-            | ExposureClass::PropagationUnknown
-            | ExposureClass::StaticUnknown
-    )
+    // The producer's named limitation remains authoritative even when its
+    // conservative class is reachable_unrevealed or weakly_exposed.
+    finding.static_limit_kind.is_some()
+        || matches!(
+            finding.class,
+            ExposureClass::NoStaticPath
+                | ExposureClass::InfectionUnknown
+                | ExposureClass::PropagationUnknown
+                | ExposureClass::StaticUnknown
+        )
 }
 
 fn is_preview_limited(finding: &Finding) -> bool {

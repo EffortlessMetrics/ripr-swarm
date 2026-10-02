@@ -98,7 +98,7 @@ pub use model::{
     HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact, LiteralFact, ModuleDeclarationFact,
     ModulePathTarget, OracleFact, ProbeShapeFact, ResolvedIncludeParent, ReturnFact,
     RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
-    SourceRoleProvenanceEdgeKind, TestFact, TestSummary,
+    SourceRoleProvenanceEdgeKind, TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::source_digest;

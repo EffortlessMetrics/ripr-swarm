@@ -158,6 +158,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         // parse; out-of-line test modules under fallback files keep the
         // fail-closed standalone roles (#3533).
         module_declarations: Vec::new(),
+        unresolved_property_macros: Vec::new(),
         role_provenance: super::super::facts::SourceRoleProvenance::default(),
         source,
     }

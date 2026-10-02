@@ -5867,8 +5867,8 @@ try_parse_summary(raw).map_err(Into::into)"
     }
 
     #[test]
-    fn given_parser_indexed_proptest_and_quickcheck_when_relating_then_only_marked_tests()
-    -> Result<(), String> {
+    fn given_unresolved_property_macros_when_relating_then_no_invented_tests() -> Result<(), String>
+    {
         let source = r#"
 pub fn gate(x: u32) -> bool {
     x > 10
@@ -5916,21 +5916,10 @@ quickcheck! {
             .iter()
             .map(|(test, _)| test.name.as_str())
             .collect::<Vec<_>>();
-        if !names.contains(&"gate_threshold") {
-            return Err(format!(
-                "proptest #[test] must relate through the parser facts: {names:?}"
-            ));
-        }
-        if !names.contains(&"qc_gate") {
-            return Err(format!(
-                "quickcheck! fn must relate through the parser facts: {names:?}"
-            ));
-        }
-        if names.contains(&"unmarked") {
-            return Err(format!(
-                "unmarked proptest fn must not relate as a test: {names:?}"
-            ));
-        }
+        assert!(
+            names.is_empty(),
+            "opaque macros must not mint tests: {names:?}"
+        );
         Ok(())
     }
 }
