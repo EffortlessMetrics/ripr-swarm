@@ -182,8 +182,10 @@ Current ledger selections add `selected.command_context` with authority
 symlink before `..`; a missing root never falls back to the caller directory.
 
 First-pr and PR-summary human projections consume these forms. Bash uses a
-subshell with `cd -- <quoted root> && <raw command>`, preserving the caller's
-directory and exact native exit status. Unsupported compound, redirecting,
+subshell with `cd -P -- <quoted root> && <raw command>`, preserving the caller's
+directory and exact native exit status. Physical `cd -P` also preserves a
+lossless UTF-8 alias containing symlink/`..` traversal when its canonical target
+has non-UTF-8 bytes. Unsupported compound, redirecting,
 expanding, or multiline forms are withheld with recovery guidance. The shared
 simple-command translator bounds accepted syntax without introducing a parser.
 

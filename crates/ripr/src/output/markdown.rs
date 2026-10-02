@@ -304,7 +304,7 @@ fn rooted_command_forms(cwd: Option<&str>, command: &str) -> serde_json::Value {
     };
     let root = crate::agent::loop_commands::shell_arg(cwd);
     serde_json::json!({
-        "bash": format!("(cd -- {root} && {command})"),
+        "bash": format!("(cd -P -- {root} && {command})"),
         "powershell": null,
         "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt.",
     })

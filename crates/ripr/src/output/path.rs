@@ -105,7 +105,7 @@ pub(crate) fn absolute_command_root_display(root: &Path) -> Result<String, Strin
 
 fn require_lossless_command_path(path: &Path) -> Result<(), String> {
     path.to_str().map(|_| ()).ok_or_else(|| {
-        "selected root cannot be represented losslessly in a command; rerun from a UTF-8 parent using a UTF-8 alias".to_string()
+        "selected root cannot be represented losslessly in a command; rerun doctor from a UTF-8 parent using a UTF-8 alias".to_string()
     })
 }
 

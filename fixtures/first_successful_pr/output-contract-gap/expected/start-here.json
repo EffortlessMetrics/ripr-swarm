@@ -108,12 +108,12 @@
       "authority": "advisory_display_only",
       "cwd": "<root>",
       "receipt": {
-        "bash": "(cd -- <root> && ripr receipt write --gap gap:rust:output:device-label --verify-command 'cargo xtask goldens check' --status not_run --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json)",
+        "bash": "(cd -P -- <root> && ripr receipt write --gap gap:rust:output:device-label --verify-command 'cargo xtask goldens check' --status not_run --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json)",
         "powershell": null,
         "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt."
       },
       "verify": {
-        "bash": "(cd -- <root> && cargo xtask goldens check)",
+        "bash": "(cd -P -- <root> && cargo xtask goldens check)",
         "powershell": null,
         "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt."
       }

@@ -55,12 +55,12 @@
       "authority": "advisory_display_only",
       "cwd": "<root>",
       "receipt": {
-        "bash": "(cd -- <root> && ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json)",
+        "bash": "(cd -P -- <root> && ripr outcome --before .ripr/before.json --after .ripr/after.json --format json --out .ripr/receipts/python-threshold.json)",
         "powershell": null,
         "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt."
       },
       "verify": {
-        "bash": "(cd -- <root> && pytest tests/test_pricing.py::test_calculate_discount_smoke)",
+        "bash": "(cd -P -- <root> && pytest tests/test_pricing.py::test_calculate_discount_smoke)",
         "powershell": null,
         "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt."
       }
