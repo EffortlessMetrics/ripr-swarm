@@ -29,6 +29,8 @@ and `--head REF` to keep a custom comparison. If no default base resolves,
 first-pr reports the missing selection and leaves the existing packet unchanged.
 The rooted recommended first check also keeps the physical selected directory;
 missing-root recovery remains diagnostic and does not create a repository.
+An unavailable root keeps its absolute input spelling, including `..`, rather
+than redirecting recovery to a different directory through lexical cleanup.
 A UTF-8 alias is retained when the physical directory name is not UTF-8. If
 doctor cannot render a lossless rooted command, it asks for an alias instead of
 printing a lossy replacement-character path.

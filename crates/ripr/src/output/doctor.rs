@@ -70,9 +70,9 @@ impl DoctorFirstCommand {
     /// the root, or the recommended command analyzes the caller's directory.
     /// Existing directories use filesystem resolution, matching diagnosis
     /// even when a root traverses a symlink before `..`. Unresolved paths
-    /// keep the existing lexical binding for error-recovery guidance.
+    /// keep an absolute, uncollapsed spelling for error-recovery guidance.
     pub(crate) fn command_line_for_root(self, root: &Path) -> Result<String, String> {
-        use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
+        use crate::agent::loop_commands::shell_arg;
         let line = self.command_line();
         if root == Path::new(".") {
             return Ok(line.to_string());
@@ -80,11 +80,7 @@ impl DoctorFirstCommand {
         let flags = line.strip_prefix("ripr check").unwrap_or_default();
         let bound = match root.canonicalize() {
             Ok(resolved) => doctor_command_root_display(root, &resolved)?,
-            Err(_) => {
-                let bound = bound_root_path(root);
-                require_lossless_command_path(&bound)?;
-                root_path_display(&bound)
-            }
+            Err(_) => absolute_doctor_root_display(root)?,
         };
         Ok(format!("ripr check --root {}{flags}", shell_arg(&bound)))
     }
@@ -113,9 +109,14 @@ impl DoctorFirstCommand {
 /// Keep a lossless absolute alias in that case, without collapsing `..`:
 /// its filesystem traversal still selects the diagnosed physical directory.
 pub(crate) fn doctor_command_root_display(root: &Path, resolved: &Path) -> Result<String, String> {
-    let path = if resolved.to_str().is_some() {
-        std::borrow::Cow::Borrowed(resolved)
-    } else if root.is_absolute() {
+    if resolved.to_str().is_some() {
+        return Ok(human_path(resolved));
+    }
+    absolute_doctor_root_display(root)
+}
+
+fn absolute_doctor_root_display(root: &Path) -> Result<String, String> {
+    let path = if root.is_absolute() {
         std::borrow::Cow::Borrowed(root)
     } else {
         let cwd = std::env::current_dir()
@@ -2616,17 +2617,27 @@ mod tests {
                 "an apostrophe escapes differently in PowerShell"
             );
         }
-        // A relative root is bound to this process's directory, so the
-        // printed command survives a `cd` before it is pasted.
-        let relative =
-            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("../app"))?;
-        assert!(
-            !relative.contains(".."),
-            "a relative root must be bound, not printed verbatim: {relative}"
-        );
-        assert!(
-            relative.ends_with("/app") || relative.ends_with("/app'"),
-            "the bound root still names the diagnosed directory: {relative}"
+        // An unavailable relative root is bound to the producing directory,
+        // but `..` must retain filesystem traversal rather than lexical cleanup.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let relative_root = Path::new("..").join(format!(
+            "ripr-doctor-missing-{}-{nonce}",
+            std::process::id()
+        ));
+        let bound = std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(&relative_root);
+        assert!(!bound.exists(), "fixture root must remain unavailable");
+        let relative = DoctorFirstCommand::DefaultCheck.command_line_for_root(&relative_root)?;
+        assert_eq!(
+            relative,
+            format!(
+                "ripr check --root {}",
+                crate::agent::loop_commands::shell_arg(&human_path(&bound))
+            )
         );
 
         let mut missing_git = DoctorReport::new(".");

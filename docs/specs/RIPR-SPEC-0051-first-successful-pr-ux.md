@@ -122,8 +122,11 @@ command; lossy replacement characters are never executable path authority.
 Without a packet, that same unavailable recommendation supplies the safe-action
 recovery; the screen must not point to a nonexistent command below.
 The rooted recommended first check also resolves existing directories through
-the filesystem. Its existing `.` shorthand and lexical missing-path recovery
-remain unchanged; a missing-root diagnosis still fails without creating paths.
+the filesystem. If the selected directory is unavailable, recovery retains a
+lossless absolute input spelling without collapsing `..`, so it cannot select
+an existing lexical decoy. Its existing `.` shorthand is unchanged; a missing-root
+diagnosis still fails without creating paths. The shared lexical helper for
+not-yet-created output targets is unchanged.
 The generic refresh recomposes against the repository's default base and
 `HEAD`, through first-pr's existing resolver; it does not recover a historical
 custom comparison from packet metadata. Doctor names that scope and explains

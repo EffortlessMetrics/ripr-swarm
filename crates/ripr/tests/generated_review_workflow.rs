@@ -763,6 +763,56 @@ fn doctor_packet_refresh_missing_root_keeps_recovery_nonwriting() -> Result<(), 
     Ok(())
 }
 
+/// A missing selected directory must not turn into an existing lexical decoy
+/// merely because physical resolution could not finish.
+#[cfg(unix)]
+#[test]
+fn doctor_packet_refresh_missing_alias_never_selects_decoy() -> Result<(), Box<dyn Error>> {
+    let base = replay::unique_temp_dir("doctor-refresh-missing-alias")?;
+    let parent = base.join("selected parent");
+    let physical = base.join("physical parent");
+    let decoy = parent.join("repo");
+    replay::write_pr_fixture(&decoy)?;
+    fs::create_dir_all(physical.join("child"))?;
+    std::os::unix::fs::symlink(physical.join("child"), parent.join("link"))?;
+    let relative = std::path::Path::new("link/../repo");
+    let absolute = parent.join(relative);
+    assert!(!absolute.exists());
+    assert!(!physical.join("repo").exists());
+    let reports = decoy.join("target/ripr/reports");
+    fs::create_dir_all(&reports)?;
+    let json = reports.join("start-here.json");
+    let markdown = reports.join("start-here.md");
+    fs::write(
+        &json,
+        serde_json::to_vec(&serde_json::json!({
+            "ripr_version": env!("CARGO_PKG_VERSION")
+        }))?,
+    )?;
+    fs::write(&markdown, "# decoy packet must remain untouched\n")?;
+    let before = [fs::read(&json)?, fs::read(&markdown)?];
+    for spelling in [relative, absolute.as_path()] {
+        let doctor = replay::ripr(&parent, &["doctor", "--root", &spelling.to_string_lossy()])?;
+        assert_eq!(doctor.status.code(), Some(2));
+        let stdout = String::from_utf8(doctor.stdout)?;
+        assert!(stdout.contains("not yet generated"), "{stdout}");
+        assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
+        let command = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("- Recommended first command: "))
+            .ok_or("doctor omitted its missing-root recovery")?;
+        assert_eq!(
+            command,
+            format!("ripr check --root '{}'", absolute.display())
+        );
+        assert!(!absolute.exists());
+        assert!(!physical.join("repo").exists());
+        assert_eq!([fs::read(&json)?, fs::read(&markdown)?], before);
+    }
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
 /// A UTF-8 alias may select a directory whose actual name is not UTF-8.
 /// Never promote a lossy replacement-character display into a runnable command.
 #[cfg(unix)]
