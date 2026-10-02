@@ -1718,8 +1718,9 @@ fn seam_limit_from_env(
         Ok(raw) => parse_seam_limit(env_name, &raw)
             .map(|limit| limit.map(|n| (n, SeamLimitSource::Configured))),
         Err(std::env::VarError::NotPresent) => Ok(Some((default, SeamLimitSource::Default))),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
-            "{env_name} must be valid UTF-8: set a positive seam count, or 0 to remove the cap"
+        Err(std::env::VarError::NotUnicode(value)) => Err(format!(
+            "{env_name} is not valid UTF-8 (got {value:?}): set a positive seam count, or 0 to \
+             remove the cap"
         )),
     }
 }
@@ -3154,7 +3155,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     #[test]
-    fn seam_limit_env_reader_keeps_default_and_refuses_non_unicode() {
+    fn seam_limit_env_reader_keeps_default_and_refuses_non_unicode() -> Result<(), String> {
         assert_eq!(
             seam_limit_from_env(
                 PILOT_SEAM_BUDGET_ENV,
@@ -3185,8 +3186,37 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 DEFAULT_PILOT_SEAM_BUDGET,
                 Err(std::env::VarError::NotUnicode(std::ffi::OsString::new())),
             ),
-            Err(error) if error.starts_with("RIPR_PILOT_SEAM_BUDGET must be valid UTF-8")
+            Err(error) if error.starts_with("RIPR_PILOT_SEAM_BUDGET is not valid UTF-8 (got ")
         ));
+        // The escaped invalid value rides in the error, like the Unicode
+        // branch's `{value}`; a value the user cannot see cannot be corrected.
+        #[cfg(windows)]
+        let non_unicode = {
+            use std::os::windows::ffi::OsStringExt;
+            std::ffi::OsString::from_wide(&[0xD800, 0x0061])
+        };
+        #[cfg(unix)]
+        let non_unicode = {
+            use std::os::unix::ffi::OsStringExt;
+            std::ffi::OsString::from_vec(vec![0xFF, 0x61])
+        };
+        let Err(error) = seam_limit_from_env(
+            PILOT_SEAM_BUDGET_ENV,
+            DEFAULT_PILOT_SEAM_BUDGET,
+            Err(std::env::VarError::NotUnicode(non_unicode)),
+        ) else {
+            return Err("a non-UTF-8 value must be refused".to_string());
+        };
+        assert!(
+            error.starts_with("RIPR_PILOT_SEAM_BUDGET is not valid UTF-8 (got ")
+                && error.ends_with("): set a positive seam count, or 0 to remove the cap"),
+            "the error names the variable and the accepted forms: {error}"
+        );
+        assert!(
+            error.contains(r"\u{") || error.contains("\\x"),
+            "the escaped invalid value must ride in the error: {error}"
+        );
+        Ok(())
     }
 
     #[test]

@@ -10007,7 +10007,8 @@ fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let result = if !stdout.contains(&format!(
-        "- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root {root} --format repo-exposure-md`"
+        "- Recommended first command: fix the Git check above, or scan without Git history: `{}`",
+        first_command_at(&root, " --format repo-exposure-md")
     )) || stdout.contains("- Recommended first command: ripr check\n")
         || stderr.contains("working-tree change probe failed")
     {

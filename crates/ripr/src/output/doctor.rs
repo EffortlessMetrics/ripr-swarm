@@ -127,7 +127,32 @@ impl DoctorFirstCommand {
     /// PowerShell form only when the shared translator rewrites it (a root
     /// with an apostrophe, which Bash and PowerShell escape differently).
     pub(crate) fn recommendation_lines(self, root: &Path) -> Vec<String> {
-        match self {
+        // The repository-free scan is a runnable command, so its root is
+        // bound and quoted exactly like the git-backed recommendations: a
+        // spaced or quoted root must survive the paste (#4606 review). The
+        // translator reads bare commands only, so the prose wrapper is
+        // applied around each shell form, never handed to it.
+        if self == Self::OutsideGit {
+            use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
+            let bash = format!(
+                "ripr check --root {} --format repo-exposure-md",
+                shell_arg(&root_path_display(&bound_root_path(root)))
+            );
+            let mut lines = vec![format!(
+                "- Recommended first command: fix the Git check above, or scan without Git \
+                 history: `{bash}`"
+            )];
+            if let crate::output::markdown::PowershellForm::Translated(powershell) =
+                crate::output::markdown::powershell_form(&bash)
+            {
+                lines.push(format!(
+                    "- Recommended first command (PowerShell): fix the Git check above, or scan \
+                     without Git history: `{powershell}`"
+                ));
+            }
+            return lines;
+        }
+        let line = match self {
             Self::MissingRoot => {
                 return vec![
                     "- Recommended first command: none yet; pass `--root <path>` naming your \
@@ -135,16 +160,11 @@ impl DoctorFirstCommand {
                         .to_string(),
                 ];
             }
-            Self::OutsideGit => {
-                return vec![format!(
-                    "- Recommended first command: fix the Git check above, or scan without Git \
-                     history: `ripr check --root {} --format repo-exposure-md`",
-                    root.display()
-                )];
+            Self::SavedDiff | Self::Worktree | Self::DefaultCheck => {
+                self.command_line_for_root(root)
             }
-            Self::SavedDiff | Self::Worktree | Self::DefaultCheck => {}
-        }
-        let line = self.command_line_for_root(root);
+            Self::OutsideGit => String::new(),
+        };
         let mut lines = vec![format!("- Recommended first command: {line}")];
         if let crate::output::markdown::PowershellForm::Translated(powershell) =
             crate::output::markdown::powershell_form(&line)
@@ -2708,6 +2728,14 @@ mod tests {
                     "- Recommended first command (PowerShell): ripr check --root '/work/it''s app' --diff PATH",
                 ],
                 "an apostrophe escapes differently in PowerShell"
+            );
+            assert_eq!(
+                DoctorFirstCommand::OutsideGit.recommendation_lines(Path::new("/work/it's app")),
+                [
+                    r"- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root '/work/it'\''s app' --format repo-exposure-md`",
+                    "- Recommended first command (PowerShell): fix the Git check above, or scan without Git history: `ripr check --root '/work/it''s app' --format repo-exposure-md`",
+                ],
+                "the repository-free route quotes and translates like the runnable ones"
             );
         }
         // A relative root is bound to this process's directory, so the
