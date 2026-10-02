@@ -1,3 +1,4 @@
+mod batched_cache_build;
 mod build;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
@@ -47,7 +48,7 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    let mut cached = build::build_index_from_loaded_files_with_cache(root, files)?;
+    let mut cached = batched_cache_build::build_index_from_loaded_files_with_cache(root, files)?;
     parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
     test_styles::normalize_index_test_styles(&mut cached.index);
     role_composition::compose_index_source_roles(&mut cached.index, root);
