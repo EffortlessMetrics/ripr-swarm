@@ -96,9 +96,10 @@ indexing. The existing run-receipt vocabulary is preserved: `status = failed`,
 route. No guidance JSON or Markdown is published by the refused dispatch.
 The xtask wrapper preserves the named category and incomplete/non-all-clear
 semantics, rather than turning refusal into clean guidance or a real gap. It
-matches the exact colon-terminated error tag line-wise (after an optional
-`ripr: ` reporter prefix), retaining classification when warnings precede the
-guard while rejecting bare or lookalike category prefixes.
+matches the exact colon-terminated error tag line-wise (after removing an
+optional reporter prefix consisting of `ripr:` followed by one space), retaining
+classification when warnings precede the guard while rejecting bare or lookalike
+category prefixes.
 
 The repair route may raise the owning limit on a measured, sufficiently
 resourced runner or reduce the actual workspace inputs. Narrowing only the
