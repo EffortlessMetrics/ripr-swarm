@@ -1698,7 +1698,11 @@ mod tests {
                 Some(state)
             );
         }
-        assert!(serde_json::from_str::<EvidenceState>("\"unsupported\"").is_err());
+        let decoded = serde_json::from_str::<EvidenceState>("\"unsupported\"");
+        assert!(
+            matches!(decoded, Err(ref error) if error.to_string().contains("unknown variant")),
+            "{decoded:?}"
+        );
     }
     use crate::analysis::classify_seam;
     use crate::analysis::repair_route::{
