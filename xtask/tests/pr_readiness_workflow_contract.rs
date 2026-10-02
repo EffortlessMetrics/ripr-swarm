@@ -23,10 +23,10 @@ fn readiness_findings(source: &str) -> Vec<String> {
             && line.ends_with(':')
             && !line.trim_start().starts_with('#')
         {
-            if let Some(name) = job {
-                if !guarded {
-                    findings.push(format!("{name}: missing server-side draft guard"));
-                }
+            if let Some(name) = job
+                && !guarded
+            {
+                findings.push(format!("{name}: missing server-side draft guard"));
             }
             job = Some(line.trim().trim_end_matches(':'));
             guarded = false;
