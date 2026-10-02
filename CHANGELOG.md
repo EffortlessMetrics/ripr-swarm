@@ -114,6 +114,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Agent repair cards now apply the actual transaction's edit-cage admission
+  to readiness and next actions. An inline test whose production file is
+  not an allowed repair surface carries the exact refusal instead of
+  claiming repair readiness; separate-test routes stay available
+  (EffortlessMetrics/ripr#1810, RIPR-SPEC-0192/0194).
+
 - Rust: a test that pins the changed owner's whole return value now
   confirms a changed `return_value` expression, including through a method
   call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
