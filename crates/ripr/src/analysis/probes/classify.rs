@@ -1,8 +1,9 @@
 use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::rust_index::{FileFacts, ProbeShapeFact, RustIndex};
 use super::family::family_for_probe_shape;
+use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::ProbeFamily;
-use ra_ap_syntax::{AstNode, Edition, SourceFile, ast};
+use ra_ap_syntax::{AstNode, ast};
 use std::ops::Range;
 use std::path::Path;
 
@@ -143,10 +144,7 @@ fn unsafe_boundary_syntax_range(
     facts: &FileFacts,
     shape: &ProbeShapeFact,
 ) -> Option<ra_ap_syntax::TextRange> {
-    let parse = SourceFile::parse(&facts.source, Edition::CURRENT);
-    if !parse.errors().is_empty() {
-        return None;
-    }
+    let parse = parse_clean_source_file(&facts.source)?;
     let root = parse.tree();
     for function in root.syntax().descendants().filter_map(ast::Fn::cast) {
         let Some(token) = function.unsafe_token() else {
@@ -261,6 +259,22 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("#")
 }
 
+/// A line that only opens or closes a block (`}`, `});`, `} else {`,
+/// `else {`) carries no expression of its own (#4216 row 5). Opening `(`
+/// and `[` are not delimiters here, so a unit `()` or empty `[]` value is
+/// never structural; nor is `else if`, a tail value, or a call.
+///
+/// Structural is not the same as ignorable: inserting `} else {` alone
+/// splits a block and changes behavior. The diff producer skips a
+/// structural line only when its contiguous changed run also holds a
+/// behavioral line that seeds the probe for that change.
+pub(crate) fn is_structural_delimiter_line(text: &str) -> bool {
+    let rest = text.trim_matches(|ch: char| {
+        matches!(ch, '{' | '}' | ')' | ']' | ';' | ',') || ch.is_whitespace()
+    });
+    rest.is_empty() || rest == "else"
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::super::rust_index::{
@@ -274,6 +288,41 @@ mod tests {
     fn classify_functions_are_callable() {
         assert!(should_ignore_changed_line("// comment"));
         assert!(!should_ignore_changed_line("let x = 5;"));
+    }
+
+    /// #4216 row 5: brace-only and else-only lines are structural; every
+    /// line that still holds a token of behavior (a tail value, `else if`
+    /// condition, call, unit value) is not.
+    #[test]
+    fn structural_delimiter_lines_are_recognized() {
+        for structural in [
+            "}", "{", "} else {", "else {", "} else", "});", "},", "};", "]", ")",
+        ] {
+            assert!(
+                is_structural_delimiter_line(structural),
+                "`{structural}` is structural"
+            );
+            assert!(
+                !should_ignore_changed_line(structural),
+                "`{structural}` is never ignored unconditionally"
+            );
+        }
+        for kept in [
+            "amount",
+            "} else if amount > 5 {",
+            "} else { amount }",
+            "}))?;",
+            "()",
+            "[]",
+            "Ok(())",
+            "elsewhere",
+            "} else_value",
+        ] {
+            assert!(
+                !is_structural_delimiter_line(kept),
+                "`{kept}` is not structural"
+            );
+        }
     }
 
     #[test]

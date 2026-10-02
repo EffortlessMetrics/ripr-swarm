@@ -93,6 +93,35 @@ suite('Standard LSP compatibility probe', () => {
     });
   }
 
+  for (const mode of ['sync-full', 'sync-incremental'] as const) {
+    test(`accepts serviceable ${mode} options`, async () => {
+      const fake = fakeServer(mode);
+      const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
+      assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+    });
+  }
+
+  for (const [mode, reason] of [
+    ['sync-numeric-incremental', 'requires options advertising openClose and save'],
+    ['sync-save-false', 'save'],
+    ['sync-no-save', 'save'],
+    ['sync-no-open-close', 'openClose'],
+    ['sync-open-close-false', 'openClose'],
+    ['sync-will-save', 'willSave'],
+    ['sync-will-save-wait', 'willSaveWaitUntil'],
+    ['sync-include-text', 'includeText']
+  ] as const) {
+    test(`rejects unserviceable ${mode} with a sync reason`, async () => {
+      const fake = fakeServer(mode);
+      const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
+      assert.strictEqual(result.status, 'incompatible', JSON.stringify(result));
+      if (result.status === 'incompatible') {
+        assert.strictEqual(result.kind, 'missing_required_capability');
+        assert.match(result.detail, new RegExp(`textDocumentSync.*${reason}`));
+      }
+    });
+  }
+
   for (const mode of [
     'missing-jsonrpc',
     'wrong-jsonrpc',
@@ -111,6 +140,19 @@ suite('Standard LSP compatibility probe', () => {
       assert.deepStrictEqual(result.status === 'incompatible' ? result.kind : undefined, 'protocol_failure');
     });
   }
+
+  test('accepts the exact incremental document sync shape the server advertises', async () => {
+    const fake = fakeServer('incremental-sync');
+    const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
+    assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
+  });
+
+  test('rejects an advertised document sync kind the consumer does not implement', async () => {
+    const fake = fakeServer('unknown-sync-kind');
+    const result = await probeStandardLspCompatibility(fake.command, fake.useShell, fakeProbeTimeoutMs);
+    assert.strictEqual(result.status, 'incompatible');
+    assert.deepStrictEqual(result.status === 'incompatible' ? result.kind : undefined, 'missing_required_capability');
+  });
 
   test('accepts a structurally valid initialize error as an initialize rejection', async () => {
     const fake = fakeServer('initialize-error');
@@ -333,10 +375,22 @@ function consume() {
         capabilities.codeActionProvider = true;
         capabilities.hoverProvider = true;
       }
+      const syncOptions = { openClose: true, change: mode === 'sync-incremental' ? 2 : 1, save: { includeText: false }, willSave: false, willSaveWaitUntil: false };
+      if (mode === 'sync-save-false') syncOptions.save = false;
+      if (mode === 'sync-no-save') delete syncOptions.save;
+      if (mode === 'sync-no-open-close') delete syncOptions.openClose;
+      if (mode === 'sync-open-close-false') syncOptions.openClose = false;
+      if (mode === 'sync-will-save') syncOptions.willSave = true;
+      if (mode === 'sync-will-save-wait') syncOptions.willSaveWaitUntil = true;
+      if (mode === 'sync-include-text') syncOptions.save.includeText = true;
+      if (mode === 'sync-numeric-incremental') capabilities.textDocumentSync = 2;
+      else if (mode.startsWith('sync-')) capabilities.textDocumentSync = syncOptions;
       if (mode === 'missing-hover') delete capabilities.hoverProvider;
       if (mode === 'missing-diagnostics') delete capabilities.diagnosticProvider;
       if (mode === 'missing-workspace-folders') delete capabilities.workspace;
       if (mode === 'missing-command') capabilities.executeCommandProvider.commands.pop();
+      if (mode === 'incremental-sync') capabilities.textDocumentSync = { openClose: true, change: 2, willSave: false, willSaveWaitUntil: false, save: { includeText: false } };
+      if (mode === 'unknown-sync-kind') capabilities.textDocumentSync = { openClose: true, change: 3, willSave: false, willSaveWaitUntil: false, save: { includeText: false } };
       const envelope = { jsonrpc: mode === 'wrong-jsonrpc' ? '1.0' : '2.0', id: message.id, result: { capabilities, serverInfo: { name: mode === 'wrong-identity' ? 'other' : 'ripr', version: '9.9.9' } } };
       if (mode === 'missing-jsonrpc') delete envelope.jsonrpc;
       if (mode === 'missing-response-payload') delete envelope.result;

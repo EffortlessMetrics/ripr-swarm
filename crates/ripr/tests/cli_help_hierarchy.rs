@@ -15,12 +15,67 @@ use std::process::Command;
 const COMMAND_HIERARCHY_DOC: &str = include_str!("../../../docs/COMMAND_HIERARCHY.md");
 const ROOT_README: &str = include_str!("../../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../../docs/QUICKSTART.md");
+const EXIT_CODES_DOC: &str = include_str!("../../../docs/EXIT_CODES.md");
 
-fn rendered_help(args: &[&str]) -> Result<String, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+/// User-facing guides whose `ripr ...` commands a reader or agent copies.
+/// Internal specs, plans, and handoffs are historical records and stay out.
+const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
+    ("README.md", ROOT_README),
+    ("crates/ripr/README.md", include_str!("../README.md")),
+    (
+        "editors/vscode/README.md",
+        include_str!("../../../editors/vscode/README.md"),
+    ),
+    ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ("docs/COMMAND_HIERARCHY.md", COMMAND_HIERARCHY_DOC),
+    ("docs/EXIT_CODES.md", EXIT_CODES_DOC),
+    (
+        "docs/LLM_OPERATOR_GUIDE.md",
+        include_str!("../../../docs/LLM_OPERATOR_GUIDE.md"),
+    ),
+    (
+        "docs/FIRST_PR_WORKFLOW.md",
+        include_str!("../../../docs/FIRST_PR_WORKFLOW.md"),
+    ),
+    (
+        "docs/CONFIGURATION.md",
+        include_str!("../../../docs/CONFIGURATION.md"),
+    ),
+    (
+        "docs/AGENT_WORKFLOWS.md",
+        include_str!("../../../docs/AGENT_WORKFLOWS.md"),
+    ),
+    (
+        "docs/TARGETED_TEST_WORKFLOW.md",
+        include_str!("../../../docs/TARGETED_TEST_WORKFLOW.md"),
+    ),
+    (
+        "docs/interop/mcp.md",
+        include_str!("../../../docs/interop/mcp.md"),
+    ),
+    (
+        "docs/interop/neovim-lsp.md",
+        include_str!("../../../docs/interop/neovim-lsp.md"),
+    ),
+    (
+        "docs/interop/other-editors-lsp.md",
+        include_str!("../../../docs/interop/other-editors-lsp.md"),
+    ),
+    (
+        "docs/releases/0.11.0-release-notes.md",
+        include_str!("../../../docs/releases/0.11.0-release-notes.md"),
+    ),
+];
+
+fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(args)
         .output()
-        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))?;
+        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+}
+
+fn rendered_help(args: &[&str]) -> Result<String, String> {
+    let output = run_ripr(args)?;
     if !output.status.success() {
         return Err(format!(
             "ripr {args:?} failed\nstdout:\n{}\nstderr:\n{}",
@@ -44,6 +99,86 @@ fn assert_contains(surface: &str, text: &str, needle: &str) -> Result<(), String
 /// the contract.
 fn normalized(doc: &str) -> String {
     doc.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn workflow_help_lists_the_five_governed_identities() -> Result<(), String> {
+    let stdout = rendered_help(&["help", "workflow"])?;
+    for id in [
+        "inspect-change",
+        "guided-adoption",
+        "repair-gap",
+        "compose-pr-evidence",
+        "adopt-ci",
+    ] {
+        assert_contains("`ripr help workflow`", &stdout, id)?;
+    }
+    assert_contains(
+        "`ripr help workflow`",
+        &stdout,
+        "Run `ripr help workflow <name>` for one workflow's steps",
+    )?;
+    // The listing is guidance only: it must not silently execute anything.
+    assert_contains(
+        "`ripr help workflow`",
+        &stdout,
+        "Nothing on this screen runs a command",
+    )
+}
+
+#[test]
+fn workflow_help_renders_one_workflow_with_bounded_sections() -> Result<(), String> {
+    let stdout = rendered_help(&["help", "workflow", "repair-gap"])?;
+    for section in [
+        "Workflow: repair-gap",
+        "Purpose:",
+        "Applies when:",
+        "Commands (ordered):",
+        "Result families:",
+        "Artifacts:",
+        "Recovery:",
+        "Stop conditions:",
+        "Limitations:",
+    ] {
+        assert_contains("`ripr help workflow repair-gap`", &stdout, section)?;
+    }
+    // Aliases resolve on the render path.
+    assert_contains(
+        "`ripr help workflow repair-gap`",
+        &rendered_help(&["help", "workflow", "adoption"])?,
+        "Workflow: guided-adoption",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn unknown_workflow_fails_with_a_family_distinct_from_unknown_command() -> Result<(), String> {
+    let output = run_ripr(&["help", "workflow", "repar-gap"])?;
+    if output.status.success() {
+        return Err(format!(
+            "unknown workflow exited 0\nstdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("unknown workflow") {
+        return Err(format!(
+            "unknown workflow error missing its family marker:\n{stderr}"
+        ));
+    }
+    if stderr.contains("unknown command") {
+        return Err(format!(
+            "unknown workflow error leaked the unknown-command family:\n{stderr}"
+        ));
+    }
+    // Suggestions, when present, must come from workflow identities only and
+    // must not suggest a command spelling for a workflow typo.
+    if stderr.contains("repair-loop") || stderr.contains("ripr agent") {
+        return Err(format!(
+            "unknown workflow error suggested command machinery instead of a workflow:\n{stderr}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -74,15 +209,68 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
     let stdout = normalized(&rendered_help(&["help", "--all"])?);
     for needle in [
         "Diagnose setup ripr doctor",
-        "Inspect one change ripr check --base origin/main",
+        "Inspect one change ripr check",
         "Guided repo adoption ripr pilot --root .",
         "Repair one named gap ripr agent repair --seam-id ID --phase before|after|verify",
-        "Compose PR evidence ripr first-pr --root . --base origin/main --head HEAD",
+        "Compose PR evidence ripr first-pr --root . --base BASE --head HEAD",
         "Adopt advisory CI ripr init --ci github",
         "`ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.",
         "`ripr first-pr` and `ripr start-here` compose `target/ripr/reports/start-here.{json,md}` from existing artifacts; they do not run analysis or repair a gap.",
     ] {
         assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
+    }
+    Ok(())
+}
+
+/// Non-public rows are visibly distinct in the exhaustive reference
+/// (issue #4823): advanced rows carry an `[advanced]` line marker and the
+/// compatibility alias carries `[compatibility]`, so a reader can tell the
+/// primary surface from control and legacy commands without opening each
+/// help page. The projection is validated against the typed tables in
+/// `command_metadata::tests::human_surfaces_agree_with_the_typed_tables`.
+#[test]
+fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
+    let rendered = rendered_help(&["help", "--all"])?;
+    let stdout = normalized(&rendered);
+    for needle in [
+        "ripr agent start --root . --seam-id ID [--out target/ripr/workflow] [advanced]",
+        "ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [advanced]",
+        "ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json [advanced]",
+        "ripr agent card --root . --seam-id ID [--json] [advanced]",
+        "ripr agent verify --root . --before before.json --after after.json --json [advanced]",
+        "ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json [advanced]",
+        "ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json [advanced]",
+        "ripr agent review-summary --root . [--json] [advanced]",
+        "ripr start-here [same options as first-pr] [compatibility]",
+    ] {
+        assert_contains("exhaustive help (`ripr help --all`)", &stdout, needle)?;
+    }
+    // The primary public rows stay unmarked. Inspect each original rendered
+    // row: a class marker anywhere on the row (not just adjacent to the
+    // route) is a leak, and the canonical route must still be present.
+    let rendered_rows: Vec<String> = rendered.lines().map(normalized).collect();
+    for needle in [
+        "ripr check [--base REV] [--worktree] [--diff PATH] [--mode draft] [--format FORMAT]",
+        "ripr agent status --root . [--json]",
+    ] {
+        let mut found = false;
+        for row in &rendered_rows {
+            if row.contains(needle) {
+                found = true;
+                for marker in ["[advanced]", "[compatibility]"] {
+                    if row.contains(marker) {
+                        return Err(format!(
+                            "public row unexpectedly carries a class marker: {needle} {marker}"
+                        ));
+                    }
+                }
+            }
+        }
+        if !found {
+            return Err(format!(
+                "exhaustive help (`ripr help --all`) lost the canonical route `{needle}`"
+            ));
+        }
     }
     Ok(())
 }
@@ -236,7 +424,10 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "--verify-authorized",
         "--verify-authority ID",
         "--verify-rollback",
-        "ripr agent repair [--root PATH] --attempt ID --phase verify",
+        "ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before",
+        "ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after",
+        "ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify",
+        "--store PATH Explicit repair-attempt store, resolved against --root.",
         "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
     ] {
         assert_contains(
@@ -245,12 +436,80 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
             needle,
         )?;
     }
+    if stdout.contains("ripr agent repair [--root PATH] --attempt ID --phase verify") {
+        return Err(
+            "agent repair help still prints verify usage without optional [--store PATH]"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_status_help_names_the_selected_store() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["agent", "status", "--help"])?);
+    for needle in [
+        "Usage: ripr agent status [--root PATH] [--store PATH] [--json] [--out PATH]",
+        "--store PATH Explicit repair-attempt store, resolved against --root.",
+        "Missing explicit stores do not fall back to the default.",
+    ] {
+        assert_contains(
+            "agent status help (`ripr agent status --help`)",
+            &stdout,
+            needle,
+        )?;
+    }
+    Ok(())
+}
+
+/// The `help` index must route a subcommand to that subcommand's own help
+/// (#4378): `ripr help agent repair` printed the parent `agent` overview
+/// because the injected `--help` preceded `repair`. An unknown subcommand
+/// errors instead of printing unrelated help.
+#[test]
+fn help_index_routes_agent_repair_to_repair_help() -> Result<(), String> {
+    let via_index = rendered_help(&["help", "agent", "repair"])?;
+    let direct = rendered_help(&["agent", "repair", "--help"])?;
+    if via_index != direct {
+        return Err(format!(
+            "`ripr help agent repair` must print the same help as `ripr agent repair --help`\n\
+             help index:\n{via_index}\ndirect:\n{direct}"
+        ));
+    }
+    let unknown = run_ripr(&["help", "agent", "no-such-subcommand"])?;
+    if unknown.status.success() {
+        return Err(format!(
+            "`ripr help agent no-such-subcommand` must fail, got stdout:\n{}",
+            String::from_utf8_lossy(&unknown.stdout)
+        ));
+    }
+    assert_contains(
+        "unknown agent subcommand via help index",
+        &String::from_utf8_lossy(&unknown.stderr),
+        "unknown agent subcommand",
+    )
+}
+
+/// `check` and `context` must say what each `--mode` value means and where
+/// the full table lives (#4378), not only list the bare names.
+#[test]
+fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), String> {
+    for command in ["check", "context"] {
+        let help = normalized(&rendered_help(&[command, "--help"])?);
+        for needle in [
+            "instant (changed files only, cheapest)",
+            "deep and ready (whole workspace, slowest)",
+            "See docs/CONFIGURATION.md \"Analysis modes\"",
+        ] {
+            assert_contains(&format!("{command} --help --mode line"), &help, needle)?;
+        }
+    }
     Ok(())
 }
 
 /// `check --help` must teach the loader's real default-base resolution order
-/// (#3885), not the old `origin/main` shorthand; `diff --help` keeps stating
-/// its literal default because `diff` passes the base to git unchanged.
+/// (#3885), not the old `origin/main` shorthand. `diff` resolves an omitted
+/// base through the same authority (#3952), so its help states the same order.
 #[test]
 fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     let check = normalized(&rendered_help(&["check", "--help"])?);
@@ -270,8 +529,11 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     assert_contains(
         "diff help (`ripr diff --help`)",
         &diff,
-        "Defaults to origin/main, used exactly as given",
+        "the local origin/HEAD ref, then origin/main, origin/master, main, and master",
     )?;
+    if diff.contains("Defaults to origin/main") {
+        return Err("diff help still teaches the origin/main default".to_string());
+    }
     Ok(())
 }
 
@@ -286,6 +548,7 @@ fn assert_doc_command_routes(doc: &str) -> Result<(), String> {
         ("Compose PR evidence", "ripr first-pr"),
         ("Add advisory CI", "ripr init --ci github"),
         ("Diagnose setup", "ripr doctor"),
+        ("Record result usefulness", "ripr feedback record"),
     ] {
         let mut matches = doc.lines().filter_map(|line| {
             let mut cells = line.trim().strip_prefix('|')?.split('|');
@@ -379,6 +642,34 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     Ok(())
 }
 
+/// #2930 drift rule: the discovery chain (#4873, #4962, #4965, #4971) shipped
+/// after #2931 closed the original prose-alignment claim, so the hierarchy
+/// guide must name the landed discovery surfaces in its drift rule and its
+/// help row, and must not keep deferring them to #1613 as future work.
+#[test]
+fn hierarchy_doc_points_at_landed_discovery_surfaces() -> Result<(), String> {
+    let drift_rule = doc_section(COMMAND_HIERARCHY_DOC, "## Drift rule")?;
+    for needle in ["RIPR-SPEC-0187", "RIPR-SPEC-0189", "RIPR-SPEC-0190"] {
+        assert_contains("docs/COMMAND_HIERARCHY.md drift rule", &drift_rule, needle)?;
+    }
+    if drift_rule.contains("remain tracked") {
+        return Err(
+            "docs/COMMAND_HIERARCHY.md drift rule still defers shipped discovery surfaces as future work"
+                .to_string(),
+        );
+    }
+    let help_row = COMMAND_HIERARCHY_DOC
+        .lines()
+        .find(|line| line.contains("Read detailed help"))
+        .ok_or_else(|| "command guide lost task row `Read detailed help`".to_string())?;
+    assert_contains(
+        "docs/COMMAND_HIERARCHY.md help row",
+        help_row,
+        "ripr help workflow",
+    )?;
+    Ok(())
+}
+
 #[test]
 fn doc_routes_allow_editorial_rewording_and_table_spacing() -> Result<(), String> {
     let reworded = COMMAND_HIERARCHY_DOC
@@ -433,6 +724,242 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
         return Err(
             "the CLI section credited a later check instead of its first command".to_string(),
         );
+    }
+    Ok(())
+}
+
+/// PR #4196 review: the doctor exit-code guide must describe both profiles.
+/// The default analysis profile keeps a missing or old toolchain advisory
+/// (exit `0`); only `--profile source-build` fails on it. A guide that still
+/// says a Rust root fails on a missing toolchain contradicts the binary.
+#[test]
+fn doctor_exit_code_guide_distinguishes_analysis_and_source_build() -> Result<(), String> {
+    let section = normalized(&doc_section(EXIT_CODES_DOC, "## `ripr doctor` exit codes")?);
+    let help = normalized(&rendered_help(&["doctor", "--help"])?);
+    for needle in [
+        "--profile source-build",
+        "`advisory`",
+        "does not change the exit code",
+    ] {
+        assert_contains("docs/EXIT_CODES.md doctor section", &section, needle)?;
+    }
+    assert_contains(
+        "ripr doctor --help",
+        &help,
+        "--profile analysis|source-build",
+    )?;
+    if section.contains("fail on a missing manifest or toolchain") {
+        return Err(
+            "docs/EXIT_CODES.md still says the default doctor fails on a missing toolchain"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// One documented `ripr ...` invocation: the leading lowercase words (the
+/// candidate command path) and every `--flag` it passes.
+#[derive(Debug, PartialEq)]
+struct DocInvocation {
+    line: usize,
+    words: Vec<String>,
+    flags: Vec<String>,
+}
+
+/// Extract `ripr ...` invocations that pass at least one flag. A command
+/// ends at a code-span, pipe, or shell separator; a trailing `\` joins the
+/// next line so multi-line Bash examples are read whole.
+fn doc_invocations(doc: &str) -> Vec<DocInvocation> {
+    let lf = doc.replace("\r\n", "\n");
+    let lines: Vec<&str> = lf.lines().collect();
+    let mut found = Vec::new();
+    for (index, raw) in lines.iter().enumerate() {
+        let mut text = raw.to_string();
+        let mut next = index + 1;
+        while text.trim_end().ends_with('\\') && next < lines.len() {
+            text = format!("{} {}", text.trim_end().trim_end_matches('\\'), lines[next]);
+            next += 1;
+        }
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("ripr ") {
+            let boundary = rest[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_alphanumeric() || "-_/.".contains(c)));
+            let tail = &rest[at + "ripr ".len()..];
+            rest = tail;
+            if !boundary {
+                continue;
+            }
+            let command = command_text(tail);
+            let tokens: Vec<&str> = command.split_whitespace().collect();
+            let words = tokens
+                .iter()
+                .take(2)
+                .take_while(|token| {
+                    token.starts_with(|c: char| c.is_ascii_lowercase())
+                        && token
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                })
+                .map(|token| (*token).to_string())
+                .collect::<Vec<_>>();
+            let flags = tokens
+                .iter()
+                .filter_map(|token| token.strip_prefix("--"))
+                .map(|flag| flag.split('=').next().unwrap_or(flag))
+                .map(|flag| flag.trim_end_matches(['.', ',', ':', ']']))
+                .filter(|flag| {
+                    flag.starts_with(|c: char| c.is_ascii_lowercase())
+                        && flag
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                })
+                .map(|flag| format!("--{flag}"))
+                .collect::<Vec<_>>();
+            if !words.is_empty() && !flags.is_empty() {
+                found.push(DocInvocation {
+                    line: index + 1,
+                    words,
+                    flags,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// The command text after `ripr `: it ends at a code-span, pipe, or shell
+/// separator outside quotes. Each quoted value becomes one `VALUE` token, so
+/// a flag after `--diff "a b.patch"` is still checked; an unterminated quote
+/// ends the command.
+fn command_text(tail: &str) -> String {
+    let mut text = String::new();
+    let mut chars = tail.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '`' | '|' | ';' | '&' | ')' | '#' => break,
+            '"' | '\'' => {
+                if !chars.by_ref().any(|close| close == c) {
+                    break;
+                }
+                text.push_str("VALUE");
+            }
+            _ => text.push(c),
+        }
+    }
+    text
+}
+
+fn help_lists_flag(help: &str, flag: &str) -> bool {
+    help.match_indices(flag).any(|(at, _)| {
+        help[at + flag.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '-'))
+    })
+}
+
+/// Resolve the help screen for the longest documented command path that the
+/// CLI accepts. Prose such as "ripr check with --json" falls back to
+/// `ripr check`; a first word that is not a command is not an invocation.
+fn command_help(
+    words: &[String],
+    cache: &mut std::collections::BTreeMap<Vec<String>, Option<String>>,
+) -> Result<Option<(String, String)>, String> {
+    for len in (1..=words.len()).rev() {
+        let path = words[..len].to_vec();
+        if !cache.contains_key(&path) {
+            let mut args: Vec<&str> = path.iter().map(String::as_str).collect();
+            args.push("--help");
+            let output = run_ripr(&args)?;
+            let help = output
+                .status
+                .success()
+                .then(|| String::from_utf8_lossy(&output.stdout).into_owned());
+            cache.insert(path.clone(), help);
+        }
+        if let Some(Some(help)) = cache.get(&path) {
+            return Ok(Some((path.join(" "), help.clone())));
+        }
+    }
+    Ok(None)
+}
+
+fn undocumented_doc_flags(
+    docs: &[(&str, &str)],
+    cache: &mut std::collections::BTreeMap<Vec<String>, Option<String>>,
+) -> Result<Vec<String>, String> {
+    let mut drift = Vec::new();
+    for (name, doc) in docs {
+        for invocation in doc_invocations(doc) {
+            let Some((command, help)) = command_help(&invocation.words, cache)? else {
+                continue;
+            };
+            for flag in &invocation.flags {
+                if !help_lists_flag(&help, flag) {
+                    drift.push(format!(
+                        "{name}:{} `ripr {command} {flag}` is not an option of `ripr {command} --help`",
+                        invocation.line
+                    ));
+                }
+            }
+        }
+    }
+    Ok(drift)
+}
+
+/// Every flag a public guide passes to a `ripr` command must be an option that
+/// command's rendered help lists. The parser/help direction is already pinned
+/// (#2342); this pins the guide/help direction so a renamed or removed flag
+/// cannot survive in copy-paste examples.
+#[test]
+fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
+    let mut cache = std::collections::BTreeMap::new();
+    let drift = undocumented_doc_flags(PUBLIC_COMMAND_DOCS, &mut cache)?;
+    if !drift.is_empty() {
+        return Err(format!(
+            "documented flags drifted from the CLI:\n{}",
+            drift.join("\n")
+        ));
+    }
+    let checked = cache.values().filter(|help| help.is_some()).count();
+    if checked < 10 {
+        return Err(format!(
+            "doc flag guard resolved only {checked} command help screens; the extractor lost its subjects"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn doc_flag_guard_rejects_removed_flags_and_accepts_prose() -> Result<(), String> {
+    let mut cache = std::collections::BTreeMap::new();
+    let bad = "Run `ripr check --no-such-flag` first.\n";
+    let drift = undocumented_doc_flags(&[("bad.md", bad)], &mut cache)?;
+    if drift.len() != 1 || !drift[0].contains("bad.md:1 `ripr check --no-such-flag`") {
+        return Err(format!("guard missed a removed check flag: {drift:?}"));
+    }
+    let sub =
+        "```bash\nripr agent repair --root . \\\n  --seam-id ID --phase before --bogus\n```\n";
+    let drift = undocumented_doc_flags(&[("sub.md", sub)], &mut cache)?;
+    if drift.len() != 1 || !drift[0].contains("`ripr agent repair --bogus`") {
+        return Err(format!(
+            "guard missed a continued-line subcommand flag: {drift:?}"
+        ));
+    }
+    let quoted = "Run `ripr check --diff \"a b.patch\" --bogus`.\n";
+    let drift = undocumented_doc_flags(&[("quoted.md", quoted)], &mut cache)?;
+    if drift.len() != 1 || !drift[0].contains("`ripr check --bogus`") {
+        return Err(format!(
+            "guard missed a flag after a quoted value: {drift:?}"
+        ));
+    }
+    let good = "Use ripr check with --json, or `ripr pilot --root .`. The ripr is static; \
+                cargo-ripr --x and ripr-swarm --y are not invocations.\n";
+    let drift = undocumented_doc_flags(&[("good.md", good)], &mut cache)?;
+    if !drift.is_empty() {
+        return Err(format!("guard rejected valid prose: {drift:?}"));
     }
     Ok(())
 }

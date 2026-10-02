@@ -1,5 +1,9 @@
 use super::*;
+use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
+use ra_ap_syntax::{Parse, SourceFile};
 use std::cell::{OnceCell, RefCell};
+use std::sync::{Arc, OnceLock};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
@@ -16,8 +20,94 @@ pub(crate) struct CompactGripContext<'a> {
         BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_file_stem: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_import_token: BTreeMap<String, Vec<usize>>,
+    name_module_candidates: NameModuleCandidateIndex,
     owner_named_cache: RefCell<BTreeMap<String, Vec<usize>>>,
     same_module_cache: RefCell<BTreeMap<String, Vec<usize>>>,
+    pub(in crate::analysis::test_grip_evidence) source_digest_cache:
+        RefCell<BTreeMap<&'a Path, String>>,
+    /// Per test file: evidence-role function indices grouped by start line,
+    /// built on first use. See [`Self::unique_evidence_function`].
+    evidence_functions_by_line_cache: RefCell<BTreeMap<&'a Path, BTreeMap<usize, Vec<usize>>>>,
+    /// Run-scoped parser reuse for owner-result binding inspection.
+    parsed_sources: RefCell<BTreeMap<&'a Path, Option<Parse<SourceFile>>>>,
+}
+
+/// Candidate generation only: the existing `contains` and `same_module`
+/// predicates remain the authority for admitting relations.
+#[derive(Default)]
+struct NameModuleCandidateIndex {
+    name_trigrams: BTreeMap<[u8; 3], Vec<usize>>,
+    module_prefixes: BTreeMap<String, Vec<usize>>,
+}
+
+impl NameModuleCandidateIndex {
+    fn insert(&mut self, index: usize, name: &str, module: Option<&str>) {
+        let trigrams = name
+            .as_bytes()
+            .windows(3)
+            .map(|window| [window[0], window[1], window[2]]);
+        for trigram in trigrams.collect::<BTreeSet<_>>() {
+            self.name_trigrams.entry(trigram).or_default().push(index);
+        }
+        if let Some(module) = module {
+            // Include the exact module and all slash-delimited ancestors.
+            // An owner parent may also match an underscore-flattened prefix.
+            self.module_prefixes
+                .entry(module.to_string())
+                .or_default()
+                .push(index);
+            for (position, _) in module.match_indices('/') {
+                self.module_prefixes
+                    .entry(module[..position].to_string())
+                    .or_default()
+                    .push(index);
+            }
+        }
+    }
+
+    fn name_candidates(&self, query: &str, test_count: usize) -> Vec<usize> {
+        if query.len() < 3 {
+            // Sub-byte-trigram names have no safe indexed key.
+            return (0..test_count).collect();
+        }
+        let mut rarest: Option<&Vec<usize>> = None;
+        for window in query.as_bytes().windows(3) {
+            let Some(indices) = self.name_trigrams.get(&[window[0], window[1], window[2]]) else {
+                return Vec::new();
+            };
+            if rarest.is_none_or(|prior| indices.len() < prior.len()) {
+                rarest = Some(indices);
+            }
+        }
+        rarest.cloned().unwrap_or_default()
+    }
+
+    fn module_candidates(&self, owner_module: &str) -> Vec<usize> {
+        let Some((parent, _)) = owner_module.rsplit_once('/') else {
+            return Vec::new();
+        };
+        if parent.is_empty() {
+            return Vec::new();
+        }
+        let mut indices = self
+            .module_prefixes
+            .get(parent)
+            .cloned()
+            .unwrap_or_default();
+        let flattened = parent.replace('/', "_");
+        if flattened != parent {
+            indices.extend(
+                self.module_prefixes
+                    .get(&flattened)
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            );
+        }
+        indices.sort_unstable();
+        indices.dedup();
+        indices
+    }
 }
 
 pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
@@ -32,12 +122,46 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) ambiguous_target_affinity_owner_call_names:
         BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) code_lines: Vec<String>,
-    pub(in crate::analysis::test_grip_evidence) value_facts:
-        OnceCell<crate::analysis::value_resolution::ValueEnvFacts>,
+    /// Per-test facts; build through [`CompactTest::value_facts`] so the
+    /// whole-file part comes from `file_value_scan`, never a fresh scan.
+    value_facts: OnceCell<ValueEnvFacts>,
+    /// Shared by every test in the same file.
+    pub(in crate::analysis::test_grip_evidence) file_value_scan: Arc<OnceLock<FileValueScan>>,
+}
+
+impl CompactTest<'_> {
+    /// Per-test value-resolution facts, built on first use. The whole-file
+    /// part is built once per file and shared across that file's tests.
+    pub(in crate::analysis::test_grip_evidence) fn value_facts(
+        &self,
+        index: &RustIndex,
+    ) -> &ValueEnvFacts {
+        self.value_facts.get_or_init(|| {
+            let file_scan = self
+                .file_value_scan
+                .get_or_init(|| FileValueScan::build(self.test, index));
+            ValueEnvFacts::build(self.test, file_scan)
+        })
+    }
 }
 
 impl<'a> CompactGripContext<'a> {
     pub(crate) fn new(index: &'a RustIndex) -> Self {
+        match Self::build(index, || Ok::<(), std::convert::Infallible>(())) {
+            Ok(context) => context,
+            Err(never) => match never {},
+        }
+    }
+
+    pub(crate) fn try_new(index: &'a RustIndex) -> Result<Self, String> {
+        Self::build(index, crate::analysis::cancellation::checkpoint)
+    }
+
+    fn build<E>(
+        index: &'a RustIndex,
+        mut checkpoint: impl FnMut() -> Result<(), E>,
+    ) -> Result<Self, E> {
+        checkpoint()?;
         let mut tests_by_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_helper_owner_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_target_affinity_owner_call_name: BTreeMap<String, Vec<usize>> =
@@ -46,26 +170,39 @@ impl<'a> CompactGripContext<'a> {
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let same_file_helper_owner_calls_by_file = helper_owner_calls_by_file(index);
+        checkpoint()?;
         let helper_owner_calls_by_file = strict_helper_owner_calls_by_file(index);
+        checkpoint()?;
         let unambiguous_test_helper_owner_calls_by_name =
             unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
+        checkpoint()?;
         let helper_owner_calls_by_module_path =
             helper_owner_calls_by_module_path(index, &helper_owner_calls_by_file);
+        checkpoint()?;
         let direct_helper_import_aliases_by_file =
             direct_helper_import_aliases_by_file(index, &helper_owner_calls_by_module_path);
+        checkpoint()?;
         let production_helper_owner_calls_by_package =
             production_helper_owner_calls_by_package(&helper_owner_calls_by_file);
+        checkpoint()?;
         let target_affinity_production_owner_calls_by_package =
             target_affinity_production_owner_calls_by_package(index);
+        checkpoint()?;
         let ambiguous_target_affinity_owner_calls_by_package =
             ambiguous_target_affinity_owner_calls_by_package(index);
+        checkpoint()?;
         let target_affinity_production_owner_calls_by_module_path =
             target_affinity_production_owner_calls_by_module_path(index);
+        checkpoint()?;
         let unambiguous_production_owner_names_by_package =
             unambiguous_production_owner_names_by_package(index);
+        checkpoint()?;
         let module_import_aliases_by_file = module_import_aliases_by_file(index);
+        checkpoint()?;
         let function_names_by_file = local_function_names_by_file(index);
+        checkpoint()?;
         let test_scoped_function_names_by_file = test_scoped_function_names_by_file(index);
+        checkpoint()?;
         let helper_owner_lookup = HelperOwnerCallLookup {
             helpers: &helper_owner_calls_by_file,
             unique_helpers: &unambiguous_test_helper_owner_calls_by_name,
@@ -74,11 +211,13 @@ impl<'a> CompactGripContext<'a> {
             local_function_names_by_file: &function_names_by_file,
             direct_helper_import_aliases_by_file: &direct_helper_import_aliases_by_file,
         };
-        let tests = index
+        let mut file_value_scans: BTreeMap<&Path, Arc<OnceLock<FileValueScan>>> = BTreeMap::new();
+        let tests: Vec<CompactTest<'a>> = index
             .tests
             .iter()
             .enumerate()
             .map(|(test_index, test)| {
+                checkpoint()?;
                 let test_scoped_function_names = test_scoped_function_names_by_file.get(&test.file);
                 let production_owner_names = package_scope(&test.file).and_then(|package| {
                     unambiguous_production_owner_names_by_package.get(&package)
@@ -179,7 +318,7 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                CompactTest {
+                Ok(CompactTest {
                     test,
                     path_normalized: normalize_path(&test.file),
                     module_path: module_path_for_index(index, &test.file),
@@ -191,10 +330,23 @@ impl<'a> CompactGripContext<'a> {
                     ambiguous_target_affinity_owner_call_names,
                     code_lines,
                     value_facts: OnceCell::new(),
-                }
+                    file_value_scan: Arc::clone(
+                        file_value_scans.entry(test.file.as_path()).or_default(),
+                    ),
+                })
             })
-            .collect();
-        Self {
+            .collect::<Result<_, E>>()?;
+        let mut name_module_candidates = NameModuleCandidateIndex::default();
+        for (test_index, test) in tests.iter().enumerate() {
+            checkpoint()?;
+            name_module_candidates.insert(
+                test_index,
+                &test.name_lower,
+                test.module_path.as_deref(),
+            );
+        }
+        checkpoint()?;
+        Ok(Self {
             index,
             tests,
             tests_by_call_name,
@@ -203,9 +355,91 @@ impl<'a> CompactGripContext<'a> {
             tests_by_assertion_token,
             tests_by_file_stem,
             tests_by_import_token,
+            name_module_candidates,
             owner_named_cache: RefCell::new(BTreeMap::new()),
             same_module_cache: RefCell::new(BTreeMap::new()),
+            source_digest_cache: RefCell::new(BTreeMap::new()),
+            evidence_functions_by_line_cache: RefCell::new(BTreeMap::new()),
+            parsed_sources: RefCell::new(BTreeMap::new()),
+        })
+    }
+
+    /// The single evidence-role function in `path` named `name` that starts
+    /// at `start_line`, or `None` when there is none or more than one.
+    ///
+    /// The answer depends only on the test, never on the seam, but every
+    /// seam x related-test pair used to scan the whole file's function list.
+    /// On a file with thousands of inline tests that made `review-comments`
+    /// run for 19 minutes on a 505-line diff of this repository. The file's
+    /// functions are grouped by start line once, then each lookup reads one
+    /// short bucket.
+    pub(in crate::analysis::test_grip_evidence) fn unique_evidence_function(
+        &self,
+        path: &Path,
+        name: &str,
+        start_line: usize,
+    ) -> Option<&'a FunctionSummary> {
+        let (path, facts) = self.index.files.get_key_value(path)?;
+        let mut cache = self.evidence_functions_by_line_cache.borrow_mut();
+        let by_line = cache.entry(path.as_path()).or_insert_with(|| {
+            let mut by_line: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            for (position, function) in facts.functions.iter().enumerate() {
+                if function.source_role.is_evidence_role() {
+                    by_line
+                        .entry(function.start_line)
+                        .or_default()
+                        .push(position);
+                }
+            }
+            by_line
+        });
+        let mut matches = by_line
+            .get(&start_line)?
+            .iter()
+            .filter_map(|position| facts.functions.get(*position))
+            .filter(|function| function.name == name);
+        let function = matches.next()?;
+        matches.next().is_none().then_some(function)
+    }
+
+    /// SHA-256 of an indexed file's source, computed once per context.
+    /// The context borrows the index immutably, so the bytes cannot change
+    /// while it lives. Without this memo, every seam x related-test pair
+    /// re-hashed the whole test file, which dominated cold repo evidence on
+    /// files with large inline test modules.
+    pub(in crate::analysis::test_grip_evidence) fn indexed_source_digest(
+        &self,
+        path: &Path,
+    ) -> Option<String> {
+        let (path, facts) = self.index.files.get_key_value(path)?;
+        if let Some(digest) = self.source_digest_cache.borrow().get(path.as_path()) {
+            return Some(digest.clone());
         }
+        let digest = crate::analysis::facts::source_digest(facts.source.as_bytes());
+        self.source_digest_cache
+            .borrow_mut()
+            .insert(path.as_path(), digest.clone());
+        Some(digest)
+    }
+
+    /// Parser-backed source for `path`, or `None` on lexical fallback or
+    /// parse refusal. Cached once per file for the life of this context.
+    pub(in crate::analysis::test_grip_evidence) fn parsed_source(
+        &self,
+        path: &Path,
+    ) -> Option<Parse<SourceFile>> {
+        let (path, facts) = self.index.files.get_key_value(path)?;
+        if facts.used_lexical_fallback {
+            return None;
+        }
+        if let Some(cached) = self.parsed_sources.borrow().get(path.as_path()) {
+            return cached.clone();
+        }
+        let parsed = parse_clean_source_file(&facts.source);
+        self.parsed_sources
+            .borrow_mut()
+            .insert(path.as_path(), parsed.clone());
+        parsed
     }
 
     pub(super) fn owner_named_indices(&self, owner_name_lower: &str) -> Vec<usize> {
@@ -216,10 +450,10 @@ impl<'a> CompactGripContext<'a> {
             return indices.clone();
         }
         let indices = self
-            .tests
-            .iter()
-            .enumerate()
-            .filter_map(|(index, test)| test.name_lower.contains(owner_name_lower).then_some(index))
+            .name_module_candidates
+            .name_candidates(owner_name_lower, self.tests.len())
+            .into_iter()
+            .filter(|&index| self.tests[index].name_lower.contains(owner_name_lower))
             .collect::<Vec<_>>();
         self.owner_named_cache
             .borrow_mut()
@@ -235,20 +469,208 @@ impl<'a> CompactGripContext<'a> {
             return indices.clone();
         }
         let indices = self
-            .tests
-            .iter()
-            .enumerate()
-            .filter_map(|(index, test)| {
-                test.module_path
+            .name_module_candidates
+            .module_candidates(owner_module)
+            .into_iter()
+            .filter(|&index| {
+                self.tests[index]
+                    .module_path
                     .as_deref()
                     .is_some_and(|test_module| same_module(owner_module, test_module))
-                    .then_some(index)
             })
             .collect::<Vec<_>>();
+        let indices = if indices.len() > crowded_relation_limit(self.tests.len()) {
+            indices
+                .into_iter()
+                .filter(|&index| {
+                    self.tests[index]
+                        .module_path
+                        .as_deref()
+                        .is_some_and(|test_module| close_module(owner_module, test_module))
+                })
+                .collect()
+        } else {
+            indices
+        };
         self.same_module_cache
             .borrow_mut()
             .insert(owner_module.to_string(), indices.clone());
         indices
+    }
+}
+
+#[cfg(test)]
+mod candidate_index_tests {
+    use super::*;
+
+    #[test]
+    fn owned_deadline_stops_context_test_loops_without_completing_context() -> Result<(), String> {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        let started = Instant::now();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let owned_calls = Arc::clone(&calls);
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                owned_calls.fetch_add(1, Ordering::SeqCst);
+                started
+            }),
+        );
+        let empty = RustIndex::default();
+        with_token(&token, || CompactGripContext::try_new(&empty))?;
+        let helper_stage_observations = calls.load(Ordering::SeqCst);
+        if helper_stage_observations < 2 {
+            return Err("context fixture did not observe helper-map stages".to_string());
+        }
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(
+            &path,
+            r#"
+fn value() -> i32 { 1 }
+#[test] fn first() { assert_eq!(value(), 1); }
+#[test] fn second() { assert_eq!(value(), 1); }
+"#,
+        )?;
+        let mut index = RustIndex {
+            tests: facts.tests.clone(),
+            functions: facts.functions.clone(),
+            ..RustIndex::default()
+        };
+        index.files.insert(path, facts);
+        if index.tests.len() != 2 {
+            return Err("context fixture must admit exactly two parsed tests".to_string());
+        }
+        let ordinary = CompactGripContext::new(&index);
+        let complete = with_token(&token, || CompactGripContext::try_new(&index))?;
+        if complete.tests.len() != 2
+            || complete.tests_by_call_name != ordinary.tests_by_call_name
+            || complete.tests_by_assertion_token != ordinary.tests_by_assertion_token
+        {
+            return Err("unexpired context changed its complete indexes".to_string());
+        }
+        let observations = Arc::new(AtomicUsize::new(0));
+        let owned_observations = Arc::clone(&observations);
+        let deadline = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if owned_observations.fetch_add(1, Ordering::SeqCst) >= helper_stage_observations {
+                    started + Duration::from_secs(1)
+                } else {
+                    started
+                }
+            }),
+        );
+        let result = with_token(&deadline, || CompactGripContext::try_new(&index));
+        if !result.is_err_and(|error| error.contains("DeadlineExceeded"))
+            || deadline.abort_kind()
+                != Some(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
+            || observations.load(Ordering::SeqCst) != helper_stage_observations + 1
+        {
+            return Err(
+                "context test loops completed instead of observing their first expired budget"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn name_and_module_candidates_match_independent_full_scans() {
+        let fixtures = [
+            ("owner_start", Some("a/b/nested")),
+            ("prefix_owner_middle_suffix", Some("a_b/nested")),
+            ("suffix_owner", Some("a/b")),
+            ("ownowner", Some("a_b")),
+            ("éclair_owner", Some("a_b/nested/child")),
+            ("owner_éclair", Some("a/b_else/sibling")),
+            ("unrelated", Some("a/b_else")),
+            ("", None),
+        ];
+        let mut index = NameModuleCandidateIndex::default();
+        for (i, (name, module)) in fixtures.iter().enumerate() {
+            index.insert(i, name, *module);
+        }
+        for query in [
+            "owner", "own", "ow", "o", "é", "éclair", "", "no-match", "ownown",
+        ] {
+            let actual = if query.is_empty() {
+                Vec::new()
+            } else {
+                index
+                    .name_candidates(query, fixtures.len())
+                    .into_iter()
+                    .filter(|&i| fixtures[i].0.contains(query))
+                    .collect::<Vec<_>>()
+            };
+            let expected = fixtures
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (name, _))| {
+                    (!query.is_empty() && name.contains(query)).then_some(i)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "name query {query:?}");
+        }
+        for owner in [
+            "a/b/owner",
+            "a_b/owner",
+            "a/b",
+            "a/owner",
+            "flat",
+            "/owner",
+            "missing/owner",
+        ] {
+            let actual = index
+                .module_candidates(owner)
+                .into_iter()
+                .filter(|&i| {
+                    fixtures[i]
+                        .1
+                        .is_some_and(|module| same_module(owner, module))
+                })
+                .collect::<Vec<_>>();
+            // Inline legacy predicate: deliberately independent of the indexed
+            // candidate generator and of `same_module`.
+            let expected = fixtures
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (_, module))| {
+                    let parent = owner
+                        .rsplit_once('/')
+                        .map(|(parent, _)| parent)
+                        .unwrap_or("");
+                    let related = !parent.is_empty()
+                        && module.is_some_and(|module| {
+                            module == parent
+                                || module.starts_with(&format!("{parent}/"))
+                                || module.starts_with(&format!("{}/", parent.replace('/', "_")))
+                        });
+                    related.then_some(i)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "module query {owner:?}");
+        }
+    }
+
+    #[test]
+    fn new_queries_inspect_only_indexed_candidates() {
+        let mut index = NameModuleCandidateIndex::default();
+        // Every noise name shares the query's `tar` trigram, so only the
+        // rarest-trigram choice keeps the candidate list at one entry.
+        for i in 0..4096 {
+            index.insert(i, &format!("noise_tar_{i}"), Some("unrelated/tests"));
+        }
+        index.insert(4096, "prefix_target_suffix", Some("target/nested"));
+        assert_eq!(index.name_candidates("target", 4097), [4096]);
+        assert_eq!(index.module_candidates("target/owner"), [4096]);
+        assert!(index.name_candidates("absent", 4097).is_empty());
+        assert!(index.name_candidates("target_absent", 4097).is_empty());
     }
 }
 
@@ -2536,8 +2958,11 @@ mod tests {
             literals: Vec::new(),
             source_role,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 }

@@ -1071,11 +1071,13 @@ pub(crate) fn prepare_binding(
 /// Loads the retained prepare-phase binding artifact of a durable attempt, if
 /// the attempt carries one. The attempt loader has already re-verified the
 /// artifact digest against the attempt manifest.
-pub(crate) fn load_retained_binding(
+pub(crate) fn load_retained_binding_from(
     root: &Path,
+    store: Option<&Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
 ) -> Result<Option<RetainedBinding>, String> {
-    let manifest = crate::app::repair_attempt::load_repair_attempt_manifest(root, attempt_id)?;
+    let manifest =
+        crate::app::repair_attempt::load_repair_attempt_manifest_from(root, store, attempt_id)?;
     let Some(artifact) = crate::app::repair_attempt::find_manifest_artifact_by_role(
         &manifest,
         BINDING_ARTIFACT_ROLE,
@@ -1452,16 +1454,18 @@ pub(crate) fn confirm_manifest_unchanged(
 /// and no verification, movement, or closure claim. The identities are read
 /// from the durable attempt's own retained artifacts, so the record restates
 /// the authority instead of re-deriving it.
-pub(crate) fn write_apply_record(
+pub(crate) fn write_apply_record_from(
     root: &Path,
+    store: Option<&Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
     retained_artifact_sha256: &str,
     verified: &VerifiedSelection,
     authority: &str,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
 ) -> Result<PathBuf, String> {
-    let manifest = crate::app::repair_attempt::load_repair_attempt_manifest(root, attempt_id)?;
-    let policy = crate::app::repair_attempt::load_edit_cage_policy(root, attempt_id)?;
+    let manifest =
+        crate::app::repair_attempt::load_repair_attempt_manifest_from(root, store, attempt_id)?;
+    let policy = crate::app::repair_attempt::load_edit_cage_policy_from(root, store, attempt_id)?;
     // The digest chain is verified against the staged prepare artifact before
     // anything is rendered: a claimed digest that leaves the retained binding
     // fails here instead of being published into the record.
@@ -1772,6 +1776,65 @@ mod tests {
                     verified.target_path
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn identical_record_inputs_serialize_identically() -> Result<(), String> {
+        // This is deterministic construction proof, not selection admission.
+        // The packet bytes are a committed producer snapshot, not a digest
+        // placeholder. Neither call creates or publishes a durable attempt.
+        let packet = include_bytes!(
+            "../../../../fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json"
+        );
+        serde_json::from_slice::<Value>(packet)
+            .map_err(|error| format!("producer packet fixture is invalid: {error}"))?;
+        let packet_sha256 = sha256_hex(packet);
+        let before_snapshot_sha256 = sha256_hex(b"identical before snapshot bytes");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap");
+        let row = sample_row()?;
+        let verified = verify_row_binding(as_object(&row, "selection row")?, "att-test-1")?;
+        let target = crate::edit_cage::CagePathRule::exact(&verified.target_path)?;
+        let policy = EditCagePolicy {
+            selected_target: target.clone(),
+            allowed_edit_surface: vec![target],
+            forbidden_paths: Vec::new(),
+            expected_operational_writes: Vec::new(),
+            ignored_build_output: None,
+            untracked_build_lockfile: None,
+        };
+        let render = || {
+            render_record(
+                &root,
+                RecordIdentity {
+                    seam_id: "identical-seam",
+                    repository_head: &verified.head,
+                    phase: "prepare",
+                    durable_attempt_id: None,
+                    binding_artifact_sha256: None,
+                    verified: &verified,
+                    authority: AUTHORITY_IDENTITY,
+                    packet_sha256: &packet_sha256,
+                    before_snapshot_sha256: &before_snapshot_sha256,
+                    policy: &policy,
+                },
+                None,
+            )
+        };
+        let first = render()?;
+        let second = render()?;
+        if first
+            .pointer("/input/packet_sha256")
+            .and_then(Value::as_str)
+            != Some(packet_sha256.as_str())
+        {
+            return Err("record lost the identical producer packet digest".to_string());
+        }
+        let first_bytes = serde_json::to_vec(&first).map_err(|error| error.to_string())?;
+        let second_bytes = serde_json::to_vec(&second).map_err(|error| error.to_string())?;
+        if first_bytes != second_bytes {
+            return Err("identical accepted record inputs serialized differently".to_string());
         }
         Ok(())
     }

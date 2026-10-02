@@ -2,13 +2,12 @@ use crate::app::CheckOutput;
 use crate::config::RiprConfig;
 use crate::domain::{ExposureClass, Finding, LanguageId, LanguageStatus};
 use crate::output::next_step::reconcile_next_step;
-use crate::output::path::display_path;
+use crate::output::path::repository_display_path;
 use crate::output::perl_preview_card::perl_preview_card;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_preview_card::typescript_preview_card;
 use crate::output::workflow_escape::{escape_data, escape_property, escape_property_pre_encoded};
-use std::path::Path;
 
 /// Render findings as GitHub Actions workflow command annotations.
 ///
@@ -19,10 +18,13 @@ pub fn render(output: &CheckOutput) -> String {
 }
 
 pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
-    let mut out = String::new();
+    let mut annotations = String::new();
+    let mut per_level = std::collections::BTreeMap::<&'static str, usize>::new();
     // Findings suppressed by an explicit `--suppression-policy` (#1441) are
     // not annotated: filtering PR-annotation noise on accepted surfaces is
-    // the purpose of the policy. The JSON surface keeps them visible.
+    // the purpose of the policy. The JSON surface keeps them visible. When
+    // every finding is omitted this way, emit a denominator notice (#4393)
+    // rather than an empty stream.
     let suppressed_ids: std::collections::BTreeSet<&str> = output
         .suppression
         .iter()
@@ -33,14 +35,18 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    let mut suppressed = 0usize;
+    let mut not_current = 0usize;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
+            suppressed += 1;
             continue;
         }
         // Candidate-actionable eligibility (#3281): annotations are current
         // PR obligations; base-side evidence and unresolved subjects remain
         // visible on the check JSON and human surfaces.
         if !finding.is_candidate_actionable() {
+            not_current += 1;
             continue;
         }
         let Some(annotation_level) = config
@@ -153,11 +159,12 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(&card.verify_command);
             message.push_str("` (preview advisory; no repair packet).");
         }
-        out.push_str(&format!(
+        *per_level.entry(annotation_level).or_default() += 1;
+        annotations.push_str(&format!(
             "::{annotation_level} file={},line={},title={}::{}\n",
-            // `file` arrives via `annotation_path` (stable text, `%`
+            // `file` arrives via `repository_display_path` (stable text, `%`
             // pre-encoded); `title` is raw text.
-            escape_property_pre_encoded(&annotation_path(
+            escape_property_pre_encoded(&repository_display_path(
                 &output.root,
                 &finding.probe.location.file
             )),
@@ -166,23 +173,123 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             escape_data(&message)
         ));
     }
-    if output.findings.is_empty() {
+    // Disclosures lead the stream: GitHub keeps only the first
+    // `GITHUB_ANNOTATIONS_PER_LEVEL` annotations of each level per step, so
+    // a trailing notice is the first line dropped on a busy run.
+    let mut out = String::new();
+    let incomplete = output
+        .analysis_outcome
+        .as_ref()
+        .filter(|outcome| !outcome.kind.is_complete());
+    if let Some(outcome) = incomplete {
+        *per_level.entry("warning").or_default() += 1;
+        out.push_str(&incomplete_outcome_warning(
+            outcome,
+            output.findings.is_empty(),
+        ));
+    } else if output.findings.is_empty() {
         out.push_str("::notice title=ripr::No static exposure findings found\n");
     }
+    if !output.findings.is_empty() && (suppressed > 0 || not_current > 0) {
+        out.push_str(&unannotated_denominator_notice(
+            output,
+            suppressed,
+            not_current,
+        ));
+    }
+    if let Some(notice) = display_limit_notice(&per_level) {
+        out.push_str(&notice);
+    }
+    out.push_str(&annotations);
     out
 }
 
-fn annotation_path(root: &Path, file: &Path) -> String {
-    let relative = if root.is_absolute() {
-        file.strip_prefix(root).unwrap_or(file)
+/// An incomplete analysis must not read as a clean one in a PR check: the
+/// annotation stream is often the only thing a reviewer sees, so it names
+/// the outcome and each limitation's recovery, as the human report does.
+fn incomplete_outcome_warning(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+    no_findings: bool,
+) -> String {
+    let scope = if no_findings {
+        "Zero findings is not a clean result because the analyzed scope is incomplete."
     } else {
-        file
+        "The findings cover only the analyzed scope; behavior outside it has no finding."
     };
-    let mut displayed = display_path(relative);
-    while let Some(stripped) = displayed.strip_prefix("./") {
-        displayed = stripped.to_string();
+    let mut message = format!(
+        "Analysis outcome: {} (analysis incomplete). {scope}",
+        outcome.kind.as_str()
+    );
+    for limitation in &outcome.limitations {
+        message.push_str(&format!(
+            " Limitation: {}: {}",
+            limitation.kind.as_str(),
+            limitation.recovery.detail
+        ));
     }
-    displayed
+    format!(
+        "::warning title=ripr analysis incomplete::{}\n",
+        escape_data(&message)
+    )
+}
+
+/// GitHub Actions displays at most this many annotations of each level
+/// (error, warning, notice) per step and drops the rest without a trace.
+/// See actions/toolkit docs/problem-matchers.md "Limitations".
+const GITHUB_ANNOTATIONS_PER_LEVEL: usize = 10;
+
+/// Name the annotations GitHub will not display, so a truncated run does
+/// not read as a complete one. Counted against the display budget itself,
+/// the limit applies to this notice too, which is why it is emitted first.
+fn display_limit_notice(
+    per_level: &std::collections::BTreeMap<&'static str, usize>,
+) -> Option<String> {
+    let over = per_level
+        .iter()
+        .filter(|(_, count)| **count > GITHUB_ANNOTATIONS_PER_LEVEL)
+        .map(|(level, count)| format!("{count} {level}"))
+        .collect::<Vec<_>>();
+    if over.is_empty() {
+        return None;
+    }
+    let message = format!(
+        "Emitted {} annotations; GitHub displays at most {GITHUB_ANNOTATIONS_PER_LEVEL} per level in one step, so some are not shown. Run `ripr check --format json` to list every finding.",
+        over.join(" and ")
+    );
+    Some(format!("::notice title=ripr::{}\n", escape_data(&message)))
+}
+
+/// Denominator for findings the annotation stream deliberately omits (#4393).
+///
+/// Without it, a run whose findings are all policy-suppressed or all
+/// base-side prints nothing, which a reader cannot tell apart from a clean
+/// run. The omitted findings stay unannotated; this line only counts them.
+fn unannotated_denominator_notice(
+    output: &CheckOutput,
+    suppressed: usize,
+    not_current: usize,
+) -> String {
+    let total = output.findings.len();
+    let annotated = total - suppressed - not_current;
+    let mut parts = Vec::new();
+    if suppressed > 0 {
+        let policy = output
+            .suppression
+            .as_ref()
+            .map(|outcome| outcome.policy_path.as_str())
+            .unwrap_or_default();
+        parts.push(format!("{suppressed} suppressed by policy {policy}"));
+    }
+    if not_current > 0 {
+        parts.push(format!(
+            "{not_current} not current in this change (base-side or unresolved evidence)"
+        ));
+    }
+    let message = format!(
+        "Annotated {annotated} of {total} static exposure finding(s); {}. Run `ripr check --format json` to list every finding.",
+        parts.join("; ")
+    );
+    format!("::notice title=ripr::{}\n", escape_data(&message))
 }
 
 fn python_no_action_annotation(finding: &Finding) -> Option<String> {
@@ -310,6 +417,81 @@ mod tests {
         );
     }
 
+    fn partial_outcome() -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    "Not analyzed (Go: 1): pkg/calc.go.",
+                )?,
+            )],
+        )
+    }
+
+    #[test]
+    fn render_never_calls_an_incomplete_analysis_clean() -> Result<(), String> {
+        // A Perl- or Go-only diff is `partial_with_limitations`; the GitHub
+        // stream printed only "No static exposure findings found".
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.analysis_outcome = Some(partial_outcome()?);
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.starts_with("::warning title=ripr analysis incomplete::Analysis outcome: partial_with_limitations"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Zero findings is not a clean result"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Limitation: language_scope_unsupported: Not analyzed (Go: 1): pkg/calc.go."
+            ),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn render_scopes_findings_of_an_incomplete_analysis() -> Result<(), String> {
+        let mut output = output_with_unknown_finding();
+        output.analysis_outcome = Some(partial_outcome()?);
+
+        let rendered = render(&output);
+
+        let first = rendered.lines().next().unwrap_or_default();
+        assert!(
+            first.contains("findings cover only the analyzed scope"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("title=ripr static_unknown::"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn render_escapes_annotations_and_includes_effective_stop_reason_for_unknowns() {
         let rendered = render(&output_with_unknown_finding());
@@ -421,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn render_uses_warning_for_exposed_and_default_message_without_stop_reason() {
+    fn render_uses_notice_for_exposed_and_default_message_without_stop_reason() {
         let output = CheckOutput {
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
@@ -484,7 +666,10 @@ mod tests {
 
         let rendered = render(&output);
 
-        assert!(rendered.contains("::warning file=src/lib.rs,line=21,title=ripr exposed::"));
+        // An exposed finding is already discriminated; it annotates as a
+        // notice, not a warning, by default.
+        assert!(rendered.contains("::notice file=src/lib.rs,line=21,title=ripr exposed::"));
+        assert!(!rendered.contains("::warning "));
         assert!(rendered.contains("Static RIPR exposure finding"));
         assert!(!rendered.contains("Stop reason"));
     }
@@ -754,9 +939,166 @@ mod tests {
 
         let rendered = render(&output);
 
+        // Deliberate re-pin of the former empty-string assertion: suppressed
+        // findings stay unannotated, but all-suppressed is not silent (#4393).
+        assert_eq!(
+            rendered,
+            "::notice title=ripr::Annotated 0 of 1 static exposure finding(s); 1 suppressed by policy policy/ripr-suppressions.toml. Run `ripr check --format json` to list every finding.\n",
+        );
+        assert!(!rendered.contains("file=src/lib.rs"));
         assert!(
-            rendered.is_empty(),
-            "policy-suppressed findings must not be annotated: {rendered}"
+            !rendered.contains("No static exposure findings found"),
+            "all-suppressed is not an empty run: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_over_broad_src_policy_keeps_unmatched_annotation() {
+        // Over-broad `src/**` hides every src finding; a tests/ finding
+        // outside that glob must still annotate. This rejects both silence
+        // and "any suppression blanks the whole stream" (#4393).
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let mut output = output_with_unknown_finding();
+        let template = output.findings[0].clone();
+        let mut src_other = template.clone();
+        src_other.id = "probe:src_other_rs:4:static_unknown".to_string();
+        src_other.probe.location = SourceLocation::new("src/other.rs", 4, 1);
+        let mut tests_other = template;
+        tests_other.id = "probe:tests_other_rs:8:static_unknown".to_string();
+        tests_other.probe.location = SourceLocation::new("tests/other.rs", 8, 1);
+        let src_lib_id = output.findings[0].id.clone();
+        output.findings = vec![output.findings[0].clone(), src_other, tests_other];
+        output.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "policy/over-broad.toml".to_string(),
+            suppressed: vec![
+                SuppressedCheckFinding {
+                    finding_id: src_lib_id,
+                    selector: "src/**".to_string(),
+                },
+                SuppressedCheckFinding {
+                    finding_id: "probe:src_other_rs:4:static_unknown".to_string(),
+                    selector: "src/**".to_string(),
+                },
+            ],
+            warnings: Vec::new(),
+        });
+
+        let rendered = render(&output);
+
+        assert_eq!(
+            rendered.lines().next(),
+            Some(
+                "::notice title=ripr::Annotated 1 of 3 static exposure finding(s); 2 suppressed by policy policy/over-broad.toml. Run `ripr check --format json` to list every finding."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("file=src/lib.rs") && !rendered.contains("file=src/other.rs"),
+            "over-broad src/** must not annotate src findings: {rendered}"
+        );
+        assert!(
+            rendered.contains("file=tests/other.rs"),
+            "a finding outside the over-broad glob must stay annotated: {rendered}"
+        );
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_discloses_annotations_past_github_display_limit_first() {
+        let mut output = output_with_unknown_finding();
+        let template = output.findings[0].clone();
+        output.findings = (0..12)
+            .map(|index| {
+                let mut finding = template.clone();
+                finding.probe.location.line = 100 + index;
+                finding
+            })
+            .collect();
+
+        let rendered = render(&output);
+        let lines = rendered.lines().collect::<Vec<_>>();
+
+        // The disclosure must precede the per-finding notices: GitHub keeps
+        // the first ten notices of a step, so a trailing one is never shown.
+        assert_eq!(
+            lines.first().copied(),
+            Some(
+                "::notice title=ripr::Emitted 12 notice annotations; GitHub displays at most 10 per level in one step, so some are not shown. Run `ripr check --format json` to list every finding."
+            ),
+            "{rendered}"
+        );
+        assert_eq!(lines.len(), 13, "{rendered}");
+    }
+
+    #[test]
+    fn render_limit_notice_fires_at_eleven_and_follows_the_denominator() {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let mut output = output_with_unknown_finding();
+        let template = output.findings[0].clone();
+        // Twelve findings, one suppressed: eleven notices remain, one past
+        // the display limit, and the denominator notice is also due.
+        output.findings = (0..12)
+            .map(|index| {
+                let mut finding = template.clone();
+                finding.id = format!("finding-{index}");
+                finding.probe.location.line = 100 + index;
+                finding
+            })
+            .collect();
+        output.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "policy/ripr-suppressions.toml".to_string(),
+            suppressed: vec![SuppressedCheckFinding {
+                finding_id: "finding-0".to_string(),
+                selector: "src/**".to_string(),
+            }],
+            warnings: Vec::new(),
+        });
+
+        let rendered = render(&output);
+        let lines = rendered.lines().collect::<Vec<_>>();
+
+        assert_eq!(
+            lines.get(..2),
+            Some(
+                &[
+                    "::notice title=ripr::Annotated 11 of 12 static exposure finding(s); 1 suppressed by policy policy/ripr-suppressions.toml. Run `ripr check --format json` to list every finding.",
+                    "::notice title=ripr::Emitted 11 notice annotations; GitHub displays at most 10 per level in one step, so some are not shown. Run `ripr check --format json` to list every finding.",
+                ][..]
+            ),
+            "{rendered}"
+        );
+        assert_eq!(lines.len(), 13, "{rendered}");
+    }
+
+    #[test]
+    fn render_within_github_display_limit_emits_no_limit_notice() {
+        let mut output = output_with_unknown_finding();
+        let template = output.findings[0].clone();
+        output.findings = (0..10)
+            .map(|index| {
+                let mut finding = template.clone();
+                finding.probe.location.line = 100 + index;
+                finding
+            })
+            .collect();
+
+        let rendered = render(&output);
+
+        assert!(!rendered.contains("GitHub displays at most"), "{rendered}");
+        assert_eq!(rendered.lines().count(), 10, "{rendered}");
+    }
+
+    #[test]
+    fn render_without_suppression_policy_emits_no_denominator_notice() {
+        let rendered = render(&output_with_unknown_finding());
+
+        assert!(rendered.contains("file=src/lib.rs"));
+        assert!(
+            !rendered.contains("Annotated "),
+            "a fully annotated run needs no denominator: {rendered}"
         );
     }
 
@@ -1131,6 +1473,12 @@ mod tests {
             !annotations.contains("::notice file=src/lib.rs")
                 && !annotations.contains("::warning file=src/lib.rs"),
             "base-deleted finding must not annotate: {annotations}"
+        );
+        assert!(
+            annotations.contains(
+                "::notice title=ripr::Annotated 0 of 1 static exposure finding(s); 1 not current in this change"
+            ),
+            "an all-base-side run still carries a denominator (#4393): {annotations}"
         );
 
         let mut current = output_with_unknown_finding();

@@ -24,7 +24,7 @@
 
       },
       "classification": "exposed",
-      "severity": "warning",
+      "severity": "info",
       "confidence": 0.60,
       "probe": {
         "id": "probe:src_loading.py:python_preview:f9419b36",
@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return await client.total() + 2","line":2}
       ],
-      "evidence": ["owner: load_total", "owner_kind: function", "owner_decorators: async_def", "test_framework: pytest (test_load_total_includes_fee)", "test_fixtures: client (test_load_total_includes_fee)", "test_verify_command: pytest tests/test_loading.py::test_load_total_includes_fee (test_load_total_includes_fee)", "related_test_relation: syntactic_call (test_load_total_includes_fee)", "test_oracle: exact_value strong (test_load_total_includes_fee)"],
+      "evidence": ["owner: load_total", "owner_kind: function", "owner_decorators: async_def", "test_framework: pytest (test_load_total_includes_fee)", "test_fixtures: client (test_load_total_includes_fee)", "test_verify_command: python -m pytest tests/test_loading.py::test_load_total_includes_fee (test_load_total_includes_fee)", "related_test_relation: syntactic_call (test_load_total_includes_fee)", "test_oracle: exact_value strong (test_load_total_includes_fee)"],
       "missing": ["Related Python test reaches `load_total` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
       "assertion_texts": {
       },
@@ -96,5 +96,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/loading.py","digest":"sha256:0e5600e64deaf9860340bf8d62c171719cc3cb98c4484f92859f4aca0b266318"}]}
 }
