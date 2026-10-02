@@ -5444,9 +5444,19 @@ metrics = [
 id = "RIPR-SPEC-0070"
 name = "Downstream review consumer use case"
 spec = "docs/specs/RIPR-SPEC-0070-downstream-review-consumer-use-case.md"
-tests = []
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::review_guidance_windows_preserve_output_and_bound_retained_payloads",
+  "crates/ripr/src/app/agent_brief.rs::tests::streamed_selection_matches_complete_ranking_and_omissions_across_windows",
+  "crates/ripr/src/app/agent_brief.rs::tests::streamed_selection_rejects_duplicate_identity_across_windows",
+  "crates/ripr/src/app/agent_brief.rs::tests::streamed_first_stage_threshold_matches_full_selection_with_hidden_ties",
+  "crates/ripr/src/app/agent_brief/bounded.rs::tests::late_hidden_scope_match_discards_fallback_and_counter_overflow_refuses",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::streamed_windows_preserve_full_evidence_and_refuse_boundary_cancellation",
+]
 fixtures = []
-code = []
+code = [
+  "crates/ripr/src/app/agent_brief/bounded.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+]
 outputs = [
   "docs/specs/RIPR-SPEC-0070-downstream-review-consumer-use-case.md",
 ]
@@ -10340,6 +10350,7 @@ tests = [
   "crates/ripr/src/app/repair_card.rs::tests::limited_card_surfaces_producer_blocker_and_missing_evidence",
   "crates/ripr/src/app/repair_card.rs::tests::unavailable_card_has_no_target_and_no_action",
   "crates/ripr/src/app/repair_card.rs::tests::ineligible_packet_with_command_fails_closed",
+  "crates/ripr/src/app/repair_card.rs::tests::edit_cage_refusal_closes_readiness_and_route_without_erasing_target_evidence",
   "crates/ripr/src/app/repair_card.rs::tests::mismatched_seam_identity_fails_closed",
   "crates/ripr/src/app/repair_card.rs::tests::mismatched_gap_identity_fails_closed",
   "crates/ripr/src/app/repair_card.rs::tests::basis_without_target_fails_closed",
@@ -10419,10 +10430,12 @@ spec = "docs/specs/RIPR-SPEC-0194-repair-card-default-handoff.md"
 tests = [
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_projects_every_family_with_packet_route",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_omits_next_action_when_route_gate_is_closed",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_preserves_static_limitations_without_cage_admission",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::repair_card_assembly_stays_within_the_default_bounds",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::gap_names_seam_requires_owner_match",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::packet_queue_omission_marks_canonical_packet_unavailable",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::attempt_recorded_at_another_head_is_stale_not_current",
+  "crates/ripr/tests/cli_smoke.rs::agent_card_readiness_agrees_with_repair_target_admission",
   "crates/ripr/src/cli/agent.rs::tests::agent_card_parses_seam_id_request",
   "crates/ripr/src/cli/agent.rs::tests::agent_card_requires_seam_id_and_rejects_unknown_arguments",
 ]
@@ -10532,6 +10545,36 @@ metrics = [
   "repair_card_usability_relations",
   "repair_card_real_attempt_cases",
   "repair_card_budget_receipt_status",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0198"
+name = "repair card lsp projection"
+spec = "docs/specs/RIPR-SPEC-0198-repair-card-lsp-projection.md"
+tests = [
+  "crates/ripr/src/lsp/repair_card.rs::tests::hover_lines_project_identity_state_next_action_and_detail_counts",
+  "crates/ripr/src/lsp/repair_card.rs::tests::unavailable_instruction_projects_no_route_and_no_next_action",
+  "crates/ripr/src/lsp/repair_card.rs::tests::limited_route_gate_projects_closed_next_action_without_strengthening",
+  "crates/ripr/src/lsp/repair_card.rs::tests::state_wire_name_serializes_without_reinterpretation",
+  "crates/ripr/src/lsp/tests.rs::tests::repair_card_action_fails_closed_outside_a_git_workspace",
+  "crates/ripr/src/lsp/tests.rs::tests::seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace",
+  "crates/ripr/src/lsp/tests.rs::tests::repair_card_action_suppressed_for_stale_seam_diagnostic",
+  "crates/ripr/src/lsp/tests.rs::tests::seam_hover_projects_bounded_repair_card_section_in_a_git_workspace",
+  "crates/ripr/src/lsp/tests.rs::tests::seam_hover_omits_repair_card_section_outside_a_git_workspace",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/lsp/repair_card.rs",
+  "crates/ripr/src/lsp/actions.rs",
+  "crates/ripr/src/lsp/hover.rs",
+  "crates/ripr/src/app/repair_card_handoff.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0198-repair-card-lsp-projection.md",
+]
+metrics = [
+  "repair_card_schema_version",
+  "repair_card_budget_version",
 ]
 
 [[behavior]]
