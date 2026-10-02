@@ -341,6 +341,8 @@ pub(super) fn write_test_host_run(
             "--offline".to_string(),
             "--target-dir".to_string(),
             "build-target".to_string(),
+            "--config".to_string(),
+            build_dir_config(Path::new("build-target"))?,
         ],
         package: "ripr".to_string(),
         profile: "dev".to_string(),
@@ -495,7 +497,8 @@ fn run_id(source: &SourceIdentity) -> String {
 }
 
 fn build_fresh_binary(root: &Path, attempt: &Path) -> Result<BuildIdentity, String> {
-    let target = attempt.join("build-target");
+    let target = std::path::absolute(attempt.join("build-target"))
+        .map_err(|error| format!("resolve fresh build target: {error}"))?;
     if target.exists() {
         return Err(format!(
             "fresh build target already exists: `{}`",
@@ -510,6 +513,8 @@ fn build_fresh_binary(root: &Path, attempt: &Path) -> Result<BuildIdentity, Stri
         "--offline".to_string(),
         "--target-dir".to_string(),
         target.display().to_string(),
+        "--config".to_string(),
+        build_dir_config(&target)?,
     ];
     let output = capture_bytes_in_dir_with_timeout(
         Path::new("cargo"),
@@ -588,6 +593,22 @@ fn build_fresh_binary(root: &Path, attempt: &Path) -> Result<BuildIdentity, Stri
         build_stdout_sha256: sha256_bytes(&output.stdout),
         build_stderr_sha256: sha256_bytes(&output.stderr),
     })
+}
+
+/// The command-line value outranks environment and Cargo config files without
+/// replacing unrelated configuration. Cargo 1.95 expands braces in build-dir
+/// even inside a quoted TOML string, so such paths must fail before execution.
+fn build_dir_config(target: &Path) -> Result<String, String> {
+    let target = target
+        .to_str()
+        .ok_or("fresh build target must be UTF-8 for Cargo configuration; use a UTF-8 checkout/output path")?;
+    if target.contains(['{', '}']) {
+        return Err("fresh build target cannot contain Cargo build-dir template braces; choose a checkout/output path without braces".to_string());
+    }
+    Ok(format!(
+        "build.build-dir={}",
+        toml::Value::String(target.to_string())
+    ))
 }
 
 fn execute_case(
@@ -1039,8 +1060,7 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
         .parent()
         .and_then(Path::parent)
         .map(|path| path.display().to_string());
-    let command_matches = build.command.len() == 8
-        && build.command.first().is_some_and(|value| value == "cargo")
+    let historical_prefix_matches = build.command.first().is_some_and(|value| value == "cargo")
         && build.command.get(1).is_some_and(|value| value == "build")
         && build.command.get(2).is_some_and(|value| value == "-p")
         && build.command.get(3).is_some_and(|value| value == "ripr")
@@ -1057,6 +1077,24 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
             .get(6)
             .is_some_and(|value| value == "--target-dir")
         && build.command.get(7) == expected_target.as_ref();
+    if historical_prefix_matches && build.command.len() == 8 {
+        return Err(
+            "historical host build receipt does not bind intermediate storage; rebuild with \"cargo xtask rust-judged-panel replay\" before admitting or exporting this run (retained evidence is unchanged)"
+                .to_string(),
+        );
+    }
+    let expected_config = expected_target
+        .as_deref()
+        .map(Path::new)
+        .map(build_dir_config)
+        .transpose()?;
+    let command_matches = historical_prefix_matches
+        && build.command.len() == 10
+        && build
+            .command
+            .get(8)
+            .is_some_and(|value| value == "--config")
+        && build.command.get(9) == expected_config.as_ref();
     if build.package != "ripr"
         || build.profile != "dev"
         || build.features != ["default"]
@@ -1774,5 +1812,130 @@ mod tests {
         } else {
             Err("partial generation changed current or lost diagnostic staging".to_string())
         }
+    }
+
+    #[test]
+    fn build_dir_config_preserves_literal_path_characters() -> Result<(), String> {
+        for target in [
+            "/tmp/quote's \"double\" \\ café/build-target",
+            "C:\\Users\\λ\\quote's space\\build-target",
+        ] {
+            let config = super::build_dir_config(Path::new(target))?;
+            let decoded: toml::Value =
+                toml::from_str(&config).map_err(|error| error.to_string())?;
+            if decoded["build"]["build-dir"].as_str() != Some(target) {
+                return Err(format!(
+                    "build-dir configuration changed path bytes: {config}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn build_dir_config_rejects_template_paths_before_cargo() -> Result<(), String> {
+        let root = scratch("build-dir-templates")?;
+        for name in [
+            "{workspace-root}",
+            "{cargo-cache-home}",
+            "{workspace-path-hash}",
+            "{ordinary}",
+            "opening{",
+            "closing}",
+        ] {
+            let attempt = root.join(name);
+            let error = super::build_fresh_binary(&root.join("absent-workspace"), &attempt)
+                .err()
+                .ok_or("template path unexpectedly accepted")?;
+            if !error.contains("template braces") || attempt.exists() {
+                return Err(format!("template path did not fail before Cargo: {error}"));
+            }
+        }
+        fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_dir_config_rejects_non_utf8_before_cargo() -> Result<(), String> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let root = scratch("build-dir-non-utf8")?;
+        let attempt = root.join(std::ffi::OsStr::from_bytes(b"invalid-\xff"));
+        let error = super::build_fresh_binary(&root.join("absent-workspace"), &attempt)
+            .err()
+            .ok_or("non-UTF-8 path unexpectedly accepted")?;
+        if !error.contains("UTF-8") || attempt.exists() {
+            return Err(format!("non-UTF-8 path did not fail before Cargo: {error}"));
+        }
+        fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn build_identity_requires_owned_intermediates_and_preserves_old_evidence() -> Result<(), String>
+    {
+        let root = scratch("build-recipe")?;
+        let target = root.join("build-target");
+        let binary = target.join("debug/ripr");
+        fs::create_dir_all(target.join("debug")).map_err(|error| error.to_string())?;
+        fs::create_dir_all(root.join("build")).map_err(|error| error.to_string())?;
+        fs::write(&binary, b"retained binary").map_err(|error| error.to_string())?;
+        fs::write(root.join("build/stdout.bin"), b"out").map_err(|error| error.to_string())?;
+        fs::write(root.join("build/stderr.bin"), b"err").map_err(|error| error.to_string())?;
+        let mut value = build();
+        value.command = [
+            "cargo",
+            "build",
+            "-p",
+            "ripr",
+            "--locked",
+            "--offline",
+            "--target-dir",
+        ]
+        .map(str::to_string)
+        .to_vec();
+        value.command.push(target.display().to_string());
+        value.executed_binary_path = binary.display().to_string();
+        value.binary_sha256 = sha256_bytes(b"retained binary");
+        value.binary_bytes = 15;
+        value.build_stdout_sha256 = sha256_bytes(b"out");
+        value.build_stderr_sha256 = sha256_bytes(b"err");
+        let historical = super::pretty_json(&value)?;
+        let receipt_path = root.join("historical-build.json");
+        fs::write(&receipt_path, &historical).map_err(|error| error.to_string())?;
+        let error = super::validate_build_identity(&root, &value)
+            .err()
+            .ok_or("historical receipt was silently accepted")?;
+        if !error.contains("rebuild") || !error.contains("cargo xtask rust-judged-panel replay") {
+            return Err(format!(
+                "historical receipt lacks rebuild guidance: {error}"
+            ));
+        }
+        if fs::read(&receipt_path).map_err(|error| error.to_string())? != historical
+            || fs::read(&binary).map_err(|error| error.to_string())? != b"retained binary"
+            || fs::read(root.join("build/stdout.bin")).map_err(|error| error.to_string())? != b"out"
+            || fs::read(root.join("build/stderr.bin")).map_err(|error| error.to_string())? != b"err"
+        {
+            return Err("historical rejection changed retained evidence".to_string());
+        }
+        value.command.push("--config".to_string());
+        value.command.push(super::build_dir_config(&target)?);
+        super::validate_build_identity(&root, &value)?;
+        let mut redirected = value.clone();
+        redirected.command[9] = super::build_dir_config(&root.join("shared"))?;
+        let mut extra_override = value.clone();
+        extra_override.command.extend([
+            "--config".to_string(),
+            "build.build-dir='shared'".to_string(),
+        ]);
+        let mut wrong_option = value.clone();
+        wrong_option.command[8] = "--features".to_string();
+        let mut wrong_locked = value;
+        wrong_locked.command[4] = "--frozen".to_string();
+        for invalid in [redirected, extra_override, wrong_option, wrong_locked] {
+            if super::validate_build_identity(&root, &invalid).is_ok() {
+                return Err("non-owned build recipe was accepted".to_string());
+            }
+        }
+        fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 }

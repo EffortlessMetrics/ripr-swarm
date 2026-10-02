@@ -1183,7 +1183,8 @@ fn on_disk_host_fixture(name: &str) -> Result<HostDiskFixture, String> {
     fs::write(staging.join("build/stderr.bin"), build_stderr).map_err(|error| error.to_string())?;
     let build = serde_json::json!({
         "command": ["cargo", "build", "-p", "ripr", "--locked", "--offline",
-                    "--target-dir", "fixture-target"],
+                    "--target-dir", "fixture-target", "--config",
+                    format!("build.build-dir={}", toml::Value::String("fixture-target".to_string()))],
         "package": "ripr",
         "profile": "dev",
         "features": ["default"],
@@ -1383,6 +1384,41 @@ fn on_disk_host_fixture(name: &str) -> Result<HostDiskFixture, String> {
         host_current: format!("{OUTPUT_RELATIVE}/current.json"),
         run_id,
     })
+}
+
+#[test]
+fn packet_publish_requires_rebuild_for_historical_host_recipe() -> Result<(), String> {
+    let fixture = on_disk_host_fixture("historical-build-recipe")?;
+    let current_path = fixture._root.0.join(&fixture.host_current);
+    let output = current_path.parent().ok_or("host current has no parent")?;
+    let index_path = output
+        .join("runs")
+        .join(&fixture.run_id)
+        .join("run-index.json");
+    let mut index: serde_json::Value = read_strict_json(&index_path, "fixture host index")?;
+    index["build"]["command"]
+        .as_array_mut()
+        .ok_or("fixture build command is not an array")?
+        .truncate(8);
+    let index_bytes = write_json_bytes(&index_path, &index)?;
+    let mut current: serde_json::Value = read_strict_json(&current_path, "fixture host current")?;
+    current["index_sha256"] = serde_json::Value::String(sha256_hex(&index_bytes));
+    write_json_bytes(&current_path, &current)?;
+    let retained_before = snapshot_tree(output)?;
+    let portable = fixture._root.0.join(PORTABLE_ROOT);
+    let portable_before = snapshot_tree(&portable)?;
+    let error = super::publish(&fixture._root.0, &fixture.manifest, &fixture.host_current)
+        .err()
+        .ok_or("packet publication silently promoted a historical build recipe")?;
+    if !error.contains("historical host build receipt")
+        || !error.contains("cargo xtask rust-judged-panel replay")
+    {
+        return Err(format!(
+            "historical host run did not request a rebuild: {error}"
+        ));
+    }
+    assert_tree_unchanged(output, &retained_before, "historical retained evidence")?;
+    assert_tree_unchanged(&portable, &portable_before, "historical packet publication")
 }
 
 #[test]
