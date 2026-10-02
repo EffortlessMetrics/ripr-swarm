@@ -1,5 +1,5 @@
 use crate::cli::command::CliCommand;
-use crate::cli::{CommandError, commands, help, rerun};
+use crate::cli::{CommandError, commands, help, help_json, rerun};
 
 pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
     match command {
@@ -11,6 +11,10 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
             help::print_help_all();
             Ok(())
         }
+        CliCommand::HelpWorkflow(name) => {
+            help::print_workflow(name.as_deref()).map_err(CommandError::from)
+        }
+        CliCommand::HelpJson => help_json::print_help_json().map_err(CommandError::from),
         CliCommand::Version => {
             println!("{}", crate::build_identity::version_line());
             Ok(())
@@ -236,7 +240,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Agent(args(&["unknown"]))),
             Err(CommandError::Failure(
-                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
             ))
         );

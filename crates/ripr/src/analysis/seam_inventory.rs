@@ -795,6 +795,10 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     /// [`DiffScopeEvidenceStages`] stage was sufficient; zero when
     /// every scoped seam was classified.
     pub(crate) unevaluated_seams: usize,
+    /// Changed source files named by the diff that are not regular files
+    /// in the working tree (#4586). Empty when every changed source file
+    /// is on disk.
+    pub(crate) absent_changed_files: Vec<PathBuf>,
 }
 
 /// Two-stage evidence for the diff-scoped inventory.
@@ -1144,6 +1148,7 @@ fn try_no_impact_fast_path(
             changed_production_files: Vec::new(),
             immediate_caller_files: Vec::new(),
             unevaluated_seams: 0,
+            absent_changed_files: Vec::new(),
         },
     )))
 }
@@ -1319,11 +1324,17 @@ fn inventory_diff_scoped_classified_seams_inner(
     stages: Option<&DiffScopeEvidenceStages<'_>>,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
     cancellation::checkpoint()?;
+    let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
+        root,
+        changed_files.iter().map(PathBuf::as_path),
+    );
     if fast_path_enabled {
         match try_no_impact_fast_path(root, config, changed_files, changed_owner_names) {
             Ok(NoImpactOutcome::Fast(inventory)) => {
                 cancellation::checkpoint()?;
-                return Ok(*inventory);
+                let mut inventory = *inventory;
+                inventory.absent_changed_files = absent_changed_files;
+                return Ok(inventory);
             }
             Ok(NoImpactOutcome::Declined(reason)) => {
                 trace_latency_phase(
@@ -1428,6 +1439,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         changed_production_files,
         immediate_caller_files,
         unevaluated_seams,
+        absent_changed_files,
     })
 }
 
@@ -2921,6 +2933,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
@@ -2972,6 +2985,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         };
         let mut index = RustIndex::default();

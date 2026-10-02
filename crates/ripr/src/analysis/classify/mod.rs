@@ -6,6 +6,7 @@ mod flow;
 mod helper_transfer;
 mod infection;
 mod match_transfer;
+mod owner_pin;
 mod owner_shape;
 mod propagation_witness;
 mod reach;
@@ -31,6 +32,7 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use helper_transfer::resolve_chain;
 pub(in crate::analysis) use infection::infection_evidence;
+pub(in crate::analysis) use owner_pin::OwnerReturnPin;
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
@@ -39,9 +41,11 @@ pub(in crate::analysis) use propagation_witness::{
 pub(in crate::analysis) use reach::{owner_may_be_reached_unseen, reach_evidence};
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
-    find_related_tests_with_candidate_index, package_prefix,
+    find_related_tests_with_candidate_index, impl_self_type_name,
+    method_call_resolves_to_impl_type, package_prefix,
 };
 pub(in crate::analysis) use reveal::FileUseStatements;
+pub(in crate::analysis) use reveal::contains_as_whole_word;
 pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can

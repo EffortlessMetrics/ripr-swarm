@@ -16,6 +16,8 @@ use crate::cli::commands_timestamps::generated_at_unix_ms;
 
 #[path = "commands/agent.rs"]
 mod agent;
+#[path = "commands/agent_card.rs"]
+pub(crate) mod agent_card;
 #[path = "commands/agent_dispatch.rs"]
 mod agent_dispatch;
 #[path = "commands/agent_gap_packet.rs"]
@@ -126,7 +128,14 @@ pub(super) use gate::gate;
 mod init;
 pub(super) use init::init;
 #[cfg(test)]
-use init::{generated_github_actions_workflow, parse_init_options};
+use init::parse_init_options;
+
+// The generated `ripr init --ci github` workflow template lives beside the
+// init command; its tests here pin rendered placeholders against it.
+#[path = "commands/init_workflow.rs"]
+mod init_workflow;
+#[cfg(test)]
+use init_workflow::generated_github_actions_workflow;
 
 #[path = "commands/pilot.rs"]
 mod pilot;
@@ -6415,7 +6424,6 @@ language = "rust"
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove frontier dir: {err}"))?;
         Ok(())
     }
-
     #[test]
     fn outcome_defaults_to_markdown_stdout_shape() {
         assert_eq!(

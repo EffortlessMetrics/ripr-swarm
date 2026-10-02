@@ -2,7 +2,7 @@ mod agent;
 mod command;
 mod command_catalog;
 mod command_metadata;
-mod commands;
+pub(crate) mod commands;
 mod commands_agent_support;
 mod commands_context;
 mod commands_numeric;
@@ -10,10 +10,12 @@ mod commands_options;
 mod commands_timestamps;
 mod execute;
 mod help;
+mod help_json;
 mod parse;
 mod progress;
 mod rerun;
 mod suggest;
+mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
 pub(crate) use suggest::unknown_argument;
@@ -86,6 +88,18 @@ pub fn run(mut args: Vec<String>) -> Result<(), CommandError> {
     {
         args.remove(pos);
         crate::set_verbose(true);
+        // #4825: the machine-discovery route has a strict one-flag grammar and
+        // a silent-stderr contract. Combining it with the global verbosity
+        // flag is a usage error — the flag must not be silently extracted,
+        // leaving a plausible document plus a stderr diagnostic.
+        // `args` still carries argv[0]; the command body starts at index 1.
+        if args.get(1).is_some_and(|arg| arg == "help")
+            && args.get(2).is_some_and(|arg| arg == "--json")
+        {
+            return Err(CommandError::from(
+                "usage: ripr help --json (this route accepts no other arguments)".to_string(),
+            ));
+        }
         eprintln!("ripr: verbose mode enabled");
     }
     // Selection is side-effect-free parsing; the lock is acquired before the
@@ -181,7 +195,13 @@ fn persist_before_repair_attempt(
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
     let packet_text = String::from_utf8(packet_bytes.clone())
         .map_err(|error| format!("agent packet is not UTF-8: {error}"))?;
-    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+    let mut policy =
+        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+    crate::app::repair_attempt::include_explicit_store_operational_write(
+        &mut policy,
+        root,
+        options.store.as_deref(),
+    )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
     // during preparation refuses attempt publication.
     crate::edit_cage::validate_build_output_precondition(root, &policy)
@@ -257,6 +277,7 @@ fn persist_before_repair_attempt(
             next_command_suffix: binding
                 .as_ref()
                 .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+            store: options.store.as_deref(),
         },
         identity,
     )?;
@@ -281,7 +302,7 @@ fn persist_before_repair_attempt(
         );
     }
     eprintln!(
-        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
     );
     eprintln!(
         "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."

@@ -16,6 +16,7 @@ mod index;
 mod issue_intake;
 mod lsp;
 mod lsp_performance;
+mod merge_queue;
 mod metrics;
 mod module_health;
 mod mutation;
@@ -38,6 +39,7 @@ mod release_denominator;
 mod release_negative;
 mod release_scope;
 pub(crate) mod release_server;
+mod repair_card_usability;
 mod repo;
 #[cfg(test)]
 mod reverse_authorization;
@@ -105,6 +107,7 @@ pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
 pub(crate) use lsp::lsp_cockpit_report;
 pub(crate) use lsp_performance::lsp_performance_report;
+pub(crate) use merge_queue::merge_queue;
 pub(crate) use metrics::metrics_report;
 pub(crate) use module_health::module_health;
 pub(crate) use mutation::mutation_calibration;
@@ -128,6 +131,7 @@ pub(crate) use release_control::release_control;
 pub(crate) use release_denominator::release_denominator;
 pub(crate) use release_negative::release_negative_corpus;
 pub(crate) use release_scope::release_scope;
+pub(crate) use repair_card_usability::repair_card_usability_report;
 pub(crate) use repo::{
     actionable_gap_outcomes_report, agent_seam_packets_report, evidence_health_report,
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,

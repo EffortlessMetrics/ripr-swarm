@@ -42,6 +42,8 @@ mod no_panic;
 mod output_enum_contracts;
 mod package_qualification;
 mod policy;
+#[cfg(test)]
+mod portable_consumer;
 mod product_gate_plan;
 mod public_api_surface;
 mod python_judged_panel;
@@ -184,7 +186,8 @@ pub(crate) use evidence_promotion::{
     evidence_promotion_external_failure_kind, evidence_promotion_external_semantic_violations,
     evidence_promotion_human_class_line_matches, evidence_promotion_human_oracle_line_matches,
     evidence_promotion_pure_failure_kind, evidence_promotion_semantic_violations,
-    validate_evidence_promotion_honesty_corpus_at, write_evidence_promotion_external_report,
+    evidence_promotion_semantic_violations_scoped, validate_evidence_promotion_honesty_corpus_at,
+    write_evidence_promotion_external_report,
 };
 pub(crate) use evidence_promotion::{
     check_evidence_promotion_honesty, validate_evidence_promotion_honesty_corpus,
@@ -5155,6 +5158,18 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
             current_surface: "VS Code extension TypeScript".to_string(),
             recommendation: "Keep this code in the editor adapter; only move server behavior into ripr Rust modules or xtask.".to_string(),
             reason: "The VS Code Extension Host API is TypeScript-native, so this is an approved adapter boundary rather than core automation.".to_string(),
+        });
+    }
+
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "portable native-ripr consumer packet".to_string(),
+            recommendation: "Keep packet-local transport in stdlib Python; keep packet staging, policy, and oracles in Rust/xtask.".to_string(),
+            reason: "The consumer has to run in Python-capable agent environments that cannot compile or search PATH for ripr (#4713).".to_string(),
         });
     }
 
@@ -13854,6 +13869,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/evidence.rs",
         "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/probe.rs",
+        "crates/ripr/src/domain/repair_card.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
     ] {
@@ -13861,6 +13877,7 @@ fn check_output_contracts() -> Result<(), String> {
         domain.push('\n');
     }
     let app = read_text_lossy(Path::new("crates/ripr/src/app.rs"))?;
+    let repair_card_domain = read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
     let evidence_record = read_text_lossy(Path::new("crates/ripr/src/output/evidence_record.rs"))?;
     let mutation_calibration =
         read_text_lossy(Path::new("crates/ripr/src/output/mutation_calibration.rs"))?;
@@ -13918,6 +13935,38 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
                 validate_evidence_record_contract_schema_version(value, &mut violations)?;
+            }
+            "repair_card_schema_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "repair_card_budget_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
             }
             "context_version" => {
                 require_contract_value(
@@ -21924,9 +21973,22 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "packaging/npm/launcher/bin/ripr.cjs" | "packaging/npm/launcher/lib/launcher.cjs"
+    ) || (path.starts_with("packaging/npm/launcher/test/") && path.ends_with(".test.cjs"))
+    {
+        return Some("npm launcher runtime and focused launcher contract tests");
+    }
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(
+            "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
         );
     }
 
@@ -21990,7 +22052,9 @@ fn is_dependency_surface_candidate(path: &str) -> bool {
 }
 
 fn is_process_policy_candidate(path: &str) -> bool {
-    path.ends_with(".rs") || path.ends_with(".ts")
+    path.ends_with(".rs")
+        || path.ends_with(".ts")
+        || (path.starts_with("tools/python/") && path.ends_with(".py"))
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -22014,6 +22078,9 @@ fn process_policy_patterns() -> Vec<String> {
         concat!("cp.", "spawn"),
         concat!("cp.", "exec("),
         concat!("cp.", "execFile"),
+        concat!("subprocess.", "Popen"),
+        concat!("subprocess.", "run"),
+        concat!("os.", "system"),
     ]
     .iter()
     .map(|value| value.to_string())

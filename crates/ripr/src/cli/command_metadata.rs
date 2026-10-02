@@ -24,24 +24,20 @@
 //! - canonical task labels: `docs/COMMAND_HIERARCHY.md` and the default help
 //!   task map (one vocabulary, checked here in both directions);
 //! - workflow memberships: a closed tag set in [`WORKFLOW_TAGS`], promoted to
-//!   a typed workflow catalog by #4824 and never re-derived from prose.
+//!   the typed workflow catalog by #4824
+//!   ([`crate::cli::workflow_catalog`]) and never re-derived from prose.
 //!
-//! Out of scope for this slice: a `help workflow` route and workflow state
-//! (#4824), a `help --json` schema (#4825), and any command behavior change.
-//! The seam for both follow-ups is [`metadata()`] plus [`catalog()`]: a
-//! complete typed command description with no human-text scraping.
+//! The #4825 `help --json` child (RIPR-SPEC-0190) is the second production
+//! consumer: it projects this table into the versioned machine-discovery
+//! document, so a command-side metadata edit remints the document digest. The
+//! seam for the JSON child is [`metadata()`] plus [`catalog()`]: a complete
+//! typed command description with no human-text scraping. The #4824 workflow
+//! catalog is the first production consumer of this table; its validators
+//! cross-check workflow summaries against these rows so a command-side change
+//! contradicting a workflow fails visibly.
 //!
-//! The whole module is the C2 query surface: this slice adds no production
-//! consumer, so non-test builds would report the table and its accessors as
-//! dead. The allow is scoped to `not(test)` and names the seam; remove it
-//! when #4824 or #4825 consumes the surface.
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "RIPR-SPEC-0187 query surface: unit tests consume it in this slice; #4824/#4825 consume metadata() + catalog() next"
-    )
-)]
+//! The whole module is the C2 query surface consumed by both production
+//! children.
 
 use crate::cli::command_catalog::{CommandCatalogEntry, CommandClass, catalog};
 
@@ -79,6 +75,18 @@ pub(crate) enum CommandOperation {
     StateChanging,
 }
 
+impl CommandOperation {
+    /// Machine token for the versioned discovery document (#4825); the
+    /// human help labels render separately.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WritesArtifacts => "writes-artifacts",
+            Self::StateChanging => "state-changing",
+        }
+    }
+}
+
 /// Cost class vocabulary shared with #1572 and the `check --mode` help.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommandCost {
@@ -88,6 +96,18 @@ pub(crate) enum CommandCost {
     Analysis,
     /// Whole-workspace analysis; an order of magnitude longer (check --mode).
     Workspace,
+}
+
+impl CommandCost {
+    /// Machine token for the versioned discovery document (#4825); the
+    /// human help labels render separately.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Analysis => "analysis",
+            Self::Workspace => "workspace",
+        }
+    }
 }
 
 /// Independent side-effect disclosures (#1572 vocabulary plus child
@@ -1477,6 +1497,27 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["agent verify", "swarm queue"],
         stop_states: &[],
         limitations: "--json is required until a human packet surface exists.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:agent.card",
+        summary: "Hand off one seam as the compact default repair card.",
+        task: "Repair a selected Rust gap",
+        workflows: &["repair-loop", "editor-agent"],
+        operation: CommandOperation::ReadOnly,
+        cost: CommandCost::Analysis,
+        effects: ANALYSIS_RUNNER,
+        primary_inputs: &["--seam-id"],
+        outputs: CommandOutputs {
+            default: None,
+            optional: &[],
+        },
+        state_target: None,
+        json_support: true,
+        example: "ripr agent card --root . --seam-id ID",
+        next_routes: &["agent packet", "agent repair"],
+        stop_states: &[],
+        limitations: "the complete canonical packet stays behind the explicit `ripr agent packet` route; the card never embeds it.",
         not_applicable_reason: None,
     },
     CommandMetadata {
