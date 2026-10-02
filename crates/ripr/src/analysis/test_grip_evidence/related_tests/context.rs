@@ -145,6 +145,15 @@ impl CompactTest<'_> {
     }
 }
 
+/// Opt-in phase timing keeps large-workspace context preparation attributable.
+fn context_build_phase<T>(name: &str, work: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    trace_latency_phase("evidence_context_build", name, Duration::ZERO);
+    let result = work();
+    trace_latency_phase("evidence_context_built", name, started.elapsed());
+    result
+}
+
 impl<'a> CompactGripContext<'a> {
     pub(crate) fn clear_window_memos(&self) {
         self.owner_named_cache.borrow_mut().clear();
@@ -175,39 +184,68 @@ impl<'a> CompactGripContext<'a> {
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        let same_file_helper_owner_calls_by_file = helper_owner_calls_by_file(index);
+        let same_file_helper_owner_calls_by_file =
+            context_build_phase("same_file_helper_owner_calls_by_file", || {
+                helper_owner_calls_by_file(index)
+            });
         checkpoint()?;
-        let helper_owner_calls_by_file = strict_helper_owner_calls_by_file(index);
+        let helper_owner_calls_by_file = context_build_phase("helper_owner_calls_by_file", || {
+            strict_helper_owner_calls_by_file(index)
+        });
         checkpoint()?;
         let unambiguous_test_helper_owner_calls_by_name =
-            unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
+            context_build_phase("unambiguous_test_helper_owner_calls_by_name", || {
+                unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file)
+            });
         checkpoint()?;
         let helper_owner_calls_by_module_path =
-            helper_owner_calls_by_module_path(index, &helper_owner_calls_by_file);
+            context_build_phase("helper_owner_calls_by_module_path", || {
+                helper_owner_calls_by_module_path(index, &helper_owner_calls_by_file)
+            });
         checkpoint()?;
         let direct_helper_import_aliases_by_file =
-            direct_helper_import_aliases_by_file(index, &helper_owner_calls_by_module_path);
+            context_build_phase("direct_helper_import_aliases_by_file", || {
+                direct_helper_import_aliases_by_file(index, &helper_owner_calls_by_module_path)
+            });
         checkpoint()?;
         let production_helper_owner_calls_by_package =
-            production_helper_owner_calls_by_package(&helper_owner_calls_by_file);
+            context_build_phase("production_helper_owner_calls_by_package", || {
+                production_helper_owner_calls_by_package(&helper_owner_calls_by_file)
+            });
         checkpoint()?;
         let target_affinity_production_owner_calls_by_package =
-            target_affinity_production_owner_calls_by_package(index);
+            context_build_phase("target_affinity_production_owner_calls_by_package", || {
+                target_affinity_production_owner_calls_by_package(index)
+            });
         checkpoint()?;
         let ambiguous_target_affinity_owner_calls_by_package =
-            ambiguous_target_affinity_owner_calls_by_package(index);
+            context_build_phase("ambiguous_target_affinity_owner_calls_by_package", || {
+                ambiguous_target_affinity_owner_calls_by_package(index)
+            });
         checkpoint()?;
-        let target_affinity_production_owner_calls_by_module_path =
-            target_affinity_production_owner_calls_by_module_path(index);
+        let target_affinity_production_owner_calls_by_module_path = context_build_phase(
+            "target_affinity_production_owner_calls_by_module_path",
+            || target_affinity_production_owner_calls_by_module_path(index),
+        );
         checkpoint()?;
         let unambiguous_production_owner_names_by_package =
-            unambiguous_production_owner_names_by_package(index);
+            context_build_phase("unambiguous_production_owner_names_by_package", || {
+                unambiguous_production_owner_names_by_package(index)
+            });
         checkpoint()?;
-        let module_import_aliases_by_file = module_import_aliases_by_file(index);
+        let module_import_aliases_by_file =
+            context_build_phase("module_import_aliases_by_file", || {
+                module_import_aliases_by_file(index)
+            });
         checkpoint()?;
-        let function_names_by_file = local_function_names_by_file(index);
+        let function_names_by_file = context_build_phase("function_names_by_file", || {
+            local_function_names_by_file(index)
+        });
         checkpoint()?;
-        let test_scoped_function_names_by_file = test_scoped_function_names_by_file(index);
+        let test_scoped_function_names_by_file =
+            context_build_phase("test_scoped_function_names_by_file", || {
+                test_scoped_function_names_by_file(index)
+            });
         checkpoint()?;
         let helper_owner_lookup = HelperOwnerCallLookup {
             helpers: &helper_owner_calls_by_file,
@@ -218,12 +256,21 @@ impl<'a> CompactGripContext<'a> {
             direct_helper_import_aliases_by_file: &direct_helper_import_aliases_by_file,
         };
         let mut file_value_scans: BTreeMap<&Path, Arc<OnceLock<FileValueScan>>> = BTreeMap::new();
+        let tests_started = Instant::now();
+        trace_latency_phase("evidence_context_tests", "start", Duration::ZERO);
         let tests: Vec<CompactTest<'a>> = index
             .tests
             .iter()
             .enumerate()
             .map(|(test_index, test)| {
                 checkpoint()?;
+                if test_index % 4096 == 0 {
+                    trace_latency_phase(
+                        "evidence_context_tests",
+                        &format!("processed_{test_index}"),
+                        tests_started.elapsed(),
+                    );
+                }
                 let test_scoped_function_names = test_scoped_function_names_by_file.get(&test.file);
                 let production_owner_names = package_scope(&test.file).and_then(|package| {
                     unambiguous_production_owner_names_by_package.get(&package)
@@ -342,6 +389,11 @@ impl<'a> CompactGripContext<'a> {
                 })
             })
             .collect::<Result<_, E>>()?;
+        trace_latency_phase(
+            "evidence_context_tests",
+            "finished",
+            tests_started.elapsed(),
+        );
         let mut name_module_candidates = NameModuleCandidateIndex::default();
         for (test_index, test) in tests.iter().enumerate() {
             checkpoint()?;
