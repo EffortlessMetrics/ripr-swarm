@@ -1,0 +1,4595 @@
+{
+  "schema_version": "blind_journey_fixture_corpus.v1",
+  "scenarios": [
+    {
+      "id": "clean_generic_prompt_accepted",
+      "expected": {
+        "accepted": true,
+        "terminal": "passed_blind_journey"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "prompt_contamination_issue_reference",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change. The bug is tracked in issues/1234.",
+          "prompt_digest": "ee5cbd45f49eeb22251198acf275b4ca366e4c1319503fcc5e1ee6a6fcc922c8",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "ee5cbd45f49eeb22251198acf275b4ca366e4c1319503fcc5e1ee6a6fcc922c8",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_contaminated"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "ee5cbd45f49eeb22251198acf275b4ca366e4c1319503fcc5e1ee6a6fcc922c8",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "ee5cbd45f49eeb22251198acf275b4ca366e4c1319503fcc5e1ee6a6fcc922c8",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "prompt_contamination_target_test",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change. Edit the tests in /tests/adder.rs for it.",
+          "prompt_digest": "46a2f3eb1f1abb7a0179ea5a6e0c1af016d6418c3779e5e86d7dfa43f8fbaffc",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "46a2f3eb1f1abb7a0179ea5a6e0c1af016d6418c3779e5e86d7dfa43f8fbaffc",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_contaminated"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "46a2f3eb1f1abb7a0179ea5a6e0c1af016d6418c3779e5e86d7dfa43f8fbaffc",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "46a2f3eb1f1abb7a0179ea5a6e0c1af016d6418c3779e5e86d7dfa43f8fbaffc",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "prompt_contamination_gap_id",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change. The intended change is gap-042.",
+          "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_contaminated"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "prompt_contamination_artifact_path",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change. Follow the target/ripr/reports/check.json artifact.",
+          "prompt_digest": "55b739306c05936cab3fdef13982955d0db42fed37beb839348e7f998917c24a",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "55b739306c05936cab3fdef13982955d0db42fed37beb839348e7f998917c24a",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_contaminated"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "55b739306c05936cab3fdef13982955d0db42fed37beb839348e7f998917c24a",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "55b739306c05936cab3fdef13982955d0db42fed37beb839348e7f998917c24a",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "prompt_contamination_expected_command",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change. Then run cargo test --package target to verify.",
+          "prompt_digest": "a1301ecc3d82952cade02a7077f64e0f948ac84bfebd5d19efb1f75f8a19e305",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "a1301ecc3d82952cade02a7077f64e0f948ac84bfebd5d19efb1f75f8a19e305",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_contaminated"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "a1301ecc3d82952cade02a7077f64e0f948ac84bfebd5d19efb1f75f8a19e305",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "rejected",
+            "prompt_digest": "a1301ecc3d82952cade02a7077f64e0f948ac84bfebd5d19efb1f75f8a19e305",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "public_docs_and_source_reads_allowed",
+      "expected": {
+        "accepted": true,
+        "terminal": "passed_blind_journey"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": "public_documentation_lookup",
+              "actor": "operator",
+              "reason": "public documentation lookup remains allowed"
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": "ordinary_source_inspection",
+              "actor": "operator",
+              "reason": "ordinary target source inspection remains allowed"
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "private_hint_after_failed_command",
+      "expected": {
+        "accepted": true,
+        "terminal": "hidden_operator_assistance"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 9,
+              "predecessor_sequence": 8,
+              "kind": "harness_intervention",
+              "subject": "hint after the failed first command",
+              "operator_visible": false,
+              "intervention": "private_harness_hint",
+              "actor": "evaluator",
+              "reason": "named the intended edit after the command failed"
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "assistance_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "hidden_operator_assistance",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "manual_artifact_copying",
+      "expected": {
+        "accepted": true,
+        "terminal": "manual_artifact_plumbing"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 9,
+              "predecessor_sequence": 8,
+              "kind": "harness_intervention",
+              "subject": "copied a before/verify artifact",
+              "operator_visible": false,
+              "intervention": "manual_artifact_plumbing",
+              "actor": "evaluator",
+              "reason": "placed a before/verify artifact the product did not emit"
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "assistance_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "manual_artifact_plumbing",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "workspace_binary_substitution",
+      "expected": {
+        "accepted": true,
+        "terminal": "candidate_identity_failure"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 9,
+              "predecessor_sequence": 8,
+              "kind": "harness_intervention",
+              "subject": "replaced the installed binary",
+              "operator_visible": false,
+              "intervention": "workspace_binary_substitution",
+              "actor": "evaluator",
+              "reason": "planted another binary in the workspace"
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "assistance_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "candidate_identity_failure",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "instrument_watchdog_observes_only",
+      "expected": {
+        "accepted": true,
+        "terminal": "passed_blind_journey"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 9,
+              "predecessor_sequence": 8,
+              "kind": "process_cancellation_restart_cleanup",
+              "subject": "watchdog observed process bounds",
+              "operator_visible": false,
+              "intervention": "instrument_only_not_operator_visible",
+              "actor": "harness",
+              "reason": "watchdog inventory only; no operator path change"
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "operator_selects_first_eligible_item",
+      "expected": {
+        "accepted": true,
+        "terminal": "passed_blind_journey"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "operator_selects_second_eligible_item",
+      "expected": {
+        "accepted": true,
+        "terminal": "passed_blind_journey"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-b",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-b",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "quiet_neighbor_selected_as_actionable",
+      "expected": {
+        "accepted": true,
+        "terminal": "wrong_or_stale_subject"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "quiet-neighbor",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "quiet_neighbor_selected",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "wrong_or_stale_subject",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "passing_axes_with_hidden_hint",
+      "expected": {
+        "accepted": true,
+        "terminal": "hidden_operator_assistance"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 9,
+              "predecessor_sequence": 8,
+              "kind": "harness_intervention",
+              "subject": "operator already knew the change",
+              "operator_visible": false,
+              "intervention": "hidden_operator_knowledge",
+              "actor": "evaluator",
+              "reason": "operator already knew the intended change before starting"
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "assistance_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "hidden_operator_assistance",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "honest_limitation_keeps_transcript",
+      "expected": {
+        "accepted": true,
+        "terminal": "honest_limitation"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": null,
+          "selected_edit": null,
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_question",
+              "subject": "operator recorded explicit uncertainty",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "unknown",
+            "edit_cage_verdict": "unknown",
+            "project_verification_status": "not_run",
+            "static_movement": "unknown",
+            "receipt_status": "receipt_not_applicable",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "honest_limitation",
+          "limitations": [
+            "the installed product exposed no actionable gap for this repository"
+          ],
+          "non_claims": [
+            "no completed repair is claimed; recovery requires a product discoverability fix"
+          ]
+        }
+      }
+    },
+    {
+      "id": "transcript_missing_predecessor",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 99,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "transcript_reordered_trace",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "transcript_altered_prompt_binding",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "transcript_changed_answer_key",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b",
+            "item-c"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "reviewer_overrides_mechanical_finding",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change. The intended change is gap-042.",
+          "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_contaminated"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "6b07c291e0a16bb43dd951ac27e84985fff1f5eade67548015c4ba80bf892a65",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "operator_projection_hides_answer_key",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 9,
+              "predecessor_sequence": 8,
+              "kind": "harness_intervention",
+              "subject": "the hint names quiet-neighbor",
+              "operator_visible": true,
+              "intervention": "private_harness_hint",
+              "actor": "evaluator",
+              "reason": "leaked evaluator-only material"
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "equivalent_windows_root_packet",
+      "expected": {
+        "accepted": true,
+        "terminal": "passed_blind_journey",
+        "same_portable_identity_as": "equivalent_posix_root_packet"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "equivalent_posix_root_packet",
+      "expected": {
+        "accepted": true,
+        "terminal": "passed_blind_journey",
+        "same_portable_identity_as": "equivalent_windows_root_packet"
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "/tmp/journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "/tmp/journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    },
+    {
+      "id": "unsupported_future_schema",
+      "expected": {
+        "accepted": false
+      },
+      "packet": {
+        "prompt": {
+          "schema_version": "blind_journey_prompt.v2",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "operator_goal": "Improve the tests for one behavior you can reach through the installed product, using only public docs and ordinary source inspection.",
+          "public_inputs": [
+            "docs/cli.md",
+            "docs/receipts.md"
+          ],
+          "ordinary_permissions": [
+            "run public product entrypoints",
+            "run project verification commands"
+          ],
+          "prohibited_hints": [
+            "no intended change hints",
+            "no internal references"
+          ],
+          "prompt_bytes": "You are given an installed analysis tool and a target repository. Improve the tests for one behavior you can reach through the product. You may read the public docs and the ordinary target source. Do not ask anyone for the intended change.",
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "contamination_result": "mechanically_clean"
+        },
+        "answer_key": {
+          "schema_version": "blind_journey_answer_key.v1",
+          "eligible_items": [
+            "item-a",
+            "item-b"
+          ],
+          "quiet_neighbors": [
+            "quiet-neighbor"
+          ],
+          "expected_edit_cage": [
+            "src/lib.rs"
+          ],
+          "discriminator_family": "boundary-constant",
+          "known_product_limitations": [
+            "no-network"
+          ],
+          "forbidden_edits": [
+            "src/main.rs"
+          ],
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+        },
+        "receipt": {
+          "schema_version": "blind_journey_receipt.v1",
+          "candidate": {
+            "repository": "https://example.invalid/operator/target",
+            "base": "base-commit-sha",
+            "head": "head-commit-sha",
+            "tree": "tree-object-sha",
+            "root": "C:\\tmp\\journey",
+            "package": "ripr",
+            "binary": "ripr",
+            "binary_digest": "abababababababababababababababababababababababababababababababab"
+          },
+          "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+          "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20",
+          "review": {
+            "reviewer": "reviewer-1",
+            "verdict": "accepted",
+            "prompt_digest": "54ae3661cfa4b5fc9bde62ab5d32c71ec0b4762693609283caee10b980ff6f9c",
+            "answer_key_digest": "6e0d1657c2809798b1b18142f0d9146f3ef097543cf46f2113310b17eea51c20"
+          },
+          "selected_item": "item-a",
+          "selected_edit": "src/lib.rs",
+          "events": [
+            {
+              "sequence": 1,
+              "predecessor_sequence": null,
+              "kind": "public_documentation_lookup",
+              "subject": "docs:cli-check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 2,
+              "predecessor_sequence": 1,
+              "kind": "ordinary_target_source_read",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 3,
+              "predecessor_sequence": 2,
+              "kind": "product_command_invocation",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 4,
+              "predecessor_sequence": 3,
+              "kind": "operator_product_option_selection",
+              "subject": "item-a",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 5,
+              "predecessor_sequence": 4,
+              "kind": "file_edit",
+              "subject": "src/lib.rs",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 6,
+              "predecessor_sequence": 5,
+              "kind": "project_verification_execution",
+              "subject": "project test command",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 7,
+              "predecessor_sequence": 6,
+              "kind": "static_analysis_execution",
+              "subject": "ripr check",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            },
+            {
+              "sequence": 8,
+              "predecessor_sequence": 7,
+              "kind": "receipt_execution",
+              "subject": "ripr receipts",
+              "operator_visible": true,
+              "intervention": null,
+              "actor": null,
+              "reason": null
+            }
+          ],
+          "axes": {
+            "candidate_currentness": "current",
+            "selection_correctness": "correct_actionable",
+            "edit_cage_verdict": "within_cage",
+            "project_verification_status": "passed",
+            "static_movement": "improved",
+            "receipt_status": "receipt_movement_improved",
+            "operator_assistance_state": "none_observed",
+            "external_runtime_mutation_evidence": null
+          },
+          "terminal_result": "passed_blind_journey",
+          "limitations": [],
+          "non_claims": []
+        }
+      }
+    }
+  ]
+}

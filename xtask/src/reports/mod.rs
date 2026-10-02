@@ -1,6 +1,7 @@
 mod annotations;
 mod back_sync;
 mod badges;
+mod blind_journey;
 mod bun;
 mod candidate_control;
 mod ci_budget;
@@ -55,6 +56,9 @@ mod test_oracles;
 
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use back_sync::back_sync;
+pub(crate) use blind_journey::{
+    assess_blind_journey_fixture_corpus, blind_journey_contract_report,
+};
 #[cfg(test)]
 pub(crate) use badges::{
     BADGE_ENDPOINT_FILES, BadgeArtifactJob, BadgeBasisReport, BadgeBasisSignal,
