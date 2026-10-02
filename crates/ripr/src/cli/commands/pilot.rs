@@ -581,7 +581,7 @@ mod tests {
         let result = run_pilot_analysis_with_timeout(3_000, move || {
             let result = app::repo_inventory_with_progress(
                 Some(&*sink),
-                || -> Result<(), String> {
+                || -> Result<analysis::ClassifiedSeamsReport, String> {
                     loop {
                         if crate::analysis::cancellation::checkpoint().is_err() {
                             return Err("analysis cancelled".to_string());
@@ -641,7 +641,7 @@ mod tests {
         let result = run_pilot_analysis_with_timeout(50, || {
             app::repo_inventory_with_progress(
                 None,
-                || -> Result<(), String> {
+                || -> Result<analysis::ClassifiedSeamsReport, String> {
                     loop {
                         if crate::analysis::cancellation::checkpoint().is_err() {
                             return Err("analysis cancelled".to_string());
