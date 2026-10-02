@@ -384,7 +384,13 @@ mod tests {
         let expectations = read_json(Path::new(EXPECTATIONS_PATH), "ratified expectations")?;
         let receipt = read_json(Path::new(RECEIPT_PATH), "decision receipt")?;
         validate_expectations(&report, &expectations)?;
-        validate_receipt(&report, &receipt)
+        validate_receipt(&report, &receipt)?;
+        // Keep the measured report in the retained CI artifact so the actual
+        // normalized byte counts are readable without rerunning the command.
+        let json_body = serde_json::to_string_pretty(&report)
+            .map_err(|error| format!("serialize committed-evidence report: {error}"))?;
+        crate::write_report("repair-card-usability.json", &format!("{json_body}\n"))?;
+        crate::write_report("repair-card-usability.md", &markdown_report(&report))
     }
 
     #[test]
