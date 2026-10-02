@@ -579,11 +579,15 @@ fn classify_isolated(log: Option<&str>, raw_status: Option<&str>) -> IsolatedObs
         ));
     }
     if outcome.targets.len() != 1
+        || outcome
+            .targets
+            .first()
+            .is_none_or(|target| !target.owns(RIPR_LIB))
         || outcome.results.len() != 1
         || !outcome.provenance_errors.is_empty()
     {
         return IsolatedObservation::EvidenceFailure(format!(
-            "expected one test target and one result total, found {} target(s) and {} result(s)",
+            "expected one ripr library target and one result total, found {} target(s) and {} result(s)",
             outcome.targets.len(),
             outcome.results.len()
         ));
@@ -1333,6 +1337,7 @@ mod tests {
             "",
             1,
         );
+        let wrong_target = pass.replace("ripr-0000000000000001.exe", "xtask-0000000000000001.exe");
         let truncated_total = isolated_log("ok", "test result: ok. 1 passed; 0 failed;");
         let missing_counts = isolated_log(
             "ok",
@@ -1356,6 +1361,7 @@ mod tests {
             ("duplicate named row", duplicate_row),
             ("extra test", extra_test),
             ("missing target", no_target),
+            ("wrong target", wrong_target),
             ("truncated total", truncated_total),
             ("missing counts", missing_counts),
             ("nonnumeric filtered", nonnumeric_filtered),
@@ -2035,6 +2041,27 @@ mod tests {
         );
         assert_eq!(running_target("Running a custom build command"), None);
         assert_eq!(running_target("Running"), None);
+    }
+
+    #[test]
+    fn admitted_targets_preserve_the_raw_header_and_reject_malformed_aliases() {
+        let raw = "\u{1b}[92m Running\u{1b}[0m unittests src\\lib.rs (elsewhere\\ripr-0123456789abcdef.exe)";
+        let parsed = parse_log(&format!("{raw}\ntest example ... ok\n"));
+        assert_eq!(parsed.raw_headers, vec![raw]);
+        assert_eq!(
+            parsed.targets,
+            vec![target("src/lib.rs", "ripr-0123456789abcdef")]
+        );
+        for malformed in [
+            "Running unittests src/lib.rs (ripr-0123456789abcdef.exe) trailing",
+            "Running unittests src/lib.rs (ripr-not-a-hash.exe)",
+            "Running unittests src/lib.rs (ripr-0123456789abcdef.exe.extra)",
+            "Running unittests src\\lib.rs (ripr-0123456789abcdef)",
+            "Running unittests ../src/lib.rs (ripr-0123456789abcdef.exe)",
+            "Doc-tests ripr extra",
+        ] {
+            assert_eq!(running_target(malformed), None, "{malformed}");
+        }
     }
 
     #[test]

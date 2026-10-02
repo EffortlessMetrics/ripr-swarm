@@ -115,14 +115,32 @@ fn target(source: &str, stem: &str, rows: &[(&str, &str, &str)]) -> String {
 }
 
 fn controls(omit: Option<&str>) -> String {
+    controls_adjusted(omit, None, None)
+}
+
+type ExtraRow<'a> = (&'a str, &'a str, (&'a str, &'a str, &'a str));
+
+fn controls_adjusted(
+    omit: Option<&str>,
+    extra: Option<ExtraRow<'_>>,
+    failing: Option<&str>,
+) -> String {
     let mut groups = BTreeMap::<(&str, &str), Vec<(&str, &str, &str)>>::new();
     for &(source, stem, name) in CONTROLS {
         if Some(name) != omit {
-            groups
-                .entry((source, stem))
-                .or_default()
-                .push((name, "ok", ""));
+            groups.entry((source, stem)).or_default().push((
+                name,
+                if Some(name) == failing {
+                    "FAILED"
+                } else {
+                    "ok"
+                },
+                "owning control reason",
+            ));
         }
+    }
+    if let Some((source, stem, row)) = extra {
+        groups.entry((source, stem)).or_default().push(row);
     }
     groups
         .into_iter()
@@ -145,6 +163,10 @@ impl Drop for TempRoot {
 }
 
 fn invoke(first: &str, second: &str) -> Result<Output, String> {
+    invoke_with_missing(first, second, None)
+}
+
+fn invoke_with_missing(first: &str, second: &str, missing: Option<&str>) -> Result<Output, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -165,6 +187,9 @@ fn invoke(first: &str, second: &str) -> Result<Output, String> {
             },
         )
         .map_err(|e| e.to_string())?;
+    }
+    if let Some(name) = missing {
+        fs::remove_file(root.0.join(name)).map_err(|e| e.to_string())?;
     }
     Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("windows-advisory-summary")
@@ -321,9 +346,10 @@ fn same_source_different_executables_remain_distinct() -> Result<(), String> {
             "ripr",
             &[(NAME, "FAILED", "ripr main")],
         );
-    let second = controls(None).replace(
-        "test run::tests::",
-        &format!("test {NAME} ... ok\ntest run::tests::"),
+    let second = controls_adjusted(
+        None,
+        Some(("unittests src/main.rs", "xtask", (NAME, "ok", ""))),
+        None,
     );
     verify(first, second, 0, &["masked_unknown (1)"], &["unstable ("])
 }
@@ -401,7 +427,11 @@ fn doctest_transition_cannot_borrow_a_unit_pass() -> Result<(), String> {
         + &format!(
             "Doc-tests ripr\ntest {name} ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n"
         );
-    let second=controls(None).replace("test process_owner::tests::owner_drop_terminates_a_still_running_child", &format!("test {name} ... ok\ntest process_owner::tests::owner_drop_terminates_a_still_running_child"));
+    let second = controls_adjusted(
+        None,
+        Some(("unittests src/lib.rs", "ripr", (name, "ok", ""))),
+        None,
+    );
     verify(
         first,
         second,
@@ -444,10 +474,7 @@ fn duplicate_doctest_transitions_are_unproven() -> Result<(), String> {
 }
 #[test]
 fn a_failing_owning_control_stays_advisory() -> Result<(), String> {
-    let log = controls(None).replace(
-        &format!("test {} ... ok", CONTROLS[0].2),
-        &format!("test {} ... FAILED", CONTROLS[0].2),
-    );
+    let log = controls_adjusted(None, None, Some(CONTROLS[0].2));
     verify(
         log.clone(),
         log,
@@ -455,4 +482,23 @@ fn a_failing_owning_control_stays_advisory() -> Result<(), String> {
         &["repeated_failure (1)", "FAILED | FAILED"],
         &["not_observed"],
     )
+}
+
+#[test]
+fn missing_log_or_status_never_becomes_clean_evidence() -> Result<(), String> {
+    let log = controls(None);
+    for name in ["run1.log", "run2.log", "run1.status", "run2.status"] {
+        let output = invoke_with_missing(&log, &log, Some(name))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if output.status.code() != Some(1)
+            || !stdout.contains("**Evidence failure.**")
+            || stdout.contains("No test failed in either run.")
+        {
+            return Err(format!(
+                "missing {name}: unexpected status {:?}: {stdout}",
+                output.status.code()
+            ));
+        }
+    }
+    Ok(())
 }
