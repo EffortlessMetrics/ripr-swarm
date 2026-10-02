@@ -11,6 +11,18 @@ are scoped or reviewed.
 
 ### Changed
 
+- Human output: the Summary denominator is now `N of M finding(s)
+  unsuppressed` instead of `N of M finding(s) shown`; the digest renders one
+  finding and names the rest under `Hidden:`, so "shown" read as "rendered"
+  and contradicted the omitted count on the same page. The #4322 suppression
+  disclosure is unchanged. (#5017)
+- Human output: when a top gap is selected, the `Hidden:` count line now
+  names the omitted set's currentness mix instead of labeling every omission
+  lower-priority — `L lower-priority finding(s) omitted; B base-side
+  evidence, not candidate edit targets` (with an unresolved-currentness
+  clause when present), and an all-base-side or all-unresolved omitted set
+  says so directly. Pure lower-priority omitted sets keep the legacy single
+  clause. (#5021)
 - LSP: identity-law tests pin that `action_id` excludes title, range,
   message, snapshot handles, client capability, and disabled reason; build
   and parse share one fingerprint; analysis input identity excludes
