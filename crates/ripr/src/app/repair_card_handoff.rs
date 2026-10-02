@@ -925,9 +925,11 @@ mod tests {
     }
 
     /// #5008: a probe failure fails closed — no card, hence no `current`
-    /// claim. An empty `.git` directory shadows any parent repository during
-    /// discovery, so the probe errors exactly as it would outside a repo,
-    /// independent of where the test temp directory lives.
+    /// claim. A `.git` file with a dangling `gitdir:` pointer is fatal in
+    /// every git version (unlike an invalid `.git` directory, which some
+    /// versions skip during discovery), so the probe errors exactly as it
+    /// would outside a repo, independent of where the test temp directory
+    /// lives.
     #[test]
     fn evidence_tree_currentness_probe_failure_fails_closed() -> Result<(), String> {
         let probe_root = std::env::temp_dir().join(format!(
@@ -938,8 +940,10 @@ mod tests {
                 .map_err(|error| format!("clock error: {error}"))?
                 .as_nanos()
         ));
-        std::fs::create_dir_all(probe_root.join(".git"))
+        std::fs::create_dir_all(&probe_root)
             .map_err(|error| format!("probe fixture directory failed: {error}"))?;
+        std::fs::write(probe_root.join(".git"), "gitdir: /nonexistent/ripr-probe\n")
+            .map_err(|error| format!("probe fixture gitfile failed: {error}"))?;
         let entry = weakly_gripped_entry();
         let outcome = evidence_tree_currentness(&probe_root, &entry);
         std::fs::remove_dir_all(&probe_root)
