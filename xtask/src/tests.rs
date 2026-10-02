@@ -7765,20 +7765,9 @@ fn release_server_helpers_match_workflow_arguments() -> Result<(), String> {
 }
 
 #[test]
-fn release_server_archive_prepares_package_before_format_validation() -> Result<(), String> {
-    with_temp_cwd("release-server-archive", |root| {
+fn release_server_archive_rejects_format_before_repository_bound_staging() -> Result<(), String> {
+    with_temp_cwd("release-server-archive-invalid-format", |_root| {
         let executable = if cfg!(windows) { "ripr.exe" } else { "ripr" };
-        write(
-            &root
-                .join("target")
-                .join("x86_64-unknown-linux-gnu")
-                .join("release")
-                .join(executable),
-            "binary",
-        );
-        write(&root.join("LICENSE-MIT"), "mit");
-        write(&root.join("LICENSE-APACHE"), "apache");
-
         let args = vec![
             "--version".to_string(),
             "v1.2.3".to_string(),
@@ -7794,17 +7783,6 @@ fn release_server_archive_prepares_package_before_format_validation() -> Result<
             return Err("unsupported archive format should fail".to_string());
         };
         assert!(err.contains("unsupported release server archive format"));
-        assert_eq!(
-            fs::read_to_string(root.join("package").join(executable))
-                .map_err(|err| format!("read packaged executable: {err}"))?,
-            "binary"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("package").join("README-server.txt"))
-                .map_err(|err| format!("read packaged README: {err}"))?,
-            super::release_server_readme("1.2.3")
-        );
-        assert!(root.join("dist").is_dir());
         Ok(())
     })
 }
@@ -9584,19 +9562,19 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             || candidate
                 .matches("git init \"${GITHUB_WORKSPACE}\"")
                 .count()
-                != 3
+                != 4
             || candidate
                 .matches("-c credential.helper= -c http.extraheader= fetch")
                 .count()
-                != 3
+                != 4
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
             || candidate
                 .matches("https://github.com/EffortlessMetrics/ripr-swarm.git")
                 .count()
-                != 4
+                != 5
         {
             return Err(
-                "candidate source must use three isolated unauthenticated git fetches".to_owned(),
+                "candidate source must use four isolated unauthenticated git fetches".to_owned(),
             );
         }
         if !candidate.contains("permissions:\n  contents: read")
@@ -9663,11 +9641,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 3
+            != 5
             || candidate
                 .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
                 .count()
-                != 2
+                != 3
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
             || candidate.contains("gh api")
@@ -9712,7 +9690,13 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "ruleset_id",
             "--arg repository \"${REPOSITORY}\"",
             "release_assets_created: false",
-            "cargo build --locked -p ripr --release",
+            "archive_readback_verified = $true",
+            "(.archive_readback_verified == true) and",
+            "archive_readback_verified: true",
+            "RECEIPT_INSTRUMENT_REPOSITORY: ${{ job.workflow_repository }}",
+            "RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}",
+            "endswith(\" / \" + $suffix)",
+            "cargo xtask release-server-archive",
             "os: ubuntu-22.04\n",
             "os: ubuntu-22.04-arm\n",
             "GLIBC_FLOOR: \"2.34\"",
@@ -9803,8 +9787,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             workflow.replacen("curl --silent --show-error", "gh api", 1),
         ),
         (
-            "unlocked server build",
-            workflow.replacen("cargo build --locked -p ripr", "cargo build -p ripr", 1),
+            "bypassed delegated server builder",
+            workflow.replace(
+                "cargo xtask release-server-archive",
+                "cargo build --release -p ripr",
+            ),
         ),
         (
             "newer glibc runner",
@@ -9869,6 +9856,38 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "token credential",
             workflow.replacen("ruleset_mode", "GH_TOKEN", 1),
+        ),
+        (
+            "caller SHA receipt instrument",
+            workflow.replacen(
+                "RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}",
+                "RECEIPT_INSTRUMENT_SHA: ${{ github.sha }}",
+                1,
+            ),
+        ),
+        (
+            "exact-only matrix job lookup",
+            workflow.replacen(
+                "select(.name == $suffix or (.name | endswith(\" / \" + $suffix)))",
+                "select(.name == $suffix)",
+                1,
+            ),
+        ),
+        (
+            "implicit archive readback",
+            workflow.replacen(
+                "archive_readback_verified: true",
+                "archive_shape_verified: true",
+                1,
+            ),
+        ),
+        (
+            "false archive readback identity",
+            workflow.replacen(
+                "archive_readback_verified = $true",
+                "archive_readback_verified = $false",
+                1,
+            ),
         ),
     ] {
         if validate(&broken).is_ok() {
@@ -9953,6 +9972,80 @@ fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating() -> Resu
     if run_predicate(&wrong_shape, "wrong-shape.json")? {
         return Err("workflow jq predicate accepted a malformed ruleset shape".to_string());
     }
+    Ok(())
+}
+
+#[test]
+fn server_archive_terminal_job_name_filter_accepts_direct_and_reusable_names() -> Result<(), String>
+{
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let workflow =
+        fs::read_to_string(repo_root.join(".github/workflows/server-archive-qualification.yml"))
+            .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
+    let marker = "jq -r --arg suffix \"build and qualify ${target}\" '";
+    let program_start = workflow
+        .find(marker)
+        .map(|offset| offset + marker.len())
+        .ok_or_else(|| "terminal job-name jq marker is missing".to_string())?;
+    let program_end = workflow[program_start..]
+        .find("' \"${response}\"")
+        .ok_or_else(|| "terminal job-name jq terminator is missing".to_string())?;
+    let program = workflow[program_start..program_start + program_end].trim();
+    if program.is_empty() {
+        return Err("terminal job-name jq program is empty".to_string());
+    }
+    if !program.contains(".name == $suffix") || !program.contains("endswith(\" / \" + $suffix)") {
+        return Err(
+            "terminal job-name jq program must accept direct and reusable caller names".to_string(),
+        );
+    }
+
+    let suffix = "build and qualify x86_64-unknown-linux-gnu";
+    let fixture_root = temp_dir("server-terminal-job-names");
+    let run = |names: &[&str]| -> Result<String, String> {
+        let jobs: Vec<Value> = names
+            .iter()
+            .map(|name| serde_json::json!({ "name": name, "conclusion": "success" }))
+            .collect();
+        let path = fixture_root.join(format!("jobs-{}.json", jobs.len()));
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({ "jobs": jobs }))
+                .map_err(|error| format!("serialize workflow-jobs fixture: {error}"))?,
+        )
+        .map_err(|error| format!("write workflow-jobs fixture: {error}"))?;
+        let path_text = path
+            .to_str()
+            .ok_or_else(|| "workflow-jobs fixture path was not UTF-8".to_string())?;
+        let _cwd_guard = super::acquire_test_cwd_read_guard();
+        let stdout =
+            crate::run_output("jq", &["-r", "--arg", "suffix", suffix, program, path_text])
+                .map_err(|error| format!("run terminal job-name jq filter: {error}"))?;
+        Ok(stdout.trim().to_string())
+    };
+
+    if run(&[suffix])? != "success" {
+        return Err(
+            "terminal job-name jq filter rejected the direct dispatch job name".to_string(),
+        );
+    }
+    let reusable = format!("rehearse / {suffix}");
+    if run(&[reusable.as_str()])? != "success" {
+        return Err(
+            "terminal job-name jq filter rejected the reusable-caller job name".to_string(),
+        );
+    }
+    if run(&["build and qualify"])? != "missing" {
+        return Err("terminal job-name jq filter matched an unrelated job name".to_string());
+    }
+    if run(&[suffix, reusable.as_str()])? != "duplicate" {
+        return Err(
+            "terminal job-name jq filter did not report a duplicated target job".to_string(),
+        );
+    }
+    ignore_remove_dir_all(&fixture_root);
     Ok(())
 }
 
@@ -29004,11 +29097,206 @@ fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
         check_allow_attributes()?;
         check_local_context()?;
         check_file_policy()?;
+        assert_packet_coverage_report()?;
         check_executable_files()?;
         check_workflows()?;
         check_droid_review_config()?;
         check_process_policy()?;
         check_network_policy()
+    })
+}
+
+fn assert_packet_coverage_report() -> Result<(), String> {
+    let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
+    let common = report
+        .lines()
+        .find(|line| line.ends_with("`cargo test -p xtask --locked --offline portable_consumer`"))
+        .ok_or("common packet coverage is absent from the policy report")?;
+    let common_tests = packet_coverage_selected_tests(common)?;
+    for subject in [
+        "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
+        "portable_consumer::tests::packet_digest_matches_the_producer_formula",
+    ] {
+        if !common_tests.contains(&subject) || !common.contains("declared=all; applicable;") {
+            return Err(format!(
+                "common packet subject not selected: {subject}: {common}"
+            ));
+        }
+    }
+    let native = report
+        .lines()
+        .find(|line| {
+            line.ends_with(
+                "`cargo test -p ripr --locked --offline --test portable_consumer_packet`",
+            )
+        })
+        .ok_or("native packet coverage is absent from the policy report")?;
+    if packet_coverage_selected_count(common)? < 2 {
+        return Err(format!(
+            "common packet selection lost required subjects: {common}"
+        ));
+    }
+    if cfg!(windows) {
+        if !common.contains("host=windows; declared=all; applicable;")
+            || !native
+                .contains("host=windows; declared=unix; not_applicable; selected=not_enumerated;")
+            || native.contains("tests=[")
+        {
+            return Err(format!(
+                "Windows packet applicability drifted: {common}\n{native}"
+            ));
+        }
+    } else {
+        let native_tests = packet_coverage_selected_tests(native)?;
+        if !native.contains("host=unix; declared=unix; applicable;")
+            || packet_coverage_selected_count(native)? < 2
+        {
+            return Err(format!(
+                "Unix native packet selector was not retained: {native}"
+            ));
+        }
+        for subject in [
+            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
+            "native_packet_pilot_consumes_the_summary_artifact",
+        ] {
+            if !native_tests.contains(&subject) {
+                return Err(format!(
+                    "Unix native packet subject missing: {subject}: {native}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn packet_coverage_selected_count(row: &str) -> Result<usize, String> {
+    row.split_once("; selected=")
+        .and_then(|(_, rest)| rest.split_once(';'))
+        .ok_or_else(|| format!("selected count absent from coverage row: {row}"))?
+        .0
+        .parse()
+        .map_err(|error| format!("invalid selected count in {row}: {error}"))
+}
+
+fn packet_coverage_selected_tests(row: &str) -> Result<Vec<&str>, String> {
+    let tests = row
+        .rsplit_once("; `")
+        .and_then(|(fields, _)| fields.split_once("; tests=["))
+        .and_then(|(_, tests)| tests.strip_suffix(']'))
+        .ok_or_else(|| format!("selected tests field missing or malformed: {row}"))?;
+    let selected: Vec<_> = tests.split(", ").collect();
+    if selected.iter().any(|test| {
+        test.is_empty() || test.contains([',', '[', ']', ';']) || test.contains(char::is_whitespace)
+    }) || selected.len() != packet_coverage_selected_count(row)?
+    {
+        return Err(format!("selected identities and count disagree: {row}"));
+    }
+    Ok(selected)
+}
+
+fn packet_coverage_report_fixture() -> String {
+    let host = if cfg!(windows) { "windows" } else { "unix" };
+    let native = if cfg!(windows) {
+        "not_applicable; selected=not_enumerated".to_string()
+    } else {
+        concat!(
+            "applicable; selected=2; tests=[",
+            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback, ",
+            "native_packet_pilot_consumes_the_summary_artifact]",
+        )
+        .to_string()
+    };
+    format!(
+        concat!(
+            "- line 1; host={host}; declared=all; applicable; selected=2; tests=[",
+            "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client, ",
+            "portable_consumer::tests::packet_digest_matches_the_producer_formula]; ",
+            "`cargo test -p xtask --locked --offline portable_consumer`\n",
+            "- line 1; host={host}; declared=unix; {native}; ",
+            "`cargo test -p ripr --locked --offline --test portable_consumer_packet`\n",
+        ),
+        host = host,
+        native = native,
+    )
+}
+
+#[test]
+fn packet_coverage_report_accepts_exact_selected_names() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-exact-names", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        let extra = report.replacen(
+            "selected=2; tests=[",
+            "selected=3; tests=[neighboring_control, ",
+            1,
+        );
+        write(&path, &extra);
+        assert_packet_coverage_report()
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_neighboring_selected_names() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-neighbor-names", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for subject in [
+            "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
+            "portable_consumer::tests::packet_digest_matches_the_producer_formula",
+            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
+            "native_packet_pilot_consumes_the_summary_artifact",
+        ] {
+            // The native target is deliberately not enumerated on Windows.
+            if !report.contains(subject) {
+                continue;
+            }
+            for neighbor in [
+                format!("neighbor::{subject}"),
+                format!("{subject}_neighbor"),
+            ] {
+                write(&path, &report.replace(subject, &neighbor));
+                if assert_packet_coverage_report().is_ok() {
+                    return Err(format!(
+                        "neighboring selected identity accepted: {neighbor}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_invalid_selected_fields() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-invalid-fields", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for row in report.lines().filter(|row| row.contains("; tests=[")) {
+            for malformed in [
+                row.replace("selected=2", "selected=0"),
+                row.replace("selected=2", "selected=1"),
+                row.replace("selected=2", "selected=3"),
+                row.replace("selected=2", "selected=invalid"),
+                row.replace("; tests=[", "; subjects=["),
+                row.replace("; tests=[", "; tests="),
+                row.replace("]; `", "; `"),
+                row.replace("; tests=[", "; tests=[, "),
+                row.replace("]; `", ", ]; `"),
+                row.replace("]; `", "]; tests=[]; `"),
+            ] {
+                write(&path, &report.replace(row, &malformed));
+                if assert_packet_coverage_report().is_ok() {
+                    return Err(format!("malformed selected field accepted: {malformed}"));
+                }
+            }
+        }
+        Ok(())
     })
 }
 
@@ -29108,6 +29396,68 @@ covered_by = ["npm run compile"]
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].glob.as_deref(), Some("editors/vscode/**/*.ts"));
         assert_eq!(entries[0].surface.as_deref(), Some("editor"));
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_accepts_host_scoped_coverage() -> Result<(), String> {
+    with_temp_cwd("file-policy-host-coverage", |root| {
+        let path = root.join("allowlist.toml");
+        write(
+            &path,
+            r#"[[allow]]
+glob = "tools/example.py"
+kind = "tool"
+owner = "policy"
+surface = "repo"
+classification = "tooling"
+reason = "Host-scoped tests supplement common controls."
+covered_by = ["cargo test -p xtask common", "cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask unix_control"]
+covered_by_windows = ["cargo test -p xtask windows_control"]
+"#,
+        );
+        let commands = crate::read_file_policy_test_commands(&path.to_string_lossy())?;
+        assert_eq!(commands.len(), 3, "keep common and both platform selectors");
+        assert_eq!(commands[0].host, None);
+        assert_eq!(commands[1].host, Some(crate::FilePolicyHost::Unix));
+        assert_eq!(commands[2].host, Some(crate::FilePolicyHost::Windows));
+        assert!(commands[0].command.ends_with(" common"));
+        assert!(commands[1].command.ends_with(" unix_control"));
+        assert!(commands[2].command.ends_with(" windows_control"));
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_rejects_malformed_host_coverage() -> Result<(), String> {
+    with_temp_cwd("file-policy-invalid-host", |root| {
+        let path = root.join("allowlist.toml");
+        let entry = concat!(
+            "[[allow]]\nglob = \"tools/example.py\"\nkind = \"tool\"\n",
+            "owner = \"policy\"\nsurface = \"repo\"\nclassification = \"tooling\"\n",
+            "reason = \"Explicit applicability\"\ncovered_by = [\"cargo test common\"]\n",
+        );
+        for invalid in [
+            "covered_by_linux = [\"cargo test native\"]",
+            "covered_by_Unix = [\"cargo test native\"]",
+            "covered_by_unix = \"cargo test native\"",
+            "covered_by_unix = [1]",
+            "covered_by_unix = []",
+            "covered_by_windows = [\" \" ]",
+            "covered_by_windows = [\"cargo xtask check-file-policy\"]",
+            "covered_by_unix = [\"cargo test native\",,]",
+            "covered_by_unix = [\"cargo test native\"]\ncovered_by_unix = []",
+            "covered_by_unix = [\"cargo test native\"] garbage",
+            "[allow.covered_by_unix]",
+            "[allow.covered_by_unknown]",
+        ] {
+            write(&path, &format!("{entry}{invalid}\n"));
+            if crate::read_file_policy_test_commands(&path.to_string_lossy()).is_ok() {
+                return Err(format!("malformed applicability was accepted: {invalid}"));
+            }
+        }
         Ok(())
     })
 }
