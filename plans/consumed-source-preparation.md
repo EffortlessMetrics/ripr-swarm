@@ -62,6 +62,12 @@ precedence. Its additional root-scoped fallback accepts only one stored entry
 with the same admitted relative key; ambiguity is refused. Distinct lexical
 aliases inside the workspace are not collapsed. Global URI/action identity and
 per-document quarantine are unchanged.
+The immutable snapshot prepares the stored URI projection once before
+publication, with a commit guard for unprepared or changed roots/keys. Request
+lookup projects only the requested URI; it never recanonicalizes every stored
+diagnostic on a miss. Root/key mismatches refuse the cached fallback until it
+is rebuilt, including same-cardinality key replacements. Missing indexes do
+not silently restore the filesystem-scanning path.
 
 ## Proof
 

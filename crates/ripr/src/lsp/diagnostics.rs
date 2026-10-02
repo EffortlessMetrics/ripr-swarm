@@ -1072,6 +1072,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
         gap_artifact_rejections: gap_artifact_report.rejections,
         harness_facts,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
         partial_scope,
@@ -1195,6 +1196,7 @@ fn git_timeout_limited_diagnostics(
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
         diagnostics_by_uri: BTreeMap::new(),
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
         partial_scope: None,
@@ -1297,6 +1299,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
         partial_scope: None,
@@ -5079,6 +5082,7 @@ mod delivery_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,

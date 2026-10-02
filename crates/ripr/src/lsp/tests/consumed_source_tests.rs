@@ -695,7 +695,7 @@ async fn real_saved_refresh_admits_canonical_uri_under_symlinked_root() -> Resul
             .map_err(|error| format!("alias producer barrier: {error}"))?;
         release
             .send(())
-            .map_err(|_| "alias producer release closed".to_string())?;
+            .map_err(|error| format!("alias producer release closed: {error:?}"))?;
         Ok::<_, String>(produced)
     };
     let ((), produced) = tokio::time::timeout(Duration::from_mins(2), async {
@@ -783,6 +783,9 @@ async fn real_saved_refresh_admits_canonical_uri_under_symlinked_root() -> Resul
             "BEHAVIORAL: current canonical URI did not receive its actual B diagnostics".into(),
         );
     }
+    if !snapshot.diagnostic_uri_index_is_current() {
+        return Err("actual alias snapshot committed without its URI index".into());
+    }
     backend
         .did_change(quarantine_change_params(&uri, 3, SOURCE_A))
         .await;
@@ -813,6 +816,7 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
         vec![first.clone()],
         Vec::new(),
     );
+    snapshot.prepare_diagnostic_uri_index();
     if snapshot.diagnostics_for_uri(&canonical_uri) != Some([first.clone()].as_slice())
         || snapshot.served_diagnostics_for_uri(&canonical_uri) != vec![first.clone()]
     {
@@ -823,6 +827,7 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
     snapshot
         .diagnostics_by_uri
         .insert(canonical_uri.clone(), vec![second.clone()]);
+    snapshot.prepare_diagnostic_uri_index();
     for (uri, expected) in [(&lexical_uri, &first), (&canonical_uri, &second)] {
         let actual = snapshot
             .diagnostics_for_uri(uri)
@@ -856,6 +861,7 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
     snapshot
         .diagnostics_by_uri
         .insert(inner_uri.clone(), vec![first.clone()]);
+    snapshot.prepare_diagnostic_uri_index();
     if snapshot.diagnostics_for_uri(&canonical_uri).is_some() {
         return Err("distinct in-workspace lexical source keys were collapsed".into());
     }
@@ -911,6 +917,126 @@ fn consumed_projection_uses_physical_parent_resolution() -> Result<(), String> {
         .is_none_or(|state| state.is_quarantined())
     {
         return Err("physical root control remained quarantined".into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_alias_misses_do_not_recanonicalize_stored_documents() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("consumed-alias-cost")?;
+    let lexical_uri = file_uri_for_path(&fixture.alias.join("src/lib.rs"))?;
+    let diagnostic = tower_lsp_server::ls_types::Diagnostic::new_simple(
+        Default::default(),
+        "stored identity".to_string(),
+    );
+    let mut snapshot = sample_analysis_snapshot(
+        fixture.alias.clone(),
+        lexical_uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    for index in 0..128 {
+        let uri = file_uri_for_path(&fixture.alias.join(format!("src/neighbor_{index}.rs")))?;
+        snapshot
+            .diagnostics_by_uri
+            .insert(uri, vec![diagnostic.clone()]);
+    }
+    snapshot.prepare_diagnostic_uri_index();
+    let clean_file = fixture.root.join("src/clean.rs");
+    fs::write(&clean_file, SOURCE_A).map_err(|error| format!("write clean file: {error}"))?;
+    let clean_uri = file_uri_for_path(&clean_file)?;
+    let before = crate::lsp::uri::canonical_projection_count_for_test();
+    for _ in 0..8 {
+        if snapshot.diagnostics_for_uri(&clean_uri).is_some() {
+            return Err("clean document borrowed a neighbor's diagnostic".into());
+        }
+    }
+    let lookups = crate::lsp::uri::canonical_projection_count_for_test() - before;
+    if lookups != 16 {
+        return Err(format!(
+            "BEHAVIORAL: eight alias misses repeated stored-path canonicalization: {lookups} projections"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_alias_index_refuses_changed_roots_and_same_count_keys() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("consumed-alias-stale-index")?;
+    let canonical_uri = file_uri_for_path(&fixture.file)?;
+    let lexical_uri = file_uri_for_path(&fixture.alias.join("src/lib.rs"))?;
+    let diagnostic = tower_lsp_server::ls_types::Diagnostic::new_simple(
+        Default::default(),
+        "stored identity".to_string(),
+    );
+    let mut snapshot = sample_analysis_snapshot(
+        fixture.alias.clone(),
+        lexical_uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    if snapshot.diagnostics_for_uri(&canonical_uri).is_some() {
+        return Err("unprepared alias lookup scanned the snapshot".into());
+    }
+    snapshot.prepare_diagnostic_uri_index();
+    let second_alias = fixture.temp.path().join("replacement-alias");
+    std::os::unix::fs::symlink(&fixture.root, &second_alias)
+        .map_err(|error| format!("create replacement alias: {error}"))?;
+    let replacement = file_uri_for_path(&second_alias.join("src/lib.rs"))?;
+    snapshot.diagnostics_by_uri.clear();
+    snapshot
+        .diagnostics_by_uri
+        .insert(replacement, vec![diagnostic.clone()]);
+    if snapshot.diagnostic_uri_index_is_current()
+        || snapshot.diagnostics_for_uri(&canonical_uri).is_some()
+    {
+        return Err("stale alias index accepted same-count replacement keys".into());
+    }
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.alias.clone()));
+    drop(socket);
+    let backend = service.inner();
+    let batches = snapshot
+        .diagnostics_by_uri
+        .iter()
+        .map(
+            |(uri, diagnostics)| crate::lsp::diagnostics::DiagnosticBatch {
+                uri: uri.clone(),
+                diagnostics: diagnostics.clone(),
+            },
+        )
+        .collect();
+    let plan = crate::lsp::diagnostics::diagnostic_refresh_plan(&Default::default(), batches);
+    backend
+        .commit_refresh_snapshot(snapshot.clone(), &plan, &Default::default(), &[])
+        .ok_or_else(|| "stale-index direct commit failed".to_string())?;
+    let committed = backend
+        .latest_analysis_snapshot()
+        .ok_or_else(|| "stale-index direct commit had no snapshot".to_string())?;
+    if !committed.diagnostic_uri_index_is_current()
+        || committed.diagnostics_for_uri(&canonical_uri) != Some([diagnostic.clone()].as_slice())
+    {
+        return Err("commit did not rebuild the same-count stale alias index".into());
+    }
+    snapshot.prepare_diagnostic_uri_index();
+    if snapshot.diagnostics_for_uri(&canonical_uri) != Some([diagnostic.clone()].as_slice()) {
+        return Err("rebuilding the alias index did not restore the replacement key".into());
+    }
+    snapshot.root = fixture.temp.path().join("outside");
+    if snapshot.diagnostic_uri_index_is_current()
+        || snapshot.diagnostics_for_uri(&canonical_uri).is_some()
+    {
+        return Err("stale alias index accepted a changed root".into());
+    }
+    snapshot.prepare_diagnostic_uri_index();
+    if snapshot.diagnostics_for_uri(&canonical_uri).is_some() {
+        return Err("rebuilding an outside-root index admitted the prior document".into());
+    }
+    snapshot.root = fixture.root.clone();
+    snapshot.prepare_diagnostic_uri_index();
+    if snapshot.diagnostics_for_uri(&canonical_uri) != Some([diagnostic].as_slice()) {
+        return Err("ordinary-root rebuilt alias index failed to recover".into());
     }
     Ok(())
 }

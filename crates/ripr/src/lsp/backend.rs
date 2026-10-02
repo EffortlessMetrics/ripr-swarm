@@ -940,6 +940,7 @@ impl Backend {
             snapshot.refresh.snapshot_id = Some("snapshot:legacy".to_string());
         }
         bind_seam_evidence_identity(&mut snapshot, &mut batches);
+        snapshot.prepare_diagnostic_uri_index();
         let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
             return None;
         };
@@ -988,6 +989,9 @@ impl Backend {
         pending_entered: &[Uri],
     ) -> Option<super::state::QuarantineEdges> {
         snapshot.input_identity.as_ref()?;
+        if !snapshot.diagnostic_uri_index_is_current() {
+            snapshot.prepare_diagnostic_uri_index();
+        }
         // Final authority guard: a committed snapshot always carries its
         // delivery selection (#1973). The refresh-transaction prepare step
         // already computed it on the real path; this fills snapshots that
@@ -6898,6 +6902,7 @@ mod top_limitation_selection_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope,
@@ -9435,6 +9440,7 @@ mod delivery_selection_parity_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,
@@ -10368,6 +10374,7 @@ mod list_actionable_items_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
             partial_scope: None,

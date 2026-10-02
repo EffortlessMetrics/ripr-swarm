@@ -618,6 +618,19 @@ pub(super) enum HarnessFactsOnSnapshot {
 }
 
 #[derive(Clone, Debug)]
+pub(super) struct DiagnosticUriIndex {
+    root: PathBuf,
+    uris: Vec<Uri>,
+    by_relative: BTreeMap<PathBuf, Option<usize>>,
+}
+
+impl DiagnosticUriIndex {
+    fn matches(&self, root: &Path, diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>) -> bool {
+        self.root == root && self.uris.iter().eq(diagnostics.keys())
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct AnalysisSnapshot {
     pub(super) root: PathBuf,
     /// Private per-path raw input commitments, never a complete dependency ID.
@@ -653,6 +666,10 @@ pub(super) struct AnalysisSnapshot {
     /// surface reads. Never a claim that harness subjects were executed.
     pub(super) harness_facts: HarnessFactsOnSnapshot,
     pub(super) diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>>,
+    /// Admitted root-relative keys prepared once for this immutable snapshot.
+    /// `None` is unprepared; duplicate stored keys retain `None` values so an
+    /// alias lookup refuses ambiguity instead of choosing an arbitrary URI.
+    pub(super) diagnostic_uri_index: Option<DiagnosticUriIndex>,
     /// The one immutable delivery selection shared by push publication and
     /// both pull handlers (#1973). Computed once at refresh-transaction
     /// prepare time (before any publication) and retained with the committed
@@ -779,6 +796,33 @@ impl AnalysisSnapshot {
             .map(|(_, diagnostics)| diagnostics)
     }
 
+    /// Build the immutable alias lookup from the same admitted projection used
+    /// by indexing and currentness. Call before publication, after the final
+    /// diagnostic keys are known; fixtures that mutate keys must rebuild it.
+    pub(super) fn prepare_diagnostic_uri_index(&mut self) {
+        let uris = self.diagnostics_by_uri.keys().cloned().collect::<Vec<_>>();
+        let mut by_relative = BTreeMap::new();
+        for (position, uri) in uris.iter().enumerate() {
+            if let Some(relative) = file_uri_relative_to_root(&self.root, uri) {
+                by_relative
+                    .entry(relative)
+                    .and_modify(|stored| *stored = None)
+                    .or_insert(Some(position));
+            }
+        }
+        self.diagnostic_uri_index = Some(DiagnosticUriIndex {
+            root: self.root.clone(),
+            uris,
+            by_relative,
+        });
+    }
+
+    pub(super) fn diagnostic_uri_index_is_current(&self) -> bool {
+        self.diagnostic_uri_index
+            .as_ref()
+            .is_some_and(|index| index.matches(&self.root, &self.diagnostics_by_uri))
+    }
+
     /// The stored document key and complete diagnostics for one URI. The
     /// stored key is the document identity the delivery selection was
     /// computed against, so transports must look the selection up by this
@@ -794,20 +838,20 @@ impl AnalysisSnapshot {
                     .map(|(stored_uri, diagnostics)| (stored_uri, diagnostics.as_slice()))
             })
             .or_else(|| {
-                // Whole-root aliases may have different URI spellings. Match
-                // only admitted producer-relative keys, retaining exact URI
-                // precedence and refusing an ambiguous fallback. This does not
-                // change global URI/action identity or document quarantine.
+                // Stored keys are admitted once at preparation/commit, rather
+                // than canonicalizing every diagnostic path on each miss.
+                let index = self.diagnostic_uri_index.as_ref()?;
+                if index.by_relative.is_empty()
+                    || !index.matches(&self.root, &self.diagnostics_by_uri)
+                {
+                    return None;
+                }
                 let relative = file_uri_relative_to_root(&self.root, uri)?;
-                let mut matches = self.diagnostics_by_uri.iter().filter(|(stored_uri, _)| {
-                    file_uri_relative_to_root(&self.root, stored_uri).as_deref()
-                        == Some(relative.as_path())
-                });
-                let (stored_uri, diagnostics) = matches.next()?;
-                matches
-                    .next()
-                    .is_none()
-                    .then_some((stored_uri, diagnostics.as_slice()))
+                let stored_position = index.by_relative.get(&relative)?.as_ref()?;
+                let stored_uri = index.uris.get(*stored_position)?;
+                self.diagnostics_by_uri
+                    .get_key_value(stored_uri)
+                    .map(|(stored_uri, diagnostics)| (stored_uri, diagnostics.as_slice()))
             })
     }
 
@@ -2580,6 +2624,7 @@ mod tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,
@@ -2613,6 +2658,7 @@ mod tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,
@@ -2656,6 +2702,7 @@ mod tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,

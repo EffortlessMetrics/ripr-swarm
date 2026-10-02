@@ -389,6 +389,16 @@ pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> Capped
     CappedArtifactRead::Contents(contents)
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static CANONICAL_PROJECTION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn canonical_projection_count_for_test() -> usize {
+    CANONICAL_PROJECTION_COUNT.with(std::cell::Cell::get)
+}
+
 /// Canonicalize the longest existing prefix; only a path with no existing
 /// ancestor at all stays lexical.
 ///
@@ -400,6 +410,8 @@ pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> Capped
 /// or under a symlinked ancestor, and which let `linked/missing/../x.rs`
 /// through a symlinked `linked` directory read as contained.
 fn canonical_or_normalized(path: &Path) -> PathBuf {
+    #[cfg(test)]
+    CANONICAL_PROJECTION_COUNT.with(|count| count.set(count.get() + 1));
     let normalized = normalize_path(path);
     canonicalize_with_missing_tail(path)
         .or_else(|| canonicalize_with_missing_tail(&normalized))
