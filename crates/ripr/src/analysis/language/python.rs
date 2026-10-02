@@ -22,8 +22,8 @@
 use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
-use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use super::read_limit_disclosure::bounded_read_limit_limitations;
+use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod bounded_read;
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,

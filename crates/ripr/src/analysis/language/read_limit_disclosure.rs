@@ -52,9 +52,8 @@ pub(crate) fn bounded_read_limit_limitations(
 ) -> Result<Vec<AnalysisLimitation>, String> {
     refusals.sort_by(|left, right| left.0.cmp(&right.0));
     let total = refusals.len();
-    let recovery = |detail: &str| {
-        AnalysisRecovery::new(AnalysisRecoveryKind::IncreaseConfiguredLimit, detail)
-    };
+    let recovery =
+        |detail: &str| AnalysisRecovery::new(AnalysisRecoveryKind::IncreaseConfiguredLimit, detail);
     let mut limitations = Vec::new();
     for (path, reason) in refusals.iter().take(MAX_READ_LIMIT_SAMPLE_PATHS) {
         limitations.push(
@@ -76,9 +75,10 @@ pub(crate) fn bounded_read_limit_limitations(
                 AnalysisStage::LanguageAdapter,
                 recovery(recovery_detail)?,
             )
-            .with_affected_items(u64::try_from(total).map_err(|err| {
-                format!("read-limit refusal count overflows u64: {err}")
-            })?)
+            .with_affected_items(
+                u64::try_from(total)
+                    .map_err(|err| format!("read-limit refusal count overflows u64: {err}"))?,
+            )
             .with_detail(format!(
                 "{adapter}_read_limit_sampled: {total} workspace file(s) refused by read caps; \
                  the first {MAX_READ_LIMIT_SAMPLE_PATHS} sample paths (sorted) are listed above; \
@@ -95,8 +95,7 @@ pub(crate) fn bounded_read_limit_limitations(
 mod tests {
     use super::*;
 
-    const RECOVERY: &str =
-        "Raise RIPR_TEST_MAX_FILE_READ_BYTES and/or RIPR_TEST_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.";
+    const RECOVERY: &str = "Raise RIPR_TEST_MAX_FILE_READ_BYTES and/or RIPR_TEST_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.";
 
     fn refusal(name: &str) -> (String, String) {
         (name.to_string(), format!("file_read_capped: {name}"))
@@ -120,7 +119,11 @@ mod tests {
         // stable sorted order either way.
         let limitations = bounded_read_limit_limitations(
             "testlang",
-            vec![refusal("src/zeta.ts"), refusal("src/alpha.ts"), refusal("src/mid.ts")],
+            vec![
+                refusal("src/zeta.ts"),
+                refusal("src/alpha.ts"),
+                refusal("src/mid.ts"),
+            ],
             RECOVERY,
         )?;
         assert_eq!(limitations.len(), 3, "no summary entry under the cap");
@@ -137,7 +140,9 @@ mod tests {
             "sample must be sorted by path",
         );
         assert!(
-            limitations.iter().all(|limitation| limitation.affected_items == Some(1)),
+            limitations
+                .iter()
+                .all(|limitation| limitation.affected_items == Some(1)),
             "per-file entries count one refused file each",
         );
         assert!(
@@ -224,7 +229,10 @@ mod tests {
         let reversed = forward.iter().rev().cloned().collect::<Vec<_>>();
         let first = bounded_read_limit_limitations("testlang", forward, RECOVERY)?;
         let second = bounded_read_limit_limitations("testlang", reversed, RECOVERY)?;
-        assert_eq!(first, second, "same workspace must emit identical disclosure");
+        assert_eq!(
+            first, second,
+            "same workspace must emit identical disclosure"
+        );
         Ok(())
     }
 

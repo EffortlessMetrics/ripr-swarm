@@ -4943,11 +4943,9 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
 /// instead of one limitation per refused file (up to the 20,000-file
 /// discovery cap).
 #[test]
-fn analyze_diff_bounds_capped_read_disclosure_with_stable_sample_and_total(
-) -> Result<(), String> {
+fn analyze_diff_bounds_capped_read_disclosure_with_stable_sample_and_total() -> Result<(), String> {
     let root = ts_unique_tempdir("bounded-read-sample")?;
-    let sample_cap =
-        crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
+    let sample_cap = crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
     let total = sample_cap + 4;
     for index in 0..total {
         ts_write_file(

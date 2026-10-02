@@ -4603,12 +4603,10 @@ fn analyze_diff_discloses_per_file_read_cap() -> Result<(), String> {
 /// summary entry) while the summary preserves the true refused count —
 /// not one limitation per refused file.
 #[test]
-fn analyze_diff_bounds_read_limit_disclosure_and_preserves_refused_total(
-) -> Result<(), String> {
+fn analyze_diff_bounds_read_limit_disclosure_and_preserves_refused_total() -> Result<(), String> {
     let root = unique_test_root("diff-bounded-read-sample")?;
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
-    let sample_cap =
-        crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
+    let sample_cap = crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
     let total = sample_cap + 4;
     for index in 0..total {
         write_repo_file(
