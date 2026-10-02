@@ -1836,15 +1836,32 @@ fn repo_scope_and_wrapped_guard_errors_do_not_convert() -> Result<(), String> {
         "repo_scope_oversized: 900 indexed files exceed the repo guard",
         "workspace analysis failed: diff_scope_oversized: wrapped must not match",
         "adiff_scope_oversized: forged prefix must not match",
+        "diff_scope_oversizedness: unrelated failure",
+        "diff_scope_oversized_metadata: unrelated failure",
+        "diff_scope_oversized",
+        "diff_scope_oversized : invalid delimiter",
+        "diff_scope_oversized\n: invalid delimiter",
+        "diff_scope_oversized\r\n: invalid delimiter",
+        " diff_scope_oversized: not raw",
+        "\ndiff_scope_oversized: not raw",
+        "ripr: diff_scope_oversized: wrapped",
+        "git_invocation_timeout: a different guard",
+        "review_guidance_oversized: a different guard",
     ] {
         if crate::analysis::is_diff_scope_oversized(lookalike) {
             return Err(format!("non-guard error matched the guard: {lookalike}"));
         }
     }
-    if !crate::analysis::is_diff_scope_oversized(
+    for error in [
         "diff_scope_oversized: 900 indexed Rust files exceed the 800-file guard",
-    ) {
-        return Err("the named guard error must match the guard".to_string());
+        "diff_scope_oversized:	900 indexed files",
+        "diff_scope_oversized:\n900 indexed files",
+    ] {
+        if !crate::analysis::is_diff_scope_oversized(error) {
+            return Err(format!(
+                "the named guard error must match the guard: {error:?}"
+            ));
+        }
     }
     Ok(())
 }
@@ -4853,6 +4870,7 @@ mod lsp_next_step_parity_tests {
                 "typescript_oracle_confidence: high".to_string(),
                 "typescript_oracle_evidence_ref: tests/discount.test.ts:3".to_string(),
                 "missing_discriminator: amount == threshold".to_string(),
+                "typescript_boundary_parameters: parameter=amount;index=0;operand=threshold;operand_index=1".to_string(),
             ],
             missing: Vec::new(),
             flow_sinks: Vec::new(),
@@ -5121,6 +5139,73 @@ mod delivery_tests {
         }
         if workspace_diagnostic_result_id(&first) == workspace_diagnostic_result_id(&second) {
             return Err("workspace result ID ignored the changed document".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_result_ids_ignore_refresh_clock_and_attempt_snapshot_handle() -> Result<(), String>
+    {
+        let mut first = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        first.refresh.generated_at = std::time::SystemTime::UNIX_EPOCH;
+        first.refresh.duration = Some(std::time::Duration::from_millis(1));
+        first.refresh.snapshot_id = None;
+        let mut second = first.clone();
+        second.refresh.generated_at = std::time::SystemTime::now();
+        second.refresh.duration = Some(std::time::Duration::from_secs(9));
+        second.refresh.snapshot_id = Some("attempt:refresh:9".to_string());
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<Uri>()
+            .map_err(|err| format!("parse URI failed: {err}"))?;
+        if document_diagnostic_result_id(&first, &uri)
+            != document_diagnostic_result_id(&second, &uri)
+        {
+            return Err(
+                "refresh clock or attempt snapshot_id entered the document result ID".to_string(),
+            );
+        }
+        if workspace_diagnostic_result_id(&first) != workspace_diagnostic_result_id(&second) {
+            return Err(
+                "refresh clock or attempt snapshot_id entered the workspace result ID".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_result_ids_change_for_message_only_and_profile_changes() -> Result<(), String> {
+        let first = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        let mut message_changed = diagnostic("same", 4);
+        message_changed.message = "diagnostic same but wording changed".to_string();
+        let second = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![message_changed])],
+        )?;
+        let mut profile_changed = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        profile_changed.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<Uri>()
+            .map_err(|err| format!("parse URI failed: {err}"))?;
+        if document_diagnostic_result_id(&first, &uri)
+            == document_diagnostic_result_id(&second, &uri)
+        {
+            return Err("message-only change must invalidate the document result ID".to_string());
+        }
+        if document_diagnostic_result_id(&first, &uri)
+            == document_diagnostic_result_id(&profile_changed, &uri)
+        {
+            return Err(
+                "diagnostic profile change must invalidate the document result ID".to_string(),
+            );
         }
         Ok(())
     }

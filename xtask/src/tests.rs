@@ -1728,6 +1728,79 @@ fn evidence_promotion_semantic_assertions_reject_contradictory_packet_messaging(
 }
 
 #[test]
+fn evidence_promotion_probe_family_selector_scopes_findings_and_refuses_empty_match() {
+    let assertions = vec![super::EvidencePromotionSemanticAssertion::MaximumClass {
+        class: "weakly_exposed".to_string(),
+    }];
+    let check_json = serde_json::json!({
+        "summary": {"findings": 2},
+        "findings": [
+            {
+                "id": "probe:src_lib.rs:predicate:fa1d51d0",
+                "classification": "weakly_exposed",
+                "probe": {"id": "probe:src_lib.rs:predicate:fa1d51d0", "family": "predicate"}
+            },
+            {
+                "id": "probe:src_lib.rs:return_value:c71d52af",
+                "classification": "exposed",
+                "probe": {"id": "probe:src_lib.rs:return_value:c71d52af", "family": "return_value"}
+            }
+        ]
+    });
+
+    let scoped = super::evidence_promotion_semantic_violations_scoped(
+        "scoped_predicate_control",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+        Some("predicate"),
+    );
+    assert!(scoped.is_empty(), "{scoped:?}");
+
+    let promoted_family = super::evidence_promotion_semantic_violations_scoped(
+        "scoped_wrong_family",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+        Some("return_value"),
+    );
+    assert_eq!(promoted_family.len(), 1, "{promoted_family:?}");
+    assert!(
+        promoted_family[0].contains("probe:src_lib.rs:return_value:c71d52af"),
+        "{promoted_family:?}"
+    );
+
+    let unscoped = super::evidence_promotion_semantic_violations(
+        "unscoped_fixture_wide",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+    );
+    assert_eq!(unscoped.len(), 1, "{unscoped:?}");
+
+    let empty_match = super::evidence_promotion_semantic_violations_scoped(
+        "scoped_empty_match",
+        Some("fixtures/split_test_boundary_oracle"),
+        &assertions,
+        &check_json,
+        None,
+        false,
+        Some("call_deletion"),
+    );
+    assert_eq!(empty_match.len(), 1, "{empty_match:?}");
+    assert!(
+        empty_match[0].contains("matched no findings"),
+        "{empty_match:?}"
+    );
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_reject_human_contradictory_packet_messaging() {
     let assertions =
         vec![super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging];
@@ -8521,6 +8594,10 @@ fn non_rust_programming_policy_requires_retention_rule() {
             .is_some()
     );
     assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+    assert!(
+        non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
+            .is_some()
+    );
 }
 
 #[test]
@@ -8555,6 +8632,19 @@ fn rust_conversion_candidates_retains_fixture_and_editor_boundaries() -> Result<
     assert_eq!(fixture.kind, "retained_fixture_input");
     assert_eq!(editor.priority, "retained");
     assert_eq!(editor.kind, "retained_external_runtime");
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_retain_the_portable_consumer_python_runtime() -> Result<(), String> {
+    let Some(consumer) =
+        super::non_rust_source_conversion_candidate("tools/python/portable-ripr-consumer/run.py")
+    else {
+        return Err("portable consumer python should be assessed".to_string());
+    };
+
+    assert_eq!(consumer.priority, "retained");
+    assert_eq!(consumer.kind, "retained_external_runtime");
     Ok(())
 }
 
@@ -26129,11 +26219,16 @@ fn error_ripr_plus_receipt_timeout_has_indeterminate_status_and_null_unresolved(
         warnings > 0,
         "warnings must be non-empty on an error receipt"
     );
-    let head = receipt.get("head").and_then(Value::as_str).unwrap_or("");
     assert!(
-        !head.is_empty(),
-        "head must be non-empty on an error receipt"
+        receipt["head"].is_null(),
+        "error receipt cannot qualify a candidate"
     );
+    assert_eq!(
+        receipt["observed_repository_head"],
+        "abc1234def5678abc1234def5678abc1234def5678"
+    );
+    assert_eq!(receipt["candidate_binding"], "not_established");
+    assert_eq!(receipt["zero_unresolved_established"], false);
     assert_eq!(receipt["schema_version"], "0.1");
     Ok(())
 }
@@ -26162,7 +26257,7 @@ fn ripr_plus_receipt_markdown_indeterminate_does_not_claim_zero_unresolved() -> 
 }
 
 #[test]
-fn ripr_plus_receipt_happy_path_regression_pass_status() -> Result<(), String> {
+fn ripr_plus_partial_happy_path_cannot_establish_zero() -> Result<(), String> {
     let fixture = r#"{
             "schema_version": "0.1",
             "format": "repo-exposure-summary-json",
@@ -26196,17 +26291,16 @@ fn ripr_plus_receipt_happy_path_regression_pass_status() -> Result<(), String> {
         }"#;
     let receipt = ripr_plus_receipt_from_repo_exposure_summary_json(fixture, "abc1234")?;
 
-    let status = receipt["status"].as_str().unwrap_or("");
-    assert!(
-        status == "pass" || status == "warn",
-        "happy-path receipt must have pass or warn status, got {status:?}"
-    );
-    let unresolved = receipt.get("unresolved").and_then(Value::as_u64);
-    assert!(
-        unresolved.is_some(),
-        "happy-path receipt must have a concrete unresolved count, not null"
-    );
-    assert_eq!(unresolved, Some(0));
+    // Preserve the raw composition counter, then exercise the final shared
+    // boundary used by both public command surfaces.
+    assert_eq!(receipt["unresolved"], 0);
+    let receipt = ripr::app::qualify_legacy_ripr_plus_receipt(receipt)?;
+    assert_eq!(receipt["status"], "indeterminate");
+    assert!(receipt["unresolved"].is_null());
+    assert!(receipt["head"].is_null());
+    assert_eq!(receipt["known_actionable_unresolved"], 0);
+    assert_eq!(receipt["observed_repository_head"], "abc1234");
+    assert_eq!(receipt["zero_unresolved_established"], false);
     Ok(())
 }
 
@@ -29605,6 +29699,9 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"badges [--check] [--gap-ledger <path>]"));
     assert!(commands.contains(&"pr-triage-report"));
     assert!(commands.contains(&"gh-pr-status --pr <number>"));
+    assert!(commands.contains(
+        &"merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]"
+    ));
     assert!(commands.contains(&"check-badge-diff-policy"));
     assert!(commands.contains(&"check-command-catalog"));
     assert!(commands.contains(&"worktree doctor"));

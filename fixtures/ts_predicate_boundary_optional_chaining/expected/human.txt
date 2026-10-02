@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/ts_predicate_boundary_optional_chaining/input
 
-Summary: 3 probe(s), 3 exposed, 0 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 3 probe(s), 3 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) shown
 
 Changed file(s) by language: typescript: 1.
 
@@ -20,10 +20,10 @@ Start here:
   Discriminator (observed, advisory): Related test reaches `userIsAdmin` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
   Related test: tests/guards.test.ts:3 admin role behind optional chaining
   Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
-  Evidence:
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
     - reach yes: 1 related test(s) found for owner `userIsAdmin`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 4 more evidence line(s) hidden
+    - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/ts_predicate_boundary_optional_chaining/input --diff fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:7098c2ff
@@ -31,6 +31,8 @@ Next: drill into the top finding:
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).
+    - src/guards.ts:9 (exposed)
+    - src/guards.ts:15 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

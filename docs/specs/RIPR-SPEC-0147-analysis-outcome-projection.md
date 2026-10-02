@@ -28,7 +28,12 @@ Malformed non-empty diff input is a typed `malformed_diff` limitation at the
 diff-parse stage and produces `unsupported_input`; it is never represented as
 complete zero scope. Disabled preview-language files and configured generated
 source skips are typed limitations as well, while a producer-declared partial
-fact packet remains advisory rather than complete. A truncated producer stream
+fact packet remains advisory rather than complete. An EOL-only whole-file
+rewrite is a churn-shape typed limitation (`eol_only_churn`, diff-parse
+stage) that may ride on a complete outcome — the changed scope was fully
+analyzed, so it never makes the analysis incomplete — and a line-one BOM-only
+rewrite is excluded from that pairing so it is not disclosed as churn (#4952,
+#4959). A truncated producer stream
 (#4375) is the same malformed-input contract: a file section that parses a
 textual header but closes without a validated hunk body is typed
 `malformed_diff` at the diff-parse stage and produces `unsupported_input`,
@@ -123,6 +128,10 @@ projection does not analyze those regions.
 
 - combined hunk and conflict-marker parser limitations survive into the
   pipeline outcome;
+- a changed source file absent from the working tree (sparse checkout or
+  local delete) is a `changed_file_absent_from_worktree` limitation and a
+  `partial_with_limitations` outcome, not a complete `no_static_path`
+  finding; review-comments names the dropped file the same way;
 - ordinary zero-result input has a complete non-limitation kind distinct from
   unsupported or partial input;
 - human and JSON output carry the same limitation kind and recovery route;

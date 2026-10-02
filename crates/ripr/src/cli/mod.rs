@@ -1,7 +1,8 @@
 mod agent;
 mod command;
 mod command_catalog;
-mod commands;
+mod command_metadata;
+pub(crate) mod commands;
 mod commands_agent_support;
 mod commands_context;
 mod commands_numeric;
@@ -9,10 +10,12 @@ mod commands_options;
 mod commands_timestamps;
 mod execute;
 mod help;
+mod help_json;
 mod parse;
 mod progress;
 mod rerun;
 mod suggest;
+mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
 pub(crate) use suggest::unknown_argument;
@@ -85,6 +88,18 @@ pub fn run(mut args: Vec<String>) -> Result<(), CommandError> {
     {
         args.remove(pos);
         crate::set_verbose(true);
+        // #4825: the machine-discovery route has a strict one-flag grammar and
+        // a silent-stderr contract. Combining it with the global verbosity
+        // flag is a usage error — the flag must not be silently extracted,
+        // leaving a plausible document plus a stderr diagnostic.
+        // `args` still carries argv[0]; the command body starts at index 1.
+        if args.get(1).is_some_and(|arg| arg == "help")
+            && args.get(2).is_some_and(|arg| arg == "--json")
+        {
+            return Err(CommandError::from(
+                "usage: ripr help --json (this route accepts no other arguments)".to_string(),
+            ));
+        }
         eprintln!("ripr: verbose mode enabled");
     }
     // Selection is side-effect-free parsing; the lock is acquired before the
@@ -180,7 +195,13 @@ fn persist_before_repair_attempt(
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
     let packet_text = String::from_utf8(packet_bytes.clone())
         .map_err(|error| format!("agent packet is not UTF-8: {error}"))?;
-    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+    let mut policy =
+        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+    crate::app::repair_attempt::include_explicit_store_operational_write(
+        &mut policy,
+        root,
+        options.store.as_deref(),
+    )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
     // during preparation refuses attempt publication.
     crate::edit_cage::validate_build_output_precondition(root, &policy)
@@ -256,9 +277,24 @@ fn persist_before_repair_attempt(
             next_command_suffix: binding
                 .as_ref()
                 .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+            store: options.store.as_deref(),
         },
         identity,
     )?;
+    // The before-phase success stdout is one document, printed only after the
+    // attempt is published, so a refusal above is never preceded by a success
+    // document. With `--json` it is the packet envelope carrying the additive
+    // `repair_attempt` continuation (#4329) — attempt id, manifest path,
+    // packet path, and the exact `--phase after` command — so a driver that
+    // captures only stdout can complete before → edit → after without reading
+    // stderr. Without it, the human summary plus the one command a reader of
+    // stdout alone needs next.
+    let continuation = crate::output::agent_seam_packets::BeforePhaseAttemptContinuation {
+        attempt_id: result.manifest.repair_attempt_id.as_str().to_string(),
+        manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
+        next_command: result.manifest.next_command.clone(),
+        packet_path: crate::agent::loop_commands::display_path(&agent_packet),
+    };
     if let Some(binding) = &binding {
         eprintln!(
             "ripr: python repair-trust binding staged for selection attempt `{}` (selection digest {})",
@@ -266,7 +302,7 @@ fn persist_before_repair_attempt(
         );
     }
     eprintln!(
-        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below."
+        "ripr: before phase complete. Next: add or strengthen one focused test (leave production code unchanged), then run the --attempt command printed below. Editing any file outside that one test surface fails the attempt terminally."
     );
     eprintln!(
         "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
@@ -280,14 +316,16 @@ fn persist_before_repair_attempt(
         "ripr: attempt next command: {}",
         result.manifest.next_command
     );
-    // Without `--json`, stdout is the human summary, written only now that
-    // the attempt exists, and it ends with the one command a reader of
-    // stdout alone needs next.
+    print!(
+        "{}",
+        commands::before_phase_stdout(
+            &packet_text,
+            &agent_packet.display().to_string(),
+            options.json,
+            &continuation,
+        )?
+    );
     if !options.json {
-        print!(
-            "{}",
-            commands::before_phase_stdout(&packet_text, &agent_packet.display().to_string(), false)
-        );
         println!(
             "Next, after the test edit: {}",
             result.manifest.next_command
@@ -436,7 +474,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "check", "--format", "xml"])),
             Err(CommandError::Failure(
-                "unknown format \"xml\"; see `ripr check --help` for the accepted formats"
+                "unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json."
                     .to_string()
             ))
         );

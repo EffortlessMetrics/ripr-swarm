@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/python_unittest_basic/input
 
-Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) shown
 
 Changed file(s) by language: python: 1.
 
@@ -19,16 +19,16 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/risk.py:risk_score:predicate_boundary:predicate:amount>=100
   Changed behavior: if amount >= 100:
-  Missing discriminator: Related Python test reaches `risk_score` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary.
+  Missing discriminator (1 of 2): Related Python test reaches `risk_score` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary.
   Related test: tests/test_risk.py:7 test_risk_score_high
   Suggested test file: tests/test_risk.py
   Suggested test: test_risk_score_high
   Verify command: python -m unittest tests.test_risk.RiskScoreTests.test_risk_score_high (high)
   Next step: Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == 100`.
-  Evidence:
+  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     - reach yes: 1 related Python test(s) found for owner `risk_score`
     - infection yes: Changed Python predicate can alter branch selection: `if amount >= 100:`
-    - 5 more evidence line(s) hidden
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/python_unittest_basic/input --diff fixtures/python_unittest_basic/diff.patch --mode fast probe:src_risk.py:python_preview:6835190f

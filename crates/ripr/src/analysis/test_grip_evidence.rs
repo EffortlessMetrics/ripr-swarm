@@ -146,12 +146,24 @@ impl TestTargetEvidence {
         &self.symbol_id
     }
 
-    #[cfg(test)]
+    /// Projection accessors for the RepairCard builder (#4663): the card
+    /// copies these facts verbatim and never re-derives them.
+    pub(crate) fn relation(&self) -> RelationReason {
+        self.relation
+    }
+
+    pub(crate) fn test_kind(&self) -> TestKind {
+        self.test_kind
+    }
+
+    pub(crate) fn workspace_identity(&self) -> &str {
+        &self.workspace_identity
+    }
+
     pub(crate) fn file(&self) -> &Path {
         &self.file
     }
 
-    #[cfg(test)]
     pub(crate) fn line(&self) -> usize {
         self.line
     }
@@ -222,6 +234,14 @@ impl<'index> EvidencePass<'index> {
             context_started.elapsed(),
         );
         Self { context }
+    }
+
+    /// Drop memoized owner/AST detail at a window boundary. Immutable test
+    /// indexes and file-bounded scalar/line facts stay reusable.
+    pub(crate) fn clear_window_memos(&self) {
+        if let Some(context) = &self.context {
+            context.clear_window_memos();
+        }
     }
 
     /// Evidence for `seams`, sorted by `seam_id`; empty when the context
