@@ -22,7 +22,7 @@ cargo xtask fixtures error_path_diagnostic_absent
 
 Exactly one `error_path` finding remains `weakly_exposed`, with
 `observation_unverified`. The independent honesty corpus selects that family;
-the separate call-deletion finding is not this fixture's claim.
+the separate base-deleted `static_unknown` finding is not this fixture's claim.
 
 ## Must Not
 

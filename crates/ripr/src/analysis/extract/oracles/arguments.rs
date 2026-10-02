@@ -27,7 +27,9 @@ pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
     .filter_map(|(name, count)| {
         let (offset, arguments) = macro_invocation_arguments_at(line, &masked, name)?;
         let operands = arguments.into_iter().take(count).collect::<Vec<_>>();
-        Some((offset, format!("{name}({})", operands.join(", "))))
+        // Keep separators outside any trailing line comment in an operand.
+        // Trimming an operand must never hide the comma or closing delimiter.
+        Some((offset, format!("{name}({}\n)", operands.join("\n, "))))
     })
     // `assert!(matches!(...))` must use the outer assertion's condition;
     // a nested assertion in its diagnostic never becomes the observer.
@@ -153,25 +155,25 @@ mod tests {
         ] {
             assert_eq!(
                 assertion_oracle_text(text).as_deref(),
-                Some("assert_eq!(rdr.len(), 10)"),
+                Some("assert_eq!(rdr.len()\n, 10\n)"),
                 "{text}"
             );
         }
         assert_eq!(
             assertion_oracle_text("assert_eq!(read::<A, B>(rdr).unwrap_err(), Other, error)")
                 .as_deref(),
-            Some("assert_eq!(read::<A, B>(rdr).unwrap_err(), Other)")
+            Some("assert_eq!(read::<A, B>(rdr).unwrap_err()\n, Other\n)")
         );
         assert_eq!(
             assertion_oracle_text("assert!(a < b, error)").as_deref(),
-            Some("assert!(a < b)")
+            Some("assert!(a < b\n)")
         );
         assert_eq!(
             assertion_oracle_text(
                 r#"assert!(matches!(result, Err(ReadError::Closed)), "{}", diagnostic);"#
             )
             .as_deref(),
-            Some("assert!(matches!(result, Err(ReadError::Closed)))")
+            Some("assert!(matches!(result, Err(ReadError::Closed))\n)")
         );
     }
 
@@ -194,7 +196,7 @@ mod tests {
         );
         assert_eq!(
             assertion_oracle_text("/* assert_eq!(a, b) */ assert!(ready, error)"),
-            Some("assert!(ready)".to_string())
+            Some("assert!(ready\n)".to_string())
         );
     }
 }

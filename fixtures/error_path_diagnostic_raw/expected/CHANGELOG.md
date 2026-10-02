@@ -12,3 +12,8 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+2026-10-02: refresh only the analysis input identity after trimming the trailing
+unchanged blank context line from diff.patch (hunk7→6). The old/new SHA-256
+values exactly match the producer's raw-diff hashing; all other JSON fields and
+human outputs are unchanged. Full golden and independent honesty checks rerun.

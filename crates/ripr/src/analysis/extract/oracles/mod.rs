@@ -70,6 +70,34 @@ mod tests {
     }
 
     #[test]
+    fn projected_line_comments_preserve_error_payload_and_duplicate_operands() -> Result<(), String>
+    {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = r#"
+#[test]
+fn pins_error_payload() {
+    let failure = read_all(rdr).unwrap_err();
+    assert_eq!(failure, "closed" // explanation
+    );
+}
+"#;
+        let facts =
+            RaRustSyntaxAdapter.summarize_file(std::path::Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1);
+        assert_eq!(facts.tests[0].assertions.len(), 1);
+        assert_eq!(
+            facts.tests[0].assertions[0].kind,
+            OracleKind::ExactErrorVariant
+        );
+        assert_classification(
+            "assert_eq!(rdr_error // same\n, rdr_error // same\n, \"message\")",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn classify_assertion_downgrades_duplicative_equality_even_with_nested_commas() {
         assert_classification(
             r#"assert_eq!(render(vec!["a,b", nested(1, 2)]), render(vec!["a,b", nested(1, 2)]));"#,
