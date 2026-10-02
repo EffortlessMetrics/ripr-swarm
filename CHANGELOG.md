@@ -135,6 +135,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust: bare equality oracles for error-path and predicate probes now share the
+  existing execution/collectability/macro-binding admission (#5027). Uncalled,
+  false-branch and shadowed assertions retain their test relation without
+  observation or oracle credit; direct and invoked positives remain supported.
+  Family-selected runtime/honesty controls preserve static-only confidence.
+
 - Rust: a changed `?` error path no longer reads `exposed` because a
   success-value assertion shares a variable name with it. ripgrep's
   `rdr.read(buf)?` was credited to a test asserting `rdr.bstr()`, and the

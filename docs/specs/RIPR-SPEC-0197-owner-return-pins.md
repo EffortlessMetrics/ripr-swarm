@@ -15,6 +15,7 @@ Linked plan:
 Linked issues:
 
 - #4478 (confirm a return value pinned by `assert_eq!` on the owner's own call)
+- #5027 (share bounded equality execution admission with ErrorPath and Predicate)
 - #3727 (parser-backed call identity; this spec adds the owner's item
   container fact, not parser-derived `CallFact`)
 
@@ -273,12 +274,46 @@ singleton match in `guarded_result_match_fail_closed`; other retained evidence
 keeps its stages and class unchanged. This is bounded admission, not a claim
 to resolve match-arm execution or every other oracle family's provenance.
 
+### Shared error and predicate equality admission
+
+The private execution/collectability/macro-binding witness also gates bare
+`assert_eq!` evidence for `error_path` and `predicate` probes (#5027). This is
+independent of the owner-return pin: error operands still use RIPR-SPEC-0106,
+and predicate activation/boundary pairing retain their own semantic authorities.
+Neither a valid error operand nor a boundary-valued call proves that an assertion
+executes. Admission precedes matching, observation and oracle-strength selection
+for all three named families; refusal preserves the original assertion count so
+an unrelated Unknown helper cannot gain singleton credit.
+
+Fourteen family fixtures pair direct and invoked-closure positives with uncalled,
+false-branch, macro-shadowed and no-assertion controls. Each family also has an
+unconditional owner call before an uncalled assertion: real reach alone cannot
+create an observer. Public-API tests compile the correct and deliberately wrong
+version of each fixture and require exactly one executed test per subject.
+The four effective tests fail against the wrong implementation; the ten
+ineffective/removal tests pass it. These independent runtime outcomes calibrate
+the fixtures only and are not imported into production classification.
+
+The eight ineffective assertion cells and two removal cells require
+`reachable_unrevealed`, Observe `no`, Discriminate `no` and oracle strength `none`.
+Four positive cells retain `exposed` and strong exact-value evidence. Mixed
+strong/weak/refused assertions are checked in both orders; a refused exact
+assertion cannot lend strength to an admitted weak oracle or turn an Unknown
+helper into a singleton. Ten related tests exercise the eight-row JSON projection
+cap without crowding out admitted evidence. All cells are independently guarded
+by family-selected RIPR-SPEC-0108 corpus assertions.
+
+The same existing human/JSON/context projections explain a refused invocation
+and keep confidence advisory and `static_only`. This change does not assert
+that all oracle families, assertion macros or arbitrary Rust control flow have
+execution provenance.
+
 ## Non-Goals
 
-- This repair's shared admission covers Rust `return_value` evidence from
-  bare `assert_eq!` invocations. Qualified assertion macros, other oracle
-  kinds/families, and general control-flow or macro resolution retain their
-  existing authorities; this is not a general execution-proof system.
+- Shared admission covers Rust `return_value`, `error_path` and `predicate`
+  evidence from bare `assert_eq!` invocations. Qualified assertion macros, other
+  oracle kinds/families and general control-flow or macro resolution retain
+  their existing authorities; this is not a general execution-proof system.
 
 - Name resolution or type inference. The receiver typing reads a binding's
   syntax only; a receiver returned by an arbitrary function call stays
@@ -359,7 +394,7 @@ to resolve match-arm execution or every other oracle family's provenance.
   `FunctionItemFact`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: `OwnerReturnPin`
   (`establish` for the owner-side gates, `admits` for the test-side gates;
-  `OwnerPinSyntax::admits_return_assertion` applies shared context independently
+  `OwnerPinSyntax::admits_equality_assertion` applies shared context independently
   of whether an owner-return pin can be established).
 - `crates/ripr/src/analysis/classify/reveal.rs`: the pin joins the
   confirmation signals behind the family, oracle-kind and owner-binding
@@ -378,8 +413,8 @@ to resolve match-arm execution or every other oracle family's provenance.
   availability reuses the canonical lexer; the existing test-only role query
   retains its separate contract. Out-of-line resolution remains owned by
   existing `FileFacts::role_provenance`, not by the admission consumer.
-- `crates/ripr/src/analysis/seam_cache.rs`: classified `1.23`, sharded `0.29`,
-  compact `0.29` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
+- `crates/ripr/src/analysis/seam_cache.rs`: classified `1.24`, sharded `0.30`,
+  compact `0.30` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
 
 ## Metrics

@@ -2510,6 +2510,398 @@
           "class": "reachable_unrevealed"
         }
       ]
+    },
+    {
+      "id": "rust_error_path_oracle_execution_called",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_oracle_execution_called",
+      "vector": "shared_bare_equality_execution_admission_error_path_oracle_execution_called",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_error_path_oracle_execution_direct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_oracle_execution_direct",
+      "vector": "shared_bare_equality_execution_admission_error_path_oracle_execution_direct",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_error_path_oracle_execution_false_branch",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_oracle_execution_false_branch",
+      "vector": "shared_bare_equality_execution_admission_error_path_oracle_execution_false_branch",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_error_path_oracle_execution_no_assertion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_oracle_execution_no_assertion",
+      "vector": "shared_bare_equality_execution_admission_error_path_oracle_execution_no_assertion",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_error_path_oracle_execution_reached_uncalled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_oracle_execution_reached_uncalled",
+      "vector": "shared_bare_equality_execution_admission_error_path_oracle_execution_reached_uncalled",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_error_path_oracle_execution_shadowed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_oracle_execution_shadowed",
+      "vector": "shared_bare_equality_execution_admission_error_path_oracle_execution_shadowed",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_error_path_oracle_execution_uncalled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_path_oracle_execution_uncalled",
+      "vector": "shared_bare_equality_execution_admission_error_path_oracle_execution_uncalled",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_oracle_execution_called",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_oracle_execution_called",
+      "vector": "shared_bare_equality_execution_admission_predicate_oracle_execution_called",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_oracle_execution_direct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_oracle_execution_direct",
+      "vector": "shared_bare_equality_execution_admission_predicate_oracle_execution_direct",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_oracle_execution_false_branch",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_oracle_execution_false_branch",
+      "vector": "shared_bare_equality_execution_admission_predicate_oracle_execution_false_branch",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_oracle_execution_no_assertion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_oracle_execution_no_assertion",
+      "vector": "shared_bare_equality_execution_admission_predicate_oracle_execution_no_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_oracle_execution_reached_uncalled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_oracle_execution_reached_uncalled",
+      "vector": "shared_bare_equality_execution_admission_predicate_oracle_execution_reached_uncalled",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_oracle_execution_shadowed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_oracle_execution_shadowed",
+      "vector": "shared_bare_equality_execution_admission_predicate_oracle_execution_shadowed",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_oracle_execution_uncalled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_oracle_execution_uncalled",
+      "vector": "shared_bare_equality_execution_admission_predicate_oracle_execution_uncalled",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
     }
   ]
 }
