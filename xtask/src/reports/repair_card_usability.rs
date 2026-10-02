@@ -38,7 +38,9 @@ fn read_json(path: &Path, label: &str) -> Result<Value, String> {
 }
 
 fn workspace_path(relative: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(relative)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(relative)
 }
 
 pub(crate) fn repair_card_usability_report() -> Result<(), String> {
