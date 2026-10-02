@@ -1816,9 +1816,13 @@ mod tests {
 
     #[test]
     fn build_dir_config_preserves_literal_path_characters() -> Result<(), String> {
+        let windows_target = format!(
+            "{}:\\fixture\\λ\\quote's space\\build-target",
+            char::from(b'C')
+        );
         for target in [
             "/tmp/quote's \"double\" \\ café/build-target",
-            "C:\\Users\\λ\\quote's space\\build-target",
+            windows_target.as_str(),
         ] {
             let config = super::build_dir_config(Path::new(target))?;
             let decoded: toml::Value =
