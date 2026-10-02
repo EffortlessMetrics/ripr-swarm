@@ -4554,7 +4554,8 @@ fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace() -> R
         &["config", "user.email", "ripr@example.invalid"],
     )?;
     run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
-    std::fs::write(root.path().join("fixture.txt"), "fixture\n")?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
     run_lsp_scope_git(root.path(), &["add", "."])?;
     run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
 
@@ -4689,7 +4690,8 @@ fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Resul
         &["config", "user.email", "ripr@example.invalid"],
     )?;
     run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
-    std::fs::write(root.path().join("fixture.txt"), "fixture\n")?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
     run_lsp_scope_git(root.path(), &["add", "."])?;
     run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
 
