@@ -618,7 +618,11 @@ fn corpus_roots_are_distinct_with_a_fixed_clock_in_parallel() -> Result<(), Stri
             .collect::<Vec<_>>();
         handles
             .into_iter()
-            .map(|handle| handle.join().map_err(|_| "root worker failed".to_string()))
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|panic| format!("root worker failed: {panic:?}"))
+            })
             .collect::<Result<Vec<_>, _>>()
     })?;
     let distinct = roots.iter().collect::<std::collections::BTreeSet<_>>();
