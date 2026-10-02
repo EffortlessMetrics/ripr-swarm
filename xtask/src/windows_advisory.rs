@@ -1580,6 +1580,111 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bounded_provenance_rendering_retains_complete_parse_state() -> Result<(), String> {
+        let mut log = (0..1000)
+            .map(|index| format!("Running malformed_{index}\ntest orphan_{index} ... ok\n"))
+            .collect::<String>();
+        log.push_str("test result: ok. 1000 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n");
+        let parsed = load_synthetic(&log)?;
+        assert_eq!(parsed.state, RunState::IncompleteEvidence);
+        assert_eq!(parsed.provenance_errors.len(), 2000);
+        assert_eq!(parsed.raw_headers.len(), 1000);
+        assert_eq!(parsed.raw_headers[999], "Running malformed_999");
+        assert_eq!(
+            parsed.provenance_errors[1999],
+            "test without an admitted target: orphan_999"
+        );
+        assert!(parsed.passed.is_empty() && parsed.failed.is_empty());
+        assert_eq!(parsed.results.len(), 1);
+        let rendered = render(&parsed, &parsed);
+        assert!(rendered.contains("### Provenance errors\n"));
+        for label in ["Run 1", "Run 2"] {
+            assert_eq!(
+                rendered.matches(&format!("- {label} provenance:")).count(),
+                20
+            );
+            assert!(rendered.contains(&format!(
+                "- {label}: 1980 additional provenance errors omitted (2000 total)."
+            )));
+        }
+        assert_eq!(rendered.matches("  - Header text:").count(), 40);
+        assert_eq!(
+            rendered
+                .matches("980 additional raw headers omitted (1000 total).")
+                .count(),
+            2
+        );
+        assert_eq!(
+            rendered
+                .matches("observed 0 pass, 0 fail across 1 reported result line(s)")
+                .count(),
+            2
+        );
+        assert!(rendered.contains("No verdict: see the evidence failure above."));
+        Ok(())
+    }
+
+    #[test]
+    fn provenance_display_counts_only_unrendered_entries() {
+        for count in [0usize, 20, 21] {
+            let mut parsed = outcome(RunState::IncompleteEvidence, &[], &[]);
+            parsed.provenance_errors = (0..count).map(|index| format!("error_{index}")).collect();
+            parsed.raw_headers = (0..count).map(|index| format!("header_{index}")).collect();
+            let rendered = render(&parsed, &parsed);
+            assert_eq!(rendered.contains("### Provenance errors\n"), count > 0);
+            assert_eq!(
+                rendered.matches("- Run 1 provenance:").count(),
+                count.min(20)
+            );
+            assert_eq!(
+                rendered.matches("  - Header text:").count(),
+                count.min(20) * 2
+            );
+            assert_eq!(
+                rendered.contains("additional provenance errors omitted"),
+                count > 20
+            );
+            assert_eq!(
+                rendered.contains("additional raw headers omitted"),
+                count > 20
+            );
+            if count == 21 {
+                assert_eq!(
+                    rendered
+                        .matches("1 additional provenance errors omitted (21 total).")
+                        .count(),
+                    2
+                );
+                assert_eq!(
+                    rendered
+                        .matches("1 additional raw headers omitted (21 total).")
+                        .count(),
+                    2
+                );
+            }
+            assert!(!rendered.contains("[truncated]"));
+        }
+    }
+
+    #[test]
+    fn provenance_display_preserves_unicode_at_the_exact_scalar_bound() {
+        for count in [239usize, 240, 241] {
+            let raw = format!("\u{1b}[31m{}\u{1b}[0m", "🦀".repeat(count));
+            let mut parsed = outcome(RunState::IncompleteEvidence, &[], &[]);
+            parsed.provenance_errors.push(strip_ansi(&raw));
+            parsed.raw_headers.push(raw.clone());
+            let rendered = render(&parsed, &parsed);
+            let expected =
+                "🦀".repeat(count.min(240)) + if count > 240 { "… [truncated]" } else { "" };
+            assert!(rendered.contains(&format!("- Run 1 provenance: {expected}\n")));
+            assert!(rendered.contains(&format!("  - Header text: `{expected}`\n")));
+            assert_eq!(parsed.raw_headers, vec![raw]);
+            assert_eq!(parsed.provenance_errors[0].chars().count(), count);
+            assert!(!rendered.contains('\u{fffd}'));
+        }
+    }
+
     /// Real failure-section shapes from a Windows lane run: a returned
     /// `Error:`, a panic with its message on the next line, and a block whose
     /// only content is printed output.

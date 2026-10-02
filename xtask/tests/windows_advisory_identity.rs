@@ -156,6 +156,13 @@ fn beta(result: &str) -> String {
 }
 
 struct TempRoot(PathBuf);
+impl TempRoot {
+    fn create(path: PathBuf) -> std::io::Result<Self> {
+        let root = Self(path);
+        fs::create_dir_all(&root.0)?;
+        Ok(root)
+    }
+}
 impl Drop for TempRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -183,8 +190,7 @@ fn invoke_with_missing(first: &str, second: &str, missing: Option<&str>) -> Resu
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
-    let root = TempRoot(corpus_root(nonce));
-    fs::create_dir_all(&root.0).map_err(|e| e.to_string())?;
+    let root = TempRoot::create(corpus_root(nonce)).map_err(|e| e.to_string())?;
     for (label, log) in [("run1", first), ("run2", second)] {
         fs::write(root.0.join(format!("{label}.log")), log).map_err(|e| e.to_string())?;
         fs::write(
@@ -633,5 +639,238 @@ fn corpus_roots_are_distinct_with_a_fixed_clock_in_parallel() -> Result<(), Stri
             "a fixed clock must still produce distinct serial and concurrent roots".to_string(),
         );
     }
+    Ok(())
+}
+
+#[test]
+fn temp_root_refuses_existing_directories_files_and_failed_creation()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The outer fixture owns only a directory that this call created exclusively.
+    let path = corpus_root(11);
+    fs::create_dir(&path)?;
+    let parent = TempRoot(path);
+    let directory = parent.0.join("existing");
+    fs::create_dir(&directory)?;
+    let sentinel = directory.join("sentinel");
+    fs::write(&sentinel, "belongs to the previous owner")?;
+    let collision = TempRoot::create(directory.clone());
+    let refused = collision.is_err();
+    drop(collision);
+    assert!(refused, "an existing directory must never grant ownership");
+    assert_eq!(
+        fs::read_to_string(&sentinel)?,
+        "belongs to the previous owner"
+    );
+
+    let file = parent.0.join("existing-file");
+    fs::write(&file, "preserve this file")?;
+    assert!(TempRoot::create(file.clone()).is_err());
+    assert!(TempRoot::create(file.join("child")).is_err());
+    assert_eq!(fs::read_to_string(&file)?, "preserve this file");
+    let missing_parent = parent.0.join("missing");
+    assert!(TempRoot::create(missing_parent.join("child")).is_err());
+    assert!(
+        !missing_parent.exists(),
+        "creation must not claim missing ancestors"
+    );
+    assert_eq!(
+        fs::read_to_string(sentinel)?,
+        "belongs to the previous owner"
+    );
+    Ok(())
+}
+
+#[test]
+fn temp_root_concurrent_collision_grants_exactly_one_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = corpus_root(12);
+    fs::create_dir(&path)?;
+    let parent = TempRoot(path);
+    let child = parent.0.join("contended");
+    let barrier = std::sync::Barrier::new(2);
+    let attempts = std::thread::scope(|scope| {
+        let handles = (0..2)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    TempRoot::create(child.clone())
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|panic| format!("creation worker failed: {panic:?}"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    assert_eq!(attempts.iter().filter(|attempt| attempt.is_ok()).count(), 1);
+    assert_eq!(
+        attempts
+            .iter()
+            .filter(|attempt| attempt
+                .as_ref()
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists))
+            .count(),
+        1
+    );
+    let sentinel = child.join("owned");
+    fs::write(&sentinel, "winner remains live")?;
+    assert_eq!(fs::read_to_string(&sentinel)?, "winner remains live");
+    drop(attempts);
+    assert!(
+        !child.exists(),
+        "the winning guard must clean its own directory"
+    );
+    Ok(())
+}
+
+#[test]
+fn temp_root_cleans_owned_directories_on_success_and_later_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = corpus_root(13);
+    {
+        let root = TempRoot::create(path.clone())?;
+        fs::write(root.0.join("owned"), "cleanup control")?;
+    }
+    assert!(!path.exists());
+    let failing_path = corpus_root(14);
+    let failed: std::io::Result<()> = (|| {
+        let root = TempRoot::create(failing_path.clone())?;
+        let file = root.0.join("file");
+        fs::write(&file, "owned before failure")?;
+        fs::create_dir(file.join("child"))?;
+        Ok(())
+    })();
+    assert!(failed.is_err());
+    assert!(!failing_path.exists());
+    Ok(())
+}
+
+fn evidence_report(log: &str) -> Result<String, String> {
+    let output = invoke(log, log)?;
+    if output.status.code() != Some(1) {
+        return Err(format!(
+            "expected evidence refusal, got {:?}",
+            output.status.code()
+        ));
+    }
+    let report = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+    if !report.contains("incomplete_evidence")
+        || !report.contains("No verdict: see the evidence failure above.")
+    {
+        return Err("rendering must preserve incomplete evidence and refuse a verdict".to_string());
+    }
+    Ok(report)
+}
+
+#[test]
+fn provenance_report_caps_legacy_rows_and_counts_omissions() -> Result<(), String> {
+    let mut log = (0..1000)
+        .map(|index| format!("test orphan_{index} ... ok\n"))
+        .collect::<String>();
+    log.push_str("test result: ok. 1000 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n");
+    let report = evidence_report(&log)?;
+    assert!(report.contains("### Provenance errors\n"));
+    for label in ["Run 1", "Run 2"] {
+        assert_eq!(
+            report.matches(&format!("- {label} provenance:")).count(),
+            20
+        );
+        assert!(report.contains(&format!(
+            "- {label}: 980 additional provenance errors omitted (1000 total)."
+        )));
+    }
+    assert!(!report.contains("orphan_20"));
+    assert_eq!(
+        report
+            .matches("observed 0 pass, 0 fail across 1 reported result line(s)")
+            .count(),
+        2
+    );
+    assert!(
+        report.len() < 20_000,
+        "legacy rows must not bury the verdict"
+    );
+    Ok(())
+}
+
+#[test]
+fn provenance_report_caps_malformed_headers_and_raw_presentation() -> Result<(), String> {
+    let log = controls(None)
+        + &(0..1000)
+            .map(|index| format!("Running malformed_{index}\n"))
+            .collect::<String>();
+    let report = evidence_report(&log)?;
+    for label in ["Run 1", "Run 2"] {
+        assert_eq!(
+            report.matches(&format!("- {label} provenance:")).count(),
+            20
+        );
+        assert!(report.contains(&format!(
+            "- {label}: 980 additional provenance errors omitted (1000 total)."
+        )));
+    }
+    assert_eq!(report.matches("  - Header text:").count(), 40);
+    assert_eq!(
+        report
+            .matches("984 additional raw headers omitted (1004 total).")
+            .count(),
+        2
+    );
+    assert!(!report.contains("malformed_20"));
+    assert_eq!(
+        report
+            .matches("observed 15 pass, 0 fail across 4 reported result line(s)")
+            .count(),
+        2
+    );
+    assert!(
+        report.len() < 20_000,
+        "raw header echoes must not bypass the display bound"
+    );
+    Ok(())
+}
+
+#[test]
+fn provenance_report_bounds_unicode_without_losing_totals() -> Result<(), String> {
+    let header = format!("Running {}RAW_TAIL", "🦀界é`".repeat(400));
+    let log = controls(None) + &header + "\n";
+    let report = evidence_report(&log)?;
+    let error = format!("unrecognized target header: {header}");
+    let expected_error = error
+        .chars()
+        .take(240)
+        .collect::<String>()
+        .replace('`', "'");
+    let expected_header = header
+        .chars()
+        .take(240)
+        .collect::<String>()
+        .replace('`', "'");
+    for label in ["Run 1", "Run 2"] {
+        assert!(report.contains(&format!(
+            "- {label} provenance: {expected_error}… [truncated]\n"
+        )));
+    }
+    assert_eq!(
+        report
+            .matches(&format!(
+                "  - Header text: `{expected_header}… [truncated]`\n"
+            ))
+            .count(),
+        2
+    );
+    assert!(!report.contains("RAW_TAIL"));
+    assert!(!report.contains('\u{fffd}'));
+    assert_eq!(
+        report
+            .matches("observed 15 pass, 0 fail across 4 reported result line(s)")
+            .count(),
+        2
+    );
+    assert!(!report.contains("additional provenance errors omitted"));
     Ok(())
 }
