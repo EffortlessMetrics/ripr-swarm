@@ -11,14 +11,21 @@ are scoped or reviewed.
 
 ### Changed
 
-- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
-  identity, including target kind/source and exact executable hash. Required
-  release controls must resolve to one owning artifact across both samples;
-  missing or ambiguous provenance is refused instead of borrowing another
-  target's pass. Log-derived report entries use bounded excerpts and section
-  counts with explicit truncation and omissions; doctest transitions are
-  explicit and never assigned an inferred package (#5043).
-
+- CLI: `ripr cache status --json --help` and `ripr cache clear --dry-run
+  --help` now print the subcommand help and exit 0; help was previously
+  recognized only as the sole argument, so any combined invocation failed
+  with a self-referential "Run `ripr cache status --help`" error. `ripr cache
+  --help <anything>` prints the family usage, matching the sibling command
+  families (#5024).
+- CLI: `ripr doctor --profile foo` now renders the accepted set with the
+  standard backticks — `unknown doctor profile \`foo\`; expected \`analysis\`
+  or \`source-build\`` — matching the gate/diff/mode enumeration errors; the
+  outcome and calibrate `--format` errors already name their accepted set via
+  the argument-error alignment pass (#5016).
+- CLI: the `ripr cache status` cleanup hint names `ripr cache clear
+  [--dry-run] [--force]` — the command an installed-binary user can actually
+  run — instead of routing to the maintainer-only `cargo xtask cache gc`
+  (#5012; the text change landed with #4411, this PR pins and verifies it).
 - CLI: the global `-v`/`--verbose` flag is now documented on the
   `ripr help --all` reference (extra stderr pipeline diagnostics; accepted
   in any position, never consumed as another flag's value), and one shared
@@ -54,6 +61,22 @@ are scoped or reviewed.
   and parse share one fingerprint; analysis input identity excludes
   deadlines and position encoding; diagnostic result IDs ignore refresh
   clock and attempt handles. (#1932)
+- TypeScript/Python adapters: capped-read refusals are now disclosed as a
+  bounded, stable-sorted sample of refused paths (at most 8 per run) plus
+  one summary entry carrying the true refused count, instead of one
+  `AnalysisLimitation` per refused file — a correctly-capped monorepo no
+  longer emits up to ~20,000 limitation entries that dwarf the findings.
+  Every refused file is still refused (fail-closed); only the disclosure is
+  sampled, and the summary states that the full per-file list is not
+  materialized in output. No JSON/SARIF schema shape changes. (#5022)
+
+- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
+  identity, including target kind/source and exact executable hash. Required
+  release controls must resolve to one owning artifact across both samples;
+  missing or ambiguous provenance is refused instead of borrowing another
+  target's pass. Log-derived report entries use bounded excerpts and section
+  counts with explicit truncation and omissions; doctest transitions are
+  explicit and never assigned an inferred package (#5043).
 
 ### Added
 
@@ -187,6 +210,11 @@ are scoped or reviewed.
   (#4796).
 
 ### Fixed
+
+- File-policy coverage arrays preserve valid TOML comments and decoded string
+  values for common, Unix, and Windows selectors. Parser-owned spans retain
+  entry attribution; numeric admission, governed-field refusals, and nonzero
+  applicable-test enumeration remain enforced (#5053).
 
 - `RIPR_REPO_EXPOSURE_SEAM_LIMIT` and `RIPR_PILOT_SEAM_BUDGET` refuse a
   value that is not a seam count. Before, `abc`, `1k` or `-1` read as the `0`
