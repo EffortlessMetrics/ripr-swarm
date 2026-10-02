@@ -2135,9 +2135,7 @@ mod tests {
     fn positive_receipt_requires_an_accepted_review() -> Result<(), String> {
         let candidate = candidate_ref("/srv/journey");
         let key = answer_key();
-        let bound_prompt_digest = sha256_hex(clean_prompt_bytes().as_bytes());
-        let bound_key_digest = blind_journey_answer_key_digest(&key)?;
-        let prompt = BlindJourneyPromptV1 {
+        let mut prompt = BlindJourneyPromptV1 {
             schema_version: BLIND_JOURNEY_PROMPT_SCHEMA_VERSION.to_string(),
             candidate: candidate.clone(),
             operator_goal: "improve one test through the installed product".to_string(),
@@ -2149,11 +2147,16 @@ mod tests {
             review: BlindJourneyPromptReviewV1 {
                 reviewer: "reviewer-1".to_string(),
                 verdict: BlindJourneyPromptReviewVerdictV1::NotReviewed,
-                prompt_digest: bound_prompt_digest,
-                answer_key_digest: bound_key_digest,
+                prompt_digest: String::new(),
+                answer_key_digest: String::new(),
             },
             contamination_result: BlindJourneyContaminationResultV1::MechanicallyClean,
         };
+        // Pre-bind the canonical operator-visible digests the way a completed
+        // review would, so stamping keeps the reviewed binding instead of
+        // stamping a fresh one.
+        prompt.review.prompt_digest = prompt_digest(&prompt);
+        prompt.review.answer_key_digest = blind_journey_answer_key_digest(&key)?;
         let receipt = BlindJourneyReceiptV1 {
             schema_version: BLIND_JOURNEY_RECEIPT_SCHEMA_VERSION.to_string(),
             candidate,
