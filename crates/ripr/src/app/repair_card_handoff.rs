@@ -925,8 +925,9 @@ mod tests {
     }
 
     /// #5008: a probe failure fails closed — no card, hence no `current`
-    /// claim. A directory that is not a git repository makes the probe (and
-    /// any git spawn) error out.
+    /// claim. An empty `.git` directory shadows any parent repository during
+    /// discovery, so the probe errors exactly as it would outside a repo,
+    /// independent of where the test temp directory lives.
     #[test]
     fn evidence_tree_currentness_probe_failure_fails_closed() -> Result<(), String> {
         let probe_root = std::env::temp_dir().join(format!(
@@ -937,7 +938,7 @@ mod tests {
                 .map_err(|error| format!("clock error: {error}"))?
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&probe_root)
+        std::fs::create_dir_all(probe_root.join(".git"))
             .map_err(|error| format!("probe fixture directory failed: {error}"))?;
         let entry = weakly_gripped_entry();
         let outcome = evidence_tree_currentness(&probe_root, &entry);
