@@ -498,6 +498,10 @@ function unsupportedTextDocumentSyncReason(value: unknown): string | undefined {
   if (value.willSaveWaitUntil === true) {
     return 'willSaveWaitUntil is unsupported';
   }
+  // `save: { includeText: false }` keeps didSave opted in without the client
+  // resending the whole document; the server compares its retained buffer.
+  // Only an explicit `save: false` (or an omitted save) stays unsupported,
+  // because saved content is what ripr analyzes.
   if (value.save !== true && !isObject(value.save)) {
     return 'save must be enabled';
   }

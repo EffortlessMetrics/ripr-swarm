@@ -1,6 +1,8 @@
+mod framing;
 mod protocol;
 mod server;
 mod transport;
+mod writer;
 
 use std::path::PathBuf;
 
@@ -23,6 +25,7 @@ Options:
 The MCP surface is read-only. It exposes `ripr_workspace_status` and
 `ripr://workspace/status`; it does not edit source, execute verification or
 mutation, load project-local provider configuration, or embed a model provider.
+It does not analyze the diff either: run `ripr check --format json` for findings.
 Protocol messages are the only stdout output. Operational failures use stderr.
 "#;
 
@@ -75,7 +78,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| format!("create MCP runtime: {error}"))?;
-    runtime.block_on(transport::serve_stdio(explicit_root))
+    let result = runtime.block_on(transport::serve_stdio(explicit_root));
+    // Tokio stdin uses a non-cancellable blocking read. Once the SDK service
+    // has terminated, that read must not hold process exit until stdin EOF.
+    runtime.shutdown_background();
+    result
 }
 
 #[cfg(test)]

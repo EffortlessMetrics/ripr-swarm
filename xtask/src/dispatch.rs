@@ -39,9 +39,13 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::BranchInventory(args) => super::branch_inventory::run(&args),
         XtaskCommand::GhPrStatus(args) => super::reports::gh_pr_status(&args),
         XtaskCommand::CiBudget(args) => super::reports::ci_budget(&args),
+        XtaskCommand::MergeQueue(args) => super::reports::merge_queue(&args),
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::ModuleHealth(args) => super::reports::module_health(&args),
         XtaskCommand::WindowsAdvisorySummary(args) => super::windows_advisory::run(&args),
+        XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
+            super::windows_advisory::run_isolated(&args)
+        }
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
@@ -53,6 +57,12 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustRepairTrustReport => super::reports::rust_repair_trust_report(),
         XtaskCommand::RustJudgedPanel(args) => super::rust_judged_panel::run(&args),
         XtaskCommand::CheckRustJudgedPanel => super::check_rust_judged_panel(),
+        XtaskCommand::CheckReleaseChallengeSelection => {
+            super::rust_judged_panel::check_release_selection()
+        }
+        XtaskCommand::CheckReleaseChallengeJudgments => {
+            super::rust_judged_panel::check_release_judgments()
+        }
         XtaskCommand::PythonJudgedPanel(args) => super::python_judged_panel::run(&args),
         XtaskCommand::CheckPythonJudgedPanel => super::check_python_judged_panel(),
         XtaskCommand::PythonRepairTrust(args) => super::reports::python_repair_trust(&args),
@@ -66,6 +76,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RepoExposureReport => super::reports::repo_exposure_report(),
         XtaskCommand::RepoExposureSummaryReport => super::reports::repo_exposure_summary_report(),
         XtaskCommand::RepoExposureLatencyReport => super::reports::repo_exposure_latency_report(),
+        XtaskCommand::LspPerformanceReport => super::reports::lsp_performance_report(),
         XtaskCommand::TargetedRerunBenchmark(args) => {
             super::reports::targeted_rerun_benchmark(&args)
         }
@@ -160,6 +171,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckSourceRoleAuthority => super::check_rust_source_role_authority(),
         XtaskCommand::CheckPublicApi => super::check_public_api(),
         XtaskCommand::CheckOutputContracts => super::check_output_contracts(),
+        XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
         XtaskCommand::CheckDocIndex => super::check_doc_index(),
@@ -173,6 +185,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckVerificationContracts(args) => {
             super::verification_contracts::check_verification_contracts(&args)
         }
+        XtaskCommand::SchemaProducerSweep(args) => {
+            super::schema_producer_sweep::schema_producer_sweep(&args)
+        }
         XtaskCommand::CheckDependencies => super::check_dependencies(),
         XtaskCommand::CheckSupplyChain => super::check_supply_chain(),
         XtaskCommand::CheckProcessPolicy => super::check_process_policy(),
@@ -184,6 +199,8 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
+        XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
+        XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),
         XtaskCommand::VscodePackage => super::vscode_package(),
         XtaskCommand::VscodeTest => super::vscode_test(),

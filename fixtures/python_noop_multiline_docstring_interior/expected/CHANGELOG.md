@@ -38,3 +38,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_noop_multiline_docstring_interior (4)
+
+Reason:
+RIPR-SPEC-0122: omit zero-count languages, keep the empty-result caveat to empty runs, cut digest lines at word boundaries
+
+Command:
+`cargo xtask goldens bless python_noop_multiline_docstring_interior --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_noop_multiline_docstring_interior (5)
+
+Reason:
+RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+
+Command:
+`cargo xtask goldens bless python_noop_multiline_docstring_interior --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_noop_multiline_docstring_interior (6)
+
+Reason:
+RIPR-SPEC-0122: #4322 summary header names all seven classes with canonical tokens and a shown/total denominator
+
+Command:
+`cargo xtask goldens bless python_noop_multiline_docstring_interior --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -127,11 +127,14 @@ Current how-to docs:
 - [Installation verification](INSTALLATION_VERIFICATION.md)
 - [Windows packaged qualification](WINDOWS_PACKAGED_QUALIFICATION.md) - exact
   candidate Windows CLI and VSIX rehearsal with Actions-only receipts
+- [Python wheelhouse qualification](PYTHON_WHEELHOUSE_QUALIFICATION.md) - exact
+  candidate local-wheelhouse pip/uv rehearsal with a fail-closed aggregate
 - [First successful PR workflow](FIRST_PR_WORKFLOW.md)
 - [First successful PR demo](demo/first-successful-pr.md)
 - [Start-here convergence receipts](handoffs/2026-05-22-start-here-surface-convergence-receipts.md)
 - [Start-here convergence closeout](handoffs/2026-05-22-start-here-surface-convergence-closeout.md)
 - [Publishing](PUBLISHING.md)
+- [Claim package registries](how-to/claim-package-registries.md) - maintainer setup for npm organization ownership, PyPI pending publishers, protected source environments, and first-publication ordering
 - [Editor extension](EDITOR_EXTENSION.md)
 - [Editor install to first PR](EDITOR_INSTALL_TO_FIRST_PR.md)
 - [Editor first run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md)
@@ -247,6 +250,7 @@ Current explanation docs:
 - [Charter](CHARTER.md)
 - [Architecture](ARCHITECTURE.md)
 - [Roadmap](ROADMAP.md)
+- [PyPI and npm distribution plan](PYPI_NPM_DISTRIBUTION.md) - proposed adapter architecture, package identities, qualification boundaries, and source-owned publication path
 - [Repo tracking model](REPO_TRACKING_MODEL.md)
 - [Repo context system](agent-context/CONTEXT_SYSTEM.md)
 - [Implementation plans index](../plans/README.md)

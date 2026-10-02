@@ -58,12 +58,13 @@ a static snapshot, not a live view, and nothing re-resolves it:
   It is detected, not loaded;
 - `trust` and `authority`: `read_only_status` access, with source edit,
   verification execution, mutation execution, and model provider all `none`;
-- `claim_boundary` and `limitations`, as plain text;
+- `claim_boundary` and `limitations`, as plain text. The `ripr.toml`
+  limitation appears only when a `ripr.toml` was detected;
 - the transport, tool, resource, and byte bounds under `mcp`.
 
 Supported protocol versions are `2024-11-05`, `2025-03-26`, `2025-06-18`,
 `2025-11-25`, and `2026-07-28`. A client can open with `initialize`, where an
-unsupported requested version is answered with `2026-07-28`, or with
+unsupported or discovery-only requested version is answered with `2025-11-25`, or with
 `server/discover`, where every request carries
 `io.modelcontextprotocol/protocolVersion` and
 `io.modelcontextprotocol/clientCapabilities` in `params._meta` and an
@@ -76,8 +77,29 @@ commands or mutation testing, load project-local configuration or providers,
 embed a model, or offer a remote transport.
 
 An invalid root does not stop the server. Status reports
-`workspace_state: "unavailable"` with a `root.error_code`. Protocol errors keep
-standard JSON-RPC codes, and every error response carries an `id` (`null` when
-the request id is unreadable). Messages are capped at 256 KiB and responses at
-128 KiB. Stdout carries only protocol messages; operational errors go to stderr,
+`workspace_state: "unavailable"` with a `root.error_code`, and the tool result
+adds a second text content item that names the cause and the recovery
+(restart with `--root <repository>`). An unknown tool or resource name is
+rejected with the one valid name in the message and in `error.data.available`.
+A client that negotiated an older protocol version gets resource-not-found
+(`-32002`) for an unknown resource; current clients get Invalid Params
+(`-32602`). The SDK maps the code, while the adapter's bounded message
+`unknown resource; available: ripr://workspace/status` and
+`error.data.available` name the same valid URI in both lifecycles.
+The instructions (returned by both `initialize` and `server/discover`) and the
+tool description say that this server
+does not analyze the diff and name the CLI route that does
+(`ripr check --format json`, `ripr pilot --root .`); naming a route executes
+nothing. Protocol errors keep
+standard JSON-RPC codes. The pinned official Rust SDK owns negotiation,
+dispatch, correlation and cancellation. Syntax-invalid JSON is ignored;
+well-formed messages with invalid typed shapes receive Invalid Request and
+the transport can read the next frame. Unknown request IDs are omitted in SDK
+error responses; readable IDs remain correlated. Messages are capped at
+256 KiB and responses, including their delimiter, at 128 KiB. If even a
+correlated fallback cannot fit its readable ID, the service terminates with
+the bounded stderr reason `MCP output limit`, without substituting an ID.
+Partial reads and writes retain their state across cancellation. EOF closes
+the SDK service, so scripted clients must await replies before closing stdin.
+Stdout carries only protocol messages; operational errors go to stderr,
 and invalid command-line arguments exit with status 2.

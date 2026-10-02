@@ -19,6 +19,8 @@ editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/dist/
 editors/vscode/.vscode-test/
+packaging/npm/**/node_modules/
+packaging/npm/**/*.tgz
 .claude/
 .zcode/
 crates/ripr/examples/**/target/
@@ -28,3 +30,7 @@ crates/ripr/examples/**/target/
 crates/ripr/target/
 # Editor test/build artifacts (mirrors the root target/ ignore).
 editors/vscode/target/
+
+# Python bytecode from stdlib py_compile / local consumer runs.
+__pycache__/
+*.pyc

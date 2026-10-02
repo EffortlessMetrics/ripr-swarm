@@ -24,12 +24,8 @@ use crate::cli::commands_agent_support::{
 use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
 use crate::config::load_for_root;
 use crate::output;
-use std::io::IsTerminal;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-};
 
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
@@ -39,9 +35,20 @@ use super::write_text_file;
 /// (`kind: "repair_after_result"`). The envelope is its own versioned
 /// contract: the agent verify 0.3 document rides unchanged under `verify`
 /// and the agent status 0.1 document under `agent_status`, so every stdout
-/// document's shape is identifiable from its `schema_version`. Refusal
-/// paths keep printing the bare agent verify 0.3 document instead.
+/// document's shape is identifiable from its `schema_version`. Refusals
+/// after the verify render keep printing the bare agent verify 0.3 document
+/// instead; typed refusals before it print `repair_after_refusal`.
 const REPAIR_AFTER_RESULT_SCHEMA_VERSION: &str = "0.1";
+
+/// Schema version of the `ripr agent repair --phase after` typed-refusal
+/// document (`kind: "repair_after_refusal"`). A deliberate named refusal that
+/// happens before any verify document exists (a diverged HEAD, drifted
+/// analysis inputs, a no-movement verify refusal) exits 3 with this document
+/// on stdout, so the phase keeps its one-stdout-document contract on every
+/// exit-3 path. Its version is distinct from the success envelope's `0.1`
+/// and the bare verify document's `0.3`, so every after-phase stdout shape
+/// stays identifiable from `schema_version` alone.
+const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     let command = parse_agent_args(args)?;
@@ -53,7 +60,21 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
         AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
-        AgentCommand::Verify(options) => run_agent_verify(options).map_err(CommandError::from),
+        AgentCommand::Card(options) => {
+            super::agent_card::run_agent_card(options).map_err(CommandError::from)
+        }
+        // A deliberate named refusal (drifted analysis inputs, no movement)
+        // maps to exit code 3, as it does inside `repair --phase after`.
+        // Stdout stays empty on every refusal: the release negative corpus
+        // (RIPR-SPEC-0134) treats a rendered stdout on rejection as a breach,
+        // because the verify command's stdout is the verify artifact.
+        AgentCommand::Verify(options) => run_agent_verify(options).map_err(|error| {
+            if agent_verify_error_is_typed_refusal(&error) {
+                CommandError::Decision(error)
+            } else {
+                CommandError::Failure(error)
+            }
+        }),
         // Typed refusals carry the Decision variant (exit code 3).
         AgentCommand::VerifyExecute(options) => run_agent_verify_execute(options),
         AgentCommand::Receipt(options) => run_agent_receipt(options).map_err(CommandError::from),
@@ -67,6 +88,7 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         | AgentCommand::StartHelp
         | AgentCommand::BriefHelp
         | AgentCommand::PacketHelp
+        | AgentCommand::CardHelp
         | AgentCommand::VerifyHelp
         | AgentCommand::VerifyExecuteHelp
         | AgentCommand::ReceiptHelp
@@ -164,8 +186,9 @@ fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, St
     );
     if selection.top_seams.is_empty() {
         return Err(format!(
-            "agent start seam_id {} was not found or is hidden by config",
-            options.seam_id
+            "agent start seam_id {} was not found or is hidden by config. {}",
+            options.seam_id,
+            unknown_seam_id_hint(&options.root, &options.seam_id)
         ));
     }
 
@@ -239,7 +262,38 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
     Ok(())
 }
 
+/// Recovery for an unknown `--seam-id`. Cold agents most often pass the
+/// `probe:...` finding ID that `ripr check` prints; the error must name where
+/// seam IDs come from instead of leaving "not found" as a dead end. The
+/// pilot command names the same root the failing call used.
+pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
+    // `bound_root` over the raw path, like the LSP routes: `display_path`
+    // would turn a literal backslash in a Unix path into a separator (#4287).
+    let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.to_string_lossy(),
+    ));
+    let pilot = format!(
+        "`ripr pilot --root {root}` to list current seam IDs with their exact `ripr agent repair` commands."
+    );
+    if seam_id.starts_with("probe:") {
+        format!("`probe:...` is a `ripr check` finding ID, not a seam ID; run {pilot}")
+    } else {
+        format!("Run {pilot}")
+    }
+}
+
 fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
+    let root = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+    render_agent_packet_with_context(
+        options,
+        output::agent_seam_packets::PacketCommandContext::Standalone { root: &root },
+    )
+}
+
+fn render_agent_packet_with_context(
+    options: &AgentPacketOptions,
+    context: output::agent_seam_packets::PacketCommandContext<'_>,
+) -> Result<String, String> {
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
         return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id);
     }
@@ -253,16 +307,24 @@ fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
     let entry = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .ok_or_else(|| format!("agent packet seam_id {seam_id} was not found"))?;
+        .ok_or_else(|| {
+            format!(
+                "agent packet seam_id {seam_id} was not found. {}",
+                unknown_seam_id_hint(&options.root, seam_id)
+            )
+        })?;
 
     let policy = AgentBriefPolicy::from_config(&config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
-        return Err(format!("agent packet seam_id {seam_id} {reason}"));
+        // #4332: a policy-omitted seam is a dead end without the listing
+        // route; name it like the not-found refusals do.
+        return Err(format!(
+            "agent packet seam_id {seam_id} {reason}. {}",
+            unknown_seam_id_hint(&options.root, seam_id)
+        ));
     }
 
-    Ok(output::agent_seam_packets::render_agent_seam_packet_json(
-        entry,
-    ))
+    Ok(output::agent_seam_packets::render_agent_seam_packet_json_with_context(entry, context))
 }
 
 fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
@@ -317,12 +379,21 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     )
 }
 
+/// Exact `render_agent_verify` error for drifted analysis inputs.
+const AGENT_VERIFY_INPUT_DRIFT_ERROR: &str =
+    "agent verify artifacts are incomparable: analysis input identities differ";
+
+/// Prefix of the `render_agent_verify` error for a no-movement refusal.
+const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
+    "agent verify no repository movement between before and after artifacts";
+
 /// True when a `render_agent_verify` error is a deliberate named refusal
 /// (input-identity drift or a no-movement verify refusal) rather than an
-/// operational failure.
+/// operational failure. Matched on the whole message or its leading clause,
+/// never a substring: path-bearing operational errors echo user-supplied
+/// paths, and a path must not turn an unreadable input into a refusal.
 fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error.contains("analysis input identities differ")
-        || error.contains("no repository movement between before and after artifacts")
+    error == AGENT_VERIFY_INPUT_DRIFT_ERROR || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -351,18 +422,32 @@ fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), Co
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
-    run_agent_receipt_for_attempt(options, None, None)
+    // #4332: an explicit `--attempt` binds against that attempt's retained
+    // packet — the same authority the after phase consumes — instead of the
+    // repository-global compatibility packet a later attempt replaces. The
+    // seam id still travels with it, so a mismatched pair refuses with the
+    // ownership diagnostic instead of silently selecting.
+    if let Some(attempt_id) = options.attempt_id.clone() {
+        let packet_path = app::repair_attempt::retained_attempt_packet_path(
+            &options.root,
+            &options.seam_id,
+            &attempt_id,
+        )?;
+        return run_agent_receipt_for_attempt(options, Some(&attempt_id), Some(&packet_path), None);
+    }
+    run_agent_receipt_for_attempt(options, None, None, None)
 }
 
 fn run_agent_receipt_for_attempt(
     options: AgentReceiptOptions,
     attempt_id: Option<&str>,
     attempt_packet_path: Option<&Path>,
+    store: Option<&Path>,
 ) -> Result<(), String> {
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
-    let verify_json = std::fs::read_to_string(&verify_path).map_err(|err| {
+    let verify_json = crate::bounded_input::read_to_string(&verify_path).map_err(|err| {
         format!(
             "read agent receipt verify JSON {} failed: {err}",
             output::outcome::display_path(&verify_path)
@@ -377,8 +462,9 @@ fn run_agent_receipt_for_attempt(
             .and_then(|inputs| inputs.get("before_content_sha256"))
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "agent verify JSON is missing before_content_sha256".to_string())?;
-        crate::app::repair_attempt::validate_verify_binding(
+        crate::app::repair_attempt::validate_verify_binding_from(
             &options.root,
+            store,
             attempt_id,
             &validated.input_paths.before,
             before_sha256,
@@ -390,8 +476,9 @@ fn run_agent_receipt_for_attempt(
         .root
         .join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY);
     let repair_attempt_binding = if packet_path.exists() || attempts_root.exists() {
-        Some(crate::app::repair_attempt::receipt_binding(
+        Some(crate::app::repair_attempt::receipt_binding_from(
             &options.root,
+            store,
             &options.seam_id,
             packet_path,
             attempt_id,
@@ -453,19 +540,7 @@ fn run_agent_receipt_for_attempt(
     match options.out {
         Some(path) => {
             let path = resolve_agent_receipt_out_path(&options.root, &path)?;
-            if let Some(parent) = path
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                std::fs::create_dir_all(parent)
-                    .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
-            }
-            std::fs::write(&path, rendered).map_err(|err| {
-                format!(
-                    "write {} failed: {err}",
-                    output::outcome::display_path(&path)
-                )
-            })
+            super::write_text_file(&path, &rendered)
         }
         None => {
             print!("{rendered}");
@@ -517,7 +592,11 @@ fn run_agent_status(options: AgentStatusOptions) -> Result<(), String> {
             ));
         }
     }
-    let report = app::agent_status::build_agent_status_report(&options.root, &options.root);
+    let report = app::agent_status::build_agent_status_report_from(
+        &options.root,
+        &options.root,
+        options.store.as_deref(),
+    );
     if options.json {
         let rendered = app::agent_status::render_agent_status_json(&report)?;
         print!("{rendered}");
@@ -563,14 +642,36 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// recorded on that attempt through the attempt authority, so `ripr agent
 /// status` reports it instead of repeating the refused command unannotated.
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
+    run_agent_repair_with_identity(options, None)
+}
+
+pub(in crate::cli) fn run_before_repair_with_identity(
+    options: AgentRepairOptions,
+    identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
+) -> Result<(), CommandError> {
+    if options.phase != AgentRepairPhase::Before {
+        return Err(CommandError::Failure(
+            "prepared before identity requires the before phase".to_string(),
+        ));
+    }
+    run_agent_repair_with_identity(options, Some(identity))
+}
+
+fn run_agent_repair_with_identity(
+    options: AgentRepairOptions,
+    identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
+) -> Result<(), CommandError> {
+    let json = options.json;
     let mut refusal = AfterPhaseRefusalContext::default();
-    let result = run_agent_repair_phase(options, &mut refusal);
-    if let (Err(error), Some((root, attempt_id))) = (&result, &refusal.selected_attempt)
-        && let Err(record_error) = crate::app::repair_attempt::record_repair_attempt_after_refusal(
-            root,
-            attempt_id,
-            &after_refusal_reason(error, &refusal.narration),
-        )
+    let result = run_agent_repair_phase(options, &mut refusal, identity);
+    if let (Err(error), Some((root, store, attempt_id))) = (&result, &refusal.selected_attempt)
+        && let Err(record_error) =
+            crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
+                root,
+                store.as_deref(),
+                attempt_id,
+                &after_refusal_reason(error, &refusal.narration),
+            )
     {
         eprintln!(
             "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
@@ -580,6 +681,20 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
     // A deliberate named refusal once the after phase selected its attempt
     // (typed) is recorded above and maps to the decision exit code 3.
     // Operational errors after selection stay ordinary failures: exit 2.
+    if json
+        && refusal.typed
+        && !refusal.stdout_document_printed
+        && let (Err(error), Some((_, _, attempt_id))) = (&result, &refusal.selected_attempt)
+    {
+        // Exit 3 means "read the stdout JSON document for the answer"
+        // (docs/EXIT_CODES.md): a typed refusal before any verify document
+        // exists still prints exactly one document, naming the cause and the
+        // recovery the narration gave on stderr.
+        match render_repair_after_refusal_json(attempt_id.as_str(), error, &refusal.narration) {
+            Ok(rendered) => print!("{rendered}"),
+            Err(render_error) => eprintln!("ripr: {render_error}"),
+        }
+    }
     if refusal.selected_attempt.is_some() && refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
@@ -594,7 +709,11 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
 /// refusal was a deliberate named refusal rather than an operational error.
 #[derive(Default)]
 struct AfterPhaseRefusalContext {
-    selected_attempt: Option<(PathBuf, crate::app::repair_attempt::RepairAttemptId)>,
+    selected_attempt: Option<(
+        PathBuf,
+        Option<PathBuf>,
+        crate::app::repair_attempt::RepairAttemptId,
+    )>,
     narration: Vec<String>,
     /// Set only at a deliberate named refusal (diverged HEAD, drifted
     /// analysis inputs, a no-movement verify refusal, or a replaced
@@ -604,6 +723,31 @@ struct AfterPhaseRefusalContext {
     /// unreadable retained packet or manifest, a failed snapshot write,
     /// failed receipt or apply-record publication) stay exit code 2.
     typed: bool,
+    /// Set once the phase printed its one stdout document (the bare verify
+    /// document on a post-verify refusal), so a refusal never prints a
+    /// second document.
+    stdout_document_printed: bool,
+}
+
+/// The typed-refusal stdout document of an after phase that refused with a
+/// named cause before any verify document existed: the attempt, the final
+/// error, and the narrated cause and recovery lines (the same lines stderr
+/// carries and the attempt record keeps).
+fn render_repair_after_refusal_json(
+    attempt_id: &str,
+    error: &str,
+    narration: &[String],
+) -> Result<String, String> {
+    let document = serde_json::json!({
+        "schema_version": REPAIR_AFTER_REFUSAL_SCHEMA_VERSION,
+        "kind": "repair_after_refusal",
+        "attempt_id": attempt_id,
+        "error": error.trim(),
+        "narration": narration,
+    });
+    serde_json::to_string_pretty(&document)
+        .map(|rendered| format!("{rendered}\n"))
+        .map_err(|error| format!("serialize after-phase refusal document failed: {error}"))
 }
 
 impl AfterPhaseRefusalContext {
@@ -639,6 +783,7 @@ fn after_refusal_reason(error: &str, narration: &[String]) -> String {
 fn run_agent_repair_phase(
     options: AgentRepairOptions,
     refusal: &mut AfterPhaseRefusalContext,
+    identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), String> {
     let AgentRepairOptions {
         root,
@@ -648,11 +793,14 @@ fn run_agent_repair_phase(
         // The before-phase half runs the workflow only; the digest-bound
         // binding is produced in `cli::run` once the workflow artifacts exist
         // (see `persist_before_repair_attempt`).
-        python_repair_trust: _,
+        python_repair_trust,
         edit_authorization,
         verify_authorization,
         verify_rollback,
+        store,
+        json,
     } = options;
+    let store_ref = store.as_deref();
 
     match phase {
         AgentRepairPhase::Before => {
@@ -660,6 +808,10 @@ fn run_agent_repair_phase(
                 "agent repair --phase before lost its parsed seam identity".to_string()
             })?;
             ensure_command_root(&root, "agent repair --phase before")?;
+            let identity = identity.ok_or_else(|| {
+                "repair before requires its identity from the locked CLI publication driver"
+                    .to_string()
+            })?;
             eprintln!(
                 "ripr: agent repair --phase before for seam `{seam_id}` at {}",
                 root.display()
@@ -669,15 +821,36 @@ fn run_agent_repair_phase(
             // packet names no test file ripr may edit refuses here, before any
             // workflow artifact is written, so neither this phase nor
             // `ripr agent status` reads as a started repair.
-            let packet = render_agent_packet(&AgentPacketOptions {
-                root: root.clone(),
-                seam_id: Some(seam_id.clone()),
-                gap_ledger: None,
-                gap_id: None,
-                json: true,
-            })?;
-            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+            let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+            let packet = render_agent_packet_with_context(
+                &AgentPacketOptions {
+                    root: root.clone(),
+                    seam_id: Some(seam_id.clone()),
+                    gap_ledger: None,
+                    gap_id: None,
+                    json: true,
+                },
+                output::agent_seam_packets::PacketCommandContext::Prepared {
+                    root: &packet_root,
+                    attempt_id: identity.attempt_id(),
+                    authorization_suffix: python_repair_trust
+                        .as_ref()
+                        .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+                },
+            )?;
+            let mut policy =
+                crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
+                    .map_err(|error| before_phase_refusal(&seam_id, &error))?;
+            crate::app::repair_attempt::include_explicit_store_operational_write(
+                &mut policy,
+                &root,
+                store_ref,
+            )?;
+            crate::edit_cage::validate_build_output_precondition(&root, &policy).map_err(
+                |error| {
+                    format!("{error} No workflow was prepared and no repair attempt was started.")
+                },
+            )?;
 
             // Compose existing commands: start (creates workflow + brief) +
             // packet. The start step's `Next: ripr check ...` hint is dropped
@@ -699,31 +872,30 @@ fn run_agent_repair_phase(
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
             eprintln!("ripr: wrote {}", packet_path.display());
-            // Stdout carries the packet JSON when it is piped or redirected,
-            // which is how agents and scripts read it. A terminal reader gets
-            // a short summary instead of ~13 KB of JSON (F15-7); the packet
-            // file above is the same bytes either way.
-            print!(
-                "{}",
-                before_phase_stdout(
-                    &packet,
-                    "target/ripr/workflow/agent-packet.json",
-                    std::io::stdout().is_terminal(),
-                )
-            );
-            // "Complete" and the next step are printed once the attempt is
-            // published (`cli::persist_before_repair_attempt`), so a refusal
-            // there is never preceded by a completion line.
+            // Nothing prints on stdout here. The before-phase success stdout —
+            // with `--json` the packet document carrying the additive
+            // `repair_attempt` continuation (#4329), without it the short
+            // summary — prints once, only after the attempt exists
+            // (`cli::persist_before_repair_attempt`), the same ordering rule
+            // as the stderr narration: a refusal there is never preceded by a
+            // completion line or a success document.
             Ok(())
         }
         AgentRepairPhase::After => {
             ensure_command_root(&root, "agent repair --phase after")?;
-            let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt(
+            if let Some(id) = attempt_id.as_deref() {
+                crate::app::repair_attempt::complete_pending_terminal_retention_from(
+                    &root, store_ref, id,
+                )?;
+            }
+            let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt_from(
                 &root,
+                store_ref,
                 attempt_id.as_deref(),
                 seam_id.as_deref(),
             )?;
-            refusal.selected_attempt = Some((root.clone(), attempt.attempt_id.clone()));
+            refusal.selected_attempt =
+                Some((root.clone(), store.clone(), attempt.attempt_id.clone()));
             eprintln!(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),
@@ -744,7 +916,7 @@ fn run_agent_repair_phase(
             write_agent_repo_exposure_snapshot(&root, &after)?;
 
             let packet_path = attempt.packet_path.clone();
-            let packet_bytes = std::fs::read(&packet_path).map_err(|error| {
+            let packet_bytes = crate::bounded_input::read(&packet_path).map_err(|error| {
                 format!(
                     "read retained repair packet {} failed: {error}",
                     packet_path.display()
@@ -752,15 +924,21 @@ fn run_agent_repair_phase(
             })?;
             let packet_text = String::from_utf8(packet_bytes.clone())
                 .map_err(|error| format!("retained repair packet is not UTF-8: {error}"))?;
-            let cage_policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+            let mut cage_policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
                 &packet_text,
                 &attempt.seam_id,
+            )?;
+            crate::app::repair_attempt::include_explicit_store_operational_write(
+                &mut cage_policy,
+                &root,
+                store_ref,
             )?;
 
             // The trust binding, when the attempt carries one, is re-verified
             // by digest immediately before the applied edit is recorded.
-            let retained_binding = crate::app::python_repair_binding::load_retained_binding(
+            let retained_binding = crate::app::python_repair_binding::load_retained_binding_from(
                 &root,
+                store_ref,
                 &attempt.attempt_id,
             )?;
             let verified_binding = match &retained_binding {
@@ -790,40 +968,43 @@ fn run_agent_repair_phase(
             // restore the prepared head. A trust-bound attempt keeps its
             // exact-head rule and its typed `stale` record. The rule is the
             // attempt authority's, which `ripr agent status` reads too.
-            let head_movement = match crate::app::repair_attempt::after_phase_head_admission_by_id(
-                &root,
-                &attempt.attempt_id,
-            )? {
-                crate::app::repair_attempt::AfterPhaseHeadAdmission::Current { movement } => {
-                    movement
-                }
-                crate::app::repair_attempt::AfterPhaseHeadAdmission::FinishesStale { .. } => {
-                    crate::edit_cage::HeadMovement::RequireBaselineHead
-                }
-                crate::app::repair_attempt::AfterPhaseHeadAdmission::RefusedDiverged {
-                    current_head,
-                } => {
-                    for line in crate::app::repair_attempt::diverged_head_recovery(
-                        &crate::agent::loop_commands::display_path(&root),
-                        attempt.attempt_id.as_str(),
-                        &attempt.seam_id,
-                        &attempt.repository_head,
-                        &current_head,
-                    )
-                    .lines()
-                    {
-                        refusal.narrate(line);
+            let head_movement =
+                match crate::app::repair_attempt::after_phase_head_admission_by_id_from(
+                    &root,
+                    store_ref,
+                    &attempt.attempt_id,
+                )? {
+                    crate::app::repair_attempt::AfterPhaseHeadAdmission::Current { movement } => {
+                        movement
                     }
-                    // A deliberate named refusal: narrated cause and recovery
-                    // above, so it maps to the decision exit code 3.
-                    refusal.typed = true;
-                    return Err(format!(
-                        "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
-                        attempt.attempt_id.as_str(),
-                        attempt.repository_head
-                    ));
-                }
-            };
+                    crate::app::repair_attempt::AfterPhaseHeadAdmission::FinishesStale {
+                        ..
+                    } => crate::edit_cage::HeadMovement::RequireBaselineHead,
+                    crate::app::repair_attempt::AfterPhaseHeadAdmission::RefusedDiverged {
+                        current_head,
+                    } => {
+                        for line in crate::app::repair_attempt::diverged_head_recovery(
+                            &crate::agent::loop_commands::display_path(&root),
+                            attempt.attempt_id.as_str(),
+                            &attempt.seam_id,
+                            &attempt.repository_head,
+                            &current_head,
+                            &crate::app::repair_attempt::quoted_store_flag(store_ref),
+                        )
+                        .lines()
+                        {
+                            refusal.narrate(line);
+                        }
+                        // A deliberate named refusal: narrated cause and recovery
+                        // above, so it maps to the decision exit code 3.
+                        refusal.typed = true;
+                        return Err(format!(
+                            "repair attempt `{}` cannot finish: HEAD {current_head} does not descend from its before-phase head {}",
+                            attempt.attempt_id.as_str(),
+                            attempt.repository_head
+                        ));
+                    }
+                };
 
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
@@ -848,8 +1029,8 @@ fn run_agent_repair_phase(
                     // validation, and rendering failures are operational
                     // (exit 2) even though the attempt was already selected.
                     if agent_verify_error_is_typed_refusal(&error) {
-                        if error.contains("analysis input identities differ") {
-                            for line in repair_after_input_drift_lines(&root, &attempt) {
+                        if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
+                            for line in repair_after_input_drift_lines(&root, store_ref, &attempt) {
                                 refusal.narrate(line);
                             }
                         }
@@ -860,8 +1041,8 @@ fn run_agent_repair_phase(
             };
             write_text_file(&verify_json, &rendered_verify)?;
 
-            // Stdout carries exactly one JSON document on every path, like
-            // every other agent command. The verify outcome is held until the
+            // With --json, stdout carries exactly one JSON document on every
+            // path, like every other agent command. The verify outcome is held until the
             // tail below settles: on success the single document is the
             // repair-after-result envelope carrying the verify result under
             // `verify` and the status report under `agent_status`; when the
@@ -870,10 +1051,10 @@ fn run_agent_repair_phase(
             // an orchestrator can parse with one JSON.parse call.
             let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
                 use crate::app::python_repair_binding::{
-                    ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record,
+                    ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record_from,
                 };
                 use crate::app::repair_attempt::{
-                    finish_repair_attempt, restore_repair_attempt_to_awaiting_edit,
+                    finish_repair_attempt_from, restore_repair_attempt_to_awaiting_edit_from,
                 };
 
                 // The retained binding's manifest bytes are confirmed again
@@ -899,8 +1080,13 @@ fn run_agent_repair_phase(
                 // This makes the durable delta the exact delta the receipt
                 // binds, while the receipt itself remains outside the measured
                 // edit window.
-                let cage_after =
-                    finish_repair_attempt(&root, &attempt.attempt_id, &packet_path, head_movement)?;
+                let cage_after = finish_repair_attempt_from(
+                    &root,
+                    store_ref,
+                    &attempt.attempt_id,
+                    &packet_path,
+                    head_movement,
+                )?;
                 eprintln!(
                     "ripr: edit-cage verdict for attempt `{}`: {:?}",
                     cage_after.attempt_id.as_str(),
@@ -908,6 +1094,7 @@ fn run_agent_repair_phase(
                 );
                 for line in repair_after_cage_recovery_lines(
                     &root,
+                    store_ref,
                     &attempt.seam_id,
                     &attempt.repository_head,
                     &cage_after,
@@ -925,6 +1112,7 @@ fn run_agent_repair_phase(
                         root: root.clone(),
                         verify_json: verify_json.clone(),
                         seam_id: attempt.seam_id.clone(),
+                        attempt_id: None,
                         test_changed,
                         commands_run: Vec::new(),
                         json: true,
@@ -932,13 +1120,37 @@ fn run_agent_repair_phase(
                     },
                     Some(cage_after.attempt_id.as_str()),
                     Some(&packet_path),
+                    store_ref,
                 );
+
+                // Attempt-local copy of the just-written receipt and the
+                // verify document it was built from. The compatibility
+                // projection above can be replaced by a later finish; this
+                // retain is the surviving authority for this attempt.
+                if receipt_result.is_ok() {
+                    crate::app::repair_attempt::retain_terminal_evidence_from(
+                        &root,
+                        store_ref,
+                        &attempt.attempt_id,
+                        &[
+                            crate::app::repair_attempt::BeforeArtifactSource {
+                                role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
+                                path: &root.join("target/ripr/reports/agent-receipt.json"),
+                            },
+                            crate::app::repair_attempt::BeforeArtifactSource {
+                                role: crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
+                                path: &verify_json,
+                            },
+                        ],
+                    )?;
+                }
 
                 // The status report the finished after phase embeds in its
                 // single stdout document. Built here it reads exactly what
                 // `ripr agent status --json` would print at this point: after
                 // the finish and the receipt write, before the apply record.
-                let status_report = app::agent_status::build_agent_status_report(&root, &root);
+                let status_report =
+                    app::agent_status::build_agent_status_report_from(&root, &root, store_ref);
                 let status_rendered = app::agent_status::render_agent_status_json(&status_report)?;
 
                 // The apply record is published last: the receipt re-evaluates
@@ -966,8 +1178,9 @@ fn run_agent_repair_phase(
                             refusal.typed = true;
                         }
                     } else {
-                        let record_outcome = write_apply_record(
+                        let record_outcome = write_apply_record_from(
                             &root,
+                            store_ref,
                             &attempt.attempt_id,
                             &binding.artifact_sha256,
                             verified,
@@ -987,8 +1200,9 @@ fn run_agent_repair_phase(
                                 // attempt to awaiting_edit: the identical retry is
                                 // otherwise rejected and the record could never be
                                 // recreated.
-                                match restore_repair_attempt_to_awaiting_edit(
+                                match restore_repair_attempt_to_awaiting_edit_from(
                                     &root,
+                                    store_ref,
                                     &attempt.attempt_id,
                                 ) {
                                     Ok(()) => {
@@ -1015,7 +1229,10 @@ fn run_agent_repair_phase(
             let status_rendered = match after_tail(&mut *refusal) {
                 Ok(status_rendered) => status_rendered,
                 Err(error) => {
-                    print!("{rendered_verify}");
+                    if json {
+                        print!("{rendered_verify}");
+                        refusal.stdout_document_printed = true;
+                    }
                     return Err(error);
                 }
             };
@@ -1040,11 +1257,25 @@ fn run_agent_repair_phase(
             let combined = serde_json::to_string_pretty(&envelope).map_err(|error| {
                 format!("serialize after-phase result document failed: {error}")
             })?;
-            println!("{combined}");
-
             let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
-            for line in repair_after_summary_lines(&receipt_path) {
-                eprintln!("ripr: {line}");
+            let summary_lines = repair_after_summary_lines(&receipt_path);
+            // The movement summary goes to stdout when stdout is the human
+            // channel, and to stderr as narration beside the `--json`
+            // document; never both, so a terminal shows it once.
+            if json {
+                println!("{combined}");
+                for line in &summary_lines {
+                    eprintln!("ripr: {line}");
+                }
+            } else {
+                print!(
+                    "{}",
+                    after_phase_human_stdout(
+                        &summary_lines,
+                        &root.join("target/ripr/reports/agent-receipt.json"),
+                        &verify_json,
+                    )
+                );
             }
             eprintln!(
                 "ripr: after phase complete. Receipt: {}",
@@ -1070,6 +1301,7 @@ fn run_agent_repair_phase(
                         authority: verify_authorization.authority.clone(),
                     },
                     rollback: verify_rollback,
+                    store: store_ref,
                 },
             )?;
             let rendered = std::fs::read_to_string(&receipt_path).map_err(|error| {
@@ -1078,7 +1310,14 @@ fn run_agent_repair_phase(
                     receipt_path.display()
                 )
             })?;
-            print!("{rendered}");
+            if json {
+                print!("{rendered}");
+            } else {
+                println!(
+                    "Verification receipt: {} (add --json to print it here)",
+                    crate::agent::loop_commands::display_path(&receipt_path)
+                );
+            }
             eprintln!(
                 "ripr: verification receipt: {} (immutable; execution and static movement are separate observations)",
                 receipt_path.display()
@@ -1106,11 +1345,12 @@ fn write_agent_analysis_outcome(root: &Path) -> Result<(), String> {
 
 fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), String> {
     let config = load_for_root(root)?;
-    let (classified, limit_info) =
-        analysis::inventory_classified_seams_at_with_config(root, &config)?;
-    let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &classified);
+    let report = analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
+    let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
-        output::render::detect_python_repo_exposure_guidance_pub(root, &classified);
+        output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
+    let generated_skip =
+        output::repo_exposure::GeneratedRustSkip::from_paths(report.skipped_generated);
     let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
         root.to_path_buf(),
         "ready".to_string(),
@@ -1126,14 +1366,18 @@ fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), St
     }
     let temporary_path = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let write_result = (|| -> Result<(), String> {
-        let file = File::create(&temporary_path)
+        // An interrupted run can leave this pid-named file; removing a planted link
+        // removes only the link.
+        let _ = std::fs::remove_file(&temporary_path);
+        let file = output::file_write::create_exclusive(&temporary_path)
             .map_err(|err| format!("create {} failed: {err}", temporary_path.display()))?;
         let mut writer = BufWriter::new(file);
         output::repo_exposure::write_repo_exposure_json_with_context(
-            &classified,
-            limit_info.as_ref(),
+            &report.classified,
+            report.limit_info.as_ref(),
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
+            generated_skip.as_ref(),
             &context,
             &mut writer,
         )?;
@@ -1204,6 +1448,7 @@ fn authored_test_changed(
 /// that recovers: a new attempt prepared while the gap still exists.
 fn repair_after_cage_recovery_lines(
     root: &Path,
+    store: Option<&Path>,
     seam_id: &str,
     before_head: &str,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
@@ -1241,9 +1486,11 @@ fn repair_after_cage_recovery_lines(
                 violations.len() - CAGE_RECOVERY_MAX_VIOLATIONS
             ));
         }
+        lines.extend(untracked_output_hints(root, store, after));
     }
     let root_arg = shell_arg(&display_path(root));
     let seam_arg = shell_arg(seam_id);
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     lines.push(format!(
         "attempt `{attempt_id}` is terminal and cannot produce a receipt; re-running it or `ripr agent receipt` will refuse."
     ));
@@ -1255,9 +1502,65 @@ fn repair_after_cage_recovery_lines(
         "if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree), "
     };
     lines.push(format!(
-        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
+}
+
+/// Names refused untracked paths with recovery guidance for the declared
+/// build directory and possible shell redirects elsewhere in the checkout.
+/// The cage cannot attribute a path to a particular writer, so this narration
+/// leaves its verdict unchanged. An unreadable baseline yields no hint.
+fn untracked_output_hints(
+    root: &Path,
+    store: Option<&Path>,
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+) -> Vec<String> {
+    use crate::edit_cage::EditCageViolationKind;
+
+    let Ok(baseline) =
+        crate::app::repair_attempt::load_edit_cage_baseline_from(root, store, &after.attempt_id)
+    else {
+        return Vec::new();
+    };
+    let build_output = baseline.policy().ignored_build_output.as_ref();
+    let (build_paths, other_paths): (Vec<_>, Vec<_>) = after
+        .verdict
+        .violations
+        .iter()
+        .filter(|violation| violation.kind == EditCageViolationKind::OutsideAllowedSurface)
+        .filter(|violation| baseline.index_entry(&violation.path).is_none())
+        .take(CAGE_RECOVERY_MAX_VIOLATIONS)
+        .partition(|violation| build_output.is_some_and(|rule| rule.matches(&violation.path)));
+    let mut hints = Vec::new();
+    if let Some(rule) = build_output.filter(|_| !build_paths.is_empty()) {
+        let paths = build_paths
+            .iter()
+            .map(|violation| format!("`{}`", violation.path))
+            .collect::<Vec<_>>();
+        hints.push(format!(
+            "Refused untracked paths under Cargo's declared build directory `{}/`: {}. Check the effective Git ignore rules: generated build output must be ignored before starting a new repair attempt (for example `/{}/` in .gitignore). Tracked and untracked-but-not-ignored files remain subject to the edit cage; these paths are not attributed to redirected ripr output.",
+            rule.path(), paths.join(", "), rule.path()
+        ));
+    }
+    let untracked = other_paths
+        .iter()
+        .map(|violation| format!("`{}`", violation.path))
+        .collect::<Vec<_>>();
+    if untracked.is_empty() {
+        return hints;
+    }
+    hints.push(format!(
+        "{} {} not tracked by Git when the before phase ran. If {} a file you redirected ripr output into (for example `> packet.json` or `2> before.err`), the edit cage counts it as an edit: delete it, and redirect `agent repair` output outside the checkout or under target/ripr/ (the before phase already writes the packet to target/ripr/workflow/agent-packet.json).",
+        untracked.join(", "),
+        if untracked.len() == 1 { "was" } else { "were" },
+        if untracked.len() == 1 {
+            "it is"
+        } else {
+            "one is"
+        }
+    ));
+    hints
 }
 
 /// Recovery narration for an after phase refused because the analysis input
@@ -1265,6 +1568,7 @@ fn repair_after_cage_recovery_lines(
 /// still awaiting the edit: the lines name the changed inputs and the rerun.
 fn repair_after_input_drift_lines(
     root: &Path,
+    store: Option<&Path>,
     attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
 ) -> Vec<String> {
     use crate::agent::loop_commands::{display_path, shell_arg};
@@ -1272,8 +1576,10 @@ fn repair_after_input_drift_lines(
     let root_arg = shell_arg(&display_path(root));
     let attempt_arg = shell_arg(attempt.attempt_id.as_str());
     let seam_arg = shell_arg(&attempt.seam_id);
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
     let mut lines = Vec::new();
-    match crate::app::repair_attempt::analysis_input_changes(root, &attempt.attempt_id) {
+    match crate::app::repair_attempt::analysis_input_changes_from(root, store, &attempt.attempt_id)
+    {
         Ok(paths) if !paths.is_empty() => {
             lines.push(format!(
                 "analysis inputs changed after the before phase: {}. The before and after snapshots must analyze the same Cargo manifests, Git-tracked Cargo.lock files, and ripr.toml (an untracked Cargo.lock that the build writes does not count).",
@@ -1307,7 +1613,7 @@ fn repair_after_input_drift_lines(
                 })
                 .unwrap_or_default();
             lines.push(format!(
-                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`{untrack}), then rerun `ripr agent repair --root {root_arg} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
+                "to recover: {uncommit}restore those files to their before-phase state (for example `git checkout {} -- <path>`{untrack}), then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before`, restore the edit, then run the new --attempt command it prints.",
                 attempt.repository_head
             ));
         }
@@ -1317,7 +1623,7 @@ fn repair_after_input_drift_lines(
                     .to_string(),
             );
             lines.push(format!(
-                "to recover: set your test edit aside, run `ripr agent repair --root {root_arg} --seam-id {seam_arg} --phase before` with the ripr you will use for the after phase, restore the edit, then run the new --attempt command it prints."
+                "to recover: set your test edit aside, run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` with the ripr you will use for the after phase, restore the edit, then run the new --attempt command it prints."
             ));
         }
         Err(error) => lines.push(format!(
@@ -1329,22 +1635,66 @@ fn repair_after_input_drift_lines(
 
 /// A before phase refused because the seam's repair packet cannot bound a
 /// test-only edit. Names the seam and the reason in plain words, says that
-/// nothing was started, and points at the surfaces that only offer a repair
-/// start for seams that pass this check.
+/// nothing was started, states the observable packet field (#4332 — the
+/// producer-jargon cause alone leaves the agent guessing what to look at),
+/// and points at the surfaces that only offer a repair start for seams that
+/// pass this check.
 fn before_phase_refusal(seam_id: &str, error: &str) -> String {
     format!(
-        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
+        "seam `{seam_id}` has no test file ripr can route a repair to, so no repair attempt was started. In the seam's repair packet the observable state is `recommended_test.file: \"not_applicable\"` (no repair target exists). Pick a seam whose `ripr pilot` output or review card shows a repair start. Cause: {error}"
     )
 }
 
-/// What the before phase prints on stdout: the packet JSON for a pipe or
-/// file, a short summary for a terminal. A packet the summary cannot read
-/// falls back to the JSON, so nothing is hidden.
-fn before_phase_stdout(packet: &str, packet_path: &str, terminal: bool) -> String {
-    if terminal && let Some(summary) = before_phase_summary(packet, packet_path) {
-        return summary;
+/// What the before phase prints on stdout once its attempt is published: with
+/// `--json`, the packet envelope augmented with the additive `repair_attempt`
+/// continuation (#4329) so a driver that captures only stdout can complete
+/// the loop; without it, a short summary. A packet the summary cannot read
+/// falls back to a line naming the packet file, so nothing is hidden.
+pub(in crate::cli) fn before_phase_stdout(
+    packet: &str,
+    packet_path: &str,
+    json: bool,
+    continuation: &output::agent_seam_packets::BeforePhaseAttemptContinuation,
+) -> Result<String, String> {
+    if json {
+        return output::agent_seam_packets::render_before_phase_attempt_stdout(
+            packet,
+            continuation,
+        );
     }
-    packet.to_string()
+    Ok(
+        before_phase_summary(packet, packet_path).unwrap_or_else(|| {
+            format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
+        }),
+    )
+}
+
+/// Stdout of an after phase without `--json`: the movement line the receipt
+/// owns, what was written, and the next step. With `--json` these lines are
+/// stderr narration instead; stdout is what a caller that reads only stdout
+/// keeps.
+fn after_phase_human_stdout(
+    summary_lines: &[String],
+    receipt_path: &Path,
+    verify_path: &Path,
+) -> String {
+    let mut out = String::new();
+    for line in summary_lines {
+        let mut chars = line.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+            out.push('\n');
+        }
+    }
+    // Root-resolved, like the verify phase: a caller outside --root must
+    // still find the files these lines name.
+    out.push_str(&format!(
+        "  receipt: {}\n  verify result (JSON): {}; add --json to print the result document here\n",
+        receipt_path.display(),
+        verify_path.display()
+    ));
+    out
 }
 
 fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
@@ -1387,11 +1737,18 @@ fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
             "  edit one test file: {test_file}; leave production code unchanged"
         )),
     }
+    // #4330: state the terminality, not just the preference. The cage kills
+    // the attempt when any other file changes, so the narration that names
+    // the one test file must also name what violating it costs.
+    lines.push(format!(
+        "  {}",
+        crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING
+    ));
     if let Some(assertion) = text("/suggested_assertions/0") {
         lines.push(format!("  assertion shape: {assertion}"));
     }
     lines.push(format!(
-        "  full repair packet (JSON): {packet_path}; stdout carries it when piped"
+        "  full repair packet (JSON): {packet_path}; add --json to print it here"
     ));
     Some(lines.join("\n") + "\n")
 }
@@ -1419,9 +1776,27 @@ fn repair_receipt_summary_lines(receipt: &str) -> Vec<String> {
         let summary = text("/summary/next_action/summary")
             .map(|summary| format!(" {summary}"))
             .unwrap_or_default();
-        lines.push(format!(
-            "result for seam `{seam_id}`: {before} -> {after} ({movement}).{summary}"
-        ));
+        // Lead with the plain words `ripr check` uses for the same gap
+        // (`weak -> exposed`), then the grip schema values the JSON carries.
+        let plain = |value: &str| {
+            crate::analysis::seams::SeamGripClass::from_schema_value(value)
+                .map(|class| class.plain_label())
+        };
+        let words = match (plain(before), plain(after)) {
+            (Some(before_word), Some(after_word)) => {
+                format!("{before_word} -> {after_word} ({before} -> {after}, {movement})")
+            }
+            _ => format!("{before} -> {after} ({movement})"),
+        };
+        lines.push(format!("result for seam `{seam_id}`: {words}.{summary}"));
+    }
+    // Static movement is not a test result: a failing focused test still
+    // reads `improved`. Say so before the next step, not only inside it.
+    if text("/verification/status") == Some(crate::output::agent_receipt::VERIFICATION_NOT_RUN) {
+        lines.push(
+            "test run: none recorded. This receipt compares static evidence only; a failing test can still show `improved`."
+                .to_string(),
+        );
     }
     // The receipt producer owns which next step fits its status: only an
     // `advisory` receipt recommends including it in review, and any other
@@ -1502,7 +1877,7 @@ mod tests {
         assert_eq!(
             agent(&args(&["unknown"])),
             Err(CommandError::Failure(
-                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
             ))
         );
@@ -1936,6 +2311,41 @@ mod tests {
         std::fs::remove_dir_all(&outside).map_err(|err| format!("remove outside: {err}"))?;
         Ok(())
     }
+
+    #[test]
+    fn repair_after_cage_recovery_repeats_explicit_store() -> Result<(), String> {
+        let after = crate::app::repair_attempt::RepairAttemptAfter {
+            attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
+                "repair-attempt-0123456789abcdef01234567",
+            )?,
+            repository_head: "b".repeat(40),
+            delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            packet_sha256: format!("sha256:{}", "1".repeat(64)),
+            current: false,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status: crate::edit_cage::EditCageVerdictStatus::Violated,
+                changed_paths: Vec::new(),
+                violations: Vec::new(),
+            },
+        };
+        let lines = repair_after_cage_recovery_lines(
+            Path::new("."),
+            Some(Path::new(".ripr/attempts")),
+            "seam:sample",
+            &"a".repeat(40),
+            &after,
+        );
+        let joined = lines.join("\n");
+        if !joined.contains("--store") || !joined.contains(".ripr/attempts") {
+            return Err(format!("cage recovery lost --store: {joined}"));
+        }
+        if !joined.contains("--phase before") {
+            return Err(format!(
+                "cage recovery lost the before-phase restart: {joined}"
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1967,13 +2377,13 @@ mod repair_summary_tests {
             "status": "advisory",
             "seam": {"seam_id": "67fc764ba37d77bd"},
             "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"},
-            "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}
+            "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}
         }"#;
         assert_eq!(
             repair_receipt_summary_lines(receipt),
             vec![
-                "result for seam `67fc764ba37d77bd`: weakly_gripped -> strongly_gripped (improved). Static grip improved.".to_string(),
-                "next: Keep the focused test and include this receipt in review.".to_string(),
+                "result for seam `67fc764ba37d77bd`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved.".to_string(),
+                "next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.".to_string(),
             ]
         );
     }
@@ -1986,7 +2396,10 @@ mod repair_summary_tests {
         }"#;
         assert_eq!(
             repair_receipt_summary_lines(receipt),
-            vec!["result for seam `s`: weakly_gripped -> weakly_gripped (unchanged).".to_string()]
+            vec![
+                "result for seam `s`: weak -> weak (weakly_gripped -> weakly_gripped, unchanged)."
+                    .to_string()
+            ]
         );
     }
 
@@ -1995,7 +2408,7 @@ mod repair_summary_tests {
         let movement = r#""seam": {"seam_id": "s"},
             "provenance": {"before_class": "weakly_gripped", "after_class": "strongly_gripped", "movement": "improved"}"#;
         let result =
-            "result for seam `s`: weakly_gripped -> strongly_gripped (improved). Static grip improved."
+            "result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved."
                 .to_string();
         let step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review.";
         let invalid = format!(
@@ -2008,7 +2421,7 @@ mod repair_summary_tests {
         // Without a status nothing vouches for the receipt, so its
         // recommendation is not forwarded.
         let unstated = format!(
-            r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Keep the focused test and include this receipt in review."}}}}}}"#
+            r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}}}}}"#
         );
         assert_eq!(repair_receipt_summary_lines(&unstated), vec![result]);
     }
@@ -2023,9 +2436,10 @@ mod repair_summary_tests {
 #[cfg(test)]
 mod before_phase_stdout_tests {
     use super::before_phase_stdout;
+    use crate::output::agent_seam_packets::BeforePhaseAttemptContinuation;
 
     const PACKET: &str = r#"{
-  "schema_version": "0.1",
+  "schema_version": "0.5",
   "packets": [
     {
       "seam_id": "0d196886bad1b124",
@@ -2045,21 +2459,76 @@ mod before_phase_stdout_tests {
   ]
 }"#;
 
-    /// F15-7: a pipe or file gets the packet JSON byte for byte, so agents
-    /// and scripts that parse stdout keep their contract.
+    fn continuation() -> BeforePhaseAttemptContinuation {
+        BeforePhaseAttemptContinuation {
+            attempt_id: "repair-attempt-0123456789abcdef01234567".to_string(),
+            manifest_path:
+                "target/ripr/repair-attempts/repair-attempt-0123456789abcdef01234567/attempt.json"
+                    .to_string(),
+            next_command:
+                "ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after"
+                    .to_string(),
+            packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
+        }
+    }
+
+    /// `--json` keeps every packet field and adds the additive
+    /// `repair_attempt` continuation (#4329): a driver that parses stdout
+    /// once can run the after phase without reading stderr.
     #[test]
-    fn piped_stdout_is_the_packet_json_unchanged() {
+    fn json_stdout_is_the_packet_document_with_the_attempt_continuation() -> Result<(), String> {
+        let document = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            true,
+            &continuation(),
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&document)
+            .map_err(|error| format!("stdout document must parse: {error}"))?;
+        assert_eq!(value["schema_version"], "0.5");
+        assert_eq!(value["packets"][0]["seam_id"], "0d196886bad1b124");
         assert_eq!(
-            before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", false),
-            PACKET
+            value["repair_attempt"]["attempt_id"],
+            "repair-attempt-0123456789abcdef01234567"
+        );
+        assert_eq!(
+            value["repair_attempt"]["next_command"],
+            "ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after"
+        );
+        assert_eq!(
+            value["repair_attempt"]["manifest_path"],
+            "target/ripr/repair-attempts/repair-attempt-0123456789abcdef01234567/attempt.json"
+        );
+        assert_eq!(
+            value["repair_attempt"]["packet_path"],
+            "target/ripr/workflow/agent-packet.json"
+        );
+        Ok(())
+    }
+
+    /// An envelope that is not the current packet contract fails closed:
+    /// the publisher must never print a mislabeled stdout document.
+    #[test]
+    fn wrong_schema_version_fails_closed() {
+        let packet = PACKET.replace("0.5", "0.4");
+        assert!(
+            before_phase_stdout(&packet, "p", true, &continuation())
+                .err()
+                .is_some_and(|error| error.contains("schema version"))
         );
     }
 
-    /// F15-7: a terminal gets a short summary naming the seam, the one test
-    /// file to edit, and where the full packet is, instead of the JSON.
+    /// F15-7: without `--json`, a terminal and a pipe alike get a short
+    /// summary naming the seam, the one test file to edit, and where the
+    /// full packet is, instead of ~13 KB of JSON.
     #[test]
-    fn terminal_stdout_is_a_short_summary_of_the_same_packet() {
-        let summary = before_phase_stdout(PACKET, "target/ripr/workflow/agent-packet.json", true);
+    fn default_stdout_is_a_short_summary_of_the_same_packet() -> Result<(), String> {
+        let summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &continuation(),
+        )?;
         assert!(!summary.contains('{'), "{summary}");
         assert!(summary.lines().count() <= 8, "{summary}");
         for expected in [
@@ -2068,21 +2537,46 @@ mod before_phase_stdout_tests {
             "  missing discriminator: DISCOUNT_THRESHOLD (equality boundary)",
             "  edit one test file: tests/pricing.rs (suggested test `discounted_total_boundary_discriminator`); leave production code unchanged",
             "  assertion shape: assert_eq!(discounted_total(10_000), 9_000)",
-            "  full repair packet (JSON): target/ripr/workflow/agent-packet.json; stdout carries it when piped",
+            "  full repair packet (JSON): target/ripr/workflow/agent-packet.json; add --json to print it here",
         ] {
             assert!(
                 summary.lines().any(|line| line == expected),
                 "missing `{expected}` in:\n{summary}"
             );
         }
+        Ok(())
     }
 
-    /// A packet the summary cannot read (no test file) falls back to the JSON
-    /// rather than hiding it behind an empty summary.
+    /// A packet the summary cannot read (no test file) still names where the
+    /// packet is and how to print it, rather than an empty stdout.
     #[test]
-    fn unreadable_packet_falls_back_to_the_json_on_a_terminal() {
+    fn unreadable_packet_points_at_the_packet_file() -> Result<(), String> {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
-        assert_eq!(before_phase_stdout(packet, "p", true), packet);
+        assert_eq!(
+            before_phase_stdout(packet, "p", false, &continuation())?,
+            "Repair packet (JSON): p; add --json to print it here\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn after_phase_default_stdout_leads_with_the_movement_and_names_the_artifacts() {
+        let out = super::after_phase_human_stdout(
+            &[
+                "result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved)."
+                    .to_string(),
+                "next: Keep the focused test.".to_string(),
+            ],
+            std::path::Path::new("/repo/target/ripr/reports/agent-receipt.json"),
+            std::path::Path::new("/repo/target/ripr/workflow/agent-verify.json"),
+        );
+        assert_eq!(
+            out,
+            "Result for seam `s`: weak -> exposed (weakly_gripped -> strongly_gripped, improved).\n\
+             Next: Keep the focused test.\n  \
+             receipt: /repo/target/ripr/reports/agent-receipt.json\n  \
+             verify result (JSON): /repo/target/ripr/workflow/agent-verify.json; add --json to print the result document here\n"
+        );
     }
 }
 

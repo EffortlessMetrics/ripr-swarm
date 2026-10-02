@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return amount + 2","line":2}
       ],
-      "evidence": ["owner: calculate_fee", "owner_kind: function", "test_framework: pytest (test_checkout_total)", "test_fixtures: pricing (test_checkout_total)", "test_verify_command: pytest tests/test_checkout.py::test_checkout_total (test_checkout_total)", "related_test_relation: fixture_name (test_checkout_total)", "related_test_uncertain: fixture_name (test_checkout_total)"],
+      "evidence": ["owner: calculate_fee", "owner_kind: function", "test_framework: pytest (test_checkout_total)", "test_fixtures: pricing (test_checkout_total)", "test_verify_command: python -m pytest tests/test_checkout.py::test_checkout_total (test_checkout_total)", "related_test_relation: fixture_name (test_checkout_total)", "related_test_uncertain: fixture_name (test_checkout_total)"],
       "missing": ["Only heuristic Python test links were found for `calculate_fee`; verify the suggested test location or add a direct pytest or unittest call with an exact-value assertion."],
       "assertion_texts": {
       },
@@ -95,5 +95,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/pricing.py","digest":"sha256:33716584d863638c4edd42afe2c298129ac825bb9196746dfe5a4c9180a87da5"}]}
 }

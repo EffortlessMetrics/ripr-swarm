@@ -16,6 +16,143 @@ const RIPR_SCHEMA_PREFIX: &str = "schemas/ripr/";
 /// parked in `schemas/` declare itself in the audit rather than slip past.
 const SCHEMA_FILE_SUFFIX: &str = ".json";
 
+const PR_EVIDENCE_INSTALLED_PRODUCER: &str = "crates/ripr/src/app/pr_evidence.rs";
+const PR_EVIDENCE_VERSION_PREFIX: &str = "json!({\n        \"schema_version\": \"";
+
+/// One producer that writes a published schema version into its output.
+struct VersionProducer {
+    source_path: &'static str,
+    /// Text immediately preceding each emitted version literal.
+    prefix: &'static str,
+    occurrences: usize,
+}
+
+const fn producer(
+    source_path: &'static str,
+    prefix: &'static str,
+    occurrences: usize,
+) -> VersionProducer {
+    VersionProducer {
+        source_path,
+        prefix,
+        occurrences,
+    }
+}
+
+// Each published RIPR schema lists every producer that emits its version.
+// Keep this inventory exhaustive: a newly published schema needs an explicit
+// owner, and a schema written by more than one producer (for example both the
+// installed `ripr` binary and unpublished xtask automation) lists each one so
+// no producer can drift unreconciled.
+const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
+    (
+        "check",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "const CHECK_OUTPUT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "executed-control",
+        &[producer(
+            "crates/ripr/src/domain/executed_control.rs",
+            "pub(crate) const EXECUTED_CONTROL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "gate-decision",
+        &[producer(
+            "crates/ripr/src/output/gate.rs",
+            "const SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "pr-evidence",
+        &[
+            // Installed `ripr pr-evidence`: success and error packets each
+            // pin the public envelope.
+            producer(
+                PR_EVIDENCE_INSTALLED_PRODUCER,
+                PR_EVIDENCE_VERSION_PREFIX,
+                2,
+            ),
+            // Unpublished xtask compatibility producer, same two packets.
+            producer(
+                "xtask/src/reports/pr_evidence.rs",
+                PR_EVIDENCE_VERSION_PREFIX,
+                2,
+            ),
+        ],
+    ),
+    (
+        "repair-assurance",
+        &[producer(
+            "crates/ripr/src/domain/verification_result.rs",
+            "pub const VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "repair-attempt",
+        &[producer(
+            "crates/ripr/src/app/repair_attempt/mod.rs",
+            "const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "review-comments",
+        &[producer(
+            "crates/ripr/src/output/review_comments.rs",
+            "const REVIEW_COMMENTS_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "ripr-agent-capability",
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "ripr-agent-error",
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "ripr-agent-request",
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "ripr-agent-success",
+        &[producer(
+            "crates/ripr/src/lsp/agent_protocol.rs",
+            "const RIPR_AGENT_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "rust-repair-trust-corpus",
+        &[producer(
+            "xtask/src/reports/rust_repair_trust.rs",
+            "get(\"schema_version\").and_then(Value::as_str) == Some(\"",
+            1,
+        )],
+    ),
+];
+
 /// Which value inside `fixture_path` a contract validates.
 ///
 /// A published schema is not always the shape of a whole file. Some producer
@@ -100,9 +237,9 @@ const CONTRACTS: &[VerificationContract] = &[
         ],
     },
     // The `--gap-ledger` route writes the same review-comments artifact but
-    // renders an `inputs.gap_ledger` disclosure and gap-variant `suppressed[]`
-    // items (`gap_id`, nullable `file`/`line`) that the diff-scoped fixture
-    // above never carries; the generation-time `--check` in
+    // renders an `inputs.gap_ledger` disclosure, eligible gap-record cards,
+    // and gap-variant `suppressed[]` items (`gap_id`, nullable `file`/`line`)
+    // that the diff-scoped fixture above never carries; the generation-time `--check` in
     // `xtask/src/reports/review_comments.rs` shells `ripr review-comments`
     // without `--gap-ledger`, so nothing consumed this shape before this row
     // while the closed published schema rejected it.
@@ -112,7 +249,13 @@ const CONTRACTS: &[VerificationContract] = &[
         fixture_path: "tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json",
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
-        doc_markers: &["inputs", "gap_ledger"],
+        doc_markers: &[
+            "inputs",
+            "gap_ledger",
+            "gap_record_anchor",
+            "comments[].gap_id",
+            "gap_repair_card",
+        ],
     },
     VerificationContract {
         schema_path: "schemas/ripr/gate-decision.schema.json",
@@ -276,6 +419,25 @@ const CONTRACTS: &[VerificationContract] = &[
             "observations",
         ],
     },
+    VerificationContract {
+        schema_path: "schemas/ripr/executed-control.schema.json",
+        schema_pointer: Some("/$defs/packet"),
+        fixture_path: "fixtures/executed-control-contract/corpus.json",
+        subject: ContractSubject::EachItem {
+            array: "/cases",
+            item: Some("/packet"),
+        },
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "schema_version",
+            "kind",
+            "obligation_id",
+            "offered_evidence_kind",
+            "executed_discriminating_control",
+            "ordinary_positive_test",
+            "not_proven",
+        ],
+    },
     // `command_specs.verify` in a generated agent packet is producer output
     // from `crate::agent::command_specs`, so the published command-spec
     // contract is checked against bytes the product actually emitted.
@@ -409,13 +571,24 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         }
     }
 
-    // Reverse-direction check: every schemas/ripr/*.schema.json must define a
-    // schema_version property with a const value. This is the first
-    // enforcement step toward #1720 (per-output version reconciliation).
+    let registered = version_authority_violations(
+        &root,
+        &published_schemas,
+        &|path| read_text(root.join(path)),
+        &mut violations,
+    )?;
+    // Reverse-direction check: every published RIPR schema declares a pinned
+    // version and has exactly one reconciled authority.
     for rel_str in published_schemas
         .iter()
         .filter(|path| path.starts_with(RIPR_SCHEMA_PREFIX))
     {
+        let name = rel_str
+            .strip_prefix(RIPR_SCHEMA_PREFIX)
+            .and_then(|name| name.strip_suffix(".schema.json"));
+        if !name.is_some_and(|name| registered.contains(name)) {
+            violations.push(format!("{rel_str} has no registered version authority"));
+        }
         let schema = read_json(root.join(rel_str))?;
         let props = schema.get("properties").and_then(Value::as_object);
         let Some(props) = props else {
@@ -452,6 +625,95 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
                 .map(|violation| format!("- {violation}"))
                 .collect::<Vec<_>>()
                 .join("\n")
+        ))
+    }
+}
+
+/// Reconcile every registered producer with its published schema and the
+/// consumer-facing version table, returning the registered schema names.
+///
+/// Producer sources are read through `read_source` so a test can mutate one
+/// producer in isolation and prove the gate notices.
+fn version_authority_violations(
+    root: &Path,
+    published_schemas: &[String],
+    read_source: &dyn Fn(&str) -> Result<String, String>,
+    violations: &mut Vec<String>,
+) -> Result<BTreeSet<&'static str>, String> {
+    let version_doc = read_text(root.join("docs/OUTPUT_SCHEMA.md"))?;
+    // Audit the disk inventory in both directions, then compare each producer,
+    // the published schema, and the consumer-facing version table per row.
+    let mut registered = BTreeSet::new();
+    for (name, producers) in VERSION_AUTHORITIES {
+        if !registered.insert(*name) {
+            violations.push(format!("duplicate schema version authority: {name}"));
+        }
+        let schema_path = format!("schemas/ripr/{name}.schema.json");
+        if !published_schemas.contains(&schema_path) {
+            violations.push(format!(
+                "{schema_path} has an authority but is not published"
+            ));
+            continue;
+        }
+        if producers.is_empty() {
+            violations.push(format!("{schema_path} has no registered producer"));
+            continue;
+        }
+        let schema = read_json(root.join(&schema_path))?;
+        let pinned = schema
+            .pointer("/properties/schema_version/const")
+            .and_then(Value::as_str);
+        for producer in *producers {
+            let source = read_source(producer.source_path)?;
+            if let Some(violation) = version_mismatch(
+                &schema_path,
+                pinned,
+                producer.source_path,
+                &source,
+                producer.prefix,
+                producer.occurrences,
+                &version_doc,
+            ) {
+                violations.push(violation);
+            }
+        }
+    }
+    Ok(registered)
+}
+
+fn version_mismatch(
+    schema_path: &str,
+    pinned: Option<&str>,
+    source_path: &str,
+    source: &str,
+    prefix: &str,
+    expected_occurrences: usize,
+    version_doc: &str,
+) -> Option<String> {
+    let producers = source
+        .split(prefix)
+        .skip(1)
+        .filter_map(|rest| rest.split_once('"').map(|(version, _)| version))
+        .collect::<Vec<_>>();
+    let doc_row_prefix = format!("| `{schema_path}` | `");
+    let documented = version_doc
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix(&doc_row_prefix)?
+                .split_once('`')
+                .map(|(version, _)| version)
+        })
+        .collect::<Vec<_>>();
+    if pinned.is_some()
+        && producers.len() == expected_occurrences
+        && producers.iter().all(|version| Some(*version) == pinned)
+        && documented.len() == 1
+        && documented[0] == pinned.unwrap_or("")
+    {
+        None
+    } else {
+        Some(format!(
+            "{schema_path} version mismatch: schema={pinned:?}, {source_path}={producers:?} (expected {expected_occurrences} producer occurrences), docs/OUTPUT_SCHEMA.md={documented:?}"
         ))
     }
 }
@@ -694,7 +956,7 @@ fn validate_schema_document(path: &str, schema: &Value, violations: &mut Vec<Str
     }
 }
 
-fn validate_value_against_schema(
+pub(crate) fn validate_value_against_schema(
     value: &Value,
     schema: &Value,
     root_schema: &Value,
@@ -1112,6 +1374,89 @@ mod tests {
     use super::*;
 
     #[test]
+    fn schema_version_reconciliation_rejects_each_drift_and_missing_rows() {
+        let path = "schemas/ripr/example.schema.json";
+        let source_path = "producer.rs";
+        let prefix = "const VERSION: &str = \"";
+        let source = "const VERSION: &str = \"0.1\";";
+        let doc = "| `schemas/ripr/example.schema.json` | `0.1` | producer |";
+        let check = |pinned: Option<&str>, source: &str, doc: &str| {
+            version_mismatch(path, pinned, source_path, source, prefix, 1, doc)
+        };
+
+        assert!(check(Some("0.1"), source, doc).is_none());
+        assert_eq!(
+            check(Some("0.2"), source, doc).as_deref(),
+            Some(
+                "schemas/ripr/example.schema.json version mismatch: schema=Some(\"0.2\"), producer.rs=[\"0.1\"] (expected 1 producer occurrences), docs/OUTPUT_SCHEMA.md=[\"0.1\"]"
+            )
+        );
+        assert!(check(Some("0.1"), "const VERSION: &str = \"0.2\";", doc).is_some());
+        assert!(
+            check(
+                Some("0.1"),
+                source,
+                "| `schemas/ripr/example.schema.json` | `0.2` | producer |"
+            )
+            .is_some()
+        );
+        assert!(check(Some("0.1"), source, "").is_some());
+        assert!(check(Some("0.1"), source, &format!("{doc}\n{doc}")).is_some());
+        assert!(check(None, source, doc).is_some());
+        assert!(check(Some("0.1"), &format!("{source}\n{source}"), doc).is_some());
+        assert!(
+            version_mismatch(
+                path,
+                Some("0.1"),
+                source_path,
+                &format!("{source}\nconst VERSION: &str = \"0.2\";"),
+                prefix,
+                2,
+                doc,
+            )
+            .is_some()
+        );
+    }
+
+    /// Mutate only the installed `ripr pr-evidence` producer and require the
+    /// real inventory to reject it, so the unpublished xtask copy cannot stand
+    /// in for the binary users actually run.
+    #[test]
+    fn installed_pr_evidence_producer_drift_fails_the_gate() -> Result<(), String> {
+        let root = repo_root()?;
+        let published = published_schema_paths(&root)?;
+        let reconcile = |mutate: bool| -> Result<Vec<String>, String> {
+            let read_source = |path: &str| -> Result<String, String> {
+                let source = read_text(root.join(path))?;
+                if !mutate || path != PR_EVIDENCE_INSTALLED_PRODUCER {
+                    return Ok(source);
+                }
+                let current = format!("{PR_EVIDENCE_VERSION_PREFIX}0.1\"");
+                if source.matches(&current).count() != 2 {
+                    return Err(format!("{path} no longer emits two `0.1` packets"));
+                }
+                Ok(source.replacen(&current, &format!("{PR_EVIDENCE_VERSION_PREFIX}9.9\""), 1))
+            };
+            let mut violations = Vec::new();
+            version_authority_violations(&root, &published, &read_source, &mut violations)?;
+            Ok(violations)
+        };
+
+        let clean = reconcile(false)?;
+        if !clean.is_empty() {
+            return Err(format!("the unmutated tree must reconcile: {clean:?}"));
+        }
+        let drifted = reconcile(true)?;
+        let expected = format!(
+            "schemas/ripr/pr-evidence.schema.json version mismatch: schema=Some(\"0.1\"), {PR_EVIDENCE_INSTALLED_PRODUCER}=[\"9.9\", \"0.1\"] (expected 2 producer occurrences), docs/OUTPUT_SCHEMA.md=[\"0.1\"]"
+        );
+        if drifted != [expected.clone()] {
+            return Err(format!("expected only `{expected}`, got {drifted:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn published_schema_inventory_is_read_from_disk() -> Result<(), String> {
         let inventory = published_schema_paths(&repo_root()?)?;
         // Both published directories must be reached, or the inventory would
@@ -1321,6 +1666,142 @@ mod tests {
         );
 
         assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_gap_ledger_card_has_its_own_schema_branch() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
+        // The fixture carries an eligible card shaped by
+        // output::review_comments::gap_record_recommendation_json, as well as
+        // suppressed records whose anchor can be absent.
+        let packet = read_json(
+            root.join("tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json"),
+        )?;
+        let check = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "gap-ledger review comments".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert_eq!(packet["summary"]["comments"], 1);
+        assert!(check(&packet).is_empty(), "{:#?}", check(&packet));
+
+        let mut missing_identity = packet.clone();
+        missing_identity["comments"][0]
+            .as_object_mut()
+            .ok_or("missing fixture comment")?
+            .remove("gap_id");
+        assert!(!check(&missing_identity).is_empty());
+
+        // The eligible card exists to carry the repair card; a gap-ledger
+        // card without one is not a valid review recommendation.
+        let mut missing_repair_card = packet.clone();
+        missing_repair_card["comments"][0]
+            .as_object_mut()
+            .ok_or("missing fixture comment")?
+            .remove("repair_card");
+        assert!(!check(&missing_repair_card).is_empty());
+
+        // Key presence alone is not a repair card: `null`, an empty object,
+        // and a card without verification commands carry no repair guidance.
+        for (label, card) in [
+            ("null", Value::Null),
+            ("empty object", serde_json::json!({})),
+        ] {
+            let mut hollow = packet.clone();
+            hollow["comments"][0]["repair_card"] = card;
+            assert!(!check(&hollow).is_empty(), "{label} repair_card accepted");
+        }
+        let mut no_commands = packet.clone();
+        no_commands["comments"][0]["repair_card"]["verification_commands"] = serde_json::json!([]);
+        assert!(!check(&no_commands).is_empty());
+
+        // An eligible GapRecord needs no related test or target file.
+        // gap_record_comment_json then projects null test-navigation fields,
+        // which the gap-ledger card must admit.
+        let mut no_related_test = packet.clone();
+        {
+            let suggested = &mut no_related_test["comments"][0]["suggested_test"];
+            suggested["recommended_name"] = Value::Null;
+            suggested["near_test"] = Value::Null;
+            suggested["related_test"] = Value::Null;
+        }
+        no_related_test["comments"][0]["repair_card"]["repair_route"]
+            .as_object_mut()
+            .ok_or("missing fixture repair route")?
+            .remove("related_test");
+        assert!(
+            check(&no_related_test).is_empty(),
+            "{:#?}",
+            check(&no_related_test)
+        );
+        let mut no_test_location = no_related_test.clone();
+        no_test_location["comments"][0]["suggested_test"]["recommended_file"] = Value::Null;
+        no_test_location["comments"][0]["repair_card"]["repair_route"]
+            .as_object_mut()
+            .ok_or("missing fixture repair route")?
+            .remove("target_file");
+        assert!(
+            check(&no_test_location).is_empty(),
+            "{:#?}",
+            check(&no_test_location)
+        );
+
+        let mut wrong_placement = packet.clone();
+        wrong_placement["comments"][0]["placement"]["mode"] =
+            Value::String("exact_seam_line".to_string());
+        assert!(!check(&wrong_placement).is_empty());
+
+        // A gap-record card is keyed by its GapRecord; seam identity is
+        // optional there (#4524) but stays required on working-set cards.
+        let mut seamless = packet.clone();
+        seamless["comments"][0]
+            .as_object_mut()
+            .ok_or("missing fixture comment")?
+            .remove("seam_id");
+        assert!(check(&seamless).is_empty(), "{:#?}", check(&seamless));
+
+        let mut default_packet =
+            read_json(root.join("tests/fixtures/verification/ripr/review-comments.valid.json"))?;
+        assert!(
+            !default_packet["comments"]
+                .as_array()
+                .ok_or("missing default comments")?
+                .is_empty()
+        );
+        assert!(
+            check(&default_packet).is_empty(),
+            "{:#?}",
+            check(&default_packet)
+        );
+        // Working-set cards keep their string test-navigation contract.
+        for field in ["recommended_file", "recommended_name"] {
+            let mut null_navigation = default_packet.clone();
+            null_navigation["comments"][0]["suggested_test"][field] = Value::Null;
+            assert!(
+                !check(&null_navigation).is_empty(),
+                "working-set null {field} accepted"
+            );
+        }
+        let mut seamless_default = default_packet.clone();
+        seamless_default["comments"][0]
+            .as_object_mut()
+            .ok_or("missing default comment")?
+            .remove("seam_id");
+        assert!(
+            !check(&seamless_default).is_empty(),
+            "working-set card without seam_id accepted"
+        );
+        default_packet["comments"][0]["placement"]["mode"] =
+            Value::String("gap_record_anchor".to_string());
+        assert!(!check(&default_packet).is_empty());
         Ok(())
     }
 
