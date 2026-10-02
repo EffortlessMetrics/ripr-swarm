@@ -1,6 +1,6 @@
 # Blind Journey Execute Fixture Corpus
 
-Spec: RIPR-SPEC-0203
+Spec: RIPR-SPEC-0204
 
 ## Given
 

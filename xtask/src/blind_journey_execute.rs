@@ -1,4 +1,4 @@
-//! Blind-journey execution consumer (#4604, RIPR-SPEC-0203).
+//! Blind-journey execution consumer (#4604, RIPR-SPEC-0204).
 //!
 //! The named execution consumer of the RIPR-SPEC-0200 blind-journey contract
 //! (#4603): a deterministic, offline executor that turns one scripted journey
@@ -53,8 +53,8 @@ use crate::blind_journey::{
     BlindJourneyCurrentnessV1, BlindJourneyEditCageVerdictV1, BlindJourneyEventKindV1,
     BlindJourneyEventV1, BlindJourneyEvidenceAxesV1, BlindJourneyInterventionV1,
     BlindJourneyPacketV1, BlindJourneyPromptReviewV1, BlindJourneyPromptReviewVerdictV1,
-    BlindJourneyPromptV1, BlindJourneyReceiptStatusV1, BlindJourneyReceiptV1,
-    BlindJourneyResultV1, BlindJourneySelectionCorrectnessV1, BlindJourneyStaticMovementV1,
+    BlindJourneyPromptV1, BlindJourneyReceiptStatusV1, BlindJourneyReceiptV1, BlindJourneyResultV1,
+    BlindJourneySelectionCorrectnessV1, BlindJourneyStaticMovementV1,
     BlindJourneyVerificationStatusV1, assess_blind_journey_packet, sha256_hex,
     stamp_blind_journey_packet,
 };
@@ -66,7 +66,7 @@ pub(crate) const BLIND_JOURNEY_EXECUTE_CLAIM_BOUNDARY: &str = "Static blind-jour
  consumer: executor success defines that one scripted journey deterministically produces one \
  stamped, validator-accepted blind-journey receipt; it claims no installed usefulness, no \
  candidate qualification, no blind acceptance and no release verdict.";
-pub(crate) const BLIND_JOURNEY_EXECUTE_DECISION: &str = "RIPR-SPEC-0203";
+pub(crate) const BLIND_JOURNEY_EXECUTE_DECISION: &str = "RIPR-SPEC-0204";
 
 /// One scripted observable action. The script records what was observed
 /// (subject and, where the per-kind presence rule requires it, the exact
@@ -168,7 +168,7 @@ pub(crate) struct BlindJourneyExecuteCorpusV1 {
     pub scenarios: Vec<BlindJourneyExecuteScenarioV1>,
 }
 
-/// The executor fixture scenarios RIPR-SPEC-0203 requires; the committed
+/// The executor fixture scenarios RIPR-SPEC-0204 requires; the committed
 /// corpus must cover all of them and the live executor decides each outcome
 /// independently of the committed expectation.
 pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 24] = [
@@ -449,11 +449,9 @@ fn derive_axes(
     };
     let static_executions = kind_count(events, BlindJourneyEventKindV1::StaticAnalysisExecution);
     if static_executions > 0 {
-        let recorded = last_recorded_output(
-            journey,
-            BlindJourneyEventKindV1::StaticAnalysisExecution,
-        )
-        .and_then(parse_recorded_static_movement);
+        let recorded =
+            last_recorded_output(journey, BlindJourneyEventKindV1::StaticAnalysisExecution)
+                .and_then(parse_recorded_static_movement);
         let recorded = match recorded {
             Some(recorded) => recorded,
             None => {
@@ -496,11 +494,9 @@ fn derive_axes(
                 );
             }
             Some(BlindJourneyReceiptStatusV1::ReceiptNotApplicable) => {
-                return Err(
-                    "observation_unbound:a receipt execution cannot record \
+                return Err("observation_unbound:a receipt execution cannot record \
                      receipt_not_applicable; no applicable receipt observation exists"
-                        .to_string(),
-                );
+                    .to_string());
             }
             Some(recorded) => {
                 if journey.observations.receipt_status == BlindJourneyReceiptStatusV1::Unknown {
@@ -706,8 +702,7 @@ pub(crate) fn execute_blind_journey(
     // must arrive with both bindings present; stamping then refuses any
     // binding that does not match the exact content.
     if journey.review.verdict == BlindJourneyPromptReviewVerdictV1::Accepted
-        && (journey.review.prompt_digest.is_empty()
-            || journey.review.answer_key_digest.is_empty())
+        && (journey.review.prompt_digest.is_empty() || journey.review.answer_key_digest.is_empty())
     {
         return Err(
             "review_binding_missing:an accepted review must bind the exact reviewed prompt \
@@ -937,9 +932,9 @@ mod tests {
             contamination_result: BlindJourneyContaminationResultV1::MechanicallyClean,
         };
         journey.review.prompt_digest = crate::blind_journey::prompt_digest(&prompt);
-        if let Ok(digest) = crate::blind_journey::blind_journey_answer_key_digest(
-            &journey.answer_key,
-        ) {
+        if let Ok(digest) =
+            crate::blind_journey::blind_journey_answer_key_digest(&journey.answer_key)
+        {
             journey.review.answer_key_digest = digest;
         }
     }
@@ -1427,8 +1422,7 @@ mod tests {
     #[test]
     fn receipt_not_applicable_with_an_execution_refuses() -> Result<(), String> {
         let mut journey = positive_journey();
-        journey.observations.receipt_status =
-            BlindJourneyReceiptStatusV1::ReceiptNotApplicable;
+        journey.observations.receipt_status = BlindJourneyReceiptStatusV1::ReceiptNotApplicable;
         for step in &mut journey.actions {
             if step.kind == BlindJourneyEventKindV1::ReceiptExecution {
                 step.output_bytes = Some("receipt:not-applicable".to_string());

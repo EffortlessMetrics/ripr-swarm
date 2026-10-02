@@ -1,4 +1,4 @@
-# RIPR-SPEC-0203: Blind journey execution consumer
+# RIPR-SPEC-0204: Blind journey execution consumer
 
 Status: proposed
 

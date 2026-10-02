@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "kind": "blind_journey_execute_decision_receipt",
-  "decision": "RIPR-SPEC-0203",
+  "decision": "RIPR-SPEC-0204",
   "status": "ratified_fixture_scope",
   "governing_issues": ["#4604", "#4603", "#4600", "#3797", "#4510", "#4508", "#4516", "#4518", "#4519"],
   "consumer_schema_versions": {

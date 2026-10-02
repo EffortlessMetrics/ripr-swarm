@@ -1,4 +1,4 @@
-//! `cargo xtask blind-journey-execute` (#4604, RIPR-SPEC-0203): runs the
+//! `cargo xtask blind-journey-execute` (#4604, RIPR-SPEC-0204): runs the
 //! committed scripted blind-journey corpus through the deterministic executor
 //! in `crate::blind_journey_execute`, validates the committed versioned
 //! executor decision receipt against the live result, and writes the
