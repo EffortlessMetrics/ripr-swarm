@@ -319,7 +319,12 @@ Git metadata stdout is capped at 8 MiB and stderr at 1 MiB. The ordinary-blob
 census includes declared sizes before body capture. Batch stdout is capped at
 the exact sum of those body sizes and Git's per-object headers/terminators;
 changed batch identities or sizes refuse. Readers consume at most limit+1
-bytes. Oversized output or missing terminal drain output is a refusal.
+bytes. Oversized output or missing terminal drain output is a refusal for
+this budgeted source mode. A reader closes its pipe as soon as its byte limit
+is exceeded, but the parent keeps the existing child wait/deadline and cleanup
+path. Overflow can therefore be reported after that deadline; byte limits do
+not promise immediate process cancellation. Existing uncapped byte-capture
+callers retain their prior drain-placeholder and timeout-reporting behavior.
 
 Checkout revalidation uses the shared observed regular-file snapshot reader,
 with each read capped at the already admitted blob length plus one. Empty

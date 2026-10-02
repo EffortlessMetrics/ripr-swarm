@@ -203,17 +203,32 @@ fn bounded_byte_capture_rejects_stdout_and_stderr_overflow_and_reaps_child() -> 
 
 #[test]
 fn bounded_byte_drain_requires_terminal_output() -> Result<(), String> {
-    let (_sender, receiver) = mpsc::channel();
-    let handle = thread::spawn(|| {});
-    match drain_byte_reader_bounded(
-        receiver,
-        handle,
-        Duration::from_millis(10),
-        "stdout",
-        "missing terminal output",
-    ) {
-        Err(error) if error.contains("byte output is not established") => Ok(()),
-        Err(error) => Err(format!("wrong missing-output refusal: {error}")),
-        Ok(_) => Err("byte drain fabricated successful output after grace expiry".to_string()),
+    for require_complete in [true, false] {
+        let (_sender, receiver) = mpsc::channel();
+        let handle = thread::spawn(|| {});
+        match drain_byte_reader_bounded(
+            receiver,
+            handle,
+            Duration::from_millis(10),
+            "stdout",
+            "missing terminal output",
+            require_complete,
+        ) {
+            Err(error) if require_complete && error.contains("byte output is not established") => {
+                ()
+            }
+            Ok(bytes)
+                if !require_complete
+                    && String::from_utf8_lossy(&bytes).contains("output truncated") =>
+            {
+                ()
+            }
+            _ => {
+                return Err(
+                    "byte drain changed the selected strict/legacy reporting contract".to_string(),
+                );
+            }
+        }
     }
+    Ok(())
 }

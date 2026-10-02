@@ -328,7 +328,9 @@ also applied to this local adapter. Source metadata and cat-file batches now
 share one no-replacement Git invocation. Metadata includes ordinary blob sizes
 before capture, with independent source count/file/aggregate limits. The
 existing owned process helper has optional stdout/stderr byte caps, and byte
-drain expiry refuses. Checkout reads reuse the manifest's observed snapshot
+drain expiry refuses in that budgeted mode. Existing uncapped callers keep
+their timeout/reporting behavior; byte overflow can surface after the existing
+child deadline rather than cancelling the child immediately. Checkout reads reuse the manifest's observed snapshot
 reader with exact admitted-size caps; manifest and source budgets stay separate.
 
 New authored controls exercise active replacement-object parity and concealed

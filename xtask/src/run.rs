@@ -718,6 +718,7 @@ fn capture_bytes_with_input(
         POST_KILL_DRAIN_GRACE,
         "stdout",
         error_context,
+        budget.is_some(),
     )?;
     let stderr = drain_byte_reader_bounded(
         stderr_rx,
@@ -725,6 +726,7 @@ fn capture_bytes_with_input(
         POST_KILL_DRAIN_GRACE,
         "stderr",
         error_context,
+        budget.is_some(),
     )?;
     if let Some(receiver) = input_completion {
         let result = receiver
@@ -1162,13 +1164,19 @@ fn drain_byte_reader_bounded(
     grace: Duration,
     stream_name: &str,
     error_context: &str,
+    require_complete: bool,
 ) -> Result<Vec<u8>, String> {
     match rx.recv_timeout(grace) {
         Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+        Err(mpsc::RecvTimeoutError::Timeout) if require_complete => Err(format!(
             "{stream_name} drain exceeded post-kill grace ({}s) for {error_context}; byte output is not established",
             grace.as_secs()
         )),
+        // Preserve established uncapped callers' timeout/reporting contract.
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(format!(
+            "[ripr-xtask: {stream_name} drain exceeded post-kill grace ({}s) for {error_context}; output truncated]",
+            grace.as_secs()
+        ).into_bytes()),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
             "{stream_name} reader thread disconnected while running {error_context}"
         )),
