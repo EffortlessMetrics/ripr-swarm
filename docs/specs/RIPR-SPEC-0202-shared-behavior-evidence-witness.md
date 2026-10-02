@@ -153,10 +153,11 @@ and named cross-language limits may explain a difference.
 - `crates/ripr/src/analysis/language/rust/mod.rs` — diff-path retain (`push_retained_finding`) at the classify call sites
 - `crates/ripr/src/analysis/seam_inventory.rs` — repo-path retain after classify
 
-Retain hooks run on release builds too: the discarded `digest_matches` result
-is the adapter's production liveness check until #4792 consumes the
-projection, so the per-finding and per-seam witness build plus SHA-256 digest
-is an intentional, bounded cost, not dead work. Gating it behind
+Retain hooks run on release builds too, but until #4792 consumes the
+projection the `digest_matches` result has no observable consumer: the
+per-finding and per-classified-seam witness build plus SHA-256 digest is an
+accepted exercisability cost that keeps the adapter code on the production
+path, not a checked invariant and not a liveness proof. Gating it behind
 `debug_assertions` would return the adapter to an unexercised debug-only path.
 - `crates/ripr/src/analysis/witness/parity.rs` — paired report DTO
 - `crates/ripr/src/analysis/witness/tests.rs` — corpus and controls
