@@ -40,10 +40,12 @@ fn routed_mcp_args(args: &[String]) -> Option<Vec<String>> {
     }
     if is_help_route {
         let mut routed = vec!["--help".to_string()];
-        routed.extend(owned.into_iter().skip(2));
+        // `owned` still carries argv[0]; drop it plus the `help mcp` pair.
+        routed.extend(owned.into_iter().skip(3));
         return Some(routed);
     }
-    Some(owned.into_iter().skip(1).collect())
+    // `owned` still carries argv[0]; drop it plus the `mcp` command itself.
+    Some(owned.into_iter().skip(2).collect())
 }
 
 fn collect_args() -> Vec<String> {
