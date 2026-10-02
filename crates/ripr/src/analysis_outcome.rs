@@ -92,6 +92,7 @@ impl AnalysisLimitationKind {
             Self::DiffScopeOversized => "the diff is larger than the configured limit",
             Self::LanguageAdapterUnavailable => "no analyzer is available for a changed language",
             Self::LanguageScopeUnsupported => "some changed files were not analyzed",
+            Self::ChangedFileAbsentFromWorktree => "a changed file is absent from the working tree",
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
             Self::EolOnlyChurn => "some files changed only in line endings",

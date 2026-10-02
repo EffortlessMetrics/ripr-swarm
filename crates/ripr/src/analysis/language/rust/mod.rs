@@ -1625,16 +1625,6 @@ fn unreached_module_limitations<'a>(
         AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
         AnalysisStage,
     };
-/// One typed limitation per changed Rust file that no Cargo target's module
-/// tree reaches (#4435). rustc never compiles such a file, so its change
-/// seeds no finding; the run says so instead of reading as complete.
-fn unreached_module_limitations<'a>(
-    paths: impl Iterator<Item = &'a std::path::PathBuf>,
-) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
-    use crate::analysis_outcome::{
-        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
-        AnalysisStage,
-    };
     paths
         .map(|path| {
             let display = path.to_string_lossy().replace('\\', "/");
