@@ -464,9 +464,8 @@ mod tests {
         if wire_omits_packet_envelope(&embedded_wire, seam_id) {
             return Err("an embedded packet envelope must not pass the omission check".to_string());
         }
-        let marker_card = format!(
-            "{{\"kind\":\"repair_card.v1\",\"marker\":\"{PACKET_ENVELOPE_MARKER}\"}}"
-        );
+        let marker_card =
+            format!("{{\"kind\":\"repair_card.v1\",\"marker\":\"{PACKET_ENVELOPE_MARKER}\"}}");
         if wire_omits_packet_envelope(&marker_card, seam_id) {
             return Err("the raw CLI format marker must not pass the omission check".to_string());
         }
