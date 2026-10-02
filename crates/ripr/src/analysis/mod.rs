@@ -3,12 +3,15 @@ pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
+pub(crate) mod diagnostic_origin;
 mod diff;
 mod extract;
 mod facts;
+mod generated_rust_corpus;
+pub(crate) use generated_rust_corpus::generated_rust_recovery;
 pub(crate) mod harness_projection;
 mod language;
-mod new_test_target;
+pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
@@ -48,6 +51,7 @@ pub(crate) use diff::{
 pub use diff::{load_diff_range, resolve_default_base_commit};
 pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
+pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
     TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
@@ -67,18 +71,20 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
-    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages, ScopedClassifiedSeamInventory,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    inventory_changed_test_classified_seams_at_with_config_node,
-    inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
+    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
+    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
+    inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
+    inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_staged_at_with_config, inventory_seams_at_with_config,
-    workspace_cache_key_at_with_config,
+    inventory_diff_scoped_streamed_seams_at_with_config, inventory_seams_at_with_config,
+    pilot_seam_budget, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
+pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::seeds_diff_probes;
@@ -563,6 +569,12 @@ pub struct PreviewLanguageAdvisory {
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,
+    /// How many of the `file_count` files are JavaScript-family sources
+    /// (`.js`, `.jsx`, `.mjs`, `.cjs`). The TypeScript adapter analyzes both
+    /// halves of the family under the `typescript` wire name, so this lets
+    /// prose call a JavaScript-only diff JavaScript (#4555). Always `0` for
+    /// other languages.
+    pub javascript_file_count: usize,
     /// Whether this preview adapter was configured and available for this
     /// analysis.
     ///
@@ -620,6 +632,25 @@ impl PreviewLanguageAdvisory {
             why.push_str(&prerequisite);
         }
         why
+    }
+
+    /// Single-line `why` for a detected-but-not-analyzed advisory: not
+    /// enabled (or not compiled into this binary), adapter run failed, or
+    /// enabled but nothing routed. Shared by the JSON check report and the
+    /// GitHub annotation stream so the machine surfaces cannot drift; the
+    /// analyzed arm stays owned by each renderer's own caveat.
+    pub(crate) fn unaudited_why(&self, language_runs: &[LanguageRun]) -> String {
+        if !self.enabled {
+            return self.not_enabled_why();
+        }
+        if let Some(run) = self.non_success_run(language_runs) {
+            return format!(
+                "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
+                run.status.as_str()
+            );
+        }
+        "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean"
+            .to_string()
     }
 }
 
@@ -716,6 +747,8 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// Crate-private numeric diagnostic origins for Rust findings (#4464).
+    pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Default language list when callers do not pass `[languages]` config.
@@ -749,31 +782,31 @@ pub(crate) fn run_analysis_with_oracle_policy(
     pipeline::run_diff_pipeline_with_oracle_policy(options, oracle_policy, languages)
 }
 
-pub(crate) fn run_analysis_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
-    pipeline::run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
+    pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        generated_file_patterns,
+        rust_config,
     )
 }
 
-pub(crate) fn run_worktree_analysis_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
-    pipeline::run_worktree_pipeline_with_oracle_policy_and_generated_file_patterns(
+    pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        generated_file_patterns,
+        rust_config,
     )
 }
 
@@ -790,17 +823,17 @@ pub(crate) fn run_repo_analysis_with_oracle_policy(
     pipeline::run_repo_pipeline_with_oracle_policy(options, oracle_policy, languages)
 }
 
-pub(crate) fn run_repo_analysis_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_repo_analysis_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
-    pipeline::run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+    pipeline::run_repo_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        generated_file_patterns,
+        rust_config,
     )
 }
 

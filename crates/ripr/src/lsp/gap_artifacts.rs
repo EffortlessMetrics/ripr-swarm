@@ -1679,6 +1679,8 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustMacroWrappedAssertionUnresolved,
         StaticLimitKind::RustValuePropagationUnresolved,
         StaticLimitKind::RustSubprocessBinaryReachUnresolved,
+        StaticLimitKind::WrapperErrorBindingUnresolved,
+        StaticLimitKind::PythonTransitiveReachUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -2060,25 +2062,33 @@ mod tests {
     fn first_useful_action_with_the_producers_verify_redirect_validates() -> Result<(), String> {
         // The first-useful-action producer (#4306) writes this exact verify
         // string; before #4758 the whole artifact was rejected as
-        // `malformed_command_payload`.
-        let workspace = root();
+        // `malformed_command_payload`. The root comes from `temp_root`
+        // (#4921): a real absolute root on every host, where the previous
+        // `/workspace` literal is drive-relative (not absolute) on Windows
+        // and the producer's anchored redirect was refused.
+        let workspace = temp_root("first-useful-redirect")?;
+        let workspace_text = crate::agent::loop_commands::display_path(&workspace);
         let mut artifact = first_action();
-        artifact["root"] = json!(workspace.to_string_lossy());
+        artifact["root"] = json!(workspace_text.as_str());
         artifact["commands"]["verify"] = json!(crate::agent::loop_commands::agent_verify_command(
-            &workspace.to_string_lossy(),
+            &workspace_text,
             crate::agent::loop_commands::WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
             crate::agent::loop_commands::WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
             Some(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT),
         ));
-        let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
-            .map_err(|err| format!("{err:?}"))?;
+        let context = GapArtifactValidationContext {
+            root: &workspace,
+            enabled_languages: &[LanguageId::Rust],
+        };
+        let validated =
+            validate_gap_artifact(&artifact, &context).map_err(|err| format!("{err:?}"))?;
         assert_eq!(validated.kind, GapArtifactKind::FirstUsefulAction);
         assert!(validated.verify_commands[0].contains(" > "));
 
         artifact["commands"]["verify"] =
             json!("ripr agent verify --root . --json > /elsewhere/target/ripr/v.json");
         assert!(matches!(
-            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            validate_gap_artifact(&artifact, &context),
             Err(GapArtifactRejection::MalformedCommandPayload(_))
         ));
         Ok(())
@@ -3028,6 +3038,29 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-python")]
+    fn validation_accepts_python_transitive_reach_static_limit_kind() -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["static_limit_kind"] = json!("python_transitive_reach_unresolved");
+
+        validate_gap_artifact(&artifact, &context(&[LanguageId::Rust, LanguageId::Python]))
+            .map_err(|err| format!("{err:?}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn validation_accepts_wrapper_error_binding_static_limit_kind() -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["language"] = json!("rust");
+        artifact["records"][0]["language_status"] = json!("stable");
+        artifact["records"][0]["static_limit_kind"] = json!("wrapper_error_binding_unresolved");
+
+        validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
+            .map_err(|err| format!("{err:?}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn evidence_record_validates_text_static_limits_without_parsing_action_semantics()
     -> Result<(), String> {
         let artifact = json!({
@@ -3105,13 +3138,16 @@ mod tests {
     }
 
     #[test]
-    fn command_payload_accepts_the_producers_anchored_verify_redirect() {
+    fn command_payload_accepts_the_producers_anchored_verify_redirect() -> Result<(), String> {
         // #4306 persists `agent verify` output where the receipt reads it and
         // #3938 anchors the target at `--root`; the first-useful-action
         // artifact carries exactly this string, so refusing it dropped the
-        // whole artifact as `malformed_command_payload`.
-        let workspace = root();
-        let workspace_text = workspace.to_string_lossy().to_string();
+        // whole artifact as `malformed_command_payload`. The root comes from
+        // `temp_root` (#4921): a real absolute root on every host, where the
+        // previous `/workspace` literal is drive-relative (not absolute) on
+        // Windows and the anchored redirect was refused.
+        let workspace = temp_root("command-payload-redirect")?;
+        let workspace_text = crate::agent::loop_commands::display_path(&workspace);
         for command_root in [".", workspace_text.as_str()] {
             let command = if command_root == "." {
                 // `--root .` anchors at the process cwd; render it against
@@ -3147,11 +3183,11 @@ mod tests {
         ));
         assert!(command_payload_is_safe(
             &workspace,
-            &format!("{body} > '/workspace/target/ripr/dir with space/v.json'")
+            &format!("{body} > '{workspace_text}/target/ripr/dir with space/v.json'")
         ));
         for command in [
             format!("{body} > /elsewhere/target/ripr/workflow/agent-verify.json"),
-            format!("{body} > /workspace/src/lib.rs"),
+            format!("{body} > {workspace_text}/src/lib.rs"),
             format!("{body} > target/other.json"),
             format!("{body} > target/ripr"),
             format!("{body} > target/ripr/../../outside.json"),
@@ -3173,6 +3209,7 @@ mod tests {
                 "accepted {command:?}"
             );
         }
+        Ok(())
     }
 
     #[test]

@@ -60,6 +60,7 @@ mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod parametrize;
 mod parse_budget;
 mod probe_shape;
 mod reexports;
@@ -88,8 +89,9 @@ use no_behavior::{
     is_annotation_only_def_change, is_annotation_only_var_change,
 };
 use no_behavior::{
-    is_python_import_line, is_python_no_behavior_line, is_python_structural_line,
-    is_structural_def_header_text, multi_line_def_header_span, python_quiet_lines_covered_by_run,
+    header_param_line_defaults, is_python_import_line, is_python_no_behavior_line,
+    is_python_structural_line, is_structural_def_header_text, multi_line_def_header_span,
+    python_quiet_lines_covered_by_run,
 };
 use oracles::collect_assertions_from_statements;
 #[cfg(test)]
@@ -125,11 +127,13 @@ use source_facts::parse_module;
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod same_class_callees;
 mod static_limits;
 use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
     contains_dynamic_dispatch, contains_dynamic_import, contains_metaprogramming,
@@ -191,6 +195,15 @@ struct PythonOwner {
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
     module_constants: Vec<module_constants::PythonModuleConstant>,
+    /// Same-class methods this method may call through its receiver
+    /// (`self.` / `cls.`) or a bound-method alias (`f = self.x`). Empty for
+    /// non-methods and `@staticmethod`. Used only to name a Python
+    /// transitive-reach limitation on silent `no_static_path` findings (#4765).
+    same_class_callees: Vec<String>,
+    /// Dotted path of the enclosing classes of a method owner, outermost
+    /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
+    /// owners. `qualified_name` keeps only the innermost class.
+    class_path: String,
 }
 
 /// One declared parameter of a Python function owner.
@@ -201,6 +214,8 @@ struct PythonParameter {
     default: Option<String>,
     /// Keyword-only parameters (after `*` / `*args`) never bind positionally.
     keyword_only: bool,
+    /// Positional-only parameters (before `/`) never bind by keyword.
+    positional_only: bool,
 }
 
 impl PythonOwner {
@@ -258,6 +273,8 @@ struct PythonTest {
     decorators: Vec<String>,
     fixtures: Vec<String>,
     parametrized: bool,
+    /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
+    parametrize: Option<parametrize::PythonParametrizeCases>,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
     /// How the test and its module can rebind names and attributes; guards
@@ -327,6 +344,7 @@ fn expr_full_name(expr: &Expr) -> Option<String> {
 fn stop_reason_for_python_static_limit(limit: &PythonStaticLimit) -> StopReason {
     match limit.kind {
         StaticLimitKind::DynamicDispatch => StopReason::DynamicDispatchUnresolved,
+        StaticLimitKind::PythonTransitiveReachUnresolved => StopReason::TransitiveReachUnresolved,
         _ => StopReason::StaticProbeUnknown,
     }
 }
@@ -704,6 +722,26 @@ impl PythonAdapter {
                     continue;
                 }
                 let old_line_text = old_line.map(|removed| removed.text.as_str());
+                // Only a structural or default-carrying line can matter inside a
+                // multi-line header, so other lines skip the span lookup.
+                let in_multi_line_def_header = (is_structural_def_header_text(&added.text)
+                    || header_param_line_defaults(&added.text).is_some())
+                    && workspace_read
+                        .sources
+                        .get(&changed.path)
+                        .zip(owner_for_changed_line(
+                            &changed.path,
+                            added.line,
+                            &all_owners,
+                        ))
+                        .and_then(|(source, owner)| {
+                            *header_spans.entry(owner.start_line).or_insert_with(|| {
+                                multi_line_def_header_span(source, owner.start_line)
+                            })
+                        })
+                        .is_some_and(|(def_line, header_end)| {
+                            (def_line..=header_end).contains(&added.line)
+                        });
                 let no_behavior = PythonNoBehaviorContext {
                     new_line_in_docstring: line_is_in_ranges(added.line, new_docstring_ranges),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
@@ -730,23 +768,9 @@ impl PythonAdapter {
                                     && !is_python_no_behavior_line(&other.text)
                             })
                     }),
-                    structural_def_header_line: is_structural_def_header_text(&added.text)
-                        && workspace_read
-                            .sources
-                            .get(&changed.path)
-                            .zip(owner_for_changed_line(
-                                &changed.path,
-                                added.line,
-                                &all_owners,
-                            ))
-                            .and_then(|(source, owner)| {
-                                *header_spans.entry(owner.start_line).or_insert_with(|| {
-                                    multi_line_def_header_span(source, owner.start_line)
-                                })
-                            })
-                            .is_some_and(|(def_line, header_end)| {
-                                (def_line..=header_end).contains(&added.line)
-                            }),
+                    structural_def_header_line: in_multi_line_def_header
+                        && is_structural_def_header_text(&added.text),
+                    multi_line_def_header_line: in_multi_line_def_header,
                 };
                 if let Some(finding) = classify_change_with_context(
                     &changed.path,
@@ -770,6 +794,7 @@ impl PythonAdapter {
             partial_scope: None,
             skipped_files,
             limitations,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 
@@ -802,6 +827,7 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 }

@@ -11,6 +11,7 @@
 //! actionability flip is fail-closed and every ineligible state carries a
 //! typed reason.
 
+pub(crate) use super::new_test_target::NewTestTargetAdmission;
 use super::seam_classification::ClassifiedSeam;
 use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind};
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
@@ -18,7 +19,7 @@ use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
 
 pub(crate) use super::new_test_target::{
-    NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+    NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
 };
 
 pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
@@ -38,9 +39,13 @@ pub(crate) enum RepairRouteState {
 /// The producer-owned choice of where a test-only repair may land.
 ///
 /// `Missing` is deliberate: a related-test summary, a path, or a renderer
-/// heuristic is not permission to edit that location. New-test proposals are
-/// represented explicitly so a producer can supply them without overloading
-/// an existing-test identity.
+/// heuristic is not permission to edit that location. Ranking prefers an
+/// admitted `Existing` target. A DirectOwnerCall related test that failed
+/// target admission stays `Missing` rather than inventing a new test.
+/// Advisory observers (`SameModule`, `WeakTokenSubstring`,
+/// `ImportPathAffinity`) do not occupy that slot: a producer-owned
+/// `Proposed` Integration or InlineUnit remains eligible when no suitable
+/// existing target was admitted. `Proposed` is not an existing-test identity.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RepairTargetSelection {
@@ -229,7 +234,11 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     let has_discriminator = has_exact_discriminator(seam, evidence);
     let selected_test_target = existing_test_target(evidence, false);
     let admission = evidence.new_test_target.as_ref();
-    let target_selection = value_target_selection(selected_test_target.as_ref(), admission);
+    let target_selection = value_target_selection(
+        selected_test_target.as_ref(),
+        admission,
+        &evidence.related_tests,
+    );
     let has_safe_target = !matches!(target_selection, RepairTargetSelection::Missing);
     let state = if has_discriminator && has_safe_target {
         RepairRouteState::Ready
@@ -242,8 +251,10 @@ fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repair
     }
     if has_safe_target {
         present_evidence.push(SAFE_TEST_TARGET_EVIDENCE.to_string());
-        if matches!(target_selection, RepairTargetSelection::Proposed(_)) {
-            present_evidence.push(NewTestTargetAdmission::present_reason().to_string());
+        if matches!(target_selection, RepairTargetSelection::Proposed(_))
+            && let Some(admission) = admission
+        {
+            present_evidence.push(admission.present_reason().to_string());
         }
     }
     let mut missing_evidence = Vec::new();
@@ -490,9 +501,10 @@ fn fact_discriminator_key(
                     right,
                 });
             }
-            let right = fact
-                .trim()
+            let trimmed = fact.trim();
+            let right = trimmed
                 .strip_suffix(" (equality boundary)")
+                .or_else(|| trimmed.strip_suffix(" (boundary value)"))
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(normalize_discriminator_text)?;
@@ -548,13 +560,26 @@ fn direct_owner_related_test_with_target(evidence: &TestGripEvidence) -> Option<
 fn value_target_selection(
     existing: Option<&TestTargetEvidence>,
     admission: Option<&NewTestTargetAdmission>,
+    related_tests: &[RelatedTestGrip],
 ) -> RepairTargetSelection {
     if let Some(existing) = existing {
         return RepairTargetSelection::Existing(existing.clone());
     }
+    // A DirectOwnerCall observer that failed target admission occupies the
+    // existing-test slot. Falling through to Proposed would keep a repair
+    // packet after authority refused the test we already found. Advisory
+    // relations never supplied a suitable Existing target, so they must not
+    // block an independently admitted producer-owned proposal.
+    if related_tests.iter().any(|test| {
+        test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_none()
+    }) {
+        return RepairTargetSelection::Missing;
+    }
     if let Some(proposal) = admission.and_then(|admission| admission.proposal.clone()) {
-        if proposal.kind != NewTestKind::InlineUnit
-            || proposal.provenance != NewTestProposalProvenance::ProducerOwned
+        if !matches!(
+            proposal.kind,
+            NewTestKind::Integration | NewTestKind::InlineUnit
+        ) || proposal.provenance != NewTestProposalProvenance::ProducerOwned
         {
             return RepairTargetSelection::Missing;
         }
@@ -914,7 +939,62 @@ mod tests {
     }
 
     #[test]
-    fn integration_proposal_is_not_admitted_by_the_inline_unit_ranker() -> Result<(), String> {
+    fn refused_direct_owner_target_does_not_fall_through_to_proposed() -> Result<(), String> {
+        let mut related = rust_related_test(RelationReason::DirectOwnerCall);
+        related.test_target = None;
+        let mut entry =
+            classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, vec![related]);
+        entry.evidence.new_test_target = Some(inline_unit_admission());
+        let eligibility = repair_packet_eligibility(&entry);
+        match eligibility.readiness.target_selection {
+            RepairTargetSelection::Missing => {}
+            other => {
+                return Err(format!(
+                    "refused DirectOwnerCall must stay Missing, not fall through to {other:?}"
+                ));
+            }
+        }
+        if eligibility.eligible() || eligibility.readiness.is_repair_ready() {
+            return Err(
+                "failed existing-target authority must not keep a repair packet".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn advisory_related_observer_does_not_block_producer_owned_proposal() -> Result<(), String> {
+        for reason in [
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SameModule,
+            RelationReason::ImportPathAffinity,
+        ] {
+            let mut related = rust_related_test(reason);
+            related.test_target = None;
+            let mut entry =
+                classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, vec![related]);
+            entry.evidence.new_test_target = Some(inline_unit_admission());
+            let eligibility = repair_packet_eligibility(&entry);
+            match &eligibility.readiness.target_selection {
+                RepairTargetSelection::Proposed(proposal)
+                    if proposal.kind == NewTestKind::InlineUnit => {}
+                other => {
+                    return Err(format!(
+                        "{reason:?}: advisory observer must not block Proposed, got {other:?}"
+                    ));
+                }
+            }
+            if !eligibility.eligible() || !eligibility.readiness.is_repair_ready() {
+                return Err(format!(
+                    "{reason:?}: independently admitted proposal must stay eligible"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_owned_integration_proposal_is_a_safe_target() -> Result<(), String> {
         let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
         let mut admission = inline_unit_admission();
         if let Some(proposal) = admission.proposal.as_mut() {
@@ -923,10 +1003,11 @@ mod tests {
         }
         entry.evidence.new_test_target = Some(admission);
         match repair_packet_eligibility(&entry).readiness.target_selection {
-            RepairTargetSelection::Missing => Ok(()),
-            other => Err(format!(
-                "Integration must stay Missing on this producer, got {other:?}"
-            )),
+            RepairTargetSelection::Proposed(proposal) => {
+                assert_eq!(proposal.kind, NewTestKind::Integration);
+                Ok(())
+            }
+            other => Err(format!("expected Proposed Integration, got {other:?}")),
         }
     }
 

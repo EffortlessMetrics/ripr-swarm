@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 #[cfg(test)]
@@ -269,11 +268,15 @@ pub fn resolve_effective_base(
 ///
 /// Default-base probes treat any git spawn failure as "ref absent". This
 /// classification is the single place that puts missing git, a non-repository
-/// root, and an unanswered probe back into distinct messages.
+/// root, Git's dubious-ownership refusal, and an unanswered probe back into
+/// distinct messages.
 #[derive(Debug, PartialEq, Eq)]
 enum GitRootProbe {
     GitNotFoundOnPath,
     NotAWorkTree,
+    /// Git ran and refused the repository because another user owns it; the
+    /// message carries the `safe.directory` repair rendered from Git's stderr.
+    DubiousOwnership(String),
     Unanswered,
 }
 
@@ -301,6 +304,7 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
             Some(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string())
         }
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
+        GitRootProbe::DubiousOwnership(message) => Some(message),
         GitRootProbe::Unanswered => None,
     }
 }
@@ -315,6 +319,15 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
         Ok(output) => {
             let inside =
                 output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true";
+            if !inside
+                && let Some(message) = crate::git::dubious_ownership_message(
+                    root,
+                    &output.stderr,
+                    " (the analysis did not run)",
+                )
+            {
+                return GitRootProbe::DubiousOwnership(message);
+            }
             classify_git_root_probe(Ok(inside))
         }
     }
@@ -336,10 +349,13 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
 /// printed anything else — or failed, which is what it does outside a
 /// repository — is the case this names. Missing git is not this message; the
 /// omitted-`--base` path reads [`message_for_git_root_probe`] so PATH is named
-/// instead of "pass `--base`".
+/// instead of "pass `--base`". A repository Git refuses because another user
+/// owns it fails the same way, so that refusal is named with its
+/// `safe.directory` repair instead (#4530).
 fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     match probe_git_root(root, git_timeout) {
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
+        GitRootProbe::DubiousOwnership(message) => Some(message),
         GitRootProbe::GitNotFoundOnPath | GitRootProbe::Unanswered => None,
     }
 }
@@ -655,6 +671,11 @@ fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static st
     }
 }
 
+/// Cooperative ceiling for the PR-evidence packet diff (#4363). A `--binary`
+/// full-patch diff of a large pull request can take far longer than a
+/// revision probe, so this is five minutes, not the one-minute probe ceiling.
+const PR_EVIDENCE_DIFF_DEADLINE: Duration = Duration::from_mins(5);
+
 /// PR-evidence range path (issue #3930): the same pinned presentation as
 /// the analysis loaders, with `--binary` as the caller extra (the packet
 /// artifact keeps binary hunks) and three context lines (the pre-#3930
@@ -663,10 +684,28 @@ fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static st
 /// PR-evidence path produced it, so ordinary repositories see
 /// byte-identical `PR_DIFF`. The packet artifact records evidence, so the
 /// decode stays strict like the pre-#3930 helper: non-UTF-8 stdout is a
-/// named error, never silently recorded with replacement characters. Like
-/// `load_diff_range`, no deadline is threaded.
+/// named error, never silently recorded with replacement characters. The
+/// diff runs under [`PR_EVIDENCE_DIFF_DEADLINE`] (#4363), so a hung git ends
+/// in the named `git_invocation_timeout` error instead of pinning the packet.
 pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    let bytes = run_git_diff_bytes(root, &format!("{base}...{head}"), &["--binary"], "3", None)?;
+    load_pr_evidence_diff_range_within(root, base, head, PR_EVIDENCE_DIFF_DEADLINE)
+}
+
+/// [`load_pr_evidence_diff_range`] with the deadline as a parameter, so a
+/// test can prove the deadline reaches the git runner.
+fn load_pr_evidence_diff_range_within(
+    root: &Path,
+    base: &str,
+    head: &str,
+    deadline: Duration,
+) -> Result<String, String> {
+    let bytes = run_git_diff_bytes(
+        root,
+        &format!("{base}...{head}"),
+        &["--binary"],
+        "3",
+        Some(deadline),
+    )?;
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
 
@@ -719,12 +758,20 @@ enum WorkingTreeProbe {
     Error(String),
 }
 
+/// Cooperative deadline for the working-tree change probe (#2303, #4363).
+/// The probe is a disclosure side channel on the analysis path, not the
+/// analysis itself: a hung `git status` must not block the run past the
+/// deadline. One minute matches the `GIT_DEADLINE` family used by the other
+/// bounded git consumers; unlike the loader's base-resolution probes, this
+/// public entry point carries no caller-supplied `git_timeout`.
+const WORKING_TREE_PROBE_DEADLINE: Duration = Duration::from_mins(1);
+
 fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
-    let result = Command::new("git")
-        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
-        .args(["status", "--porcelain", "--", "."])
-        .current_dir(root)
-        .output();
+    let result = crate::git::run_git_output_with_deadline(
+        root,
+        &["status", "--porcelain", "--", "."],
+        Some(WORKING_TREE_PROBE_DEADLINE),
+    );
     match result {
         Ok(out) if out.status.success() => {
             if String::from_utf8_lossy(&out.stdout)
@@ -1009,6 +1056,26 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+
+    #[test]
+    fn pr_evidence_diff_range_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn with the named
+        // timeout error. Dropping the deadline would instead report the
+        // missing root as a spawn failure, which this rejects.
+        let missing = std::env::temp_dir().join(format!(
+            "ripr-pr-evidence-diff-deadline-missing-{}",
+            std::process::id()
+        ));
+        match load_pr_evidence_diff_range_within(&missing, "HEAD~1", "HEAD", Duration::from_mins(5))
+        {
+            Err(err) if !crate::git::is_git_invocation_timeout(&err) => {}
+            other => return Err(format!("control: expected a spawn failure, got {other:?}")),
+        }
+        match load_pr_evidence_diff_range_within(&missing, "HEAD~1", "HEAD", Duration::ZERO) {
+            Err(err) if crate::git::is_git_invocation_timeout(&err) => Ok(()),
+            other => Err(format!("zero deadline must be refused, got {other:?}")),
+        }
+    }
 
     /// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
     /// so a `#[must_use]` cleanup failure is an explicit ignore.
