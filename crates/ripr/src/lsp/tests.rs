@@ -4708,7 +4708,7 @@ fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Resul
         match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
             HoverContents::Markup(markup) => markup.value,
             other => return Err(format!("expected markdown hover, got {other:?}")),
-    };
+        };
     for needle in [
         "## Repair card",
         "Instruction: `unavailable`",
