@@ -8,7 +8,7 @@
 //! summary (default), which presents typed fields verbatim and never
 //! re-derives or enhances them.
 //!
-//! #5007 (RIPR-SPEC-0201): the adapter also owns the typed-refusal envelope.
+//! #5007 (RIPR-SPEC-0202): the adapter also owns the typed-refusal envelope.
 //! Every deliberate named refusal of the handoff — seam-not-found,
 //! policy-omitted, witness-unavailable, identity-unnameable, and
 //! budget-overflow — renders one versioned `agent_card_refusal` document on

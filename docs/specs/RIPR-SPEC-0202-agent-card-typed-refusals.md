@@ -1,4 +1,4 @@
-# RIPR-SPEC-0201: Agent card typed refusal envelope
+# RIPR-SPEC-0202: Agent card typed refusal envelope
 
 Status: proposed
 

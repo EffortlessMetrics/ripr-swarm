@@ -10,7 +10,7 @@
 //! `canonical_packet` detail route (`ripr agent packet --seam-id ... --json`);
 //! the packet render is unchanged and remains the compatibility path.
 //!
-//! #5007 (RIPR-SPEC-0201): producer failures are split at their origin into
+//! #5007 (RIPR-SPEC-0202): producer failures are split at their origin into
 //! [`AgentCardError::Refusal`] — a deliberate named refusal the CLI types
 //! into the versioned `agent_card_refusal` envelope (exit code 3) — and
 //! [`AgentCardError::Operational`] — a could-not-complete that stays exit 2.
@@ -47,7 +47,7 @@ use super::repair_card::{RepairCardInput, build_repair_card};
 use super::{CheckInput, check_workspace_with_config};
 
 /// Producer failure of the `ripr agent card` handoff, split into the two
-/// machine states an orchestrator branches on (#5007, RIPR-SPEC-0201):
+/// machine states an orchestrator branches on (#5007, RIPR-SPEC-0202):
 /// a deliberate named refusal (exit code 3; the CLI renders the versioned
 /// typed envelope naming the kind and the remedy) and an operational
 /// could-not-complete (exit code 2; human prose only, retrying differently

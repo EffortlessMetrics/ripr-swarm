@@ -81,7 +81,7 @@ impl RepairCardBudget {
 }
 
 /// The typed refusal kinds of the `ripr agent card` handoff failure envelope
-/// (#5007, RIPR-SPEC-0201). Each kind names one deliberate machine state a
+/// (#5007, RIPR-SPEC-0202). Each kind names one deliberate machine state a
 /// loop driver branches on — never a severity — and carries the same remedy
 /// family on every surface. The wire spelling is pinned against
 /// `policy/output_contracts.txt` and `docs/OUTPUT_SCHEMA.md` by

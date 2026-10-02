@@ -102,7 +102,7 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   `remedy_route`; stdout stays empty because it is the card-artifact stream.
   Without `--json` stderr carries the prose rendering only. The kinds are
   closed and pinned by `cargo xtask check-output-contracts`
-  (RIPR-SPEC-0201). Operational failures of the command (an unreadable
+  (RIPR-SPEC-0202). Operational failures of the command (an unreadable
   config, a failed git probe, a detail-source serialization failure) still
   exit `2`.
 

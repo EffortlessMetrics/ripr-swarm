@@ -740,6 +740,15 @@ impl RepoFileFactCacheKey {
         }
     }
 
+    /// Model a prior analyzer build without changing path, content or schema.
+    #[cfg(test)]
+    pub(crate) fn with_test_analyzer_identity(&self, analyzer_version: String) -> Self {
+        Self {
+            analyzer_version,
+            ..self.clone()
+        }
+    }
+
     fn filename(&self) -> String {
         let file_path = self.file_path.to_string_lossy();
         let parts = [
@@ -867,9 +876,13 @@ impl WorkspaceKeyContext<'_> {
 
         // Encode the effective seam limit into the key so capped runs and
         // unbounded runs never share a cache file.
+        // An invalid override (#4529) gets its own key, so it can never
+        // read a cached unbounded run; the inventory refuses it before any
+        // store.
         let seam_limit_key = match repo_exposure_seam_limit() {
-            None => "unlimited".to_string(),
-            Some((n, _)) => format!("limit_{n}"),
+            Ok(None) => "unlimited".to_string(),
+            Ok(Some((n, _))) => format!("limit_{n}"),
+            Err(_) => "invalid".to_string(),
         };
 
         let workspace_manifests_hash = hash_workspace_manifests(self.workspace_root);
