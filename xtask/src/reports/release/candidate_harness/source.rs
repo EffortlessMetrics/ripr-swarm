@@ -238,6 +238,8 @@ impl AdmittedSource {
             "source_root": self.root, "package_name": self.package_name,
             "package_version": self.version, "package_prefix": self.package_prefix,
             "source_checkout_contract": "ordinary tracked files match raw committed blobs; transformed/sparse inputs refuse; unlocked observed snapshots",
+            "source_capture_mode": "byte_budgeted_strict_terminal_drain",
+            "git_object_mode": "--no-replace-objects",
             "source_resource_budget": {"ordinary_blobs": inventory::MAX_SOURCE_FILES, "file_bytes": inventory::MAX_SOURCE_FILE_BYTES,
                 "retained_blob_bytes": inventory::MAX_SOURCE_BYTES, "metadata_stdout_bytes": inventory::MAX_GIT_METADATA_BYTES,
                 "stderr_bytes": inventory::MAX_GIT_STDERR_BYTES, "batch_stdout": "declared total body bytes plus exact per-object protocol headers; bounded before capture"}})

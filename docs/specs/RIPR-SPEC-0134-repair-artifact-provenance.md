@@ -320,7 +320,8 @@ census includes declared sizes before body capture. Batch stdout is capped at
 the exact sum of those body sizes and Git's per-object headers/terminators;
 changed batch identities or sizes refuse. Readers consume at most limit+1
 bytes. Oversized output or missing terminal drain output is a refusal for
-this budgeted source mode. A reader closes its pipe as soon as its byte limit
+this budgeted source mode, reported as `byte_budgeted_strict_terminal_drain`.
+No truncated-output placeholder is admitted in that mode. A reader closes its pipe as soon as its byte limit
 is exceeded, but the parent keeps the existing child wait/deadline and cleanup
 path. Overflow can therefore be reported after that deadline; byte limits do
 not promise immediate process cancellation. Existing uncapped byte-capture
