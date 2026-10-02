@@ -261,11 +261,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// expression (#4478), so return-value probes can move from
 /// `weakly_exposed` to `exposed`. Old classified entries would keep serving
 /// the unconfirmed discriminator for warm workspaces.
-/// `1.20` -> `1.21`: bare assert_eq return-value evidence requires shared
-/// parser-backed context admission before token or owner-pin credit (#4478).
-/// Old entries could retain observation/strength for deferred or shadowed
-/// assertions. File facts and confidence arithmetic are unchanged.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.21";
+/// `1.21` was reserved by the unmerged owner-execution admission draft (#4478).
+/// `1.22`: diagnostic-free oracle extraction and ErrorPath matching (#4748)
+/// landed first. Preserve that generation rather than reusing it.
+/// `1.22` -> `1.23`: shared parser-backed admission precedes bare assert_eq
+/// return-value matching/observation (#4478). Deferred, uncollected, disabled
+/// or ambiguously bound assertions cannot retain warm oracle credit.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.23";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -323,8 +325,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.21";
 /// transition as the outer classified-seam cache.
 /// `0.25` -> `0.26`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
-/// `0.26` -> `0.27`: eager owner-pin assertion context; same outer transition.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
+/// `0.27` was reserved by the unmerged owner-execution admission draft.
+/// `0.28`: diagnostic-free extraction/ErrorPath confirmation (#4748).
+/// `0.28` -> `0.29`: shared return-oracle admission (#4478), same outer transition.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.29";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -384,8 +388,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
 /// transition as the outer classified-seam cache.
 /// `0.25` -> `0.26`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
-/// `0.26` -> `0.27`: eager owner-pin assertion context; same outer transition.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
+/// `0.27` was reserved by the unmerged owner-execution admission draft.
+/// `0.28`: diagnostic-free extraction/ErrorPath confirmation (#4748).
+/// `0.28` -> `0.29`: shared return-oracle admission (#4478), same outer transition.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.29";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -505,7 +511,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// receiver and body flags, #4478). A warm pre-bump hit would deserialize
 /// every function as `Unknown`, silently retiring the owner-return pin on
 /// parser-backed files.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.14";
+/// `1.14` -> `1.15`: assertion diagnostics no longer manufacture error kinds
+/// or unwrap-error-bound pins (#4748); old TestFact.assertions must not replay.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.15";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3532,7 +3540,7 @@ mod tests {
         // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
         // 1.13 -> 1.14: `FunctionFact` gains the parser's item container
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.14");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.15");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -3577,8 +3585,8 @@ mod tests {
         // `Type::method()` calls.
         // 1.19 -> 1.20: owner-return pins (#4478) confirm return-value
         // probes the token rule left unconfirmed.
-        // 1.20 -> 1.21: eager, unambiguous assertion context for owner pins.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.21");
+        // 1.22 -> 1.23: integrate shared return-oracle admission after #4748.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.23");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3600,9 +3608,53 @@ mod tests {
         // 0.25 (sharded) / 0.25 (compact): function impl context (#4558).
         // 0.26 (sharded) / 0.26 (compact): owner-return pins (#4478) —
         // same semantic transition as the outer cache.
-        // 0.27 (both): eager owner-pin context; file facts are unchanged.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.27");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.27");
+        // 0.28 -> 0.29: same combined semantic transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.29");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.29");
+    }
+
+    #[test]
+    fn file_fact_generation_before_diagnostic_operands_is_a_miss() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use crate::domain::OracleKind;
+
+        let scratch = integrity_scratch("diagnostic-oracle-generation")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/diagnostic.rs");
+        let source = r#"#[test] fn t() { assert_eq!(rdr.len(), 10, "Err(ReadError::Closed)"); }"#;
+        let current_facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        assert_eq!(current_facts.tests.len(), 1);
+        assert_eq!(current_facts.tests[0].assertions.len(), 1);
+        assert_eq!(
+            current_facts.tests[0].assertions[0].kind,
+            OracleKind::ExactValue
+        );
+        let current_key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        let previous_key = RepoFileFactCacheKey {
+            schema_version: "1.14".to_string(),
+            ..current_key.clone()
+        };
+        let mut previous_facts = current_facts.clone();
+        previous_facts.tests[0].assertions[0].kind = OracleKind::ExactErrorVariant;
+        cache.store_file_facts(&previous_key, &previous_facts)?;
+        assert!(matches!(
+            cache.load_file_facts(&previous_key),
+            CacheLoad::Hit(_)
+        ));
+        assert!(matches!(
+            cache.load_file_facts(&current_key),
+            CacheLoad::Miss
+        ));
+        cache.store_file_facts(&current_key, &current_facts)?;
+        match cache.load_file_facts(&current_key) {
+            CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
+            other => {
+                return Err(format!(
+                    "current diagnostic facts did not round trip: {other:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]
