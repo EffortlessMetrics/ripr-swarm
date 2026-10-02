@@ -323,6 +323,10 @@ An ordinary or CFG-disabled nested helper's return cannot escape the outer test;
 direct and invoked-closure positives remain admitted with either helper present.
 This does not admit an assertion inside an uncalled nested helper, and the earlier
 closure-return refusal remains unchanged.
+The ReturnValue helper controls use the existing token-direct assertion shape;
+the separate owner-return pin still conservatively refuses a test body containing
+multiple function declarations. Execution admission does not broaden that binding
+proof or turn it into an exact owner-return pin.
 
 The full scan also exposes a deliberate usefulness tradeoff: the existing real
 `#[tokio::test]` fixture catches an inverted predicate at runtime, but the bounded

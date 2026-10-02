@@ -708,6 +708,14 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
                 format!("{original}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n")
             });
         let direct = format!("{binding} {assertion}");
+        // Keep this execution control independent of the narrower owner-pin
+        // binding gate, which conservatively refuses any nested function.
+        // The existing token-direct ReturnValue fixture uses this same shape.
+        let helper_direct = if family == "return_value" {
+            "let input = 4;\nassert_eq!(weight(input), 12);".to_string()
+        } else {
+            direct.clone()
+        };
         for (case, body, exposed) in [
             ("later_return", format!("{direct}\nreturn;"), true),
             ("earlier_return", format!("return;\n{direct}"), false),
@@ -728,23 +736,25 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
             ),
             (
                 "nested_helper_return",
-                format!("fn unrelated() {{ return; }}\n{direct}"),
+                format!("fn unrelated() {{ return; }}\n{helper_direct}"),
                 true,
             ),
             (
                 "disabled_nested_helper_return",
-                format!("#[cfg(any())]\nfn unrelated() {{ return; }}\n{direct}"),
+                format!("#[cfg(any())]\nfn unrelated() {{ return; }}\n{helper_direct}"),
                 true,
             ),
             (
                 "invoked_after_nested_helper_return",
-                format!("fn unrelated() {{ return; }}\nlet check = || {{ {direct} }};\ncheck();"),
+                format!(
+                    "fn unrelated() {{ return; }}\nlet check = || {{ {helper_direct} }};\ncheck();"
+                ),
                 true,
             ),
             (
                 "invoked_after_disabled_nested_helper_return",
                 format!(
-                    "#[cfg(any())]\nfn unrelated() {{ return; }}\nlet check = || {{ {direct} }};\ncheck();"
+                    "#[cfg(any())]\nfn unrelated() {{ return; }}\nlet check = || {{ {helper_direct} }};\ncheck();"
                 ),
                 true,
             ),
