@@ -89,6 +89,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 // iterator, so attrs stay empty. Value-extraction-v2's
                 // rstest support is parser-only.
                 attrs: Vec::new(),
+                impl_attrs: Vec::new(),
                 // #3727 Slice A: shadow facts are parser-only, mirroring
                 // probe_shapes. Consumers route this file's shadow decisions
                 // through the lexical scanners because
@@ -96,6 +97,11 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 // emptiness, is the discriminator.
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                // #4478: the item container is parser-only; `Unknown` makes
+                // every consumer that needs it fail closed.
+                item: crate::analysis::facts::FunctionItemFact::default(),
+                // No parser: where the `fn` sits is not established (#4558).
+                impl_context: crate::analysis::facts::FunctionImplContext::Unknown,
             };
             if pending_test {
                 tests.push(TestFact {

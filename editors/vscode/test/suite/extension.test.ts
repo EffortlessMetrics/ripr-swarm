@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -11,6 +12,7 @@ import {
   readFirstPrPacketStatus,
   validatedAgentLoopCommand
 } from '../../src/client';
+import { explicitSetting } from '../../src/config';
 import { hasUnsafeShellMetacharacter, redirectStaysInWorkspace, redirectTargetMatches, serverShellArg } from '../../src/packetJson';
 import { compatibleLspEvidence } from './testCompatibility';
 
@@ -343,6 +345,44 @@ suite('Extension Smoke', () => {
     });
   });
 
+  test('leaves unset seam diagnostic settings to ripr.toml', async () => {
+    await withControllerTestContext({}, async (context) => {
+      await context.controller.start();
+
+      // A key the user never set must stay absent so the server applies
+      // ripr.toml [lsp] values; forwarding the manifest default overrode
+      // `seam_diagnostics = false` for every 0.10 user who upgraded.
+      const initializationOptions = context.client.receivedInitializationOptions ?? {};
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).seamDiagnostics, undefined);
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).diagnosticProfile, undefined);
+    });
+  });
+
+  test('explicitSetting ignores manifest defaults and returns user layers', () => {
+    const fakeConfig = (inspected: Record<string, unknown>) =>
+      ({ inspect: () => ({ key: 'ripr.seamDiagnostics', ...inspected }) }) as unknown as vscode.WorkspaceConfiguration;
+
+    assert.strictEqual(explicitSetting<boolean>(fakeConfig({ defaultValue: true }), 'seamDiagnostics'), undefined);
+    assert.strictEqual(
+      explicitSetting<boolean>(fakeConfig({ defaultValue: true, globalValue: false }), 'seamDiagnostics'),
+      false
+    );
+    assert.strictEqual(
+      explicitSetting<boolean>(
+        fakeConfig({ defaultValue: true, globalValue: true, workspaceValue: false }),
+        'seamDiagnostics'
+      ),
+      false
+    );
+    assert.strictEqual(
+      explicitSetting<boolean>(
+        fakeConfig({ defaultValue: true, workspaceValue: false, workspaceFolderValue: true }),
+        'seamDiagnostics'
+      ),
+      true
+    );
+  });
+
   test('preserves mixed LSP configuration request ordering', async () => {
     await withControllerTestContext({}, async (context) => {
       await context.controller.start();
@@ -500,13 +540,13 @@ suite('Extension Smoke', () => {
 
     await vscode.commands.executeCommand(contextCommand.command, ...(contextCommand.arguments ?? []));
     const contextPacket = await waitForClipboardText((text) =>
-      text.includes('"schema_version": "0.4"') && text.includes('"seam_id": "67fc764ba37d77bd"')
+      text.includes('"schema_version": "0.5"') && text.includes('"seam_id": "67fc764ba37d77bd"')
     );
     const parsedContextPacket = JSON.parse(contextPacket) as {
       schema_version?: string;
       packets?: Array<{ seam_id?: string }>;
     };
-    assert.strictEqual(parsedContextPacket.schema_version, '0.4');
+    assert.strictEqual(parsedContextPacket.schema_version, '0.5');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
 
     await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
@@ -730,6 +770,9 @@ suite('Extension Smoke', () => {
       // Keep the preview journey on the same host/session as the trusted Rust
       // journey so state leakage remains observable across the sequence.
       await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
+      // The server withholds a ledger whose source_subject does not match the
+      // files on disk (#4544), so stamp it after the save changed pricing.ts.
+      await writeEditorGapSmokeLedger();
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
       await vscode.commands.executeCommand('ripr.showStatus');
 
@@ -1014,6 +1057,35 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(context.client.requests, []);
       assert.strictEqual(context.clipboardWrites[0], packet);
       assert.ok(context.infoMessages.at(-1)?.includes('gap repair packet'));
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
+  test('copyContext copies repair cards without LSP fallback for active workspace file', async () => {
+    const relativePath = 'src/repair-card.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({});
+    const packet = JSON.stringify({
+      schema_version: 'ripr-repair-card-v1',
+      repair_card_id: 'card-digest',
+      subject: { seam_id: 'seam:rust:pricing' }
+    });
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn repair_card_target() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await context.controller.start();
+      await context.controller.copyContext({
+        label: 'repair_card',
+        packet
+      });
+
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.strictEqual(context.clipboardWrites[0], packet);
+      assert.ok(context.infoMessages.at(-1)?.includes('repair card'));
     } finally {
       await context.dispose();
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
@@ -1593,7 +1665,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed on a bounded partition of the diff.',
         'the remainder was not evaluated',
-        'Next safe action: Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff'
+        'Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff'
       ]);
 
       emitSucceededWithRunStatus('limited_incomplete_input');
@@ -4849,8 +4921,8 @@ function createControllerTestContext(options: ControllerTestOptions) {
         checkMode: 'draft',
         baseRef: 'origin/main',
         includeUnchangedTests: options.includeUnchangedTests ?? true,
-        seamDiagnostics: options.seamDiagnostics ?? true,
-        diagnosticProfile: options.diagnosticProfile ?? 'actionable',
+        seamDiagnostics: options.seamDiagnostics,
+        diagnosticProfile: options.diagnosticProfile,
         traceServer: 'off'
       };
     },
@@ -5181,13 +5253,41 @@ async function writeEditorGapSmokeFiles(): Promise<void> {
       ''
     ].join('\n')
   );
+}
+
+// Stamp every file the ledger records name (anchor, repair target, related
+// test) with its current digest, the way a real producer stamps the files its
+// analysis read. Deriving the set from the records keeps the stamp complete
+// when the fixture ledger changes.
+async function writeEditorGapSmokeLedger(): Promise<void> {
+  const ledger = editorGapSmokeLedger();
+  const files = await Promise.all(
+    gapLedgerSubjectPaths(ledger).map(async (relativePath) => ({
+      path: relativePath,
+      digest: `sha256:${createHash('sha256').update(await fs.readFile(workspaceFilePath(relativePath))).digest('hex')}`
+    }))
+  );
   await writeWorkspaceFile(
     'target/ripr/reports/gap-decision-ledger.json',
-    JSON.stringify(editorGapSmokeLedger(), null, 2)
+    JSON.stringify({ ...ledger, source_subject: { digest_algorithm: 'sha256', files } }, null, 2)
   );
 }
 
-function editorGapSmokeLedger(): unknown {
+function gapLedgerSubjectPaths(ledger: Record<string, unknown>): string[] {
+  type SubjectRecord = {
+    anchor?: { file?: string };
+    repair_route?: { target_file?: string; related_test?: string };
+  };
+  const records = (ledger.records ?? []) as SubjectRecord[];
+  const paths = records.flatMap((record) => [
+    record.anchor?.file,
+    record.repair_route?.target_file,
+    record.repair_route?.related_test?.split('::')[0]
+  ]);
+  return [...new Set(paths.filter((path): path is string => Boolean(path)))].sort();
+}
+
+function editorGapSmokeLedger(): Record<string, unknown> {
   return {
     schema_version: '0.1',
     tool: 'ripr',
