@@ -359,7 +359,7 @@ fn derive_axes(
                     .to_string(),
             );
         }
-        (count, None) if count > 0 => {
+        (count, None) => {
             return Err(format!(
                 "observation_unbound:event {} executed project verification but no exit \
                  is recorded",
