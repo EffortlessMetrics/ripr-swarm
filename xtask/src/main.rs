@@ -21239,6 +21239,15 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
     // retaining its spans instead of reparsing coverage arrays line by line.
     let document = toml::de::DeTable::parse(&text)
         .map_err(|error| format!("{path}: invalid non-Rust allowlist TOML: {error}"))?;
+    // Retain Value's numeric representability checks, even for ignored
+    // metadata, without parsing again or discarding the original spans.
+    let _: toml::Value = serde::Deserialize::deserialize(toml::de::Deserializer::from(
+        document.clone(),
+    ))
+    .map_err(|mut error: toml::de::Error| {
+        error.set_input(Some(&text));
+        format!("{path}: invalid non-Rust allowlist TOML: {error}")
+    })?;
     let line_number = |offset| {
         text.bytes()
             .take(offset)
