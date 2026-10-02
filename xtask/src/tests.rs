@@ -29624,6 +29624,8 @@ fn file_policy_allowlist_toml_keeps_governed_field_refusals() -> Result<(), Stri
             "[allow.expires]",
             "[allow.retired]",
             "[unknown_table]",
+            "[unknown.nested]",
+            "[[unknown.nested]]",
         ] {
             cases.push((invalid.to_string(), format!("{valid}{invalid}\n")));
         }
