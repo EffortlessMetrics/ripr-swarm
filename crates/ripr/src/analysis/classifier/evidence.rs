@@ -154,7 +154,7 @@ impl ClassifiedProbeEvidence {
                     })
                 },
                 assertion_admitted: &|test, assertion| {
-                    pin_syntax.admits_return_assertion(
+                    pin_syntax.admits_equality_assertion(
                         context.probe,
                         test,
                         assertion,

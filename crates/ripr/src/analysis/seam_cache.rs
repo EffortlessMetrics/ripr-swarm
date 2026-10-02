@@ -265,7 +265,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// parser-backed context admission before token or owner-pin credit (#4478).
 /// Old entries could retain observation/strength for deferred or shadowed
 /// assertions. File facts and confidence arithmetic are unchanged.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.21";
+/// `1.21` -> `1.23`: ErrorPath and Predicate bare equality oracles reuse the
+/// execution/macro admission (#5027). Generation 1.22 belongs to the independent
+/// ErrorPath operand repair (#4748); neither earlier result is reusable.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.23";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -324,7 +327,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.21";
 /// `0.25` -> `0.26`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
 /// `0.26` -> `0.27`: eager owner-pin assertion context; same outer transition.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
+/// `0.27` -> `0.29`: shared equality admission for ErrorPath/Predicate (#5027);
+/// 0.28 is the independent ErrorPath operand transition (#4748).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.29";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -385,7 +390,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
 /// `0.25` -> `0.26`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
 /// `0.26` -> `0.27`: eager owner-pin assertion context; same outer transition.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
+/// `0.27` -> `0.29`: shared equality admission for ErrorPath/Predicate (#5027);
+/// 0.28 is the independent ErrorPath operand transition (#4748).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.29";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -3578,7 +3585,8 @@ mod tests {
         // 1.19 -> 1.20: owner-return pins (#4478) confirm return-value
         // probes the token rule left unconfirmed.
         // 1.20 -> 1.21: eager, unambiguous assertion context for owner pins.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.21");
+        // 1.23: equality execution admission also covers ErrorPath/Predicate.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.23");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3601,8 +3609,9 @@ mod tests {
         // 0.26 (sharded) / 0.26 (compact): owner-return pins (#4478) —
         // same semantic transition as the outer cache.
         // 0.27 (both): eager owner-pin context; file facts are unchanged.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.27");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.27");
+        // 0.29: same shared equality-admission transition.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.29");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.29");
     }
 
     #[test]

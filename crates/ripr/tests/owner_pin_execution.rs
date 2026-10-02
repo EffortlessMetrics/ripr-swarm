@@ -353,3 +353,162 @@ fn owner_pin_refused_rows_do_not_crowd_out_admitted_oracles() -> Result<(), Stri
     assert_eq!(json["findings"][0]["oracle_strength"], "strong");
     Ok(())
 }
+
+/// Shared execution provenance is independent of the changed behavior's family.
+/// The error assertions use semantic operands, never diagnostic text (#5027).
+#[test]
+fn equality_oracle_family_matched_static_and_runtime_controls() -> Result<(), String> {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for (family, probe_family, before, after) in [
+        (
+            "error_path",
+            ProbeFamily::ErrorPath,
+            "rdr.read(&mut buf).unwrap_or(0)",
+            "rdr.read(&mut buf)?",
+        ),
+        (
+            "predicate",
+            ProbeFamily::Predicate,
+            "amount > discount_threshold",
+            "amount >= discount_threshold",
+        ),
+    ] {
+        for case in [
+            "direct",
+            "called",
+            "uncalled",
+            "false_branch",
+            "shadowed",
+            "no_assertion",
+            "reached_uncalled",
+        ] {
+            let exposed = matches!(case, "direct" | "called");
+            let fixture = fixtures.join(format!("{family}_oracle_execution_{case}"));
+            let report = check_workspace(CheckInput {
+                root: fixture.join("input"),
+                diff_file: Some(fixture.join("diff.patch")),
+                mode: Mode::Fast,
+                format: OutputFormat::Json,
+                include_unchanged_tests: true,
+                ..CheckInput::default()
+            })?;
+            let findings: Vec<_> = report
+                .findings
+                .iter()
+                .filter(|finding| finding.probe.family == probe_family)
+                .collect();
+            assert_eq!(findings.len(), 1, "{family}/{case}: unique family subject");
+            assert_eq!(
+                findings[0].class,
+                if exposed {
+                    ExposureClass::Exposed
+                } else {
+                    ExposureClass::ReachableUnrevealed
+                },
+                "{family}/{case}"
+            );
+            let json: serde_json::Value =
+                serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                    .map_err(|error| error.to_string())?;
+            assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
+            let finding = json["findings"]
+                .as_array()
+                .and_then(|findings| {
+                    findings
+                        .iter()
+                        .find(|finding| finding["probe"]["family"] == family)
+                })
+                .ok_or("selected family disappeared from JSON")?;
+            for stage in ["observe", "discriminate"] {
+                assert_eq!(
+                    finding["ripr"][stage]["state"],
+                    if exposed { "yes" } else { "no" },
+                    "{family}/{case}/{stage}"
+                );
+            }
+            assert_eq!(
+                finding["oracle_strength"],
+                if exposed { "strong" } else { "none" },
+                "{family}/{case}"
+            );
+            let related = finding["related_tests"]
+                .as_array()
+                .ok_or("missing related test provenance")?;
+            assert_eq!(related.len(), 1, "{family}/{case}");
+            if !exposed {
+                assert_eq!(related[0]["oracle_strength"], "none");
+                assert_eq!(related[0]["oracle"], "");
+                if case != "no_assertion" {
+                    assert!(
+                        finding["ripr"]["observe"]["summary"]
+                            .as_str()
+                            .is_some_and(
+                                |summary| summary.contains("rust_assertion_context_unestablished")
+                            ),
+                        "{family}/{case}"
+                    );
+                }
+            }
+
+            let correct = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+                .map_err(|error| error.to_string())?;
+            assert_eq!(correct.matches(after).count(), 1, "unique mutation subject");
+            for broken in [false, true] {
+                // Generated mutation sources must remain outside analyzed roots.
+                let scratch = Scratch::create()?;
+                let source = scratch.0.join("subject.rs");
+                let executable = scratch
+                    .0
+                    .join(format!("family_tests{}", std::env::consts::EXE_SUFFIX));
+                std::fs::write(
+                    &source,
+                    if broken {
+                        correct.replace(after, before)
+                    } else {
+                        correct.clone()
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                compiles(
+                    run(
+                        Path::new("rustc"),
+                        &[
+                            "--edition=2024".as_ref(),
+                            "--crate-name=oracle_family_control".as_ref(),
+                            "--test".as_ref(),
+                            source.as_os_str(),
+                            "-o".as_ref(),
+                            executable.as_os_str(),
+                        ],
+                    )?,
+                    "family fixture",
+                )?;
+                let listed = run(&executable, &["--list".as_ref()])?;
+                assert!(listed.status.success(), "{family}/{case}: list failed");
+                assert!(
+                    String::from_utf8_lossy(&listed.stdout)
+                        .trim_end()
+                        .ends_with("1 test, 0 benchmarks"),
+                    "{family}/{case}: unique runtime subject"
+                );
+                let runtime = run(&executable, &["--nocapture".as_ref()])?;
+                let stdout = String::from_utf8_lossy(&runtime.stdout);
+                assert!(
+                    stdout.contains("running 1 test"),
+                    "{family}/{case}: {stdout}"
+                );
+                assert_eq!(
+                    runtime.status.code(),
+                    Some(if broken && exposed { 101 } else { 0 }),
+                    "{family}/{case}, broken={broken}: {stdout}; {}",
+                    String::from_utf8_lossy(&runtime.stderr)
+                );
+                eprintln!(
+                    "family-oracle runtime: {family}/{case}, broken={broken}, {}, executed=1",
+                    runtime.status
+                );
+            }
+        }
+    }
+    Ok(())
+}

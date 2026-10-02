@@ -72,18 +72,22 @@ pub(in crate::analysis) struct OwnerPinSyntax {
 }
 
 impl OwnerPinSyntax {
-    /// Shared return-value oracle admission. Applicability is the invocation
+    /// Shared equality-oracle admission for the bounded supported families.
+    /// Execution provenance is independent of the error/boundary/value matcher.
+    /// Applicability is the invocation
     /// identity, not the more restrictive owner-pin operand shape, so token
     /// matches and nested diagnostic syntax cannot bypass the same refusal.
-    pub(in crate::analysis) fn admits_return_assertion(
+    pub(in crate::analysis) fn admits_equality_assertion(
         &self,
         probe: &Probe,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        !matches!(probe.family, ProbeFamily::ReturnValue)
-            || !is_bare_assert_eq_invocation(&assertion.text)
+        !matches!(
+            probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
+        ) || !is_bare_assert_eq_invocation(&assertion.text)
             || self.admits(test, assertion, index)
     }
 
