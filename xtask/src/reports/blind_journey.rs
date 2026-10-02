@@ -242,7 +242,7 @@ fn validate_contract_receipt(receipt: &Value, corpus_scenario_count: usize) -> R
         }
         if entries
             .iter()
-            .any(|entry| entry.as_str().is_none_or(str::is_empty))
+            .any(|entry| entry.as_str().is_none_or(|entry| entry.trim().is_empty()))
         {
             return Err(format!(
                 "contract receipt must record exact non-empty {key} entries"
