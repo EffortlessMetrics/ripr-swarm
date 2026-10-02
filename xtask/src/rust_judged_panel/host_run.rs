@@ -2079,7 +2079,13 @@ mod tests {
                 format!("{}:\\fixture-root", char::from(b'C')),
                 cfg!(windows),
             ),
+            (format!("{}:/fixture-root", char::from(b'C')), cfg!(windows)),
             (r"\\fixture-server\share".to_string(), cfg!(windows)),
+            (
+                format!(r"\\?\{}:\fixture-root", char::from(b'C')),
+                cfg!(windows),
+            ),
+            (r"\\?\UNC\fixture-server\share".to_string(), cfg!(windows)),
             (format!("{}:fixture-root", char::from(b'C')), false),
             (r"\fixture-root".to_string(), false),
             ("relative-root".to_string(), false),
