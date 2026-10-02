@@ -150,9 +150,15 @@ are scoped or reviewed.
   Boundary pairing now consumes that same admission decision, so refused
   boundary assertions cannot borrow a far oracle to restore exposure.
   A bounded statement-prefix refinement preserves earlier synchronous equality
-  before a later return and ignores returns owned by nested helpers/futures. Async/test-macro execution remains unsupported: the
+  before a later return and ignores returns owned by nested helpers/futures.
+  Async/test-macro execution remains unsupported: the
   real Tokio fixture keeps discovery but loses strong static oracle credit, an
   explicit conservative usefulness tradeoff tracked by #5040.
+
+- Rust `proptest!` and `quickcheck!` token trees are reparsed as items, so
+  inner `#[test]` / `quickcheck!` functions keep their real lines, owner
+  calls, and `prop_assert*` oracles. An unmarked `proptest!` fn stays a
+  function fact, not a test (#4789).
 
 - Review guidance: admit workspace and changed-owner inputs before either
   index build, with file/byte limits and a `review_guidance_oversized` failed
@@ -1376,6 +1382,17 @@ are scoped or reviewed.
   only the canonical top-ten full payloads between windows (#4691). Preserve
   rankings, omission disclosure and evaluated/unevaluated counts; interrupted
   windows remain incomplete. Whole-index and per-test facts remain corpus-sized.
+- Review context: calls without a qualified-path separator skip the otherwise
+  corpus-wide qualified-helper module search. Existing path/alias admission,
+  direct-helper routes and guidance results retain their semantics (#4388).
+- Rust indexing: source-role normalization borrows full-identity keys and
+  per-file tests instead of retaining extra owned body/test copies. Parse workers
+  inherit and restore request cancellation; index construction and normalization
+  check cancellation before retaining or publishing work. Parallel joins preserve
+  the first collected source/worker error before observing a later deadline,
+  keeping source failures distinct from timeout receipts. Opt-in phase tracing
+  separates parsing and role passes. Whole-corpus facts still scale with input,
+  and a single parser call is not preemptible (#4388).
 - PR review guidance retains unresolved headline-eligible recommendations
   when the nearby recommended test file changes. Test-file proximity no
   longer erases these cards; evidence limitations and output caps remain
