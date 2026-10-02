@@ -29513,12 +29513,23 @@ covered_by_windows = ["cargo test windows_second"] # keep this selector
 covered_by_unix = ["cargo test unix_second"]
 covered_by = ["cargo test common_second"]
 "#;
-        let parsed: toml::Value = toml::from_str(source).map_err(|error| error.to_string())?;
-        assert_eq!(parsed["allow"].as_array().map(Vec::len), Some(2));
-        for (case, source) in [
-            ("lf", source.to_string()),
-            ("crlf", source.replace('\n', "\r\n")),
+        for (case, source, multiline_command) in [
+            ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
+            (
+                "crlf",
+                source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
         ] {
+            // Preserve the selected TOML authority's newline bytes, rather
+            // than assuming it normalizes CRLF inside multiline strings.
+            let parsed: toml::Value = toml::from_str(&source).map_err(|error| error.to_string())?;
+            assert_eq!(parsed["allow"].as_array().map(Vec::len), Some(2));
+            assert_eq!(
+                parsed["allow"][0]["covered_by_windows"][0].as_str(),
+                Some(multiline_command),
+                "{case}: the fixture's exact decoded selector is independently checked"
+            );
             write(&path, &source);
             let entries = parse_file_policy_allowlist(&path.to_string_lossy())?;
             assert_eq!(
@@ -29540,11 +29551,7 @@ covered_by = ["cargo test common_second"]
                         "cargo test unix_first",
                         Some(crate::FilePolicyHost::Unix)
                     ),
-                    (
-                        5,
-                        "cargo test first\n[[allow]]\n",
-                        Some(crate::FilePolicyHost::Windows)
-                    ),
+                    (5, multiline_command, Some(crate::FilePolicyHost::Windows)),
                     (19, "cargo test common_second", None),
                     (
                         19,
@@ -29582,6 +29589,72 @@ fn file_policy_allowlist_toml_keeps_legacy_fields_and_common_empty_array() -> Re
             Some("cargo xtask fixtures")
         );
         assert!(crate::read_file_policy_test_commands(&path.to_string_lossy())?.is_empty());
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata() -> Result<(), String>
+{
+    with_temp_cwd("file-policy-toml-value-admission", |root| {
+        let path = root.join("allowlist.toml");
+        let entry = file_policy_toml_coverage_fixture("covered_by", "[]");
+        let mut failures = Vec::new();
+        for location in [
+            "expires",
+            "retired",
+            "root",
+            "expires_inline",
+            "retired_inline_array",
+            "root_inline",
+        ] {
+            for (value, accepted) in [
+                ("9223372036854775808", false),
+                ("1e9999", false),
+                ("42", true),
+                ("9223372036854775807", true),
+                ("-9223372036854775808", true),
+                ("1e300", true),
+            ] {
+                let declaration = match location {
+                    "expires" => format!("expires = {value}\n"),
+                    "retired" => format!("retired = {value}\n"),
+                    "root" => format!("metadata = {value}\n"),
+                    "expires_inline" => format!("expires = {{ outer = {{ value = {value} }} }}\n"),
+                    "retired_inline_array" => {
+                        format!("retired = {{ outer = [{{ value = {value} }}] }}\n")
+                    }
+                    _ => format!("metadata = {{ outer = {{ value = {value} }} }}\n"),
+                };
+                let root_metadata = location.starts_with("root");
+                let source = if root_metadata {
+                    format!("{declaration}{entry}")
+                } else {
+                    format!("{entry}{declaration}")
+                };
+                // DeTable retains numeric lexemes. The previous Value reader
+                // also enforced representable integers and finite exponents,
+                // including inside otherwise ignored metadata.
+                assert!(toml::de::DeTable::parse(&source).is_ok());
+                assert_eq!(
+                    toml::from_str::<toml::Value>(&source).is_ok(),
+                    accepted,
+                    "{location}/{value}: bind this control to the existing Value authority"
+                );
+                write(&path, &source);
+                match parse_file_policy_allowlist(&path.to_string_lossy()) {
+                    Ok(entries)
+                        if accepted
+                            && entries.len() == 1
+                            && entries[0].line == if root_metadata { 2 } else { 1 }
+                            && entries[0].covered_by.as_ref().is_some_and(Vec::is_empty) => {}
+                    Err(error)
+                        if !accepted && error.contains("invalid non-Rust allowlist TOML") => {}
+                    actual => failures.push(format!("{location}/{value}: {actual:?}")),
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
         Ok(())
     })
 }
