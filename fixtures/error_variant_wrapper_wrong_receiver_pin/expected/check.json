@@ -239,8 +239,8 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_error_variant",
           "oracle": "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\nreturn Err(\"other receiver pin should observe ParseSummaryError::MalformedSource\".into());\n}",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
         },
         {
           "name": "parse_summary_other_receiver_pins_same_variant",
@@ -249,8 +249,8 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_error_variant",
           "oracle": "matches!(result, Err(ParseSummaryError::MalformedSource))",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
         }
       ],
       "stop_reasons": [],

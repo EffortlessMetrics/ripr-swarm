@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 #[cfg(test)]
@@ -19,6 +18,57 @@ pub struct LoadedDiff {
     pub text: String,
     pub effective_base: Option<String>,
 }
+
+/// Decode a supplied diff the same way the git-run path decodes its stdout
+/// (`run_git_diff_with_unified`). A diff carries the raw bytes of every
+/// changed file, so one Latin-1 or binary-ish text file in the change made
+/// `--diff` refuse the whole diff that `ripr check` itself accepts.
+///
+/// Hunk payloads decode lossily. Path identity must not: the git route pins
+/// `core.quotePath=true`, so non-UTF-8 path bytes arrive C-quoted, but a
+/// supplied diff made with `quotePath=false` carries them raw, and a lossy
+/// decode would merge distinct names onto one U+FFFD path (#3601). A
+/// file-header line that is not UTF-8 therefore fails closed, naming the
+/// regeneration command.
+fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    let error = match String::from_utf8(bytes) {
+        Ok(text) => return Ok(text),
+        Err(error) => error,
+    };
+    let bytes = error.as_bytes();
+    let lines = bytes.split(|byte| *byte == b'\n').collect::<Vec<_>>();
+    let not_utf8 = |line: &[u8]| std::str::from_utf8(line).is_err();
+    // A `---`/`+++` pair is a file header in a plain unified diff too.
+    let raw_marker_pair = lines.windows(2).any(|pair| {
+        matches!(pair, [old, new] if old.starts_with(b"--- ")
+            && new.starts_with(b"+++ ")
+            && (not_utf8(old) || not_utf8(new)))
+    });
+    let raw_header = lines.iter().any(|line| {
+        not_utf8(line)
+            && DIFF_PATH_HEADER_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+    });
+    if raw_marker_pair || raw_header {
+        return Err(format!(
+            "failed to read {source}: a file header names a path that is not UTF-8 and \
+             not C-quoted, so distinct paths cannot be told apart; regenerate the diff \
+             with `git -c core.quotePath=true diff ...`"
+        ));
+    }
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Git file-header lines that carry a path. None can be a hunk line, which
+/// always starts with `+`, `-`, a space or a backslash.
+const DIFF_PATH_HEADER_PREFIXES: &[&[u8]] = &[
+    b"diff --git ",
+    b"rename from ",
+    b"rename to ",
+    b"copy from ",
+    b"copy to ",
+];
 
 pub fn load_diff(
     root: &Path,
@@ -43,10 +93,10 @@ pub fn load_diff_with_effective_base(
             // library callers never receive CLI-branded stderr text.
             // #4480: stdin is bounded by the shared CLI input cap, so a
             // producer that never closes the pipe cannot grow memory forever.
-            let text = crate::bounded_input::read_reader_to_string(std::io::stdin().lock())
+            let buffer = crate::bounded_input::read_reader(std::io::stdin().lock())
                 .map_err(|err| format!("failed to read diff from stdin: {err}"))?;
             return Ok(LoadedDiff {
-                text,
+                text: decode_diff_text("diff from stdin", buffer)?,
                 effective_base: None,
             });
         }
@@ -62,10 +112,10 @@ pub fn load_diff_with_effective_base(
         }
         // #4480: bounded, so `--diff /dev/zero` or a multi-GB log fails with
         // the input limit instead of reading until memory is exhausted.
-        let text = crate::bounded_input::read_to_string(diff_file)
+        let bytes = crate::bounded_input::read(diff_file)
             .map_err(|err| format!("failed to read diff file {}: {err}", diff_file.display()))?;
         return Ok(LoadedDiff {
-            text,
+            text: decode_diff_text(&format!("diff file {}", diff_file.display()), bytes)?,
             effective_base: None,
         });
     }
@@ -119,11 +169,29 @@ pub fn load_worktree_diff_with_effective_base(
 
     let base = resolve_effective_base(root, base, git_timeout)?;
 
-    let text = run_git_diff(root, &base, &["--submodule=short"], git_timeout)?;
+    let origin = worktree_diff_origin(root, &base, git_timeout);
+    let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
     Ok(LoadedDiff {
         text,
         effective_base: Some(base),
     })
+}
+
+/// The commit a `--worktree` diff starts from: the merge base of `base` and
+/// `HEAD`, the same origin the committed `<base>...HEAD` form uses. Diffing
+/// from the base tip instead would report every commit the base gained after
+/// the branch forked, reversed, as a change in this branch, so a worktree
+/// re-check after a test edit would not cover the same PR changes as the
+/// check it is compared with. Without a merge base (a shallow clone, an
+/// unborn branch) the base tip stays the origin, as before.
+fn worktree_diff_origin(root: &Path, base: &str, git_timeout: Option<Duration>) -> String {
+    crate::git::run_git_output_with_deadline(root, &["merge-base", base, "HEAD"], git_timeout)
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|commit| commit.trim().to_string())
+        .filter(|commit| !commit.is_empty())
+        .unwrap_or_else(|| base.to_string())
 }
 
 /// Resolve the base ref the diff will actually run against, which is also
@@ -137,11 +205,13 @@ pub fn load_worktree_diff_with_effective_base(
 /// zero-config path (no `--base`) still resolves the repository's real default
 /// branch below.
 ///
-/// Both of those failures ask [`not_a_work_tree`] first, because neither
-/// names the right thing when the root is not a repository: no ref resolves
-/// there, so blaming the chosen ref or the default-base search sends the user
-/// to a repair that cannot work. When that probe answers, its message replaces
-/// theirs; otherwise they stand.
+/// Both of those failures ask the git-root probe first. Missing git is named
+/// ahead of "not a work tree", because the default-base search treats any
+/// spawn failure as "ref absent" and would otherwise tell the user to pass
+/// `--base` (#4735). A root that is not a repository is named next: no ref
+/// resolves there, so blaming the chosen ref or the default-base search sends
+/// the user to a repair that cannot work. When that probe answers, its
+/// message replaces theirs; otherwise they stand.
 ///
 /// The probe is evidence, not an assumption: only a `rev-parse` that actually
 /// ran and reported the ref absent produces the named failure above. When the
@@ -166,10 +236,20 @@ pub fn resolve_effective_base(
     git_timeout: Option<Duration>,
 ) -> Result<String, String> {
     let Some(explicit) = base else {
-        return resolve_default_base(root, git_timeout)
-            .map_err(|err| not_a_work_tree(root, git_timeout).unwrap_or(err));
+        return resolve_default_base(root, git_timeout).map_err(|err| {
+            message_for_git_root_probe(probe_git_root(root, git_timeout), root).unwrap_or(err)
+        });
     };
 
+    // No revision starts with `-`, and `git diff` would parse one as an option
+    // (`--output=<path>...HEAD` writes a file) if the probe below cannot run.
+    // The LSP takes this value from its client's settings.
+    if explicit.starts_with('-') {
+        return Err(format!(
+            "the base `{explicit}` starts with `-`, which no Git revision does (the analysis \
+             did not run). Pass `--base <ref>` for a ref this repository has."
+        ));
+    }
     let commit = format!("{explicit}^{{commit}}");
     match git_ref_output(root, &commit, git_timeout) {
         Some(output) if !output.status.success() => Err(not_a_work_tree(root, git_timeout)
@@ -181,6 +261,61 @@ pub fn resolve_effective_base(
                 )
             })),
         _ => Ok(explicit.to_string()),
+    }
+}
+
+/// What `rev-parse --is-inside-work-tree` established on a failed base path.
+///
+/// Default-base probes treat any git spawn failure as "ref absent". This
+/// classification is the single place that puts missing git, a non-repository
+/// root, and an unanswered probe back into distinct messages.
+#[derive(Debug, PartialEq, Eq)]
+enum GitRootProbe {
+    GitNotFoundOnPath,
+    NotAWorkTree,
+    Unanswered,
+}
+
+fn classify_git_root_probe(spawn: Result<bool, &str>) -> GitRootProbe {
+    match spawn {
+        Err(err) if crate::git::is_git_not_found_on_path(err) => GitRootProbe::GitNotFoundOnPath,
+        Ok(false) => GitRootProbe::NotAWorkTree,
+        Ok(true) | Err(_) => GitRootProbe::Unanswered,
+    }
+}
+
+fn not_a_work_tree_message(root: &Path) -> String {
+    format!(
+        "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
+         committed history, so run it from inside your repository, or pass `--root <path>` \
+         pointing at one. For a repository-free scan of the current sources, use \
+         `ripr check --root . --format repo-exposure-md`.",
+        root.display()
+    )
+}
+
+fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String> {
+    match probe {
+        GitRootProbe::GitNotFoundOnPath => {
+            Some(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string())
+        }
+        GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
+        GitRootProbe::Unanswered => None,
+    }
+}
+
+fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
+    match crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--is-inside-work-tree"],
+        git_timeout,
+    ) {
+        Err(err) => classify_git_root_probe(Err(err.as_str())),
+        Ok(output) => {
+            let inside =
+                output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true";
+            classify_git_root_probe(Ok(inside))
+        }
     }
 }
 
@@ -198,24 +333,14 @@ pub fn resolve_effective_base(
 /// directory is not a repository any more than it may assert a ref is absent.
 /// `--is-inside-work-tree` prints `true` only inside a work tree, so a run that
 /// printed anything else — or failed, which is what it does outside a
-/// repository — is the case this names.
+/// repository — is the case this names. Missing git is not this message; the
+/// omitted-`--base` path reads [`message_for_git_root_probe`] so PATH is named
+/// instead of "pass `--base`".
 fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
-    let output = crate::git::run_git_output_with_deadline(
-        root,
-        &["rev-parse", "--is-inside-work-tree"],
-        git_timeout,
-    )
-    .ok()?;
-    if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true" {
-        return None;
+    match probe_git_root(root, git_timeout) {
+        GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
+        GitRootProbe::GitNotFoundOnPath | GitRootProbe::Unanswered => None,
     }
-    Some(format!(
-        "`{}` is not inside a Git work tree (the analysis did not run). ripr diffs \
-         committed history, so run it from inside your repository, or pass `--root <path>` \
-         pointing at one. For a repository-free scan of the current sources, use \
-         `ripr check --root . --format repo-exposure-md`.",
-        root.display()
-    ))
 }
 
 /// Resolve the best available base ref for `ripr check` when none was
@@ -454,7 +579,7 @@ pub fn resolve_base_commit(
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Option<String> {
-    let base = base?;
+    let base = base.filter(|base| !base.starts_with('-'))?;
     let commit = format!("{base}^{{commit}}");
     let output = git_ref_output(root, &commit, git_timeout)?;
     if !output.status.success() {
@@ -529,6 +654,11 @@ fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static st
     }
 }
 
+/// Cooperative ceiling for the PR-evidence packet diff (#4363). A `--binary`
+/// full-patch diff of a large pull request can take far longer than a
+/// revision probe, so this is five minutes, not the one-minute probe ceiling.
+const PR_EVIDENCE_DIFF_DEADLINE: Duration = Duration::from_mins(5);
+
 /// PR-evidence range path (issue #3930): the same pinned presentation as
 /// the analysis loaders, with `--binary` as the caller extra (the packet
 /// artifact keeps binary hunks) and three context lines (the pre-#3930
@@ -537,10 +667,28 @@ fn missing_ref_repair(root: &Path, git_timeout: Option<Duration>) -> &'static st
 /// PR-evidence path produced it, so ordinary repositories see
 /// byte-identical `PR_DIFF`. The packet artifact records evidence, so the
 /// decode stays strict like the pre-#3930 helper: non-UTF-8 stdout is a
-/// named error, never silently recorded with replacement characters. Like
-/// `load_diff_range`, no deadline is threaded.
+/// named error, never silently recorded with replacement characters. The
+/// diff runs under [`PR_EVIDENCE_DIFF_DEADLINE`] (#4363), so a hung git ends
+/// in the named `git_invocation_timeout` error instead of pinning the packet.
 pub fn load_pr_evidence_diff_range(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    let bytes = run_git_diff_bytes(root, &format!("{base}...{head}"), &["--binary"], "3", None)?;
+    load_pr_evidence_diff_range_within(root, base, head, PR_EVIDENCE_DIFF_DEADLINE)
+}
+
+/// [`load_pr_evidence_diff_range`] with the deadline as a parameter, so a
+/// test can prove the deadline reaches the git runner.
+fn load_pr_evidence_diff_range_within(
+    root: &Path,
+    base: &str,
+    head: &str,
+    deadline: Duration,
+) -> Result<String, String> {
+    let bytes = run_git_diff_bytes(
+        root,
+        &format!("{base}...{head}"),
+        &["--binary"],
+        "3",
+        Some(deadline),
+    )?;
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
 
@@ -593,11 +741,20 @@ enum WorkingTreeProbe {
     Error(String),
 }
 
+/// Cooperative deadline for the working-tree change probe (#2303, #4363).
+/// The probe is a disclosure side channel on the analysis path, not the
+/// analysis itself: a hung `git status` must not block the run past the
+/// deadline. One minute matches the `GIT_DEADLINE` family used by the other
+/// bounded git consumers; unlike the loader's base-resolution probes, this
+/// public entry point carries no caller-supplied `git_timeout`.
+const WORKING_TREE_PROBE_DEADLINE: Duration = Duration::from_mins(1);
+
 fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
-    let result = Command::new("git")
-        .args(["status", "--porcelain", "--", "."])
-        .current_dir(root)
-        .output();
+    let result = crate::git::run_git_output_with_deadline(
+        root,
+        &["status", "--porcelain", "--", "."],
+        Some(WORKING_TREE_PROBE_DEADLINE),
+    );
     match result {
         Ok(out) if out.status.success() => {
             if String::from_utf8_lossy(&out.stdout)
@@ -761,6 +918,13 @@ fn run_git_diff_bytes(
     // decode distinct and the C-quoted parser form applies. ASCII-only
     // paths are unaffected, so existing fixtures and goldens see no
     // change.
+    // The range is the one caller-derived argument; one starting with `-`
+    // would be parsed as a diff option, so refuse it at the sink.
+    if range.starts_with('-') {
+        return Err(format!(
+            "refusing to diff `{range}`: a revision range cannot start with `-`"
+        ));
+    }
     let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
     args.extend_from_slice(extra_args);
     // Analysis consumes source-coordinate patches, not human diff views.
@@ -792,6 +956,7 @@ fn run_git_diff_bytes(
         Ok(output) => output,
         Err(err)
             if crate::git::is_git_invocation_timeout(&err)
+                || crate::git::is_git_not_found_on_path(&err)
                 || crate::analysis::cancellation::is_cancellation_error(&err) =>
         {
             return Err(err);
@@ -875,10 +1040,91 @@ mod tests {
     use std::fs;
     use std::process::Command;
 
+    #[test]
+    fn pr_evidence_diff_range_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn with the named
+        // timeout error. Dropping the deadline would instead report the
+        // missing root as a spawn failure, which this rejects.
+        let missing = std::env::temp_dir().join(format!(
+            "ripr-pr-evidence-diff-deadline-missing-{}",
+            std::process::id()
+        ));
+        match load_pr_evidence_diff_range_within(&missing, "HEAD~1", "HEAD", Duration::from_mins(5))
+        {
+            Err(err) if !crate::git::is_git_invocation_timeout(&err) => {}
+            other => return Err(format!("control: expected a spawn failure, got {other:?}")),
+        }
+        match load_pr_evidence_diff_range_within(&missing, "HEAD~1", "HEAD", Duration::ZERO) {
+            Err(err) if crate::git::is_git_invocation_timeout(&err) => Ok(()),
+            other => Err(format!("zero deadline must be refused, got {other:?}")),
+        }
+    }
+
     /// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
     /// so a `#[must_use]` cleanup failure is an explicit ignore.
     fn ignore_remove_dir_all(path: &Path) {
         if let Ok(()) = fs::remove_dir_all(path) {}
+    }
+
+    #[test]
+    fn git_root_probe_prefers_missing_git_over_unresolved_base() {
+        let probe = classify_git_root_probe(Err(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE));
+        assert_eq!(probe, GitRootProbe::GitNotFoundOnPath);
+        assert_eq!(
+            message_for_git_root_probe(probe, Path::new("/repo")).as_deref(),
+            Some(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE)
+        );
+        assert!(
+            !crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.contains("could not resolve a default base"),
+            "PATH diagnosis must not fall through to the default-base text"
+        );
+        assert!(
+            !crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.contains("Pass `--base"),
+            "PATH diagnosis must not send the user to `--base`"
+        );
+    }
+
+    #[test]
+    fn git_root_probe_names_a_non_repo_after_git_ran() {
+        assert_eq!(
+            classify_git_root_probe(Ok(false)),
+            GitRootProbe::NotAWorkTree
+        );
+        let message =
+            message_for_git_root_probe(GitRootProbe::NotAWorkTree, Path::new("/tmp/not-a-repo"));
+        assert!(
+            message
+                .as_deref()
+                .is_some_and(|text| text.contains("is not inside a Git work tree")),
+            "expected the work-tree diagnosis, got: {message:?}"
+        );
+        assert!(
+            message
+                .as_deref()
+                .is_some_and(|text| !text.contains("git was not found on PATH")),
+            "a git that ran must not steal the PATH diagnosis: {message:?}"
+        );
+    }
+
+    #[test]
+    fn git_root_probe_does_not_invent_a_cause_when_git_ran_inside_a_work_tree() {
+        assert_eq!(classify_git_root_probe(Ok(true)), GitRootProbe::Unanswered);
+        assert!(
+            message_for_git_root_probe(GitRootProbe::Unanswered, Path::new("/repo")).is_none(),
+            "an answered work tree must keep the original default-base error"
+        );
+    }
+
+    #[test]
+    fn git_root_probe_does_not_invent_a_cause_on_timeout() {
+        let probe = classify_git_root_probe(Err(
+            "git_invocation_timeout: git -C /repo [\"rev-parse\"] exceeded 100ms",
+        ));
+        assert_eq!(probe, GitRootProbe::Unanswered);
+        assert!(
+            message_for_git_root_probe(probe, Path::new("/repo")).is_none(),
+            "a timeout must not be remapped to missing git or a non-repo"
+        );
     }
 
     #[test]
@@ -925,6 +1171,56 @@ mod tests {
             !message.contains("os error"),
             "the OS error text must not stand in for the cause: {message}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_non_utf8_content_loads_like_the_git_route() -> std::io::Result<()> {
+        // A Latin-1 line in an unrelated changed file used to refuse the
+        // whole `--diff` input ("stream did not contain valid UTF-8") that
+        // the git-run route decodes lossily.
+        let dir = unique_fixture_root("load-diff-non-utf8")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let diff_path = dir.join("change.diff");
+        fs::write(
+            &diff_path,
+            b"diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-caf\xe9\n+caf\xe9s\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn a() -> bool { 1 > 0 }\n+fn a() -> bool { 1 >= 0 }\n",
+        )?;
+
+        let result = load_diff(&dir, None, Some(&diff_path), None);
+        ignore_remove_dir_all(&dir);
+        let text = result.map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}\n+caf\u{fffd}s\n"), "{text}");
+        let files = crate::analysis::diff::parse_unified_diff(&text);
+        let rust = files
+            .iter()
+            .find(|file| file.path == std::path::Path::new("src/lib.rs"))
+            .ok_or_else(|| std::io::Error::other("rust file missing from parsed diff"))?;
+        assert_eq!(rust.added_lines[0].text, "fn a() -> bool { 1 >= 0 }");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_file_with_raw_non_utf8_path_fails_closed() -> std::io::Result<()> {
+        // `quotePath=false` emits raw path bytes; a lossy decode would merge
+        // `p_\xff.rs` and `p_\xfe.rs` onto one U+FFFD path (#3601).
+        let git_diff = b"diff --git a/src/p_\xff.rs b/src/p_\xff.rs\n--- a/src/p_\xff.rs\n+++ b/src/p_\xff.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        let plain_diff = b"--- src/p_\xfe.rs\n+++ src/p_\xfe.rs\n@@ -1 +1 @@\n-a\n+b\n".to_vec();
+        for bytes in [git_diff, plain_diff] {
+            let Err(message) = decode_diff_text("diff from stdin", bytes) else {
+                return Err(std::io::Error::other(
+                    "a raw non-UTF-8 path must fail closed",
+                ));
+            };
+            assert!(message.contains("core.quotePath=true"), "{message}");
+        }
+        // C-quoted paths are ASCII, so only the hunk payload decodes lossily.
+        let quoted =
+            b"diff --git \"a/src/p_\\377.rs\" \"b/src/p_\\377.rs\"\n@@ -1 +1 @@\n-caf\xe9\n+b\n"
+                .to_vec();
+        let text = decode_diff_text("diff from stdin", quoted).map_err(std::io::Error::other)?;
+        assert!(text.contains("-caf\u{fffd}"), "{text}");
         Ok(())
     }
 
@@ -1350,6 +1646,30 @@ mod tests {
     }
 
     #[test]
+    fn option_shaped_base_never_reaches_git_diff() -> std::io::Result<()> {
+        let dir = unique_fixture_root("option-shaped-base")?;
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("lib.rs"), "fn a() {}\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-q", "-m", "init"])?;
+        let planted = dir.join("planted");
+        let base = format!("--output={}", planted.display());
+        // The sink: `git diff --output=<path>...HEAD` would create the file.
+        let sink = run_git_diff_bytes(&dir, &format!("{base}...HEAD"), &[], "0", None);
+        // The LSP settings path and the CLI path both refuse it before git.
+        let resolved = resolve_effective_base(&dir, Some(&base), None);
+        let identity = resolve_base_commit(&dir, Some(&base), None);
+        let planted_exists = planted.exists() || dir.join("planted...HEAD").exists();
+        ignore_remove_dir_all(&dir);
+        assert!(sink.is_err(), "an option-shaped range must be refused");
+        assert!(!planted_exists, "git diff must not write an --output file");
+        let err = resolved.expect_err("an option-shaped base must be refused");
+        assert!(err.contains("starts with `-`"), "{err}");
+        assert!(identity.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn resolve_default_base_returns_named_error_when_nothing_resolves() -> std::io::Result<()> {
         // Simulates a bare repo with no commits and no remote refs. We create
         // a temp dir, run git init, but do NOT create any commits or refs.
@@ -1657,6 +1977,58 @@ mod tests {
             loaded.as_ref().is_ok_and(|diff| diff.contains("src.rs")),
             "expected a resolvable explicit base to analyze the changed file, got: {loaded:?}"
         );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_load_starts_at_the_merge_base_when_the_base_moved_on() -> std::io::Result<()> {
+        // The branch forks at A and changes feature.rs; the base then gains
+        // B, which changes upstream.rs. The committed `main...HEAD` diff
+        // names only feature.rs, and the worktree diff must cover the same
+        // PR changes plus the uncommitted edit, not B reversed.
+        let dir = unique_fixture_root("worktree-merge-base")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("feature.rs"), "fn feature() -> u32 { 1 }\n")?;
+        fs::write(dir.join("upstream.rs"), "fn upstream() -> u32 { 1 }\n")?;
+        fs::write(dir.join("edit.rs"), "fn edit() -> u32 { 1 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "--quiet", "-m", "A"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "-b", "feature"])?;
+        fs::write(dir.join("feature.rs"), "fn feature() -> u32 { 2 }\n")?;
+        run_git_checked(&dir, &["commit", "--quiet", "-am", "feature"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "main"])?;
+        fs::write(dir.join("upstream.rs"), "fn upstream() -> u32 { 2 }\n")?;
+        run_git_checked(&dir, &["commit", "--quiet", "-am", "B"])?;
+        run_git_checked(&dir, &["checkout", "--quiet", "feature"])?;
+        fs::write(dir.join("edit.rs"), "fn edit() -> u32 { 2 }\n")?;
+
+        let tip_diff = run_git_checked(&dir, &["diff", "main"])?;
+        assert!(
+            tip_diff.contains("upstream.rs"),
+            "fixture precondition: a base-tip diff must carry the base's own change:\n{tip_diff}"
+        );
+        let committed = load_diff(&dir, Some("main"), None, None).map_err(std::io::Error::other)?;
+        assert!(
+            committed.contains("feature.rs") && !committed.contains("upstream.rs"),
+            "fixture precondition: the committed range names only the branch change:\n{committed}"
+        );
+
+        let loaded = load_worktree_diff_with_effective_base(&dir, Some("main"), None)
+            .map_err(std::io::Error::other)?;
+        assert!(
+            loaded.text.contains("feature.rs") && loaded.text.contains("edit.rs"),
+            "the worktree diff must keep the branch change and the uncommitted edit:\n{}",
+            loaded.text
+        );
+        assert!(
+            !loaded.text.contains("upstream.rs"),
+            "the worktree diff must not report the base's later commit as a branch change:\n{}",
+            loaded.text
+        );
+        assert_eq!(loaded.effective_base.as_deref(), Some("main"));
 
         ignore_remove_dir_all(&dir);
         Ok(())

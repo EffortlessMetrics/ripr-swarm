@@ -3,6 +3,123 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-09-29: Same-crate trait methods are not unique just because they share a crate (#4760)
+
+`body_contains_owner_call` and `tests_by_call_name` match `size_hint(` including
+`.size_hint()`. That is correct for a unique impl method (`ledger.apply(5)` is
+how a test calls `Ledger::apply`). It is not identity when two impls of one
+trait method live in the same crate.
+
+The uniqueness bypass only gates *cross-crate* package-prefix filtering. A
+name seen twice in one crate (`WhileSome::size_hint` vs `Combinations::size_hint`)
+still became `direct_owner_call`, and the Combinations test's strong
+`assert_eq!(it.size_hint().1, …)` then reported itertools `WhileSome::size_hint`
+as `exposed` 1.0. Mutation: with `(0, None)` applied, every suite still passed.
+
+Fail closed: an impl method whose name has more than one workspace definition
+is `direct_owner_call` only when the receiver resolves to this impl (let
+binding that names the type, UFCS `Type::method`, or `Type { }.method` prefix).
+Unresolved receivers (`let it = (0..3).combinations(2); it.size_hint()`) stay
+`weak_token_substring`. Unique impl methods are unchanged. Full `CallFact`
+receiver fields remain #3727.
+
+A second effect: one Combinations test can occupy several of the eight
+`related_tests` render slots (one row per matching assertion). Collapse only
+when the list exceeds that cap, putting unique tests first. Under the cap,
+keep per-assertion rows.
+
+Pin both sides: `rust_adversarial_same_method_other_type` must stay below
+`exposed`; `rust_same_method_owner_type_positive` must keep `exposed`. Do not
+absorb #4478 (confirmation pin), #4486 (proximity-only oracle), or #3727.
+
+## 2026-09-29: Repo-seam FieldConstruction missing facts need parser-backed owner-result identity (#1981)
+
+`CallFact`, `LetBindingFact`, and `ValueEnv` cannot prove that a local is the
+direct return of the seam owner. A nearby test name or a `.field` token on
+another object must not emit a compatible missing discriminator. Derive the
+fact only after activation is already `Yes`; nonempty `missing_discriminators`
+classifies `WeaklyGripped` before `ActivationUnknown`, so an unconditional
+field fact would invent actionability. Keep helper-transfer and qualified or
+method callees as named limitations until a later producer can resolve them.
+A same-name local or imported callee, a mutable borrow of the observed field,
+an assertion-message-only field mention, and an assertion-local shadow of the
+owner-result binding are also not owner-result observations: credit only a
+parser-backed discriminating condition or compared operands, and fail closed
+when the bare callee identity is ambiguous, including a local binding of the
+owner name that is not itself the parser-backed direct owner-result. A grouped
+nested-`super` import is the production owner only when the resolved module
+path uniquely matches this seam's owner; do not whitelist every `super::`
+prefix. The same spelling from another module, an unresolved import, or two
+cfg-ambiguous same-name owners stay non-ready. A leading `::` path selects
+the extern prelude and is not this seam's owner. A
+DirectOwnerCall related test that failed target admission stays `Missing`;
+ranking must not fall through to a Proposed InlineUnit or Integration target
+just because the `field_value` fact is now present. Advisory related observers
+(`SameModule`, `WeakTokenSubstring`, `ImportPathAffinity`) do not occupy that
+existing-test slot.
+
+## 2026-09-29: Boundary input and oracle from different tests is a false `exposed` (#4828)
+
+Infection ("related test input at the changed boundary") and discrimination
+("strong oracle") were independently Yes across the related-test set. One test
+called `gate(10)` with no assertion; another asserted `gate(100) == true`.
+The mutant `>=` → `>` passed both. `exposed` for a predicate now requires one
+test that both feeds a boundary input to the owner and holds a discriminating
+oracle on that call's result. The split names `same_test_pairing_missing`.
+Do not absorb helper credit (#4574), proximity-only oracles (#4486), or
+bare-name method relation (#4760) into this pairing gate. Pairing reuses
+activation's `==` facts so a same-test oracle that already infected through
+a named constant or helper hop stays `exposed`.
+
+## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
+
+A SideEffect `items.push(...)` on a passed collection can be confirmed by
+`assert_eq!(items, expected)` and must stay unverified for `assert_eq!(other, expected)`
+or `assert_eq!(other, items)`. Kind-matching `WholeObjectEquality` / token
+coincidence on the expected side is not identity with the mutated receiver.
+
+Pin this as a should-stay-`weakly_exposed` control for the sibling collection.
+Do not generalize that rule to every effect family: mock/snapshot/whole-object
+observers for `persist_audit(record)` and `notifier.send(...)` remain on the
+existing Part C path. `cache.insert` is a delivered CallDeletion fixture, not
+this family's `push` admission; sharing the `insert` method name must not
+rewrite that golden. Reuse `PropagationWitnessV1`; do not mint a second
+witness DTO.
+
+## 2026-09-29: Missing git and a missing cwd share `NotFound` (#4735)
+
+Spawning `git` with `current_dir` yields `ErrorKind::NotFound` both when the
+binary is absent from PATH and when the working directory does not exist.
+Remapping every `NotFound` to "git was not found on PATH" would misdiagnose an
+invalid `--root` as a missing binary (the #3880 argv-leak class). The shared
+git spawn authority therefore names the PATH repair only when the program is
+git and the cwd exists (or is unset). Doctor's `tool_git` probe already
+classifies tool spawn `NotFound` separately from a missing repository, so it
+can consume the same PATH message without that cwd check.
+
+`ripr check` and `--worktree` both need git. When `tool_git` did not pass,
+doctor must not recommend either, even on a dirty tree; the reachable route is
+`--diff PATH` / `--diff -`.
+
+Default-base probes treat any git spawn failure as "ref absent". A gitless
+`ripr check` with no `--base` therefore used to say `Pass --base`. The
+git-root probe on that failure path must name PATH/`--diff` ahead of the
+default-base text. An explicit `--base` still falls through to `run_git_diff`,
+which already passes the named missing-git error through.
+
+## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
+
+`ripr pilot` and `ripr first-pr` create `target/ripr/pilot` and
+`target/ripr/reports` before they do useful work. On a read-only checkout the
+raw `Read-only file system (os error 30)` names neither command's output flag.
+`check`, `doctor`, and `cache status` already tolerate that layout.
+
+Keep the OS error, keep exit 2, and append `; write elsewhere with --out PATH`
+or `--out-dir PATH` only for `PermissionDenied` / `ReadOnlyFilesystem`. A path
+that is already a file is a different failure and must not grow that hint.
+Both commands share `output::file_write::create_output_dir`; do not special-case
+one command's prefix or flag in the other.
+
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 
 A rotating family of suite failures under parallel cargo builds (observed
@@ -36,6 +153,29 @@ Lesson: classify first by shared-state mechanism, then fix one mechanism per
 slice with a discriminating control. New family members get their own
 investigation per the escalation rule (same operation green in isolation and
 red only under concurrency = structural).
+
+## 2026-09-29: Unchanged lexical-fallback test files and complete runs (#4775)
+
+#2698 discloses lexical fallback on the repo/seam-inventory path (stderr).
+Diff-scoped `ripr check` did not. An unchanged test file with a nightly-only
+construct (`Some(y if y > 0)`, `Err(!)`, or any other reference-parser
+refusal) was indexed lexically; compact `#[test] fn p() { ... }` registrations
+then vanished from related-test discovery. The changed production owner read
+`no_static_path` while `analysis_outcome` stayed complete.
+
+#4722/#4773 cover *changed* files as `producer_failure`. This lane is the
+unchanged test-file follow-up. The TypeScript analog is #4261: do not mark
+every run in a nightly-feature crate partial merely because some unused test
+file failed extraction. Emit `rust_lexical_test_index_partial` only when a
+classified owner actually consulted that file.
+
+Lesson: stderr disclosure on a different analysis mode is not a machine
+limitation. Related-test dropout is a completeness fact, not a classification
+vocabulary change. Owner-call scans must mask comments and strings so a
+comment mentioning the owner cannot make the crate partial. A `fn owner()`
+declaration, a same-named call in another crate, and a long repository path
+are not reasons to abort analysis or mark an unused nightly file as
+consulted; a turbofish `owner::<T>(...)` and `#[ test ]` still are.
 
 ## 2026-07-29: Property tests and lexical fallback disclosure
 

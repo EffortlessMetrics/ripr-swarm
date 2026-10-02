@@ -221,7 +221,7 @@ fn invokes_opaque_macro(body: &str) -> bool {
 
 /// Relations that come from file or name proximity alone, with no captured
 /// call, helper chain, or assertion affinity tying the test to the owner.
-fn is_proximity_only(reason: RelationReason) -> bool {
+pub(super) fn is_proximity_only(reason: RelationReason) -> bool {
     matches!(
         reason,
         RelationReason::SameTestFile
@@ -456,9 +456,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
             item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 
