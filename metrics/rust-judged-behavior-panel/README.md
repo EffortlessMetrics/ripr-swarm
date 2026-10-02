@@ -135,6 +135,26 @@ namespace, and advances `current.json` last. A failed, partial, or concurrent
 attempt cannot become current. The build has no network fallback: an offline
 cache miss is a failed attempt.
 
+Build admission binds the command and executed binary to caller-owned context,
+not just to one another. Before publication the recorded absolute path must
+belong to the actual staging attempt. After publication the digest-checked
+current/index run ID and normalized output-relative path fix the logical suffix
+`<output>/.staging-<run-id>/build-target/debug/ripr` (or `ripr.exe`). The retained
+binary must use the matching `build-target/debug/` path, remain canonically
+confined to that generation, and match its recorded bytes and digest. Relative,
+traversing, other-output, other-run and differently retained paths are refused.
+Path roots use the native platform's absolute-path rules, including Windows
+drive and UNC roots; drive-relative paths are not absolute.
+
+Publication preserves the original staging path while moving its artifacts to
+`runs/<run-id>`. Moving the complete checkout to a new root also preserves
+admission and portable semantic identity: the historical absolute prefix is
+not compared with today's checkout root. An identical bound suffix under a
+different prefix remains valid. This is logical run membership, **not
+authentication of the historical checkout root or execution**. These unsigned
+receipts cannot distinguish that prefix change from legitimate relocation and
+do not gain such provenance from agreeing path strings or hashes.
+
 These files are host-bound run receipts. They do not by themselves select or
 bless findings, interpret quiet output, populate judgments, or support a
 mutation, rate, gate, badge, or support-tier claim.

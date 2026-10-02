@@ -8,7 +8,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::{BuildIdentity, build_fresh_binary, pretty_json, sha256_file, validate_build_identity};
+use super::{
+    BuildIdentity, BuildLocation, build_fresh_binary, pretty_json, sha256_file,
+    validate_build_identity,
+};
 use crate::run::capture_bytes_in_dir_with_timeout;
 
 const CHILD_ROOT: &str = "RIPR_HOST_BUILD_TEST_ROOT";
@@ -101,7 +104,7 @@ fn fresh_build_child() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         let attempt = root.join(format!("attempt-{index}-{subject}"));
         let build = build_fresh_binary(&workspace, &attempt)?;
-        validate_build_identity(&attempt, &build)?;
+        validate_build_identity(&attempt, &build, BuildLocation::Attempt(&attempt))?;
         let output = capture_bytes_in_dir_with_timeout(
             Path::new(&build.executed_binary_path),
             &[],
