@@ -738,9 +738,7 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
             ),
             (
                 "invoked_after_nested_helper_return",
-                format!(
-                    "fn unrelated() {{ return; }}\nlet check = || {{ {direct} }};\ncheck();"
-                ),
+                format!("fn unrelated() {{ return; }}\nlet check = || {{ {direct} }};\ncheck();"),
                 true,
             ),
             (

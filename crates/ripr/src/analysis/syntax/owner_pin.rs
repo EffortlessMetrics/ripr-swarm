@@ -246,10 +246,19 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .collect();
         // Compute the conservative prefix boundary once per function, rather
         // than rescanning its body for every candidate assertion/invocation.
+        // A nested helper returns to its own caller, not from this function.
+        // The earlier escape gate still refuses returns in any closure.
         let first_return = body
             .syntax()
             .descendants()
             .filter_map(ast::ReturnExpr::cast)
+            .filter(|expression| {
+                expression
+                    .syntax()
+                    .ancestors()
+                    .find_map(ast::Fn::cast)
+                    .is_some_and(|owner| owner == function)
+            })
             .map(|expression| expression.syntax().text_range().start())
             .min();
         let assertions = candidates

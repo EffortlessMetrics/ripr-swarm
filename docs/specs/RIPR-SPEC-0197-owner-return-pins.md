@@ -309,13 +309,20 @@ helper into a singleton. Ten related tests exercise the eight-row JSON projectio
 cap without crowding out admitted evidence. All cells are independently guarded
 by family-selected RIPR-SPEC-0108 corpus assertions.
 
-A separate thirty-subject compiled matrix covers all three admitted families:
+A separate fifty-four-subject compiled matrix covers all three admitted families:
 a direct assertion before/after a root return, a bound closure invoked before/after
-a root return, and a closure that returns before its assertion. Only direct and
-invoked-before-return positives are admitted. The statement-prefix query retains
+a root return, a closure that returns before its assertion, and unrelated ordinary
+or CFG-disabled nested helpers before direct/invoked assertions. Effective direct
+and invoked positives are admitted; prior outer returns and closure escapes are
+refused. The statement-prefix query retains
 all macro, CFG, collection and closure-escape gates; it does not evaluate arbitrary
 branch conditions. The existing Result harness retains its earlier strong equality
 and its class/confidence; a possible return still refuses a later equality.
+Only returns owned by the collected function enter its statement-prefix boundary.
+An ordinary or CFG-disabled nested helper's return cannot escape the outer test;
+direct and invoked-closure positives remain admitted with either helper present.
+This does not admit an assertion inside an uncalled nested helper, and the earlier
+closure-return refusal remains unchanged.
 
 The full scan also exposes a deliberate usefulness tradeoff: the existing real
 `#[tokio::test]` fixture catches an inverted predicate at runtime, but the bounded
