@@ -260,6 +260,22 @@ fn classify_terminal_receipt(
     let upstream_success = upstream.verify_candidate == "success"
         && upstream.build == "success"
         && upstream.manifest == "success";
+    let candidate_sha = candidate_sha.trim().to_ascii_lowercase();
+    if candidate_sha.len() != 40
+        || !candidate_sha
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        errors.push(format!(
+            "candidate_sha must be 40 hexadecimal characters, got `{candidate_sha}`"
+        ));
+    }
+    let version = version.trim().trim_start_matches('v').to_string();
+    if version.is_empty() || version.contains(['/', '\\']) {
+        errors.push(format!(
+            "version must be a non-empty release version, got `{version}`"
+        ));
+    }
     let qualification_claims_allowed = upstream_success
         && errors.is_empty()
         && counts.selected == expected_targets.len()
@@ -276,8 +292,8 @@ fn classify_terminal_receipt(
         } else {
             "not_qualified".to_string()
         },
-        candidate_sha: candidate_sha.to_ascii_lowercase(),
-        version: version.trim_start_matches('v').to_string(),
+        candidate_sha,
+        version,
         upstream,
         execution: counts,
         targets,
@@ -454,5 +470,55 @@ mod tests {
                 .iter()
                 .any(|error| error.contains("unexpected"))
         );
+    }
+
+    #[test]
+    fn malformed_candidate_identity_fails_closed() {
+        let receipt = classify_terminal_receipt(
+            &targets(),
+            success_rows(),
+            Vec::new(),
+            "not-a-sha",
+            "v",
+            "success",
+            "success",
+            "success",
+        );
+        assert!(!receipt.qualification_claims_allowed);
+        assert_eq!(receipt.status, "not_qualified");
+        assert_eq!(receipt.version, "");
+        assert!(
+            receipt
+                .errors
+                .iter()
+                .any(|error| error.contains("candidate_sha must be 40 hexadecimal"))
+        );
+        assert!(
+            receipt
+                .errors
+                .iter()
+                .any(|error| error.contains("version must be a non-empty release version"))
+        );
+    }
+
+    #[test]
+    fn trimmed_and_normalized_identity_is_retained() {
+        let receipt = classify_terminal_receipt(
+            &targets(),
+            success_rows(),
+            Vec::new(),
+            " ABCDEF0123456789ABCDEF0123456789ABCDEF01 ",
+            " v0.11.0 ",
+            "success",
+            "success",
+            "success",
+        );
+        assert!(receipt.qualification_claims_allowed);
+        assert_eq!(receipt.status, "qualified");
+        assert_eq!(
+            receipt.candidate_sha,
+            "abcdef0123456789abcdef0123456789abcdef01"
+        );
+        assert_eq!(receipt.version, "0.11.0");
     }
 }
