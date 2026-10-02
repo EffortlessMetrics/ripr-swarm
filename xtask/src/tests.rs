@@ -29083,6 +29083,112 @@ fn packet_coverage_selected_count(row: &str) -> Result<usize, String> {
         .map_err(|error| format!("invalid selected count in {row}: {error}"))
 }
 
+fn packet_coverage_report_fixture() -> String {
+    let host = if cfg!(windows) { "windows" } else { "unix" };
+    let native = if cfg!(windows) {
+        "not_applicable; selected=not_enumerated".to_string()
+    } else {
+        concat!(
+            "applicable; selected=2; tests=[",
+            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback, ",
+            "native_packet_pilot_consumes_the_summary_artifact]",
+        )
+        .to_string()
+    };
+    format!(
+        concat!(
+            "- line 1; host={host}; declared=all; applicable; selected=2; tests=[",
+            "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client, ",
+            "portable_consumer::tests::packet_digest_matches_the_producer_formula]; ",
+            "`cargo test -p xtask --locked --offline portable_consumer`\n",
+            "- line 1; host={host}; declared=unix; {native}; ",
+            "`cargo test -p ripr --locked --offline --test portable_consumer_packet`\n",
+        ),
+        host = host,
+        native = native,
+    )
+}
+
+#[test]
+fn packet_coverage_report_accepts_exact_selected_names() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-exact-names", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        let extra = report.replacen(
+            "selected=2; tests=[",
+            "selected=3; tests=[neighboring_control, ",
+            1,
+        );
+        write(&path, &extra);
+        assert_packet_coverage_report()
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_neighboring_selected_names() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-neighbor-names", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for subject in [
+            "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
+            "portable_consumer::tests::packet_digest_matches_the_producer_formula",
+            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
+            "native_packet_pilot_consumes_the_summary_artifact",
+        ] {
+            // The native target is deliberately not enumerated on Windows.
+            if !report.contains(subject) {
+                continue;
+            }
+            for neighbor in [
+                format!("neighbor::{subject}"),
+                format!("{subject}_neighbor"),
+            ] {
+                write(&path, &report.replace(subject, &neighbor));
+                if assert_packet_coverage_report().is_ok() {
+                    return Err(format!(
+                        "neighboring selected identity accepted: {neighbor}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_invalid_selected_fields() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-invalid-fields", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for row in report.lines().filter(|row| row.contains("; tests=[")) {
+            for malformed in [
+                row.replace("selected=2", "selected=0"),
+                row.replace("selected=2", "selected=1"),
+                row.replace("selected=2", "selected=3"),
+                row.replace("selected=2", "selected=invalid"),
+                row.replace("; tests=[", "; subjects=["),
+                row.replace("; tests=[", "; tests="),
+                row.replace("]; `", "; `"),
+                row.replace("; tests=[", "; tests=[, "),
+                row.replace("]; `", ", ]; `"),
+                row.replace("]; `", "]; tests=[]; `"),
+            ] {
+                write(&path, &report.replace(row, &malformed));
+                if assert_packet_coverage_report().is_ok() {
+                    return Err(format!("malformed selected field accepted: {malformed}"));
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn network_policy_candidate_extensions_cover_supported_script_sources() {
     for path in [
