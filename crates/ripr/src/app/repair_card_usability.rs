@@ -266,11 +266,10 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
         .transpose()?;
     let card_bytes = normalized_bytes(&card_wire);
     let packet_bytes = normalized_bytes(&packet_json);
-    let packet_over_card_percent = if card_bytes == 0 {
-        Value::Null
-    } else {
-        json!(packet_bytes * 100 / card_bytes)
-    };
+    let packet_over_card_percent = packet_bytes
+        .checked_mul(100)
+        .and_then(|scaled| scaled.checked_div(card_bytes))
+        .map_or(Value::Null, |percent| json!(percent));
     Ok(json!({
         "profile": profile.id,
         "card_bytes": card_bytes,
@@ -329,11 +328,8 @@ fn real_opportunity_accounting(corpus: &Value) -> Value {
     })
 }
 
-fn presentation_accounting(report: &Value) -> Value {
-    let measured = report
-        .get("synthetic_profiles")
-        .and_then(Value::as_array)
-        .map_or(0, |profiles| profiles.len());
+fn presentation_accounting(profile_count: usize) -> Value {
+    let measured = profile_count;
     json!({
         "cli_json": {
             "state": "measured",
@@ -368,12 +364,14 @@ pub fn repair_card_usability_report(corpus: &Value) -> Result<Value, String> {
     for profile in synthetic_profiles() {
         profiles.push(measure_profile(&profile)?);
     }
+    let profiles_len = profiles.len();
     let report = json!({
         "schema_version": REPAIR_CARD_USABILITY_SCHEMA_VERSION,
         "kind": "repair_card_usability_report",
         "ratification_scope": "synthetic_fixture_profiles",
         "real_opportunities": real_opportunity_accounting(corpus),
         "synthetic_profiles": profiles,
+        "presentations": presentation_accounting(profiles_len),
         "ratified_defaults": {
             "max_detail_items": DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
             "max_serialized_bytes": DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
