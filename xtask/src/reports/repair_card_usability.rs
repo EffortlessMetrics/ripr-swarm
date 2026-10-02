@@ -215,10 +215,15 @@ fn validate_receipt(report: &Value, receipt: &Value) -> Result<(), String> {
                 .to_string(),
         );
     }
-    if attempt_cases > 0 && ratification == "pending" {
+    if attempt_cases > 0 {
+        // Fail closed: no real_usability_ratification value is accepted once
+        // attempt cases exist, because per-opportunity real card measurement
+        // is not implemented yet. Extending the corpus must land together
+        // with the measurement and a refreshed receipt.
         return Err(
-            "the governed corpus now carries attempt cases; refresh the decision receipt and \
-             report real-opportunity measurements instead of staying pending"
+            "the governed corpus now carries attempt cases; per-opportunity real card \
+             measurement is not implemented, so no real_usability_ratification value is \
+             accepted — land the measurement and refresh the receipt in the same change"
                 .to_string(),
         );
     }
@@ -302,6 +307,20 @@ fn markdown_report(report: &Value) -> String {
     body.push_str(
         "\nNormalized unit: UTF-8 bytes of pretty JSON with exactly one trailing newline.\n",
     );
+    if let Some(presentations) = report.get("presentations").and_then(Value::as_object) {
+        body.push_str("\n## Presentation channels\n\n");
+        for (channel, state) in presentations {
+            let status = state
+                .get("state")
+                .and_then(Value::as_str)
+                .map_or("unknown", |status| status);
+            body.push_str(&format!("- `{channel}`: {status}"));
+            if let Some(reason) = state.get("reason").and_then(Value::as_str) {
+                body.push_str(&format!(" — {reason}"));
+            }
+            body.push('\n');
+        }
+    }
     if let Some(field_decision) = report.get("field_set_decision") {
         body.push_str("\n## Field set decision\n\n");
         if let Some(reason) = field_decision.get("reason").and_then(Value::as_str) {
@@ -401,6 +420,21 @@ mod tests {
             Err(_message) => Ok(()),
             Ok(()) => Err(
                 "a pending real ratification must be rejected once attempt cases exist".to_string(),
+            ),
+        }
+    }
+
+    #[test]
+    fn ratified_real_usability_without_measurements_is_rejected() -> Result<(), String> {
+        let corpus = serde_json::json!({"cases": [1], "exclusions": [], "observations": []});
+        let report = ripr::app::repair_card_usability::repair_card_usability_report(&corpus)?;
+        let mut receipt = matching_receipt();
+        receipt["real_usability_ratification"] = serde_json::json!("ratified");
+        match validate_receipt(&report, &receipt) {
+            Err(_message) => Ok(()),
+            Ok(()) => Err(
+                "an invented real ratification without per-opportunity measurements must be rejected"
+                    .to_string(),
             ),
         }
     }

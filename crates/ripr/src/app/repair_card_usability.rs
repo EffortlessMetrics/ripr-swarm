@@ -282,7 +282,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
             normalized_bytes(&card_wire) <= DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
         "card_bytes_below_packet_bytes":
             normalized_bytes(&card_wire) < normalized_bytes(&packet_json),
-        "wire_card_omits_packet_envelope": !card_wire.contains(PACKET_ENVELOPE_MARKER),
+        "wire_card_omits_packet_envelope": wire_omits_packet_envelope(&card_wire, &seam_id),
         "packet_envelope_surfaces_seam": packet_surfaces_seam,
         "canonical_packet_state": canonical_packet_state,
         "next_action_present": card.next_action.is_some(),
@@ -296,6 +296,49 @@ fn corpus_len(corpus: &Value, key: &str) -> usize {
         .get(key)
         .and_then(Value::as_array)
         .map_or(0, |entries| entries.len())
+}
+
+/// A wire card omits the packet envelope when neither the raw CLI format
+/// marker nor any embedded copy of the measured packet envelope (a string
+/// value that parses to a JSON object carrying a `packets` array with an
+/// entry for the measured seam) appears anywhere in the card document.
+fn wire_omits_packet_envelope(card_wire: &str, seam_id: &str) -> bool {
+    if card_wire.contains(PACKET_ENVELOPE_MARKER) {
+        return false;
+    }
+    let Ok(card) = serde_json::from_str::<Value>(card_wire) else {
+        return false;
+    };
+    !string_value_embeds_measured_packet(&card, seam_id)
+}
+
+fn string_value_embeds_measured_packet(value: &Value, seam_id: &str) -> bool {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim_start();
+            if !trimmed.starts_with('{') {
+                return false;
+            }
+            let Ok(parsed) = serde_json::from_str::<Value>(trimmed) else {
+                return false;
+            };
+            parsed
+                .get("packets")
+                .and_then(Value::as_array)
+                .is_some_and(|packets| {
+                    packets.iter().any(|packet| {
+                        packet.get("seam_id").and_then(Value::as_str) == Some(seam_id)
+                    })
+                })
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(|item| string_value_embeds_measured_packet(item, seam_id)),
+        Value::Object(map) => map
+            .values()
+            .any(|entry| string_value_embeds_measured_packet(entry, seam_id)),
+        _ => false,
+    }
 }
 
 /// Governed real-opportunity accounting over the shared #1702/#1579 corpus.
@@ -396,6 +439,38 @@ mod tests {
 
     fn synthetic_corpus() -> Value {
         json!({"cases": [], "exclusions": [1], "observations": [1, 2]})
+    }
+
+    #[test]
+    fn wire_envelope_check_rejects_embedded_packets_and_markers() -> Result<(), String> {
+        let seam_id = "seam-demo";
+        let plain_card = json!({
+            "kind": "repair_card.v1",
+            "seam_id": seam_id,
+            "note": "compact card without packet content",
+        });
+        let plain_wire = serde_json::to_string_pretty(&plain_card)
+            .map_err(|error| format!("serialize plain card: {error}"))?;
+        if !wire_omits_packet_envelope(&plain_wire, seam_id) {
+            return Err("a card without packet content must omit the envelope".to_string());
+        }
+        let embedded = json!({
+            "kind": "repair_card.v1",
+            "seam_id": seam_id,
+            "packet": "{\"packets\":[{\"seam_id\":\"seam-demo\"}]}",
+        });
+        let embedded_wire = serde_json::to_string_pretty(&embedded)
+            .map_err(|error| format!("serialize embedded card: {error}"))?;
+        if wire_omits_packet_envelope(&embedded_wire, seam_id) {
+            return Err("an embedded packet envelope must not pass the omission check".to_string());
+        }
+        let marker_card = format!(
+            "{{\"kind\":\"repair_card.v1\",\"marker\":\"{PACKET_ENVELOPE_MARKER}\"}}"
+        );
+        if wire_omits_packet_envelope(&marker_card, seam_id) {
+            return Err("the raw CLI format marker must not pass the omission check".to_string());
+        }
+        Ok(())
     }
 
     #[test]

@@ -96,7 +96,9 @@ the ratification:
   `real_usability_ratification: pending` while the governed corpus carries
   zero attempt cases. The receipt is rejected when it disagrees with the
   live measurement, omits limitations or not-exercised combinations, or
-  stays pending after attempt cases appear.
+  claims any real-usability ratification state once attempt cases appear —
+  no ratification value is accepted until per-opportunity real card
+  measurement lands in the same change.
 
 ## Required Evidence
 
