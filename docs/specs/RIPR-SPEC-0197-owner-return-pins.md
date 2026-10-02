@@ -29,7 +29,9 @@ Support-tier impact:
 
 Policy impact:
 
-- None. No new gate, policy surface, or allowlist entry.
+- None. No new CI gate or production process surface. The matched runtime integration
+  test has one allowlisted test-only process-launch site for compiling/running the
+  fixed fixture subjects.
 
 ## Problem
 
@@ -57,12 +59,33 @@ wrong in three shapes, each of which an earlier candidate credited:
 
 An `assert_eq!` confirms a `return_value` probe's discriminator when all of
 the following hold. Each rule fails closed: when ripr cannot establish it,
-the assertion keeps today's token rule.
+the owner-specific pin is refused. Before either the pin or token matching
+can supply any return-value oracle credit, bare `assert_eq!` assertions pass
+the same execution/macro-context admission below. A refused context contributes
+no observation, oracle kind, strength, or discriminator; its related-test row
+remains visible with no oracle. If no admitted oracle remains, existing stage
+combination produces `reachable_unrevealed` with Observe `no` and Discriminate
+`no`. Here `no` means no statically established oracle, not proof that a test
+can never execute. Other owner-specific pin failures retain the existing token
+rule only for an assertion whose context was admitted.
 
 1. Oracle shape. The assertion is one plain `assert_eq!` (never
    `assert_ne!`, `debug_assert_eq!`, a path-qualified or crate-specific
    `*_assert_eq!`) with an exact-value or whole-object oracle kind, on a line
-   inside the test's own body, in a test without `#[should_panic]`. Exactly
+   inside the test's own body, in a test without `#[should_panic]`. The
+   parser must match the exact indexed function body and the assertion's
+   line/text identity uniquely. Identical same-line invocations fail closed.
+   The assertion must lie on an ordinary statement/block/initializer path,
+   without conditional, async, const, labeled, nested-item, attributed-node
+   or early-return context. A non-async zero-argument closure is supported
+   only when immediately invoked, or when its immutable simple binding has
+   exactly one reference in the entire function: a subsequent zero-argument
+   call in the binding's same live statement block. Both the binding and call
+   must have an ordinary statement path to the test. Aliases, mutation, rebinding,
+   conditional calls, deferred calls and nested closure chains are unknown.
+   `?` in a root test remains supported (an error fails an ordinary Result
+   test); `?` in a closure is refused because its result could be discarded.
+   Exactly
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
@@ -125,7 +148,23 @@ the assertion keeps today's token rule.
    body that invokes any macro outside a fixed non-returning set
    (`assert!`, `format!`, `panic!`, `vec!`, ...), however it is spaced
    (`ensure !(..)`), leaves the return paths unestablished.
-4. The existing owner-binding defeats still apply: a foreign same-name
+4. Macro binding. The existing non-returning standard-macro vocabulary is
+   reused for test bodies; any other invoked macro may hide an early exit
+   and refuses the pin. Only bare standard names qualify; qualified paths stay unknown because
+   their roots can be rebound.
+   Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
+   also refuse it; nested expansion is not interpreted. Any visible
+   workspace definition/import binding of a trusted macro, a foreign glob,
+   `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a
+   trusted macro used by that test refuses the pin. This scan
+   includes other indexed files because textual macro scope reaches child
+   modules. Workspace-owned globs remain supported only when that scan finds
+   no competing binding. The scan conservatively ignores visibility/cfg
+   refinements, so unrelated same-name definitions can cause under-credit.
+   Other trusted names unused by the test do not defeat its pin (for example,
+   an unrelated `std::fs::write` import does not defeat a plain assertion). It is not
+   macro expansion or full name resolution.
+5. The existing owner-binding defeats still apply: a foreign same-name
    import, a same-named function in the test's own package when the owner
    lives in another package, and the exact variant when the changed
    expression constructs an error variant.
@@ -142,8 +181,46 @@ the assertion keeps today's token rule.
   bare call, the overridden trait default, the early-exit input, and the
   test-local binding of the owner's name.
 - Unit tests pin every gate with a positive and a discriminating negative.
+- Fourteen matched fixtures keep effective and ineffective tests separate:
+  - `owner_return_pin_direct`, `_called_closure`, `_token_direct`, and
+    `_token_called_closure` retain `exposed`; correct libraries pass one test,
+    and deliberately wrong `input * 2` libraries fail with actual 8 versus
+    expected 12.
+  - `_uncalled_closure`, `_shadowed_assertion`, `_expired_closure_binding`,
+    `_deferred_closure_binding`, `_macro_operand_return`, `_macro_return`,
+    `_if_false`, `_unpolled_async`, and `_token_overlap` pass even the wrong
+    library. They retain related-test provenance without an oracle and read
+    `reachable_unrevealed`, Observe `no`, Discriminate `no`, strength `none`.
+  - `_no_assertion` is the removal control and keeps that same class/stage
+    outcome without the context-refusal diagnostic.
+- `cargo test -p ripr --test owner_pin_execution` compiles both library
+  variants and each actual fixture test before comparing runtime outcomes.
+  All fourteen cells are in the RIPR-SPEC-0108 honesty corpus. Additional
+  public-API mixed-oracle tests reject confirmation/strength borrowed from
+  refused assertions and preserve valid direct evidence in either order.
+- The initial narrow repair left refused assertions `weakly_exposed` with
+  Observe `yes`, confidence 0.92 and advice to replace broad assertions. The
+  `_token_overlap` control additionally remained falsely `exposed` through
+  generic token matching. This is why admission precedes all oracle credit.
+  The corrected negative cells use the unchanged confidence algorithm:
+  three `yes` stages plus two `no` stages and the existing unrevealed-class
+  adjustment produce 0.79: `3 * 0.20 + 2 * 0.02 + 0.15`. Medium/High stage
+  confidence leaves the RIPR-SPEC-0109 ceiling at 1.0. This is an advisory
+  confidence signal for the static result, not a
+  probability, protection percentage or runtime-adequacy claim. Reach,
+  infection and propagation keep their existing static authorities.
+- Human/JSON/agent findings disclose `rust_assertion_context_unestablished`
+  and ask to establish execution and macro binding, rather than prescribe
+  another equality assertion. No runtime outcome is imported into the
+  production classifier. Agent context has no scalar confidence field; it
+  carries the same No/No stages, zero-oracle relation and guidance.
 
 ## Non-Goals
+
+- This repair's shared admission covers Rust `return_value` evidence from
+  bare `assert_eq!` invocations. Qualified assertion macros, other oracle
+  kinds/families, and general control-flow or macro resolution retain their
+  existing authorities; this is not a general execution-proof system.
 
 - Name resolution or type inference. The receiver typing reads a binding's
   syntax only; a receiver returned by an arbitrary function call stays
@@ -157,7 +234,11 @@ the assertion keeps today's token rule.
   pin yet.
 - A helper function the changed tail calls may itself ignore an argument
   on some inputs; the tail gate reads the tail's own syntax only.
-- No runtime claim: `exposed` stays a static reading.
+- Opaque macro expansion can synthesize a binding from fragments without a
+  visible `assert_eq` token. Such generated identities are not resolved by
+  this bounded source query; no compiler-equivalent macro identity is claimed.
+- No runtime claim: `exposed` stays a static reading. The matched compiled
+  controls are independent evidence for the fixture contract only.
 
 ## Acceptance Examples
 
@@ -202,14 +283,25 @@ the assertion keeps today's token rule.
 - `crates/ripr/src/analysis/facts/model.rs`: `FunctionContainer`,
   `FunctionItemFact`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`: `OwnerReturnPin`
-  (`establish` for the owner-side gates, `admits` for the test-side gates).
+  (`establish` for the owner-side gates, `admits` for the test-side gates;
+  `OwnerPinSyntax::admits_return_assertion` applies shared context independently
+  of whether an owner-return pin can be established).
 - `crates/ripr/src/analysis/classify/reveal.rs`: the pin joins the
   confirmation signals behind the family, oracle-kind and owner-binding
-  defeats; `file_imports_own_item`; `::`-rooted `use` paths.
+  defeats. `analyze_related_assertions` applies shared context before matching
+  or credit and preserves refused assertions only as zero-oracle relations; `file_imports_own_item`; `::`-rooted `use` paths.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin
-  once per probe.
-- `crates/ripr/src/analysis/seam_cache.rs`: file-fact `1.11`, classified
-  `1.17`, sharded `0.23`, compact `0.24`.
+  once per probe and supplies the shared context-admission callback.
+- `crates/ripr/src/analysis/classifier/finding.rs` and `classify/decision.rs`:
+  project the existing stage verdict into execution/binding guidance and
+  missing evidence, without changing classification or confidence arithmetic.
+- `crates/ripr/src/analysis/syntax/owner_pin.rs`: private bounded assertion
+  execution-context query. `OwnerPinSyntax` in the classifier memoizes the
+  workspace macro scan and per-file context across probes in one immutable
+  index; no output or serialized `OracleFact` field changes.
+- `crates/ripr/src/analysis/seam_cache.rs`: classified `1.21`, sharded `0.27`,
+  compact `0.27` invalidate stale false credit. File-fact `1.14` is unchanged;
+  the query reads existing indexed source, so no file-fact migration is needed.
 
 ## Metrics
 
