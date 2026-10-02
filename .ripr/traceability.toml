@@ -10567,6 +10567,9 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_token_overlap_cannot_bypass_oracle_admission",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_refused_rows_do_not_crowd_out_admitted_oracles",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::owner_pin_requires_test_item_ancestry_and_enabled_cfg",
+  "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::test_build_availability_preserves_unknown_and_boolean_identity",
+  "crates/ripr/tests/owner_pin_execution.rs::owner_pin_review_admission_controls",
 ]
 fixtures = [
   "fixtures/owner_return_pin_trait_method",
@@ -10588,6 +10591,12 @@ fixtures = [
   "fixtures/owner_return_pin_token_overlap",
   "fixtures/owner_return_pin_token_direct",
   "fixtures/owner_return_pin_token_called_closure",
+  "fixtures/owner_return_pin_unknown_singleton",
+  "fixtures/owner_return_pin_nested_test",
+  "fixtures/owner_return_pin_cfg_false_module",
+  "fixtures/owner_return_pin_cfg_false_file",
+  "fixtures/owner_return_pin_cfg_attr_module",
+  "fixtures/owner_return_pin_out_of_line_cfg",
 ]
 code = [
   "crates/ripr/src/analysis/classify/owner_pin.rs",
@@ -10598,6 +10607,7 @@ code = [
   "crates/ripr/src/analysis/syntax/owner_pin.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/classify/decision.rs",
+  "crates/ripr/src/analysis/facts/cfg_predicates.rs",
 ]
 outputs = [
   "fixtures/owner_return_pin_trait_method/expected/check.json",
@@ -10646,6 +10656,24 @@ outputs = [
   "fixtures/owner_return_pin_token_overlap/expected/human-full.txt",
   "fixtures/owner_return_pin_token_direct/expected/human-full.txt",
   "fixtures/owner_return_pin_token_called_closure/expected/human-full.txt",
+  "fixtures/owner_return_pin_unknown_singleton/expected/check.json",
+  "fixtures/owner_return_pin_unknown_singleton/expected/human.txt",
+  "fixtures/owner_return_pin_unknown_singleton/expected/human-full.txt",
+  "fixtures/owner_return_pin_nested_test/expected/check.json",
+  "fixtures/owner_return_pin_nested_test/expected/human.txt",
+  "fixtures/owner_return_pin_nested_test/expected/human-full.txt",
+  "fixtures/owner_return_pin_cfg_false_module/expected/check.json",
+  "fixtures/owner_return_pin_cfg_false_module/expected/human.txt",
+  "fixtures/owner_return_pin_cfg_false_module/expected/human-full.txt",
+  "fixtures/owner_return_pin_cfg_false_file/expected/check.json",
+  "fixtures/owner_return_pin_cfg_false_file/expected/human.txt",
+  "fixtures/owner_return_pin_cfg_false_file/expected/human-full.txt",
+  "fixtures/owner_return_pin_cfg_attr_module/expected/check.json",
+  "fixtures/owner_return_pin_cfg_attr_module/expected/human.txt",
+  "fixtures/owner_return_pin_cfg_attr_module/expected/human-full.txt",
+  "fixtures/owner_return_pin_out_of_line_cfg/expected/check.json",
+  "fixtures/owner_return_pin_out_of_line_cfg/expected/human.txt",
+  "fixtures/owner_return_pin_out_of_line_cfg/expected/human-full.txt",
 ]
 metrics = [
   "owner_return_pin_false_exposed",
