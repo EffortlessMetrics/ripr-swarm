@@ -110,7 +110,7 @@ are scoped or reviewed.
   The changed expression must also be the owner's tail, and when the owner
   can exit early through `?` or `return`, the pinned value must be the
   changed `Ok(..)` or `Some(..)`, so an `Err(..)` pin on that owner does
-  not count (RIPR-SPEC-0195). `use ::crate_name::..` imports now read as
+  not count (RIPR-SPEC-0196). `use ::crate_name::..` imports now read as
   the named crate.
 - A changed Rust file whose only route into its crate is a `mod` with an
   unresolved `#[path]` target (`#[cfg_attr(unix, path = "unix.rs")] mod sys;`,

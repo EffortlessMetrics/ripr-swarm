@@ -1016,7 +1016,14 @@ standalone_reason = "Issue #4667 records the third #3166 card-profile slice: `ri
 [[artifact]]
 id = "RIPR-SPEC-0195"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0195-owner-return-pins.md"
+path = "docs/specs/RIPR-SPEC-0195-repair-attempt-store-identity.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #4797 records the RepairAttempt store identity and resolver: one typed store owns durable attempt location, the default repository-local directory stays byte/behavior compatible, and an explicit --store is resolved against --root for before, status, after, and verify without CWD, mtime, or silent fallback. Renumbered four times during integration: main landed RIPR-SPEC-0183 (executed-control obligation, #4641), RIPR-SPEC-0191 (portable native consumer packet, #4713), RIPR-SPEC-0193 (repair-card detail references, #4666), and RIPR-SPEC-0194 (repair-card default handoff, #4667) first."
+[[artifact]]
+id = "RIPR-SPEC-0196"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0196-owner-return-pins.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #4478 records the owner-return pin contract: an assert_eq! whose operand is a complete call naming the changed owner confirms a changed Rust return_value expression only when the parser's item-container fact, the test's receiver binding, workspace-wide competing definitions and the owner's return paths establish that the call runs the owner and its value came through the changed tail, with fail-closed fixtures for the associated-versus-free, overridden trait default, early-exit input and shadowed-owner shapes."
