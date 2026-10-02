@@ -180,6 +180,14 @@ fn report_doctor_core_check(report: &output::doctor::DoctorReport, name: &str) -
 }
 
 fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::DoctorReport) {
+    // Both the first action and the recommendation consume this one fallible
+    // route. No-packet guidance must not point at a command below when its
+    // selected root cannot be rendered losslessly.
+    let first = output::doctor::DoctorFirstCommand::resolve(
+        output::doctor::git_tool_can_run(report),
+        || analysis::working_tree_has_tracked_changes(root),
+    );
+    let recommendation = first.command_line_for_root(root);
     // First-run honesty: name the packet as present only when it exists and
     // was written by this ripr. An unconditional path reads as an existing
     // artifact on a fresh workspace where `ripr first-pr` has never run
@@ -213,11 +221,15 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
         // existing selected directory the same way: lexical cleanup of a
         // symlink followed by `..` can name a different repository. Keep the
         // shared lexical helper unchanged for not-yet-created output paths.
-        match root.canonicalize() {
+        let refresh_root = root
+            .canonicalize()
+            .map_err(|error| error.to_string())
+            .and_then(|resolved| output::doctor::doctor_command_root_display(root, &resolved));
+        match refresh_root {
             Ok(resolved_root) => {
                 let refresh = format!(
                     "ripr first-pr --root {} --head HEAD",
-                    shell_arg(&output::path::human_path(&resolved_root))
+                    shell_arg(&resolved_root)
                 );
                 if stale_detail.is_some() {
                     println!("- Safe next action: `{refresh}` refreshes it");
@@ -236,16 +248,21 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
                 );
             }
             Err(error) => println!(
-                "- Safe next action: refresh unavailable because the selected root could not be resolved: {error}; restore access to that directory and rerun doctor."
+                "- Safe next action: refresh unavailable because the selected root could not be bound: {error}; restore access to that directory or use a lossless alias and rerun doctor."
             ),
         }
     } else {
         println!(
             "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"
         );
-        println!(
-            "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
-        );
+        match &recommendation {
+            Ok(_) => println!(
+                "- Safe next action: run the recommended first command below; it produces the evidence the packet is composed from"
+            ),
+            Err(error) => println!(
+                "- Safe next action: {error}; restore access or select a lossless root alias, then rerun doctor."
+            ),
+        }
     }
     println!(
         "- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, preview-limited evidence"
@@ -261,11 +278,7 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
     // check-time disclosure (reuse, don't fork). When git cannot run, both
     // `ripr check` and `--worktree` fail the same way; name the `--diff` route
     // instead and do not probe the worktree (#4735).
-    let first = output::doctor::DoctorFirstCommand::resolve(
-        output::doctor::git_tool_can_run(report),
-        || analysis::working_tree_has_tracked_changes(root),
-    );
-    for line in first.recommendation_lines(root) {
+    for line in output::doctor::DoctorFirstCommand::recommendation_lines(recommendation) {
         println!("{line}");
     }
     match first {

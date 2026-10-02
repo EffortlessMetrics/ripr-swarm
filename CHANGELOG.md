@@ -166,7 +166,9 @@ are scoped or reviewed.
   keep the diagnosed physical repository when a root traverses a symlink before
   `..`. The refresh retains the root-bound,
   shell-quoted refresh and default-base/HEAD scope from #4991; unresolved roots
-  now withhold that refresh rather than guess another destination (#4000).
+  now withhold that refresh rather than guess another destination. A lossless
+  alias preserves non-UTF-8 physical roots; no lossy replacement-character path is
+  offered as a rooted command (#4000).
 - CLI argument errors now name the fix on every command. `ripr context`
   no-finding errors carry `ripr explain`'s remediation suffix on both the
   fresh and `--from` paths; `ripr check --format`, `ripr outcome`, and

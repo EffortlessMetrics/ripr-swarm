@@ -763,6 +763,110 @@ fn doctor_packet_refresh_missing_root_keeps_recovery_nonwriting() -> Result<(), 
     Ok(())
 }
 
+/// A UTF-8 alias may select a directory whose actual name is not UTF-8.
+/// Never promote a lossy replacement-character display into a runnable command.
+#[cfg(unix)]
+#[test]
+fn doctor_packet_refresh_uses_lossless_alias_for_non_utf8_physical_root()
+-> Result<(), Box<dyn Error>> {
+    use std::os::unix::ffi::OsStringExt;
+    let base = replay::unique_temp_dir("doctor-refresh-non-utf8-root")?;
+    let parent = base.join("selected parent");
+    let physical = base.join(std::ffi::OsString::from_vec(
+        b"physical \xff parent".to_vec(),
+    ));
+    let repo = physical.join("repo");
+    replay::write_pr_fixture(&repo)?;
+    fs::create_dir_all(&parent)?;
+    fs::create_dir_all(physical.join("child"))?;
+    std::os::unix::fs::symlink(physical.join("child"), parent.join("link"))?;
+    let relative = std::path::Path::new("link/../repo");
+    let absolute = parent.join(relative);
+    assert!(absolute.to_str().is_some());
+    assert!(absolute.canonicalize()?.to_str().is_none());
+    assert_eq!(absolute.canonicalize()?, repo.canonicalize()?);
+    let reports = repo.join("target/ripr/reports");
+    fs::create_dir_all(&reports)?;
+    let json = reports.join("start-here.json");
+    let markdown = reports.join("start-here.md");
+    fs::write(
+        &json,
+        serde_json::to_vec(&serde_json::json!({
+            "ripr_version": env!("CARGO_PKG_VERSION")
+        }))?,
+    )?;
+    fs::write(&markdown, "# retained fixture packet\n")?;
+    let before = [fs::read(&json)?, fs::read(&markdown)?];
+    for spelling in [relative, absolute.as_path()] {
+        let doctor = replay::ripr(&parent, &["doctor", "--root", &spelling.to_string_lossy()])?;
+        assert!(
+            doctor.status.success(),
+            "{}",
+            String::from_utf8_lossy(&doctor.stderr)
+        );
+        let stdout = String::from_utf8(doctor.stdout)?;
+        let refresh = stdout
+            .lines()
+            .find(|line| line.starts_with("- Safe next action:"))
+            .and_then(|line| line.split('`').nth(1))
+            .ok_or("doctor emitted no lossless packet refresh")?;
+        let check = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("- Recommended first command: "))
+            .ok_or("doctor emitted no lossless recommended check")?;
+        assert_eq!(
+            refresh,
+            format!("ripr first-pr --root '{}' --head HEAD", absolute.display())
+        );
+        assert_eq!(check, format!("ripr check --root '{}'", absolute.display()));
+        assert!(!refresh.contains('\u{fffd}') && !check.contains('\u{fffd}'));
+    }
+    // Here both the physical spelling and the absolute original spelling
+    // contain invalid UTF-8. Under-emit instead of inventing a lossy route.
+    let unavailable = replay::ripr(&physical, &["doctor", "--root", "repo"])?;
+    assert!(unavailable.status.success());
+    let stdout = String::from_utf8(unavailable.stdout)?;
+    assert!(
+        stdout.contains("cannot be represented losslessly"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("- Safe next action: refresh unavailable"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("- Recommended first command unavailable:"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("- Recommended first command: "),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
+    assert_eq!([fs::read(&json)?, fs::read(&markdown)?], before);
+    fs::remove_file(&markdown)?;
+    let no_packet = replay::ripr(&physical, &["doctor", "--root", "repo"])?;
+    assert!(no_packet.status.success());
+    let stdout = String::from_utf8(no_packet.stdout)?;
+    assert!(stdout.contains("not yet generated"), "{stdout}");
+    assert!(
+        stdout.contains("- Safe next action: selected root cannot be represented losslessly"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("run the recommended first command below"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("- Recommended first command: "),
+        "{stdout}"
+    );
+    assert_eq!(fs::read(&json)?, before[0]);
+    assert!(!markdown.exists());
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
 /// #3948/#4287: the artifact regeneration commands `first-pr` renders for
 /// repository A, pasted into Bash from an unrelated directory B, read and
 /// write A. `first-action`, `review-comments`, `agent packet`, `gate

@@ -115,6 +115,12 @@ still names the directory whose packet doctor read. If that resolution fails,
 doctor names the failure and omits the refresh command rather than guessing a
 lexical destination. It quotes the resolved root for Bash and prints a labeled
 PowerShell form when the spelling differs.
+When the physical spelling is not UTF-8, a lossless absolute spelling of the
+supplied alias is retained without collapsing `..`. If neither spelling can
+be represented losslessly, doctor explains the limitation and omits the rooted
+command; lossy replacement characters are never executable path authority.
+Without a packet, that same unavailable recommendation supplies the safe-action
+recovery; the screen must not point to a nonexistent command below.
 The rooted recommended first check also resolves existing directories through
 the filesystem. Its existing `.` shorthand and lexical missing-path recovery
 remain unchanged; a missing-root diagnosis still fails without creating paths.

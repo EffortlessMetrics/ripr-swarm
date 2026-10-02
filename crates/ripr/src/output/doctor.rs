@@ -71,25 +71,32 @@ impl DoctorFirstCommand {
     /// Existing directories use filesystem resolution, matching diagnosis
     /// even when a root traverses a symlink before `..`. Unresolved paths
     /// keep the existing lexical binding for error-recovery guidance.
-    pub(crate) fn command_line_for_root(self, root: &Path) -> String {
+    pub(crate) fn command_line_for_root(self, root: &Path) -> Result<String, String> {
         use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
         let line = self.command_line();
         if root == Path::new(".") {
-            return line.to_string();
+            return Ok(line.to_string());
         }
         let flags = line.strip_prefix("ripr check").unwrap_or_default();
         let bound = match root.canonicalize() {
-            Ok(resolved) => crate::output::path::human_path(&resolved),
-            Err(_) => root_path_display(&bound_root_path(root)),
+            Ok(resolved) => doctor_command_root_display(root, &resolved)?,
+            Err(_) => {
+                let bound = bound_root_path(root);
+                require_lossless_command_path(&bound)?;
+                root_path_display(&bound)
+            }
         };
-        format!("ripr check --root {}{flags}", shell_arg(&bound))
+        Ok(format!("ripr check --root {}{flags}", shell_arg(&bound)))
     }
 
-    /// The printed recommendation for `root`: the Bash line, then a labeled
+    /// Render the selected recommendation: the Bash line, then a labeled
     /// PowerShell form only when the shared translator rewrites it (a root
     /// with an apostrophe, which Bash and PowerShell escape differently).
-    pub(crate) fn recommendation_lines(self, root: &Path) -> Vec<String> {
-        let line = self.command_line_for_root(root);
+    pub(crate) fn recommendation_lines(command: Result<String, String>) -> Vec<String> {
+        let line = match command {
+            Ok(line) => line,
+            Err(error) => return vec![format!("- Recommended first command unavailable: {error}")],
+        };
         let mut lines = vec![format!("- Recommended first command: {line}")];
         if let crate::output::markdown::PowershellForm::Translated(powershell) =
             crate::output::markdown::powershell_form(&line)
@@ -100,6 +107,29 @@ impl DoctorFirstCommand {
         }
         lines
     }
+}
+
+/// A valid user-supplied alias can resolve to non-UTF-8 filesystem bytes.
+/// Keep a lossless absolute alias in that case, without collapsing `..`:
+/// its filesystem traversal still selects the diagnosed physical directory.
+pub(crate) fn doctor_command_root_display(root: &Path, resolved: &Path) -> Result<String, String> {
+    let path = if resolved.to_str().is_some() {
+        std::borrow::Cow::Borrowed(resolved)
+    } else if root.is_absolute() {
+        std::borrow::Cow::Borrowed(root)
+    } else {
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("cannot bind the selected root to its directory: {error}"))?;
+        std::borrow::Cow::Owned(cwd.join(root))
+    };
+    require_lossless_command_path(&path)?;
+    Ok(human_path(&path))
+}
+
+fn require_lossless_command_path(path: &Path) -> Result<(), String> {
+    path.to_str().map(|_| ()).ok_or_else(|| {
+        "selected root cannot be represented losslessly in a command; rerun doctor from a UTF-8 parent using a UTF-8 alias".to_string()
+    })
 }
 
 /// Fail closed: only an explicit passing `tool_git` check means git can run.
@@ -2529,7 +2559,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() {
+    fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() -> Result<(), String> {
         let mut probed = false;
         assert_eq!(
             DoctorFirstCommand::resolve(false, || {
@@ -2552,27 +2582,33 @@ mod tests {
             DoctorFirstCommand::SAVED_DIFF_LINE
         );
         assert_eq!(
-            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new(".")),
+            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("."))?,
             "ripr check"
         );
         // `/work/...` is absolute only on Unix; Windows needs a drive.
         #[cfg(unix)]
         {
             assert_eq!(
-                DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app")),
+                DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app"))?,
                 "ripr check --root /work/app --diff PATH"
             );
             assert_eq!(
-                DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app")),
+                DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app"))?,
                 "ripr check --root '/work/my app' --base HEAD --worktree"
             );
             assert_eq!(
-                DoctorFirstCommand::DefaultCheck.recommendation_lines(Path::new("/work/my app")),
+                DoctorFirstCommand::recommendation_lines(
+                    DoctorFirstCommand::DefaultCheck
+                        .command_line_for_root(Path::new("/work/my app"))
+                ),
                 ["- Recommended first command: ripr check --root '/work/my app'"],
                 "a form PowerShell reads unchanged prints once"
             );
             assert_eq!(
-                DoctorFirstCommand::SavedDiff.recommendation_lines(Path::new("/work/it's app")),
+                DoctorFirstCommand::recommendation_lines(
+                    DoctorFirstCommand::SavedDiff
+                        .command_line_for_root(Path::new("/work/it's app"))
+                ),
                 [
                     r"- Recommended first command: ripr check --root '/work/it'\''s app' --diff PATH",
                     "- Recommended first command (PowerShell): ripr check --root '/work/it''s app' --diff PATH",
@@ -2582,7 +2618,8 @@ mod tests {
         }
         // A relative root is bound to this process's directory, so the
         // printed command survives a `cd` before it is pasted.
-        let relative = DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("../app"));
+        let relative =
+            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("../app"))?;
         assert!(
             !relative.contains(".."),
             "a relative root must be bound, not printed verbatim: {relative}"
@@ -2613,6 +2650,7 @@ mod tests {
         );
         assert!(git_tool_can_run(&git_ok));
         assert!(!git_tool_can_run(&DoctorReport::new(".")));
+        Ok(())
     }
     /// absolute path must fail closed with actionable evidence, independent
     /// of what happens to be (or not be) on the host's PATH.
