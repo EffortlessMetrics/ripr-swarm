@@ -461,3 +461,28 @@ controller path too, so Windows canonical prefixes and macOS temporary-directory
 aliases do not create a false mismatch. That last change affects only the
 existing full integration test oracle; hosted execution of that test remains
 pending. Both production failure exits consume the writer-returned path.
+
+### 2026-10-02 native ruleset-oracle reconciliation
+
+Published `a8c069e6` passed native repository preflight and strict workspace
+Clippy. Routed run 37056622070 / job 111002939420 then reported 10,496 tests
+passed, one failed, 444 not run after fail-fast, and two skipped. The failing
+`release_pin_ruleset_requires_fully_qualified_tag_ref` still required the old
+jq spelling and schema-1.0 `pin_recipe` template fields. Its positive synthetic
+ruleset also omitted the now-required empty exclusions/bypass arrays.
+
+The owning control now keeps its exact documented jq linkage and executes the
+same fragment against full, short, mixed, branch and mismatched refs, plus
+exclusion/bypass and missing-guard variants. The fixture names empty guards.
+The schema-1.1 template is tested through actual admission with its correct
+raw digest; it must still refuse before any candidate/source execution. The
+contract body takes explicit fixture roots so it can run in the existing
+bounded harness without compiling the monolithic test target. No production
+admission rule or release protection was weakened.
+
+All nine actual jq fragment cases passed locally. Removing the two guard
+conditions caused the four guard variants to be accepted, the intended
+behavioral counterexample. Native logs separately confirm current source,
+manifest, process, qualified report and real tiny package/install controls
+passed before the unrelated stale-oracle failure. Those passes are retained;
+actual full RIPR/final-candidate and the skipped native tail remain gaps.
