@@ -2064,6 +2064,127 @@ mod tests {
         }
     }
 
+    fn load_synthetic(log: &str) -> Result<RunOutcome, String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "ripr-winadv-transition-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let log_path = directory.join("run.log");
+        let status_path = directory.join("run.status");
+        std::fs::write(&log_path, log).map_err(|error| error.to_string())?;
+        std::fs::write(
+            &status_path,
+            if log.contains(" ... FAILED") {
+                "101"
+            } else {
+                "0"
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let outcome = load_run(&log_path, &status_path);
+        std::fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+        Ok(outcome)
+    }
+
+    const XTASK_HEADER: &str =
+        "Running unittests src/main.rs (target/debug/deps/xtask-1111111111111111.exe)\n";
+    const ONE_PASS: &str = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+    const ZERO_PASS: &str = "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2528 filtered out; finished in 0.00s\n";
+    const TWO_PASS: &str = "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+    #[test]
+    fn a_completed_harness_does_not_own_a_later_headerless_control() -> Result<(), String> {
+        let log = format!(
+            "{XTASK_HEADER}running 1 test\ntest unrelated ... ok\n{ONE_PASS}running 1 test\ntest required_control ... ok\n{ONE_PASS}"
+        );
+        let outcome = load_synthetic(&log)?;
+        assert_eq!(outcome.state, RunState::IncompleteEvidence, "{outcome:?}");
+        assert!(
+            !outcome
+                .passed
+                .iter()
+                .any(|subject| subject.name == "required_control")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_empty_nested_harness_does_not_end_the_owning_target() -> Result<(), String> {
+        let log = format!(
+            "{XTASK_HEADER}running 2 tests\ntest first ... ok\nrunning 0 tests\n{ZERO_PASS}test required_control ... ok\n{TWO_PASS}"
+        );
+        let outcome = load_synthetic(&log)?;
+        assert_eq!(outcome.state, RunState::CompletedClean, "{outcome:?}");
+        assert_eq!(outcome.passed.len(), 2);
+        assert!(
+            outcome
+                .passed
+                .iter()
+                .any(|subject| subject.name == "required_control")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_nonempty_nested_harness_cannot_supply_owning_target_evidence() -> Result<(), String> {
+        let log = format!(
+            "{XTASK_HEADER}running 2 tests\ntest first ... ok\nrunning 1 test\ntest required_control ... ok\n{ONE_PASS}test last ... ok\n{TWO_PASS}"
+        );
+        let outcome = load_synthetic(&log)?;
+        assert_eq!(outcome.state, RunState::IncompleteEvidence, "{outcome:?}");
+        assert!(
+            !outcome
+                .passed
+                .iter()
+                .any(|subject| subject.name == "required_control")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn captured_progress_is_failure_text_not_a_target_transition() -> Result<(), String> {
+        let log = format!(
+            "{XTASK_HEADER}running 1 test\ntest fails ... FAILED\nfailures:\n---- fails stdout ----\nRunning cleanup for fixture\nDoc-tests are checked separately\nError: actual reason\nfailures:\n    fails\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+        );
+        let outcome = load_synthetic(&log)?;
+        assert_eq!(
+            outcome.state,
+            RunState::NonZeroWithObservedTestFailures,
+            "{outcome:?}"
+        );
+        assert_eq!(
+            outcome.reasons.values().collect::<Vec<_>>(),
+            vec!["Error: actual reason"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_captured_cargo_header_does_not_establish_provenance() -> Result<(), String> {
+        let log = format!(
+            "{XTASK_HEADER}running 1 test\ntest fails ... FAILED\nfailures:\n---- fails stdout ----\nRunning unittests src/lib.rs (target/debug/deps/ripr-1111111111111111.exe)\ntest copied ... ok\n{ONE_PASS}"
+        );
+        let outcome = load_synthetic(&log)?;
+        assert_eq!(outcome.state, RunState::IncompleteEvidence, "{outcome:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_doctest_header_can_own_multiple_announced_batches() -> Result<(), String> {
+        let log = format!(
+            "Doc-tests ripr\nrunning 1 test\ntest src/lib.rs - first (line 1) ... ok\n{ONE_PASS}running 1 test\ntest src/lib.rs - second (line 2) ... ok\n{ONE_PASS}all doctests ran in 0.01s; merged doctests compilation took 0.01s\n"
+        );
+        let outcome = load_synthetic(&log)?;
+        assert_eq!(outcome.state, RunState::CompletedClean, "{outcome:?}");
+        assert_eq!(outcome.passed.len(), 2);
+        Ok(())
+    }
+
     #[test]
     fn ignores_lines_that_only_resemble_a_test_result() {
         let parsed = parse_log("failures:\n    some::name\ntest result: FAILED. 1 failed\n");
