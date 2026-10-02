@@ -48,7 +48,7 @@ pub(crate) fn repair_card_usability_report() -> Result<(), String> {
     Ok(())
 }
 
-fn report_profiles<'a>(report: &'a Value) -> Result<&'a [Value], String> {
+fn report_profiles(report: &Value) -> Result<&[Value], String> {
     report
         .get("synthetic_profiles")
         .and_then(Value::as_array)
@@ -264,7 +264,7 @@ fn markdown_report(report: &Value) -> String {
                 profile
                     .get("next_action_present")
                     .and_then(Value::as_bool)
-                    .map_or(false, |present| present),
+                    .is_some_and(|present| present),
                 profile
                     .get("canonical_packet_state")
                     .and_then(Value::as_str)
