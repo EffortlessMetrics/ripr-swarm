@@ -199,10 +199,7 @@ fn read_json(path: &Path, label: &str) -> Result<Value, String> {
 /// name this contract's schema identities, stay inside its ratified fixture
 /// scope, bind to the assessed corpus, and carry explicit limitations and
 /// not-exercised combinations with exact entries.
-fn validate_contract_receipt(
-    receipt: &Value,
-    corpus_scenario_count: usize,
-) -> Result<(), String> {
+fn validate_contract_receipt(receipt: &Value, corpus_scenario_count: usize) -> Result<(), String> {
     if receipt.get("kind").and_then(Value::as_str)
         != Some("blind_journey_contract_decision_receipt")
     {
@@ -422,7 +419,9 @@ mod tests {
             Err(message) => Err(format!(
                 "expected an exact-limitations error, got: {message}"
             )),
-            Ok(()) => Err("a contract receipt with a blank limitation must be rejected".to_string()),
+            Ok(()) => {
+                Err("a contract receipt with a blank limitation must be rejected".to_string())
+            }
         }
     }
 

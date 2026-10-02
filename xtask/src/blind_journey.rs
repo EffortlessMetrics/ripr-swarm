@@ -892,7 +892,10 @@ pub(crate) fn assess_blind_journey_packet(
                 event.sequence
             ));
         }
-        for (field, digest) in [("input", &event.input_digest), ("output", &event.output_digest)] {
+        for (field, digest) in [
+            ("input", &event.input_digest),
+            ("output", &event.output_digest),
+        ] {
             if let Some(digest) = digest {
                 let wellformed = digest.len() == 64
                     && digest
@@ -2045,8 +2048,7 @@ mod tests {
     }
 
     #[test]
-    fn forbidden_edit_event_rejects_even_when_the_selected_edit_is_allowed() -> Result<(), String>
-    {
+    fn forbidden_edit_event_rejects_even_when_the_selected_edit_is_allowed() -> Result<(), String> {
         let mut packet = stamped_positive_packet("/srv/journey")?;
         let last = packet.receipt.events.len() as u64;
         packet.receipt.events.push(BlindJourneyEventV1 {
