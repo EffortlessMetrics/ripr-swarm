@@ -284,16 +284,13 @@ pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
                 "release-negative-corpus.json",
                 &json,
             )?;
-            write_corpus_report(
+            let markdown_report = write_corpus_report(
                 args.qualification.as_ref(),
                 "release-negative-corpus.md",
                 &negative_corpus_markdown(&report),
             )?;
             if report.status == "fail" {
-                return Err(
-                    "release negative corpus failed; see target/ripr/reports/release-negative-corpus.md"
-                        .to_string(),
-                );
+                return Err(corpus_failure_hint(&markdown_report));
             }
             Ok(())
         }
@@ -318,17 +315,14 @@ pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
                     "{phase_error}; additionally JSON failure report was not written: {write_error}"
                 )
             })?;
-            write_corpus_report(
+            let markdown_report = write_corpus_report(
                 args.qualification.as_ref(),
                 "release-negative-corpus.md",
                 &format!(
                     "# release-negative-corpus\n\nStatus: fail\n\nThe corpus run failed before the case matrix completed:\n\n```text\n{phase_error}\n```\n"
                 ),
             ).map_err(|write_error| format!("{phase_error}; additionally Markdown failure report was not written: {write_error}"))?;
-            Err(
-                "release negative corpus failed; see target/ripr/reports/release-negative-corpus.md"
-                    .to_string(),
-            )
+            Err(corpus_failure_hint(&markdown_report))
         }
     }
 }
@@ -337,7 +331,7 @@ fn write_corpus_report(
     input: Option<&QualificationInput>,
     name: &str,
     body: &str,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     if let Some(input) = input {
         let controller = input
             .controller_root()
@@ -346,11 +340,20 @@ fn write_corpus_report(
         let reports = controller.join("target/ripr/reports");
         fs::create_dir_all(&reports)
             .map_err(|error| format!("create controller reports: {error}"))?;
-        fs::write(reports.join(name), body)
-            .map_err(|error| format!("write controller report: {error}"))
+        let path = reports.join(name);
+        fs::write(&path, body).map_err(|error| format!("write controller report: {error}"))?;
+        Ok(path)
     } else {
-        crate::write_report(name, body)
+        crate::write_report(name, body)?;
+        Ok(crate::reports_dir().join(name))
     }
+}
+
+fn corpus_failure_hint(written_report: &Path) -> String {
+    format!(
+        "release negative corpus failed; see {}",
+        crate::normalize_path(written_report)
+    )
 }
 
 struct OwnedQualificationRoot(PathBuf);
@@ -3427,6 +3430,57 @@ mod tests {
     }
 
     #[test]
+    fn qualified_failure_hint_names_the_actual_written_report() -> Result<(), String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("report fixture clock: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-qualified-hint-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let owned = OwnedReportFixture(root.clone());
+        let controller = root.join("controller with spaces é");
+        fs::create_dir(&controller).map_err(|error| error.to_string())?;
+        let input = QualificationInput::new(
+            controller.clone(),
+            root.join("unused source"),
+            PathBuf::from("unused-manifest.json"),
+        )?;
+        let written = write_corpus_report(
+            Some(&input),
+            "release-negative-corpus.md",
+            "current qualified failure\n",
+        )?;
+        let expected = controller
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .join("target/ripr/reports/release-negative-corpus.md");
+        let hint = corpus_failure_hint(&written);
+        if written != expected
+            || fs::read_to_string(&written).map_err(|error| error.to_string())?
+                != "current qualified failure\n"
+            || hint
+                != format!(
+                    "release negative corpus failed; see {}",
+                    crate::normalize_path(&expected)
+                )
+        {
+            return Err(
+                "qualified failure hint did not identify the actual controller report".to_string(),
+            );
+        }
+        if corpus_failure_hint(&crate::reports_dir().join("release-negative-corpus.md"))
+            != "release negative corpus failed; see target/ripr/reports/release-negative-corpus.md"
+        {
+            return Err("legacy report hint changed".to_string());
+        }
+        fs::remove_dir_all(&owned.0).map_err(|error| format!("report fixture cleanup: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn qualified_failure_report_preserves_admission_and_write_errors() -> Result<(), String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3469,7 +3523,11 @@ mod tests {
         let refusal = invoke(&controller)
             .err()
             .ok_or_else(|| "invalid writable controller unexpectedly accepted".to_string())?;
-        if !refusal.contains("release negative corpus failed") {
+        let expected_hint = format!(
+            "release negative corpus failed; see {}",
+            crate::normalize_path(&reports.join("release-negative-corpus.md"))
+        );
+        if refusal != expected_hint {
             return Err(format!(
                 "writable failure reports were not retained: {refusal}"
             ));

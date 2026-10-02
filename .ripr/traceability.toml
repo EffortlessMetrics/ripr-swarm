@@ -8898,6 +8898,7 @@ tests = [
   "xtask/src/reports/release/candidate_harness/live_head/budget_tests.rs::direct_manifest_caps_proof_inputs_and_aggregate_bytes",
   "xtask/src/reports/release/candidate_harness/live_head/budget_tests.rs::owned_reads_require_regular_contained_files_and_available_budget",
   "xtask/src/reports/release_negative.rs::tests::direct_manifest_mode_requires_explicit_complete_digest_pinned_inputs",
+  "xtask/src/reports/release_negative.rs::tests::qualified_failure_hint_names_the_actual_written_report",
   "xtask/src/run/input_tests.rs::byte_input_round_trips_more_than_pipe_capacity",
   "xtask/src/run/input_tests.rs::byte_input_nonreader_timeout_and_early_exit_are_bounded_and_reaped",
   "xtask/src/run/input_tests.rs::dropping_owned_byte_command_reaps_the_cancelled_primary",

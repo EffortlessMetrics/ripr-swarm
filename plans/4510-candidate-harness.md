@@ -417,3 +417,37 @@ authenticate GitHub decisions or re-prove human audit judgments. The direct
 adapter does not complete #1609, #4510's entire reusable packet contract, the
 #4604 consumer, or any real 35-scenario/human blind campaign. Publication keeps
 this same PR draft while those native review/proof dimensions are obtained.
+
+### 2026-10-02 native review follow-up
+
+Published engineering head `77fbba0e` has the exact local `3ad5bfdbf` tree;
+Git-data transport preserved every published/integrated ancestor and mapped
+only unpublished commits. Native routed run 37053575722, job 110992742436,
+passed its policy inventories (including file policy) and then refused four
+redundant unit expressions in the new process tests under strict Clippy. Those
+expressions are removed without changing their assertions. A strict pass of
+the bounded exact-source harness additionally found a byte-slice spelling in
+the reused range helper; replacing `[b'\n']` with `b"\n"` preserves serialized
+bytes and addresses that newer lint.
+
+Review discussion 4169093089 correctly identified that qualified failure hints
+still named the ambient legacy report path. The shared report writer now
+returns the exact path it wrote, and both failure exits render that path. A
+focused actual-file control covers a controller path with spaces/non-ASCII
+and the legacy hint. The existing admission/report failure control also checks
+the exact hint. Original write-failure causes remain retained.
+
+Discussion 4169093099 raised the repeated full-custody cost. The existing
+per-command pre/post boundary is retained; SPEC-0134 now discloses the linear
+byte/file work multiplied by the command count. The one engineering census
+is not promoted to a full-corpus benchmark, and reducing the boundary would
+require separately proved invalidation behavior.
+
+The exact-source harness now copies the repository Rust/Clippy lint tables and
+has no blanket allow. Its first strict pass exposed 47 individual unused-item
+spans from intentionally omitted driver/report/archive consumers. Every span
+was source-audited and narrowly annotated only in the generated harness with
+an explained `expect(dead_code)`; all owning bodies remain compiled. No new
+lint suppression was added to the product. With those explicit harness-only
+omissions, strict Clippy passed. Path-recovery red/green and the selected
+runtime refresh are retained separately when terminal.

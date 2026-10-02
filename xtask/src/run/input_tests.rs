@@ -97,10 +97,7 @@ fn byte_input_nonreader_timeout_and_early_exit_are_bounded_and_reaped() -> Resul
             Ok(output)
                 if timeout_expected
                     && output.timed_out
-                    && output.status.is_some_and(|status| !status.success()) =>
-            {
-                ()
-            }
+                    && output.status.is_some_and(|status| !status.success()) => {}
             Err(error) if !timeout_expected && error.contains("write stdin") => (),
             Err(error) => {
                 return Err(format!(
@@ -188,7 +185,6 @@ fn bounded_byte_capture_rejects_stdout_and_stderr_overflow_and_reaps_child() -> 
         }
         match result {
             Err(error) if error.contains(&format!("{stream} exceeds its 4-byte output budget")) => {
-                ()
             }
             Err(error) => return Err(format!("wrong overflow refusal: {error}")),
             Ok(_) => return Err(format!("{stream} overflow was accepted")),
@@ -214,15 +210,10 @@ fn bounded_byte_drain_requires_terminal_output() -> Result<(), String> {
             "missing terminal output",
             require_complete,
         ) {
-            Err(error) if require_complete && error.contains("byte output is not established") => {
-                ()
-            }
+            Err(error) if require_complete && error.contains("byte output is not established") => {}
             Ok(bytes)
                 if !require_complete
-                    && String::from_utf8_lossy(&bytes).contains("output truncated") =>
-            {
-                ()
-            }
+                    && String::from_utf8_lossy(&bytes).contains("output truncated") => {}
             _ => {
                 return Err(
                     "byte drain changed the selected strict/legacy reporting contract".to_string(),

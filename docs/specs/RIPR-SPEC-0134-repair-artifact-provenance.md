@@ -337,3 +337,14 @@ custody. The batch buffer and retained blob map can coexist transiently; the
 The 2026-10-02 review census had 5,411 ordinary blobs, 58,566,161 body bytes,
 1,949,776 bytes in the largest blob, and 647,658 metadata bytes. That observation
 motivates the limits and is not a promise about the final release candidate.
+
+Full custody is intentionally checked before and after each qualified child
+command, including fixture Git commands. Each check rereads retained manifest
+evidence, the source checkout, archive and executable, and reruns source Git
+identity/range observations. Its work is linear in those bytes/files per check;
+the corpus multiplies that work by twice its child-command count. Hundreds of
+commands over a roughly 59 MB checkout can therefore reread tens of GB before
+archive/executable/evidence costs. The 1.31-second engineering inventory and
+checkout observation is not a per-command or complete corpus benchmark. Actual
+qualification must retain its elapsed observations; no low-overhead claim is
+made. Reducing this boundary needs separately proved invalidation semantics.
