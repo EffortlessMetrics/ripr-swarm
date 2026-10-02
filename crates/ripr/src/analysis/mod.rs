@@ -51,6 +51,7 @@ pub(crate) use diff::{
 pub use diff::{load_diff_range, resolve_default_base_commit};
 pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
+pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
     TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
@@ -631,6 +632,25 @@ impl PreviewLanguageAdvisory {
             why.push_str(&prerequisite);
         }
         why
+    }
+
+    /// Single-line `why` for a detected-but-not-analyzed advisory: not
+    /// enabled (or not compiled into this binary), adapter run failed, or
+    /// enabled but nothing routed. Shared by the JSON check report and the
+    /// GitHub annotation stream so the machine surfaces cannot drift; the
+    /// analyzed arm stays owned by each renderer's own caveat.
+    pub(crate) fn unaudited_why(&self, language_runs: &[LanguageRun]) -> String {
+        if !self.enabled {
+            return self.not_enabled_why();
+        }
+        if let Some(run) = self.non_success_run(language_runs) {
+            return format!(
+                "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
+                run.status.as_str()
+            );
+        }
+        "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean"
+            .to_string()
     }
 }
 

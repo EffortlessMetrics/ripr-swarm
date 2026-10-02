@@ -397,6 +397,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 name,
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
+                    | "blind_journey_contract"
                     | "bun-ub-cross-language-dogfood"
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
@@ -411,6 +412,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "first_successful_pr"
                     | "finding-alignment-dogfood"
                     | "gap-decision-ledger"
+                    | "github_unanalyzed_states"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
                     | "perl_packet_contract_migration"

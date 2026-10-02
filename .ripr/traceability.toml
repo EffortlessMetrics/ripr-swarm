@@ -23,6 +23,8 @@ tests = [
   "crates/ripr/src/build_identity.rs::tests::cache_identity_binds_the_build_not_only_the_version",
   "crates/ripr/src/analysis/classify/flow.rs",
   "crates/ripr/src/analysis/classifier.rs",
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parser_indexed_proptest_and_quickcheck_when_relating_then_only_marked_tests",
   "crates/ripr/src/analysis/probes/lexical.rs",
   "crates/ripr/src/analysis/rust_index.rs",
   "crates/ripr/src/analysis/mod.rs",
@@ -63,6 +65,7 @@ fixtures = [
   "fixtures/strong_boundary_oracle",
   "fixtures/strong_error_oracle",
   "fixtures/unrelated_test_mentions_token",
+  "fixtures/rust_proptest_quickcheck_tests",
   "fixtures/weak_error_oracle",
   "fixtures/weak_error_oracle_assert_matches"
 ]
@@ -103,6 +106,8 @@ outputs = [
   "fixtures/strong_error_oracle/expected/human.txt",
   "fixtures/unrelated_test_mentions_token/expected/check.json",
   "fixtures/unrelated_test_mentions_token/expected/human.txt",
+  "fixtures/rust_proptest_quickcheck_tests/expected/check.json",
+  "fixtures/rust_proptest_quickcheck_tests/expected/human.txt",
   "fixtures/weak_error_oracle/expected/check.json",
   "fixtures/weak_error_oracle/expected/human.txt",
   "fixtures/weak_error_oracle_assert_matches/expected/check.json",
@@ -1161,6 +1166,30 @@ id = "RIPR-SPEC-0012"
 name = "PR test guidance annotations"
 spec = "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::unqualified_helper_calls_have_no_module_candidates",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::qualified_helper_filter_matches_unbounded_relations",
+  "crates/ripr/src/analysis/cancellation.rs::tests::optional_worker_context_clears_and_restores_an_outer_request",
+  "crates/ripr/src/analysis/cancellation.rs::tests::optional_worker_context_restores_after_unwind",
+  "crates/ripr/src/analysis/facts/build.rs::tests::cached_parse_workers_observe_request_cancellation_before_cache_store",
+  "crates/ripr/src/analysis/facts/build.rs::tests::cached_source_failure_precedes_join_deadline",
+  "crates/ripr/src/analysis/facts/build.rs::tests::uncached_source_failure_precedes_join_deadline",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::normalization_observes_cancellation_inside_function_walk",
+  "crates/ripr/src/analysis/generated_rust_corpus.rs::payload_census_matches_handwritten_and_stronger_exclusion_policy",
+  "crates/ripr/src/analysis/generated_rust_corpus.rs::payload_census_distinguishes_absent_owner_from_disappeared_corpus",
+  "crates/ripr/src/analysis/generated_rust_corpus.rs::payload_census_observes_cancellation_before_metadata",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_admission_deadline_records_timeout_before_owner_indexing",
+  "crates/ripr/src/cli/commands/review_comments.rs::guidance_payload_ceiling_defaults_and_validates_env_family_values",
+  "crates/ripr/src/cli/commands/review_comments.rs::guidance_payload_ceiling_names_the_exceeded_axis",
+  "crates/ripr/src/cli/commands/review_comments.rs::guidance_payload_default_admits_current_family_but_refuses_failure_scale",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_admission_precedes_changed_owner_indexing",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_admission_counts_changed_inputs_outside_corpus_once",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_refuses_over_ceiling_closure_with_named_receipt",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_refuses_over_ceiling_payload_bytes_with_named_receipt",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_admits_the_same_closure_under_a_generous_ceiling",
+  "crates/ripr/tests/cli_smoke.rs::review_comments_help_survives_invalid_admission_environment",
+  "crates/ripr/src/output/review_comments_receipt.rs::oversized_records_named_limitation_while_staying_in_the_receipt_vocabulary",
+  "xtask/src/reports/review_comments.rs::write_wrapper_classifies_named_guidance_ceiling_failure",
+  "xtask/src/reports/review_comments.rs::producer_error_matching_distinguishes_ceiling_from_other_failures",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_canonical_deadline_cancellation_records_timeout",
   "crates/ripr/src/cli/commands/review_comments.rs::review_comments_source_error_wins_over_later_clock_expiry",
   "crates/ripr/src/analysis/seam_inventory.rs::scoped_evidence_rejects_deadline_after_the_final_seam",
@@ -1202,6 +1231,9 @@ fixtures = [
   "fixtures/boundary_gap/expected/pr-guidance"
 ]
 code = [
+  "crates/ripr/src/analysis/generated_rust_corpus.rs",
+  "crates/ripr/src/output/review_comments_receipt.rs",
+  "xtask/src/reports/review_comments.rs",
   "crates/ripr/src/app/annotations.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/commands/review_comments.rs",
@@ -1214,6 +1246,7 @@ code = [
   "crates/ripr/src/output/review_comments.rs"
 ]
 outputs = [
+  "docs/CONFIGURATION.md",
   "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md",
   "docs/specs/README.md",
   "docs/OUTPUT_SCHEMA.md",
@@ -8505,6 +8538,7 @@ id = "RIPR-SPEC-0136"
 name = "lsp configuration pull"
 spec = "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md"
 tests = [
+  "crates/ripr/src/git.rs::tests::git_timeout_tag_requires_exact_raw_error_prefix",
   "crates/ripr/src/lsp/capabilities.rs::tests::configuration_mode_follows_workspace_capabilities",
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_wrong_item_count",
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_non_object_item_and_bad_values",
@@ -8966,6 +9000,8 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::normalization_identity_keys_borrow_body_storage",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::borrowed_normalization_matches_owned_reference_with_duplicate_coordinates",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::layout_classifies_evidence_and_production",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::cargo_autodiscovery_shapes_govern_benches_and_examples",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::declared_targets_and_opt_in_override_layout",
@@ -10805,4 +10841,64 @@ outputs = [
 ]
 metrics = [
   "owner_return_pin_false_exposed",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0200"
+name = "Blind journey prompt, intervention and transcript receipt contract"
+spec = "docs/specs/RIPR-SPEC-0200-blind-journey-contract.md"
+tests = [
+  "xtask/src/blind_journey.rs::tests::clean_generic_prompt_validates_positive",
+  "xtask/src/blind_journey.rs::tests::each_contamination_category_rejects_independently",
+  "xtask/src/blind_journey.rs::tests::public_docs_and_ordinary_source_reads_stay_allowed",
+  "xtask/src/blind_journey.rs::tests::private_hint_after_passing_verification_stays_non_positive",
+  "xtask/src/blind_journey.rs::tests::hidden_hint_cannot_hide_behind_passing_axes",
+  "xtask/src/blind_journey.rs::tests::manual_artifact_plumbing_is_classified_and_non_positive",
+  "xtask/src/blind_journey.rs::tests::workspace_binary_substitution_records_candidate_identity_failure",
+  "xtask/src/blind_journey.rs::tests::instrument_watchdog_observes_without_helping",
+  "xtask/src/blind_journey.rs::tests::either_eligible_product_presented_choice_validates",
+  "xtask/src/blind_journey.rs::tests::quiet_neighbor_selection_fails_the_answer_key_comparison",
+  "xtask/src/blind_journey.rs::tests::forbidden_edit_fails_the_edit_cage_comparison",
+  "xtask/src/blind_journey.rs::tests::honest_limitation_keeps_the_complete_transcript",
+  "xtask/src/blind_journey.rs::tests::missing_predecessor_rejects_the_transcript",
+  "xtask/src/blind_journey.rs::tests::reordered_trace_rejects_the_transcript",
+  "xtask/src/blind_journey.rs::tests::altered_prompt_bytes_reject_the_digest_binding",
+  "xtask/src/blind_journey.rs::tests::changed_answer_key_rejects_the_digest_binding",
+  "xtask/src/blind_journey.rs::tests::reviewer_label_cannot_override_mechanical_rejection",
+  "xtask/src/blind_journey.rs::tests::answer_key_never_reaches_the_operator_projection",
+  "xtask/src/blind_journey.rs::tests::equivalent_roots_share_portable_identity",
+  "xtask/src/blind_journey.rs::tests::unsupported_future_schema_rejects_every_packet",
+  "xtask/src/blind_journey.rs::tests::positive_receipt_requires_an_accepted_review",
+  "xtask/src/blind_journey.rs::tests::non_product_action_requires_closed_classification",
+  "xtask/src/blind_journey.rs::tests::receipt_review_divergence_rejects",
+  "xtask/src/blind_journey.rs::tests::forbidden_edit_event_rejects_even_when_the_selected_edit_is_allowed",
+  "xtask/src/blind_journey.rs::tests::honest_forbidden_edit_run_is_accepted",
+  "xtask/src/blind_journey.rs::tests::selection_event_mismatch_rejects",
+  "xtask/src/reports/blind_journey.rs::tests::committed_corpus_and_receipt_validate_against_the_live_validator",
+  "xtask/src/reports/blind_journey.rs::tests::receipt_with_a_drifted_schema_version_is_rejected",
+  "xtask/src/reports/blind_journey.rs::tests::receipt_without_limitations_is_rejected",
+  "xtask/src/reports/blind_journey.rs::tests::receipt_with_a_blank_limitation_is_rejected",
+  "xtask/src/reports/blind_journey.rs::tests::receipt_without_not_exercised_combinations_is_rejected",
+  "xtask/src/reports/blind_journey.rs::tests::json_and_markdown_derive_from_one_dto_deterministically",
+  "xtask/src/reports/blind_journey.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
+]
+fixtures = [
+  "fixtures/blind_journey_contract",
+]
+code = [
+  "xtask/src/blind_journey.rs",
+  "xtask/src/reports/blind_journey.rs",
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "fixtures/blind_journey_contract/corpus.json",
+  "metrics/blind-journey-contract/contract-receipt.json",
+]
+metrics = [
+  "blind_journey_contract_scenarios",
+  "blind_journey_contract_positive_scenarios",
+  "blind_journey_contract_expectation_failures",
+  "blind_journey_contract_receipt_status",
 ]

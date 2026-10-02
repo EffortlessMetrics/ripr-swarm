@@ -164,6 +164,19 @@ are scoped or reviewed.
   error no longer cites an internal campaign (#4534).
 - `ripr check` refuses two output selections that disagree, such as
   `--json --format human`. Before, the last one silently won (#4535).
+- Rust `proptest!` and `quickcheck!` token trees are reparsed as items, so
+  inner `#[test]` / `quickcheck!` functions keep their real lines, owner
+  calls, and `prop_assert*` oracles. An unmarked `proptest!` fn stays a
+  function fact, not a test (#4789).
+- Review guidance: admit workspace and changed-owner inputs before either
+  index build, with file/byte limits and a `review_guidance_oversized` failed
+  receipt instead of silently truncated guidance (#4388, RIPR-SPEC-0012).
+  The default file limit is 1200, matching the current diff/repo family;
+  required runner lanes no longer override it to 2000. Malformed overrides
+  still reject execution but no longer hide `review-comments --help`.
+  Admission is not an RSS/completion guarantee; large-workspace completed
+  guidance and hosted replay remain separate acceptance work.
+
 - Rust: a changed `?` error path no longer reads `exposed` because a
   success-value assertion shares a variable name with it. ripgrep's
   `rdr.read(buf)?` was credited to a test asserting `rdr.bstr()`, and the
@@ -1377,6 +1390,17 @@ are scoped or reviewed.
   only the canonical top-ten full payloads between windows (#4691). Preserve
   rankings, omission disclosure and evaluated/unevaluated counts; interrupted
   windows remain incomplete. Whole-index and per-test facts remain corpus-sized.
+- Review context: calls without a qualified-path separator skip the otherwise
+  corpus-wide qualified-helper module search. Existing path/alias admission,
+  direct-helper routes and guidance results retain their semantics (#4388).
+- Rust indexing: source-role normalization borrows full-identity keys and
+  per-file tests instead of retaining extra owned body/test copies. Parse workers
+  inherit and restore request cancellation; index construction and normalization
+  check cancellation before retaining or publishing work. Parallel joins preserve
+  the first collected source/worker error before observing a later deadline,
+  keeping source failures distinct from timeout receipts. Opt-in phase tracing
+  separates parsing and role passes. Whole-corpus facts still scale with input,
+  and a single parser call is not preemptible (#4388).
 - PR review guidance retains unresolved headline-eligible recommendations
   when the nearby recommended test file changes. Test-file proximity no
   longer erases these cards; evidence limitations and output caps remain
