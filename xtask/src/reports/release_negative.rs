@@ -3519,7 +3519,10 @@ mod tests {
         }
         let controller = root.join("controller");
         fs::create_dir(&controller).map_err(|error| format!("report controller: {error}"))?;
-        let reports = controller.join("target/ripr/reports");
+        let reports = controller
+            .canonicalize()
+            .map_err(|error| format!("resolve expected report controller: {error}"))?
+            .join("target/ripr/reports");
         let refusal = invoke(&controller)
             .err()
             .ok_or_else(|| "invalid writable controller unexpectedly accepted".to_string())?;

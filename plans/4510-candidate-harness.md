@@ -451,3 +451,13 @@ an explained `expect(dead_code)`; all owning bodies remain compiled. No new
 lint suppression was added to the product. With those explicit harness-only
 omissions, strict Clippy passed. Path-recovery red/green and the selected
 runtime refresh are retained separately when terminal.
+
+The follow-up selected runtime batch passed 46/46 controls. Replacing the hint
+with the old legacy path failed the intended actual-report oracle; restoring
+the exact helper passed. Strict harness Clippy was terminal with the exact
+repository lint table and enumerated harness-only unused-item expectations.
+A final review normalized the existing full admission test's expected
+controller path too, so Windows canonical prefixes and macOS temporary-directory
+aliases do not create a false mismatch. That last change affects only the
+existing full integration test oracle; hosted execution of that test remains
+pending. Both production failure exits consume the writer-returned path.
