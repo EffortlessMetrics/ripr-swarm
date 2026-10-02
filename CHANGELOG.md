@@ -1324,6 +1324,9 @@ are scoped or reviewed.
   only the canonical top-ten full payloads between windows (#4691). Preserve
   rankings, omission disclosure and evaluated/unevaluated counts; interrupted
   windows remain incomplete. Whole-index and per-test facts remain corpus-sized.
+- Review context: calls without a qualified-path separator skip the otherwise
+  corpus-wide qualified-helper module search. Existing path/alias admission,
+  direct-helper routes and guidance results retain their semantics (#4388).
 - Rust indexing: source-role normalization borrows full-identity keys and
   per-file tests instead of retaining extra owned body/test copies. Parse workers
   inherit and restore request cancellation; index construction and normalization

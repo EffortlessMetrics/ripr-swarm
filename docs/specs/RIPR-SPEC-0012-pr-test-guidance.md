@@ -99,6 +99,18 @@ there is no hard allocator ceiling. An outer wrapper is required for a hard
 process bound. The wider phase/shutdown contract remains under
 #1778/#1699/#1604; this index-boundary repair does not complete those issues.
 
+### Qualified-helper candidate work
+
+After lexical cleaning, a call without `::` has no qualified-module candidate:
+all existing direct-path and module-alias spellings require that separator.
+Context preparation skips the corpus-wide qualified-helper module walk for
+those calls. This is only candidate generation; existing path boundaries,
+alias scopes and owner membership still decide every retained relation.
+Direct/unqualified helper routes, analyzed tests, ranking and coverage are
+unchanged. The work control requires zero module candidates for an unqualified
+call even when thousands of modules exist, with old-traversal parity for
+qualified and aliased positives and comment/string/boundary negatives.
+
 ## Surfaces
 
 The default GitHub surface is:

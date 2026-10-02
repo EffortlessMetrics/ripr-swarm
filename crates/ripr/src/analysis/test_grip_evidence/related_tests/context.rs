@@ -2754,7 +2754,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qual
     let mut owner_names = BTreeSet::new();
     for call in calls {
         let cleaned = strip_comments_and_strings(&call.text);
-        for (module_path, helpers) in qualified_helpers {
+        for (module_path, helpers) in qualified_helper_modules(&cleaned, qualified_helpers) {
             let Some(helper_owner_names) = helpers.get(&call.name) else {
                 continue;
             };
@@ -2772,6 +2772,21 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qual
         }
     }
     owner_names
+}
+
+/// Every admitted qualified spelling contains `::` after lexical cleaning.
+/// An unqualified call therefore has no candidate module, regardless of corpus
+/// size. Keep the existing path/alias predicates authoritative for candidates.
+fn qualified_helper_modules<'a>(
+    cleaned: &str,
+    modules: &'a HelperOwnerCallsByModulePath,
+) -> impl Iterator<Item = (&'a String, &'a HelperOwnerCallsByName)> {
+    let candidates = if cleaned.contains("::") {
+        modules.len()
+    } else {
+        0
+    };
+    modules.iter().take(candidates)
 }
 
 pub(in crate::analysis::test_grip_evidence) fn code_contains_aliased_module_helper_call(
@@ -2996,6 +3011,131 @@ mod tests {
             scoped_names,
             Some(&production_names),
         ));
+    }
+
+    #[test]
+    fn unqualified_helper_calls_have_no_module_candidates() {
+        let modules: HelperOwnerCallsByModulePath = (0..2048)
+            .map(|index| {
+                (
+                    format!("scope_{index}"),
+                    BTreeMap::from([("target".to_string(), BTreeSet::from(["owner".to_string()]))]),
+                )
+            })
+            .collect();
+        for text in [
+            "target()",
+            "receiver.target()",
+            "target(\"scope_0::target()\")",
+            "target() // scope_0::target()",
+        ] {
+            let cleaned = strip_comments_and_strings(text);
+            assert_eq!(
+                qualified_helper_modules(&cleaned, &modules).count(),
+                0,
+                "{text}"
+            );
+            let call = CallFact {
+                line: 2,
+                name: "target".to_string(),
+                text: text.to_string(),
+            };
+            assert!(
+                helper_owner_call_names_from_qualified_calls(&[call], &modules, None).is_empty()
+            );
+        }
+        assert_eq!(
+            qualified_helper_modules("scope_0::target()", &modules).count(),
+            2048
+        );
+    }
+
+    #[test]
+    fn qualified_helper_filter_matches_unbounded_relations() {
+        let modules = BTreeMap::from([
+            (
+                "pkg::helpers".to_string(),
+                BTreeMap::from([(
+                    "target".to_string(),
+                    BTreeSet::from(["owner_a".to_string()]),
+                )]),
+            ),
+            (
+                "other".to_string(),
+                BTreeMap::from([(
+                    "target".to_string(),
+                    BTreeSet::from(["owner_b".to_string()]),
+                )]),
+            ),
+        ]);
+        let aliases = module_import_aliases(
+            "use crate::pkg::helpers as alias;\nfn invoke() { alias::target(); }\n",
+        );
+        assert!(
+            aliases.contains_key("alias"),
+            "fixture must contain an admitted alias"
+        );
+        let cases = [
+            ("pkg::helpers::target()", Some("owner_a")),
+            ("crate::pkg::helpers::target()", Some("owner_a")),
+            ("self::pkg::helpers::target()", Some("owner_a")),
+            ("super::pkg::helpers::target()", Some("owner_a")),
+            ("alias::target()", Some("owner_a")),
+            ("other::target()", Some("owner_b")),
+            ("target()", None),
+            ("receiver.target()", None),
+            ("notpkg::helpers::target()", None),
+            ("target(\"pkg::helpers::target()\")", None),
+            ("target() // pkg::helpers::target()", None),
+        ];
+        for (text, expected) in cases {
+            let call = CallFact {
+                line: 2,
+                name: "target".to_string(),
+                text: text.to_string(),
+            };
+            let old = unbounded_qualified_helper_names(
+                std::slice::from_ref(&call),
+                &modules,
+                Some(&aliases),
+            );
+            let current = helper_owner_call_names_from_qualified_calls(
+                std::slice::from_ref(&call),
+                &modules,
+                Some(&aliases),
+            );
+            assert_eq!(current, old, "exact relation parity for {text}");
+            assert_eq!(
+                current,
+                expected.into_iter().map(str::to_string).collect(),
+                "nonempty positive/negative oracle for {text}"
+            );
+        }
+    }
+
+    // Frozen pre-filter traversal: preserves the complete old admission predicates.
+    fn unbounded_qualified_helper_names(
+        calls: &[CallFact],
+        modules: &HelperOwnerCallsByModulePath,
+        aliases: Option<&BTreeMap<String, ScopedModuleImportAlias>>,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for call in calls {
+            let cleaned = strip_comments_and_strings(&call.text);
+            for (module, helpers) in modules {
+                let Some(owners) = helpers.get(&call.name) else {
+                    continue;
+                };
+                if code_contains_qualified_helper_call(&cleaned, module, &call.name)
+                    || code_contains_aliased_module_helper_call(
+                        &cleaned, module, &call.name, aliases, call.line,
+                    )
+                {
+                    names.extend(owners.iter().cloned());
+                }
+            }
+        }
+        names
     }
 
     fn function_fact(
