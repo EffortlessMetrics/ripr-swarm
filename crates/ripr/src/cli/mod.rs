@@ -18,9 +18,9 @@ mod suggest;
 mod workflow_catalog;
 
 pub(crate) use parse::expect_value;
-pub(crate) use suggest::unknown_argument;
 #[doc(hidden)]
 pub use parse::extract_global_verbose;
+pub(crate) use suggest::unknown_argument;
 
 /// Top-level error of command dispatch, carrying the process exit-code
 /// contract documented in `docs/EXIT_CODES.md`.
@@ -602,8 +602,7 @@ mod tests {
             assert_eq!(
                 run(argv),
                 Err(CommandError::Failure(
-                    "usage: ripr help --json (this route accepts no other arguments)"
-                        .to_string()
+                    "usage: ripr help --json (this route accepts no other arguments)".to_string()
                 ))
             );
         }

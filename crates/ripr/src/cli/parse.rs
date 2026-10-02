@@ -293,14 +293,7 @@ mod tests {
 
     #[test]
     fn extract_global_verbose_keeps_lookalike_and_plain_tokens() {
-        let mut argv = args(&[
-            "ripr",
-            "check",
-            "--verbose-extra",
-            "-vv",
-            "--base",
-            "main",
-        ]);
+        let mut argv = args(&["ripr", "check", "--verbose-extra", "-vv", "--base", "main"]);
         assert!(!extract_global_verbose(&mut argv));
         assert_eq!(
             argv,
