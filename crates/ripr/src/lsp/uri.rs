@@ -389,12 +389,12 @@ pub(super) fn read_artifact_capped_with_limit(path: &Path, limit: u64) -> Capped
     CappedArtifactRead::Contents(contents)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 std::thread_local! {
     static CANONICAL_PROJECTION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn canonical_projection_count_for_test() -> usize {
     CANONICAL_PROJECTION_COUNT.with(std::cell::Cell::get)
 }
@@ -410,7 +410,7 @@ pub(super) fn canonical_projection_count_for_test() -> usize {
 /// or under a symlinked ancestor, and which let `linked/missing/../x.rs`
 /// through a symlinked `linked` directory read as contained.
 fn canonical_or_normalized(path: &Path) -> PathBuf {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     CANONICAL_PROJECTION_COUNT.with(|count| count.set(count.get() + 1));
     let normalized = normalize_path(path);
     canonicalize_with_missing_tail(path)
