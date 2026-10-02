@@ -470,7 +470,12 @@ mod tests {
             Ok(FilePolicyHost::Windows)
         );
         for unsupported in ["", "linux", "Windows", "wasm", "unix,windows"] {
-            assert!(FilePolicyHost::parse(unsupported).is_err());
+            assert_eq!(
+                FilePolicyHost::parse(unsupported),
+                Err(format!(
+                    "unsupported file-policy host family `{unsupported}`"
+                ))
+            );
         }
     }
 
