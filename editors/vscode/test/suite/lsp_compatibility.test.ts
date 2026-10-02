@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { probeStandardLspCompatibility } from '../../src/lspCompatibility';
+import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS } from '../../src/lspCompatibility';
 import { probeServerVersion } from '../../src/serverResolver';
 
 suite('Standard LSP compatibility probe', () => {
@@ -388,7 +388,10 @@ function consume() {
       if (mode === 'missing-hover') delete capabilities.hoverProvider;
       if (mode === 'missing-diagnostics') delete capabilities.diagnosticProvider;
       if (mode === 'missing-workspace-folders') delete capabilities.workspace;
-      if (mode === 'missing-command') capabilities.executeCommandProvider.commands.pop();
+      if (mode === 'missing-command') {
+        const omittedCommand = ${JSON.stringify(REQUIRED_SERVER_COMMANDS[REQUIRED_SERVER_COMMANDS.length - 1])};
+        capabilities.executeCommandProvider.commands = capabilities.executeCommandProvider.commands.filter((command) => command !== omittedCommand);
+      }
       if (mode === 'incremental-sync') capabilities.textDocumentSync = { openClose: true, change: 2, willSave: false, willSaveWaitUntil: false, save: { includeText: false } };
       if (mode === 'unknown-sync-kind') capabilities.textDocumentSync = { openClose: true, change: 3, willSave: false, willSaveWaitUntil: false, save: { includeText: false } };
       const envelope = { jsonrpc: mode === 'wrong-jsonrpc' ? '1.0' : '2.0', id: message.id, result: { capabilities, serverInfo: { name: mode === 'wrong-identity' ? 'other' : 'ripr', version: '9.9.9' } } };
