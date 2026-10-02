@@ -957,3 +957,34 @@ fn case_columns_stay_aligned_past_a_pattern_parameter() {
         vec!["100", "200"]
     );
 }
+
+#[test]
+fn case_value_not_credited_past_a_shadowing_let_after_a_url_string() {
+    // Review of #4715: `strip_comments_and_strings` cut the line at the
+    // `//` inside `"http://example"`, so the shadowing `let amount` after
+    // the string vanished from the rebound scan and `gate(amount)` was
+    // credited with the original case value. A string-internal `//` is not
+    // a comment; the binding after it must fail the case credit closed.
+    let test = TestSummary {
+        name: "rebound_after_url".to_string(),
+        file: std::path::PathBuf::from("src/lib.rs"),
+        start_line: 1,
+        end_line: 1,
+        body: "fn rebound_after_url(#[case] amount: u32) { let _url = \"http://example\"; let amount = amount + 1; gate(amount); }".to_string(),
+        calls: Vec::new(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: vec![
+            "#[rstest]".to_string(),
+            "#[case(100)]".to_string(),
+            "#[case(200)]".to_string(),
+        ],
+        nested_fn_names: Vec::new(),
+        let_bindings: Vec::new(),
+    };
+
+    assert_eq!(
+        test_case_bound_literals(&test, "amount"),
+        Vec::<String>::new()
+    );
+}

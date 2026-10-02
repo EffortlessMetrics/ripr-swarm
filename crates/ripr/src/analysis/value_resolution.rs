@@ -1991,18 +1991,17 @@ fn builder_method_matches_allowed(
 
 /// Drop `//` line-comment tails and replace string-literal contents
 /// with empty text, so binding scans don't pick up `// let x = 1;`
-/// or string-embedded names. Mirrors the helper added in
-/// `analysis/related-test-precision-v1` for `import_path_affinity`.
+/// or string-embedded names. Only a `//` outside a string literal starts
+/// a comment: a URL such as `"http://example"` must not truncate the
+/// line, or a binding after it would vanish from the scan. Mirrors the
+/// helper added in `analysis/related-test-precision-v1` for
+/// `import_path_affinity`.
 fn strip_comments_and_strings(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     for raw_line in source.lines() {
-        let without_comment = match raw_line.find("//") {
-            Some(idx) => &raw_line[..idx],
-            None => raw_line,
-        };
         let mut in_string = false;
         let mut escaped = false;
-        for ch in without_comment.chars() {
+        for (idx, ch) in raw_line.char_indices() {
             if in_string {
                 if escaped {
                     escaped = false;
@@ -2022,6 +2021,9 @@ fn strip_comments_and_strings(source: &str) -> String {
                 in_string = true;
                 out.push('"');
                 continue;
+            }
+            if ch == '/' && raw_line[idx..].starts_with("//") {
+                break;
             }
             out.push(ch);
         }
