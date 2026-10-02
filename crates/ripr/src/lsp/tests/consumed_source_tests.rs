@@ -864,3 +864,53 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
     }
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn consumed_projection_uses_physical_parent_resolution() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("consumed-physical-parent")?;
+    let physical_root = fixture.root.join("real");
+    fs::create_dir_all(physical_root.join("deep"))
+        .map_err(|error| format!("create physical root: {error}"))?;
+    fs::create_dir_all(physical_root.join("src"))
+        .map_err(|error| format!("create physical source directory: {error}"))?;
+    let file = physical_root.join("src/lib.rs");
+    fs::write(&file, SOURCE_A).map_err(|error| format!("write physical source A: {error}"))?;
+    let link = fixture.root.join("linked-deep");
+    std::os::unix::fs::symlink(physical_root.join("deep"), &link)
+        .map_err(|error| format!("link physical root control: {error}"))?;
+    let root_with_parent = link.join("..");
+    if root_with_parent
+        .canonicalize()
+        .map_err(|error| error.to_string())?
+        != physical_root
+    {
+        return Err("SETUP: symlink/.. did not reach the intended physical root".into());
+    }
+    let uri = file_uri_for_path(&file)?;
+    if !crate::lsp::uri::file_uri_is_within_root(&root_with_parent, &uri) {
+        return Err("SETUP: physical root control was not admitted".into());
+    }
+    let relative = crate::lsp::uri::file_uri_relative_to_root(&root_with_parent, &uri);
+    if relative.as_deref() != Some(Path::new("src/lib.rs")) {
+        return Err(format!(
+            "BEHAVIORAL: symlink/.. used a lexical key instead of the physical root: {relative:?}"
+        ));
+    }
+    let mut captured = crate::analysis::consumed_source::ConsumedRustSources::default();
+    captured.record(Path::new("src/lib.rs"), Some(SOURCE_A.as_bytes()));
+    let mut documents = DocumentStore::default();
+    documents.open(quarantine_open_params(&uri, SOURCE_A));
+    let (pending, _) = documents.pending_analyzed_digests(&root_with_parent, &captured);
+    if pending.get(&uri).and_then(Option::as_ref) != Some(&content_digest(SOURCE_A.as_bytes())) {
+        return Err("physical root projection did not retain its captured identity".into());
+    }
+    documents.note_refresh_analyzed(None, &pending, &[]);
+    if documents
+        .state_for_uri(&uri)
+        .is_none_or(|state| state.is_quarantined())
+    {
+        return Err("physical root control remained quarantined".into());
+    }
+    Ok(())
+}

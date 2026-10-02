@@ -130,6 +130,15 @@ fn path_relative_to_root(root: &Path, path: &Path) -> Option<PathBuf> {
     let canonical_root = canonical_or_normalized(root);
     let canonical_candidate = canonical_or_normalized(&candidate);
     let canonical_relative = relative_path_below(&canonical_root, &canonical_candidate)?;
+    // Lexical collapse of `symlink/..` can name a different root or child.
+    // Preserve the physical key for path/API callers carrying parent segments.
+    if root
+        .components()
+        .chain(candidate.components())
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Some(canonical_relative);
+    }
     relative_path_below(&normalize_path(root), &normalize_path(&candidate))
         .or(Some(canonical_relative))
 }

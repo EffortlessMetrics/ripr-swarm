@@ -51,6 +51,8 @@ Admitted file URIs are projected to relative keys by the existing LSP URI
 containment owner. Open-file indexing and commitment lookup share that
 projection: physical containment is checked first, admitted lexical keys are
 preserved, and canonical-relative keys support a symlinked workspace root.
+Roots or candidate paths containing parent segments use the canonical-relative
+key, because lexical collapse of `symlink/..` can name a different location.
 The carrier accepts only normalized relative keys and performs no filesystem
 canonicalization. Outside-root and symlink-escaped documents cannot borrow a
 captured commitment.
