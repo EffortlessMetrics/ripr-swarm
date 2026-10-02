@@ -2,13 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::run::{ProcessErrorKind, capture_process_output};
+use crate::run::{ProcessErrorKind, capture_output_without_timeout, capture_process_output};
 
 #[cfg(test)]
 use crate::run::run_process_status;
@@ -834,41 +833,57 @@ fn git_bytes(root: &Path, args: &[&str], context: &str) -> Result<Vec<u8>, Preco
 }
 
 fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError> {
-    let output = Command::new("cargo").args(args).output().map_err(|error| {
+    // No per-step wall-clock cap (#4150): a cold Cargo build may legitimately
+    // run longer than any fixed host-dependent cutoff.  The shared runner
+    // still owns the child process tree and keeps the post-exit pipe drain
+    // bounded, so a completed child with a lingering pipe-holding descendant
+    // cannot hang the run.
+    let output = capture_output_without_timeout("cargo", args, &[], context).map_err(|error| {
         PrecommitError::new(
             PrecommitFailureKind::Infrastructure,
-            format!("{context} could not start cargo: {error}"),
+            format!("{context} could not run cargo: {error}"),
         )
     })?;
-    if output.status.success() {
-        return Ok(output.stdout);
+    let Some(status) = output.status else {
+        return Err(PrecommitError::new(
+            PrecommitFailureKind::Infrastructure,
+            format!("{context} produced no process status"),
+        ));
+    };
+    if status.success() {
+        return Ok(output.stdout.into_bytes());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let detail = [stdout.trim(), stderr.trim()]
+    let detail = [output.stdout.trim(), output.stderr.trim()]
         .into_iter()
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("; ");
     Err(PrecommitError::new(
         PrecommitFailureKind::IncompleteEvidence,
-        format!("{context} failed with {}: {detail}", output.status),
+        format!("{context} failed with {status}: {detail}"),
     ))
 }
 
 fn run_status(program: &str, args: &[String]) -> Result<(), PrecommitError> {
-    let output = Command::new(program).args(args).output().map_err(|error| {
-        PrecommitError::new(
+    // Same no-cap shared-runner path as `cargo_bytes` (#4150).
+    let output = capture_output_without_timeout(program, args, &[], "precommit command").map_err(
+        |error| {
+            PrecommitError::new(
+                PrecommitFailureKind::Infrastructure,
+                format!("{program} {} could not run: {error}", args.join(" ")),
+            )
+        },
+    )?;
+    let Some(status) = output.status else {
+        return Err(PrecommitError::new(
             PrecommitFailureKind::Infrastructure,
-            format!("{program} {} could not start: {error}", args.join(" ")),
-        )
-    })?;
-    if output.status.success() {
+            format!("{program} {} produced no process status", args.join(" ")),
+        ));
+    };
+    if status.success() {
         return Ok(());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let detail = [stdout.trim(), stderr.trim()]
+    let detail = [output.stdout.trim(), output.stderr.trim()]
         .into_iter()
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
@@ -876,9 +891,8 @@ fn run_status(program: &str, args: &[String]) -> Result<(), PrecommitError> {
     Err(PrecommitError::new(
         PrecommitFailureKind::SourceOrPolicy,
         format!(
-            "{program} {} failed with {}{}",
+            "{program} {} failed with {status}{}",
             args.join(" "),
-            output.status,
             if detail.is_empty() {
                 String::new()
             } else {
