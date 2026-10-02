@@ -281,7 +281,7 @@ mod any_tests {
 }
 
 #[test]
-fn normalizer_preserves_producer_roles_for_shared_authority_spellings() {
+fn normalizer_preserves_producer_roles_for_shared_authority_spellings() -> Result<(), String> {
     // #3530: the preservation walk consumes the shared cfg-predicate
     // authority, so whitespace variants and multi-line attribute spellings
     // the producer accepts keep their evidence role, while a non-test cfg
@@ -340,6 +340,7 @@ mod production_gate {
             .is_some_and(|function| !function.source_role.is_evidence_role()),
         "a cfg gate without a test requirement must fail closed"
     );
+    Ok(())
 }
 
 fn cfg_function_fact(name: &str, start_line: usize) -> FunctionFact {
