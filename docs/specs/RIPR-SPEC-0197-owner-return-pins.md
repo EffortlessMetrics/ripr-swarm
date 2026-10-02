@@ -16,6 +16,7 @@ Linked issues:
 
 - #4478 (confirm a return value pinned by `assert_eq!` on the owner's own call)
 - #5027 (share bounded equality execution admission with ErrorPath and Predicate)
+- #5040 (typed async-harness execution provenance; explicit unsupported boundary)
 - #3727 (parser-backed call identity; this spec adds the owner's item
   container fact, not parser-derived `CallFact`)
 
@@ -91,7 +92,10 @@ rule only for an assertion whose context was admitted.
    missing, unresolved or include-only provenance cannot establish that context.
    The assertion must lie on an ordinary statement/block/initializer path,
    without conditional, async, const, labeled, nested-item, attributed-node
-   or early-return context. A non-async zero-argument closure is supported
+   or prior root-return context. Root returns after the actual assertion execution
+   point do not defeat it. For a bound closure, use the invocation position, not
+   its earlier definition; any closure return remains conservatively refused.
+   A non-async zero-argument closure is supported
    only when immediately invoked, or when its immutable simple binding has
    exactly one reference in the entire function: a subsequent zero-argument
    call in the binding's same live statement block. Both the binding and call
@@ -261,11 +265,13 @@ new matching signal for an unrelated survivor. The bot's initial `assert!(ready)
 example is a `RelationalCheck` and already family-matches; the separate-line
 `assert_ready(true)` helper is the discriminating Unknown control.
 
-The full fixture scan changes five older guarded-result fixtures: conditional
+The initial return-only slice changed five older guarded-result fixtures: conditional
 bare equality rows lose standalone return-value oracle credit. The dedicated
 `guarded_result_match` authority remains intact, including its positive control.
 Four fixture class outcomes are unchanged; `guarded_result_match_swallowed`'s
-return-value probe becomes unrevealed while its error-path probe stays weak.
+return-value probe became unrevealed while its error-path probe initially stayed
+weak. The #5027 extension now refuses the same conditional bare equalities as
+standalone ErrorPath evidence, so both selected families are unrevealed.
 Separate family-filtered honesty cases pin exactly one return-value finding
 and exactly one error-path finding, preserving both distinct class contracts.
 The original-cardinality repair also prevents an existing lexical
@@ -302,6 +308,23 @@ assertion cannot lend strength to an admitted weak oracle or turn an Unknown
 helper into a singleton. Ten related tests exercise the eight-row JSON projection
 cap without crowding out admitted evidence. All cells are independently guarded
 by family-selected RIPR-SPEC-0108 corpus assertions.
+
+A separate thirty-subject compiled matrix covers all three admitted families:
+a direct assertion before/after a root return, a bound closure invoked before/after
+a root return, and a closure that returns before its assertion. Only direct and
+invoked-before-return positives are admitted. The statement-prefix query retains
+all macro, CFG, collection and closure-escape gates; it does not evaluate arbitrary
+branch conditions. The existing Result harness retains its earlier strong equality
+and its class/confidence; a possible return still refuses a later equality.
+
+The full scan also exposes a deliberate usefulness tradeoff: the existing real
+`#[tokio::test]` fixture catches an inverted predicate at runtime, but the bounded
+query cannot establish its macro binding and async polling path. It retains owner
+and test discovery and `propagation_unknown`, while oracle strength becomes None
+and advisory confidence moves 0.66 to 0.43. Its 100/50 input still cannot distinguish
+`>` from `>=`; that activation limitation is separate. #5040 owns producer-backed
+async-harness execution provenance and the real positive/removal controls. No
+Tokio-name exception or claim that the actual test is ineffective is made here.
 
 The same existing human/JSON/context projections explain a refused invocation
 and keep confidence advisory and `static_only`. This change does not assert
@@ -416,6 +439,7 @@ execution provenance.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.24`, sharded `0.30`,
   compact `0.30` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
+  The statement-prefix refinement changes no serialized fact shape.
 
 ## Metrics
 

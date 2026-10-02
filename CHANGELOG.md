@@ -140,6 +140,10 @@ are scoped or reviewed.
   false-branch and shadowed assertions retain their test relation without
   observation or oracle credit; direct and invoked positives remain supported.
   Family-selected runtime/honesty controls preserve static-only confidence.
+  A bounded statement-prefix refinement preserves earlier synchronous equality
+  before a later return. Async/test-macro execution remains unsupported: the
+  real Tokio fixture keeps discovery but loses strong static oracle credit, an
+  explicit conservative usefulness tradeoff tracked by #5040.
 
 - Rust: a changed `?` error path no longer reads `exposed` because a
   success-value assertion shares a variable name with it. ripgrep's
