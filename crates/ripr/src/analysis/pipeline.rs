@@ -2607,10 +2607,10 @@ mod tests {
              --- a/src/lib.rs\n\
              +++ b/src/lib.rs\n\
              @@ -1,3 +1,3 @@\n\
-              pub fn discount(total: i32) -> i32 {\n\
+             \u{20}pub fn discount(total: i32) -> i32 {\n\
              -    if total > 100 { total / 10 } else { 0 }\n\
              +    if total >= 100 { total / 10 } else { 0 }\n\
-              }\n",
+             \u{20}}\n",
         )?;
         let outcome = result
             .analysis_outcome
