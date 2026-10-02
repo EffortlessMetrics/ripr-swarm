@@ -56,9 +56,6 @@ mod test_oracles;
 
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use back_sync::back_sync;
-pub(crate) use blind_journey::{
-    assess_blind_journey_fixture_corpus, blind_journey_contract_report,
-};
 #[cfg(test)]
 pub(crate) use badges::{
     BADGE_ENDPOINT_FILES, BadgeArtifactJob, BadgeBasisReport, BadgeBasisSignal,
@@ -87,6 +84,9 @@ pub(crate) use badges::{
 pub(crate) use badges::{
     badge_artifacts, badge_basis, check_badge_diff_policy, check_badge_endpoints,
     repo_badge_artifacts, ripr_plus, update_badge_endpoints,
+};
+pub(crate) use blind_journey::{
+    assess_blind_journey_fixture_corpus, blind_journey_contract_report,
 };
 pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use ci_budget::ci_budget;

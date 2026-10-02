@@ -414,7 +414,11 @@ impl BlindJourneyAssessmentV1 {
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut digest = Sha256::new();
     digest.update(bytes);
-    digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// The scoped semantic surface of the answer key: every field except the
@@ -458,7 +462,9 @@ fn prompt_digest(prompt: &BlindJourneyPromptV1) -> String {
 /// concrete root spelling, plus the prompt and answer-key digest bindings.
 /// Equivalent roots therefore share one portable identity while concrete root
 /// evidence remains retained in the packet.
-pub(crate) fn blind_journey_portable_identity(packet: &BlindJourneyPacketV1) -> Result<String, String> {
+pub(crate) fn blind_journey_portable_identity(
+    packet: &BlindJourneyPacketV1,
+) -> Result<String, String> {
     #[derive(Serialize)]
     struct PortableIdentityInput<'a> {
         schema_version: &'a str,
@@ -482,7 +488,11 @@ pub(crate) fn blind_journey_portable_identity(packet: &BlindJourneyPacketV1) -> 
         binary: &packet.receipt.candidate.binary,
         binary_digest: &packet.receipt.candidate.binary_digest,
         prompt_digest: packet.receipt.prompt_digest.as_deref().unwrap_or_default(),
-        answer_key_digest: packet.receipt.answer_key_digest.as_deref().unwrap_or_default(),
+        answer_key_digest: packet
+            .receipt
+            .answer_key_digest
+            .as_deref()
+            .unwrap_or_default(),
     };
     Ok(sha256_hex(canonical_json(&input)?.as_bytes()))
 }
@@ -556,10 +566,7 @@ pub(crate) fn mechanical_contamination_findings(
             "preselected_item_reference",
             ["ripr-spec-", "ripr-prop-", "gap-"],
         ),
-        (
-            "target_file_or_edit",
-            [".rs:", "/tests/", "test_"],
-        ),
+        ("target_file_or_edit", [".rs:", "/tests/", "test_"]),
         (
             "expected_command_sequence",
             ["cargo test --", "cargo xtask", "cargo nextest"],
@@ -643,18 +650,16 @@ pub(crate) fn blind_journey_operator_visible_text(packet: &BlindJourneyPacketV1)
 }
 
 fn event_kind_present(packet: &BlindJourneyPacketV1, kind: BlindJourneyEventKindV1) -> bool {
-    packet
-        .receipt
-        .events
-        .iter()
-        .any(|event| event.kind == kind)
+    packet.receipt.events.iter().any(|event| event.kind == kind)
 }
 
 /// Validate one stamped packet. The assessment collects every violation in a
 /// fixed check order, so exact inputs produce deterministic output. A
 /// non-positive terminal result on an accepted packet is a valid honest
 /// receipt; only `passed_blind_journey` is the positive row.
-pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> BlindJourneyAssessmentV1 {
+pub(crate) fn assess_blind_journey_packet(
+    packet: &BlindJourneyPacketV1,
+) -> BlindJourneyAssessmentV1 {
     let mut reasons: Vec<String> = Vec::new();
 
     // 1. Schema versions: an unsupported future schema stays a rejection, not
@@ -681,7 +686,9 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
     // 2. Digest bindings: recompute and compare every binding.
     let expected_prompt_digest = prompt_digest(&packet.prompt);
     if packet.prompt.prompt_digest != expected_prompt_digest {
-        reasons.push("prompt_digest_mismatch:recorded digest does not match the prompt bytes".to_string());
+        reasons.push(
+            "prompt_digest_mismatch:recorded digest does not match the prompt bytes".to_string(),
+        );
     }
     let expected_key_digest = match blind_journey_answer_key_digest(&packet.answer_key) {
         Ok(digest) => digest,
@@ -760,7 +767,11 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
     }
 
     // 4. Candidate identity must be portable-equal between prompt and receipt.
-    if !packet.prompt.candidate.portable_eq(&packet.receipt.candidate) {
+    if !packet
+        .prompt
+        .candidate
+        .portable_eq(&packet.receipt.candidate)
+    {
         reasons.push(
             "candidate_identity_mismatch:receipt candidate identity differs from the prompt"
                 .to_string(),
@@ -792,7 +803,8 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
                 event.sequence
             ));
         }
-        if event.kind == BlindJourneyEventKindV1::HarnessIntervention && event.intervention.is_none()
+        if event.kind == BlindJourneyEventKindV1::HarnessIntervention
+            && event.intervention.is_none()
         {
             reasons.push(format!(
                 "intervention_unclassified:non-product event {} has no closed classification",
@@ -801,8 +813,7 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
         }
         if let Some(intervention) = event.intervention {
             if !intervention.positive_allowed()
-                && intervention
-                    != BlindJourneyInterventionV1::InstrumentOnlyNotOperatorVisible
+                && intervention != BlindJourneyInterventionV1::InstrumentOnlyNotOperatorVisible
                 && event.reason.as_deref().is_none_or(str::is_empty)
             {
                 reasons.push(format!(
@@ -900,11 +911,15 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
         && !comparison_disqualifiers.contains(&BlindJourneyResultV1::UnsafeOrWrongEdit)
     {
         reasons.push(
-            "edit_cage_axis_misrecorded:violation without a forbidden or out-of-cage edit".to_string(),
+            "edit_cage_axis_misrecorded:violation without a forbidden or out-of-cage edit"
+                .to_string(),
         );
     }
     if axes.project_verification_status == BlindJourneyVerificationStatusV1::Failed
-        && !event_kind_present(packet, BlindJourneyEventKindV1::ProjectVerificationExecution)
+        && !event_kind_present(
+            packet,
+            BlindJourneyEventKindV1::ProjectVerificationExecution,
+        )
     {
         reasons.push(
             "verification_axis_misrecorded:failed without a project verification execution event"
@@ -912,7 +927,10 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
         );
     }
     if axes.project_verification_status == BlindJourneyVerificationStatusV1::NotRun
-        && event_kind_present(packet, BlindJourneyEventKindV1::ProjectVerificationExecution)
+        && event_kind_present(
+            packet,
+            BlindJourneyEventKindV1::ProjectVerificationExecution,
+        )
     {
         reasons.push(
             "verification_axis_misrecorded:not_run although project verification executed"
@@ -923,14 +941,16 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
         && !event_kind_present(packet, BlindJourneyEventKindV1::StaticAnalysisExecution)
     {
         reasons.push(
-            "static_axis_misrecorded:improved without a static analysis execution event".to_string(),
+            "static_axis_misrecorded:improved without a static analysis execution event"
+                .to_string(),
         );
     }
     if axes.receipt_status == BlindJourneyReceiptStatusV1::ReceiptMovementImproved
         && !event_kind_present(packet, BlindJourneyEventKindV1::ReceiptExecution)
     {
         reasons.push(
-            "receipt_axis_misrecorded:movement_improved without a receipt execution event".to_string(),
+            "receipt_axis_misrecorded:movement_improved without a receipt execution event"
+                .to_string(),
         );
     }
 
@@ -949,11 +969,16 @@ pub(crate) fn assess_blind_journey_packet(packet: &BlindJourneyPacketV1) -> Blin
         for value in key_only_strings {
             let lowered = value.to_ascii_lowercase();
             if !lowered.is_empty() && operator_text.contains(&lowered) {
-                violations.push(format!("answer_key_leak:operator-visible material contains `{value}`"));
+                violations.push(format!(
+                    "answer_key_leak:operator-visible material contains `{value}`"
+                ));
             }
         }
         if operator_text.contains(&key.answer_key_digest.to_ascii_lowercase()) {
-            violations.push("answer_key_leak:operator-visible material contains the answer-key digest".to_string());
+            violations.push(
+                "answer_key_leak:operator-visible material contains the answer-key digest"
+                    .to_string(),
+            );
         }
         violations
     };
@@ -1266,14 +1291,49 @@ mod tests {
 
     fn positive_events() -> Vec<BlindJourneyEventV1> {
         vec![
-            event(1, None, BlindJourneyEventKindV1::PublicDocumentationLookup, "docs:cli-check"),
-            event(2, Some(1), BlindJourneyEventKindV1::OrdinaryTargetSourceRead, "src/lib.rs"),
-            event(3, Some(2), BlindJourneyEventKindV1::ProductCommandInvocation, "ripr check"),
-            event(4, Some(3), BlindJourneyEventKindV1::OperatorProductOptionSelection, "item-a"),
+            event(
+                1,
+                None,
+                BlindJourneyEventKindV1::PublicDocumentationLookup,
+                "docs:cli-check",
+            ),
+            event(
+                2,
+                Some(1),
+                BlindJourneyEventKindV1::OrdinaryTargetSourceRead,
+                "src/lib.rs",
+            ),
+            event(
+                3,
+                Some(2),
+                BlindJourneyEventKindV1::ProductCommandInvocation,
+                "ripr check",
+            ),
+            event(
+                4,
+                Some(3),
+                BlindJourneyEventKindV1::OperatorProductOptionSelection,
+                "item-a",
+            ),
             event(5, Some(4), BlindJourneyEventKindV1::FileEdit, "src/lib.rs"),
-            event(6, Some(5), BlindJourneyEventKindV1::ProjectVerificationExecution, "cargo test"),
-            event(7, Some(6), BlindJourneyEventKindV1::StaticAnalysisExecution, "ripr check"),
-            event(8, Some(7), BlindJourneyEventKindV1::ReceiptExecution, "ripr receipts"),
+            event(
+                6,
+                Some(5),
+                BlindJourneyEventKindV1::ProjectVerificationExecution,
+                "cargo test",
+            ),
+            event(
+                7,
+                Some(6),
+                BlindJourneyEventKindV1::StaticAnalysisExecution,
+                "ripr check",
+            ),
+            event(
+                8,
+                Some(7),
+                BlindJourneyEventKindV1::ReceiptExecution,
+                "ripr receipts",
+            ),
         ]
     }
 
@@ -1352,11 +1412,26 @@ mod tests {
     #[test]
     fn each_contamination_category_rejects_independently() -> Result<(), String> {
         let contaminated_prompts = [
-            ("internal_reference", "Fix the bug reported in issues/1234 today."),
-            ("preselected_item_reference", "Improve the tests for gap-042."),
-            ("target_file_or_edit", "Edit src/lib.rs tests/add.rs for the change."),
-            ("private_artifact_path", "Use the target/ripr/reports/check.json artifact."),
-            ("expected_command_sequence", "Run cargo test --package target to verify."),
+            (
+                "internal_reference",
+                "Fix the bug reported in issues/1234 today.",
+            ),
+            (
+                "preselected_item_reference",
+                "Improve the tests for gap-042.",
+            ),
+            (
+                "target_file_or_edit",
+                "Edit src/lib.rs tests/add.rs for the change.",
+            ),
+            (
+                "private_artifact_path",
+                "Use the target/ripr/reports/check.json artifact.",
+            ),
+            (
+                "expected_command_sequence",
+                "Run cargo test --package target to verify.",
+            ),
         ];
         for (category, text) in contaminated_prompts {
             let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
@@ -1621,9 +1696,12 @@ mod tests {
         packet.receipt.axes.selection_correctness = BlindJourneySelectionCorrectnessV1::Unknown;
         packet.receipt.selected_item = None;
         packet.receipt.selected_edit = None;
-        packet.receipt.limitations = vec!["the installed product exposed no actionable gap for this repository".to_string()];
-        packet.receipt.non_claims =
-            vec!["no completed repair is claimed; recovery requires a product discoverability fix".to_string()];
+        packet.receipt.limitations =
+            vec!["the installed product exposed no actionable gap for this repository".to_string()];
+        packet.receipt.non_claims = vec![
+            "no completed repair is claimed; recovery requires a product discoverability fix"
+                .to_string(),
+        ];
         packet.receipt.terminal_result = BlindJourneyResultV1::HonestLimitation;
         let assessment = assess_blind_journey_packet(&packet);
         if !assessment.accepted
@@ -1635,7 +1713,9 @@ mod tests {
             ));
         }
         if assessment.positive() {
-            return Err("an honest limitation must never aggregate into a positive row".to_string());
+            return Err(
+                "an honest limitation must never aggregate into a positive row".to_string(),
+            );
         }
         Ok(())
     }
@@ -1786,7 +1866,8 @@ mod tests {
         };
         let packet = stamp_blind_journey_packet(prompt, key, receipt)?;
         let assessment = assess_blind_journey_packet(&packet);
-        if assessment.positive() || !reason_contains(&assessment, "positive_without_accepted_review")
+        if assessment.positive()
+            || !reason_contains(&assessment, "positive_without_accepted_review")
         {
             return Err(
                 "until a current accepted reviewer verdict exists, a positive blind result must be refused"

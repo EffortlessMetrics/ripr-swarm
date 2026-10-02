@@ -15,8 +15,9 @@ use serde_json::Value;
 use crate::blind_journey::{
     BLIND_JOURNEY_ANSWER_KEY_SCHEMA_VERSION, BLIND_JOURNEY_CLAIM_BOUNDARY,
     BLIND_JOURNEY_PROMPT_SCHEMA_VERSION, BLIND_JOURNEY_RECEIPT_SCHEMA_VERSION,
-    BlindJourneyFixtureCorpusV1, BlindJourneyResultV1, assess_blind_journey_packet,
-    load_blind_journey_fixture_corpus, missing_blind_journey_required_scenarios,
+    BlindJourneyAssessmentV1, BlindJourneyFixtureCorpusV1, BlindJourneyResultV1,
+    assess_blind_journey_packet, load_blind_journey_fixture_corpus,
+    missing_blind_journey_required_scenarios,
 };
 
 const CORPUS_PATH: &str = "fixtures/blind_journey_contract/corpus.json";
@@ -190,7 +191,8 @@ fn require_required_scenarios(report: &BlindJourneyContractReportV1) -> Result<(
 fn read_json(path: &Path, label: &str) -> Result<Value, String> {
     let body = fs::read_to_string(path)
         .map_err(|error| format!("read {label} {}: {error}", path.display()))?;
-    serde_json::from_str(&body).map_err(|error| format!("parse {label} {}: {error}", path.display()))
+    serde_json::from_str(&body)
+        .map_err(|error| format!("parse {label} {}: {error}", path.display()))
 }
 
 /// The committed decision receipt is the versioned contract record; it must
@@ -234,7 +236,8 @@ fn validate_contract_receipt(receipt: &Value) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn blind_journey_contract_report_value() -> Result<BlindJourneyContractReportV1, String> {
+pub(crate) fn blind_journey_contract_report_value() -> Result<BlindJourneyContractReportV1, String>
+{
     let corpus_body = fs::read_to_string(workspace_path(CORPUS_PATH))
         .map_err(|error| format!("read blind journey fixture corpus: {error}"))?;
     let corpus = load_blind_journey_fixture_corpus(&corpus_body)?;
@@ -332,8 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_corpus_and_receipt_validate_against_the_live_validator(
-    ) -> Result<(), String> {
+    fn committed_corpus_and_receipt_validate_against_the_live_validator() -> Result<(), String> {
         let report = live_report()?;
         require_required_scenarios(&report)?;
         validate_contract_receipt(&committed_receipt()?)?;
@@ -368,9 +370,9 @@ mod tests {
             serde_json::json!("blind_journey_prompt.v2");
         match validate_contract_receipt(&receipt) {
             Err(_message) => Ok(()),
-            Ok(()) => Err(
-                "a contract receipt with a drifted schema version must be rejected".to_string(),
-            ),
+            Ok(()) => {
+                Err("a contract receipt with a drifted schema version must be rejected".to_string())
+            }
         }
     }
 
@@ -380,7 +382,9 @@ mod tests {
         receipt["limitations"] = serde_json::json!([]);
         match validate_contract_receipt(&receipt) {
             Err(_message) => Ok(()),
-            Ok(()) => Err("a contract receipt without explicit limitations must be rejected".to_string()),
+            Ok(()) => {
+                Err("a contract receipt without explicit limitations must be rejected".to_string())
+            }
         }
     }
 
