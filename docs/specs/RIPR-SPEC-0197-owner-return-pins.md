@@ -75,6 +75,19 @@ rule only for an assertion whose context was admitted.
    inside the test's own body, in a test without `#[should_panic]`. The
    parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
+   The test itself must have item ancestry through modules/item lists to the
+   source file, never an enclosing function, block, closure or impl. Module
+   outer attributes and module/source-file inner attributes must establish
+   availability in a test build. The existing `cfg_predicates` owner evaluates
+   `test = true`, `all`/`any`/`not` and nested `cfg_attr`; `all()` is true and
+   `any()` false. Feature/target/custom atoms remain unknown and cannot grant
+   credit. Ordinary lint/doc attributes and definitely enabled forms such as
+   `cfg(test)` or `any(test, feature = "unknown")` remain supported. Raw attribute
+   heads (including raw introduced attributes) remain unestablished; refusing
+   them does not alter the cached source-role classifier. Malformed
+   operands are not silently discarded. Existing module-provenance edges bind
+   out-of-line parents to their indexed source and declaration coordinate;
+   missing, unresolved or include-only provenance cannot establish that context.
    The assertion must lie on an ordinary statement/block/initializer path,
    without conditional, async, const, labeled, nested-item, attributed-node
    or early-return context. A non-async zero-argument closure is supported
@@ -181,7 +194,7 @@ rule only for an assertion whose context was admitted.
   bare call, the overridden trait default, the early-exit input, and the
   test-local binding of the owner's name.
 - Unit tests pin every gate with a positive and a discriminating negative.
-- Fourteen matched fixtures keep effective and ineffective tests separate:
+- Twenty matched fixtures keep effective and ineffective tests separate:
   - `owner_return_pin_direct`, `_called_closure`, `_token_direct`, and
     `_token_called_closure` retain `exposed`; correct libraries pass one test,
     and deliberately wrong `input * 2` libraries fail with actual 8 versus
@@ -191,11 +204,16 @@ rule only for an assertion whose context was admitted.
     `_if_false`, `_unpolled_async`, and `_token_overlap` pass even the wrong
     library. They retain related-test provenance without an oracle and read
     `reachable_unrevealed`, Observe `no`, Discriminate `no`, strength `none`.
+  - `_unknown_singleton`, `_nested_test`, `_cfg_false_module`, `_cfg_false_file`,
+    `_cfg_attr_module`, and `_out_of_line_cfg` pin review findings from #5020:
+    admission cannot manufacture a singleton match or use an uncollected test.
+    Each keeps one collected runtime test and passes either library, while
+    the static finding is No/No/None `reachable_unrevealed`.
   - `_no_assertion` is the removal control and keeps that same class/stage
     outcome without the context-refusal diagnostic.
 - `cargo test -p ripr --test owner_pin_execution` compiles both library
   variants and each actual fixture test before comparing runtime outcomes.
-  All fourteen cells are in the RIPR-SPEC-0108 honesty corpus. Additional
+  All twenty cells are in the RIPR-SPEC-0108 honesty corpus. Additional
   public-API mixed-oracle tests reject confirmation/strength borrowed from
   refused assertions and preserve valid direct evidence in either order.
 - The initial narrow repair left refused assertions `weakly_exposed` with
@@ -219,7 +237,7 @@ rule only for an assertion whose context was admitted.
 
 ### Matched before/after observations
 
-The fourteen fixture inputs were replayed on retained analyzer `e729ca15`,
+The initial fourteen fixture inputs were replayed on retained analyzer `e729ca15`,
 the rejected narrow owner-pin-only candidate, and the shared-admission candidate.
 Every run produced one complete `return_value` finding. Each exact test also ran
 against the correct and deliberately wrong library; every correct-library test
@@ -232,18 +250,28 @@ passed. Runtime outcomes remain independent of the static verdict.
 | Deferred closure with named-input token overlap | 1 | exposed, 1.00 | exposed, 1.00 | reachable_unrevealed, 0.79 | one pass |
 | No-assertion removal control | 1 | reachable_unrevealed, 0.79 | reachable_unrevealed, 0.79 | reachable_unrevealed, 0.79 | one pass |
 
+Six later review controls extend the matrix to twenty cases (forty compiled
+library/test subjects). Against the first published #5020 head, the real
+Unknown helper singleton reads `weakly_exposed` at 0.92, while the five
+non-collectable-test shapes read `exposed` at 1.00. With the repaired admission,
+all six read No/No/None `reachable_unrevealed` at 0.79. The singleton heuristic
+uses the original test assertion count: removing credit must never create a
+new matching signal for an unrelated survivor. The bot's initial `assert!(ready)`
+example is a `RelationalCheck` and already family-matches; the separate-line
+`assert_ready(true)` helper is the discriminating Unknown control.
+
 The full fixture scan changes five older guarded-result fixtures: conditional
 bare equality rows lose standalone return-value oracle credit. The dedicated
 `guarded_result_match` authority remains intact, including its positive control.
 Four fixture class outcomes are unchanged; `guarded_result_match_swallowed`'s
 return-value probe becomes unrevealed while its error-path probe stays weak.
 Separate family-filtered honesty cases pin exactly one return-value finding
-and exactly one error-path finding, preserving both distinct class contracts. In
-`guarded_result_match_fail_closed`, filtering also exposes an already extracted
-`let result = expect_response(..)` lexical `mock_expectation` row; that retained
-heuristic is not a newly established real mock, and does not change the stages
-or class. This is bounded admission, not a claim to resolve match-arm execution or every
-other oracle family's provenance.
+and exactly one error-path finding, preserving both distinct class contracts.
+The original-cardinality repair also prevents an existing lexical
+`let result = expect_response(..)` mock-expectation row from gaining a new
+singleton match in `guarded_result_match_fail_closed`; other retained evidence
+keeps its stages and class unchanged. This is bounded admission, not a claim
+to resolve match-arm execution or every other oracle family's provenance.
 
 ## Non-Goals
 
@@ -304,12 +332,18 @@ other oracle family's provenance.
   `owner_pin_requires_unambiguous_standard_assert_eq`, `owner_pin_refuses_ambiguous_oracle_coordinates`,
   `owner_pin_macro_ambiguity_in_other_files_and_run_memo`,
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
-  `shared_return_admission_uses_the_outer_invocation_identity` in the same test module.
+  `shared_return_admission_uses_the_outer_invocation_identity`, and
+  `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
+- CFG authority (`analysis/facts/cfg_predicates/tests.rs`):
+  `test_build_availability_preserves_unknown_and_boolean_identity` and
+  `test_build_availability_refuses_raw_attribute_heads` distinguish
+  enabled, disabled, unknown and malformed inputs without changing role classification.
 - Integration (`crates/ripr/tests/owner_pin_execution.rs`):
-  `owner_pin_matched_static_and_runtime_controls` (fourteen fixtures, two library variants),
+  `owner_pin_matched_static_and_runtime_controls` (twenty fixtures, two library variants),
   `owner_pin_token_overlap_cannot_bypass_oracle_admission`,
   `owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle` (six mixed cases), and
-  `owner_pin_refused_rows_do_not_crowd_out_admitted_oracles` (eight related tests).
+  `owner_pin_refused_rows_do_not_crowd_out_admitted_oracles` (eight related tests),
+  and `owner_pin_review_admission_controls` (six public-API review regressions).
   The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
 - Fixtures: `fixtures/owner_return_pin_trait_method`,
   `fixtures/owner_return_pin_identity_traps`; re-blessed
@@ -340,6 +374,10 @@ other oracle family's provenance.
   execution-context query. `OwnerPinSyntax` in the classifier memoizes the
   workspace macro scan and per-file context across probes in one immutable
   index; no output or serialized `OracleFact` field changes.
+- `crates/ripr/src/analysis/facts/cfg_predicates.rs`: bounded test-build
+  availability reuses the canonical lexer; the existing test-only role query
+  retains its separate contract. Out-of-line resolution remains owned by
+  existing `FileFacts::role_provenance`, not by the admission consumer.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.21`, sharded `0.27`,
   compact `0.27` invalidate stale false credit. File-fact `1.14` is unchanged;
   the query reads existing indexed source, so no file-fact migration is needed.

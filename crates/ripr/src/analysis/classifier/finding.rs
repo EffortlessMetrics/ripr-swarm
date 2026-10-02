@@ -52,7 +52,7 @@ pub(in crate::analysis) fn build_finding(
         && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
         && !context.owner_assertion_shaped
     {
-        Some("Establish that the assertion runs on the test's executed path and resolves to the intended standard macro, then check the changed returned value.".to_string())
+        Some("Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string())
     } else {
         recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
     };

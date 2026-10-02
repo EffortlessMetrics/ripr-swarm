@@ -16,7 +16,9 @@ Start here:
   Changed behavior: input * 3
   Missing discriminator (1 of 4): No detected assertion observes the changed value, error, field, or effect
   Related test: tests/weight_tests.rs:4 checks_weight
-  Next step: Establish that the assertion runs on the test's executed path and resolves to the intended standard macro, then check the changed returned value.
+  Next step: Establish that the test is collected and enabled, that the assertion runs on its
+    executed path, and that it resolves to the intended standard macro, then check the changed
+    returned value.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach weight: checks_weight
     - infection yes: Reachable tests can plausibly activate this changed behavior

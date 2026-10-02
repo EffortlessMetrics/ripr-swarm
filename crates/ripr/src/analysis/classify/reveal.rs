@@ -410,7 +410,9 @@ fn analyze_related_assertions(
         let cross_package_defeats_owner = match_context
             .owner_callee
             .is_some_and(|callee| cross_package_name_defeats(test, callee));
-        let assertion_count = assertions.len();
+        // Refusing credit must not manufacture the singleton-test fallback
+        // for an otherwise unrelated surviving oracle.
+        let assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
             // #4478: whether this `assert_eq!` pins the owner's whole return
