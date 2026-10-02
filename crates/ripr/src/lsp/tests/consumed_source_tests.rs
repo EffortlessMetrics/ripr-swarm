@@ -530,7 +530,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
 
 #[cfg(unix)]
 struct ConsumedSourceAliasFixture {
-    _temp: TempLspRoot,
+    temp: TempLspRoot,
     root: PathBuf,
     alias: PathBuf,
     file: PathBuf,
@@ -552,7 +552,7 @@ fn consumed_source_alias_fixture(name: &str) -> Result<ConsumedSourceAliasFixtur
         .map_err(|error| format!("link alias fixture: {error}"))?;
     let file = root.join("src/lib.rs");
     Ok(ConsumedSourceAliasFixture {
-        _temp: temp,
+        temp,
         root,
         alias,
         file,
@@ -621,7 +621,7 @@ fn admitted_root_aliases_resolve_captured_identity_and_preserve_refusals() -> Re
 #[test]
 fn consumed_identity_rejects_outside_and_symlink_escaped_documents() -> Result<(), String> {
     let fixture = consumed_source_alias_fixture("consumed-root-refusal")?;
-    let outside = fixture._temp.path().join("outside.rs");
+    let outside = fixture.temp.path().join("outside.rs");
     fs::write(&outside, SOURCE_A).map_err(|error| format!("write outside control: {error}"))?;
     let escaped = fixture.root.join("src/escaped.rs");
     std::os::unix::fs::symlink(&outside, &escaped)
@@ -831,7 +831,7 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
             return Err("exact URI lost precedence to a different stored alias".into());
         }
     }
-    let second_alias = fixture._temp.path().join("second-alias");
+    let second_alias = fixture.temp.path().join("second-alias");
     std::os::unix::fs::symlink(&fixture.root, &second_alias)
         .map_err(|error| format!("create second root alias: {error}"))?;
     let ambiguous_uri = file_uri_for_path(&second_alias.join("src/lib.rs"))?;
@@ -844,7 +844,7 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
             "ambiguous root-relative fallback selected an arbitrary stored identity".into(),
         );
     }
-    let outside_uri = file_uri_for_path(&fixture._temp.path().join("outside/src/lib.rs"))?;
+    let outside_uri = file_uri_for_path(&fixture.temp.path().join("outside/src/lib.rs"))?;
     if snapshot.diagnostics_for_uri(&outside_uri).is_some() {
         return Err("outside-root request borrowed a stored relative identity".into());
     }
