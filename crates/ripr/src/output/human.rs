@@ -1563,9 +1563,7 @@ mod tests {
         lower.probe.location = SourceLocation::new("src/lower.rs", 1, 1);
 
         let rendered = render(&bounded_output_with_findings(vec![
-            selected,
-            unresolved,
-            lower,
+            selected, unresolved, lower,
         ]));
 
         assert!(
@@ -1595,9 +1593,7 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(vec![selected, lower]));
 
         assert!(
-            rendered.contains(
-                "  1 lower-priority finding(s) omitted from default human output.\n"
-            ),
+            rendered.contains("  1 lower-priority finding(s) omitted from default human output.\n"),
             "{rendered}"
         );
     }
