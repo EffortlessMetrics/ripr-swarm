@@ -5,15 +5,6 @@ use serde_json::{Value, json};
 pub(super) const STATUS_TOOL_NAME: &str = "ripr_workspace_status";
 pub(super) const STATUS_RESOURCE_URI: &str = "ripr://workspace/status";
 
-pub(super) const CURRENT_PROTOCOL_VERSION: &str = "2026-07-28";
-pub(super) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
-    "2024-11-05",
-    "2025-03-26",
-    "2025-06-18",
-    "2025-11-25",
-    CURRENT_PROTOCOL_VERSION,
-];
-
 /// What a host shows a model before any call. Cold agents read the earlier
 /// text ("bounded, read-only static workspace status") as the whole of RIPR
 /// and stopped, or guessed the CLI from `ripr --help`. Name what RIPR answers,
@@ -21,84 +12,14 @@ pub(super) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
 /// a route is not invoking it: the server still executes nothing (ADR 0022).
 pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server only reports whether the workspace root is usable (tool `ripr_workspace_status`); it does not analyze the diff, edit source, or run tests or mutation. To analyze, run the ripr CLI in the repository: `ripr check --format json` names each changed-behavior gap and its missing test input; `ripr pilot --root .` lists repair seam IDs with the exact `ripr agent repair` commands; `ripr agent status --root . --json` gives the next command in a repair loop.";
 
-const STATUS_TOOL_DESCRIPTION: &str = "Report whether the RIPR workspace root is usable: root validation, repository markers, configuration presence, and the authority this server declares. Read-only; it does not run analysis or load project-local provider configuration. It answers no gap question: after a `ready` result, run `ripr check --format json` in the repository for findings.";
+const STATUS_TOOL_DESCRIPTION: &str = "Report whether the RIPR workspace root is usable. The document contains only repository-root discovery state (validated or unavailable, with repository markers and any root error code), configuration presence, and the launch-trust and authority facts this server declares (project_config_trust = not_established, authority = none). `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This server exposes no analysis findings, gap records, or exposure evidence over MCP; it does not run analysis or load project-local provider configuration. For findings, run `ripr check --format json` in the repository, or use editor diagnostics from the ripr language server.";
 
-pub(super) const ERROR_RESOURCE_NOT_FOUND: i64 = -32002;
-pub(super) const ERROR_UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
-pub(super) const ERROR_INVALID_REQUEST: i64 = -32600;
-pub(super) const ERROR_METHOD_NOT_FOUND: i64 = -32601;
-pub(super) const ERROR_INVALID_PARAMS: i64 = -32602;
-pub(super) const ERROR_INTERNAL: i64 = -32603;
-pub(super) const ERROR_PARSE: i64 = -32700;
-
-pub(super) fn is_supported_protocol_version(value: &str) -> bool {
-    SUPPORTED_PROTOCOL_VERSIONS.contains(&value)
+pub(super) fn tools_list_result() -> Value {
+    json!({"tools": [status_tool_descriptor()]})
 }
 
-pub(super) fn is_current_protocol(value: &str) -> bool {
-    value >= CURRENT_PROTOCOL_VERSION
-}
-
-pub(super) fn server_capabilities() -> Value {
-    json!({
-        "resources": {
-            "subscribe": false,
-            "listChanged": false
-        },
-        "tools": {
-            "listChanged": false
-        }
-    })
-}
-
-pub(super) fn initialize_result(protocol_version: &str) -> Value {
-    json!({
-        "protocolVersion": protocol_version,
-        "capabilities": server_capabilities(),
-        "serverInfo": server_info(),
-        "instructions": INSTRUCTIONS
-    })
-}
-
-pub(super) fn discover_result() -> Value {
-    json!({
-        "resultType": "complete",
-        "supportedVersions": SUPPORTED_PROTOCOL_VERSIONS,
-        "capabilities": server_capabilities(),
-        "ttlMs": 0,
-        "cacheScope": "private",
-        "instructions": INSTRUCTIONS,
-        "_meta": {
-            "io.modelcontextprotocol/serverInfo": server_info()
-        }
-    })
-}
-
-pub(super) fn tools_list_result(current_protocol: bool) -> Value {
-    with_result_type(
-        json!({
-            "tools": [status_tool_descriptor()]
-        }),
-        current_protocol,
-    )
-}
-
-pub(super) fn resources_list_result(current_protocol: bool) -> Value {
-    with_result_type(
-        json!({
-            "resources": [status_resource_descriptor()]
-        }),
-        current_protocol,
-    )
-}
-
-pub(super) fn resource_templates_list_result(current_protocol: bool) -> Value {
-    with_result_type(
-        json!({
-            "resourceTemplates": []
-        }),
-        current_protocol,
-    )
+pub(super) fn resources_list_result() -> Value {
+    json!({"resources": [status_resource_descriptor()]})
 }
 
 #[derive(Serialize)]
@@ -126,7 +47,6 @@ pub(super) fn status_tool_result(
     status: &WorkspaceStatus,
     max_message_bytes: usize,
     max_response_bytes: usize,
-    current_protocol: bool,
 ) -> Result<Value, String> {
     let document = status_document(status, max_message_bytes, max_response_bytes);
     let structured = serde_json::to_value(&document)
@@ -143,14 +63,11 @@ pub(super) fn status_tool_result(
             "text": recovery
         }));
     }
-    Ok(with_result_type(
-        json!({
-            "content": content,
-            "structuredContent": structured,
-            "isError": false
-        }),
-        current_protocol,
-    ))
+    Ok(json!({
+        "content": content,
+        "structuredContent": structured,
+        "isError": false
+    }))
 }
 
 /// One sentence a model can act on when the root is unusable. The status
@@ -175,21 +92,17 @@ pub(super) fn status_resource_result(
     status: &WorkspaceStatus,
     max_message_bytes: usize,
     max_response_bytes: usize,
-    current_protocol: bool,
 ) -> Result<Value, String> {
     let document = status_document(status, max_message_bytes, max_response_bytes);
     let text = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("render workspace status: {error}"))?;
-    Ok(with_result_type(
-        json!({
-            "contents": [{
-                "uri": STATUS_RESOURCE_URI,
-                "mimeType": "application/json",
-                "text": text
-            }]
-        }),
-        current_protocol,
-    ))
+    Ok(json!({
+        "contents": [{
+            "uri": STATUS_RESOURCE_URI,
+            "mimeType": "application/json",
+            "text": text
+        }]
+    }))
 }
 
 fn status_document(
@@ -210,26 +123,6 @@ fn status_document(
             },
         },
     }
-}
-
-pub(super) fn empty_result(current_protocol: bool) -> Value {
-    with_result_type(json!({}), current_protocol)
-}
-
-fn with_result_type(mut result: Value, current_protocol: bool) -> Value {
-    if current_protocol && let Some(object) = result.as_object_mut() {
-        object
-            .entry("resultType".to_string())
-            .or_insert_with(|| Value::String("complete".to_string()));
-    }
-    result
-}
-
-fn server_info() -> Value {
-    json!({
-        "name": "ripr",
-        "version": env!("CARGO_PKG_VERSION")
-    })
 }
 
 fn status_tool_descriptor() -> Value {
@@ -258,7 +151,7 @@ fn status_resource_descriptor() -> Value {
         "uri": STATUS_RESOURCE_URI,
         "name": "ripr-workspace-status",
         "title": "RIPR workspace status",
-        "description": "Bounded, read-only workspace discovery and authority status.",
+        "description": "Bounded, read-only workspace discovery and authority status: repository-root discovery state, configuration presence, and launch-trust and authority facts only. No analysis findings, gap records, or exposure evidence are exposed over MCP; run `ripr check --format json` for findings.",
         "mimeType": "application/json"
     })
 }
@@ -435,4 +328,68 @@ fn status_output_schema() -> Value {
         "required": ["schema_version", "workspace", "mcp"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn json_str<'a>(value: &'a Value, pointer: &str) -> Result<&'a str, String> {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{pointer} missing or not a string"))
+    }
+
+    #[test]
+    fn status_tool_description_names_payload_scope_and_analysis_boundary() -> Result<(), String> {
+        // #5002: the tool description is the only thing an LLM host sees
+        // before spending a call. It must state positively what the document
+        // contains, disavow the `ready`-means-analyzed misreading, and name
+        // the real evidence route — or a future edit can silently restore the
+        // exclusion-only framing.
+        let tools = tools_list_result();
+        if tools.pointer("/tools/0/name").and_then(Value::as_str) != Some(STATUS_TOOL_NAME) {
+            return Err(format!("unexpected tools/list payload: {tools}"));
+        }
+        let description = json_str(&tools, "/tools/0/description")?;
+        for required in [
+            "repository-root discovery state",
+            "project_config_trust = not_established",
+            "authority = none",
+            "not that analysis ran or that no issues were found",
+            "exposes no analysis findings, gap records, or exposure evidence over MCP",
+            "ripr check --format json",
+            "editor diagnostics",
+        ] {
+            if !description.contains(required) {
+                return Err(format!(
+                    "status tool description lost payload boundary wording {required:?}: {description}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn status_resource_description_states_no_analysis_evidence() -> Result<(), String> {
+        let resources = resources_list_result();
+        let uri = json_str(&resources, "/resources/0/uri")?;
+        if uri != STATUS_RESOURCE_URI {
+            return Err(format!("unexpected resources/list payload: {resources}"));
+        }
+        let description = json_str(&resources, "/resources/0/description")?;
+        for required in [
+            "repository-root discovery state",
+            "No analysis findings, gap records, or exposure evidence are exposed over MCP",
+            "ripr check --format json",
+        ] {
+            if !description.contains(required) {
+                return Err(format!(
+                    "status resource description lost boundary wording {required:?}: {description}"
+                ));
+            }
+        }
+        Ok(())
+    }
 }

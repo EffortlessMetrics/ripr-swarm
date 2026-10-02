@@ -10,8 +10,14 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.1";
+
+/// Named limitation category for a review-guidance dispatch refused at the
+/// memory ceiling (#4388). Consumers match this category — not error prose —
+/// when distinguishing an instrument-limited pass from a real gap.
+pub(crate) const REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY: &str = "review_guidance_oversized";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ReviewCommentsReceiptLimitation {
@@ -44,10 +50,31 @@ impl ReviewCommentsRunReceipt {
         head: &str,
         timeout_ms: u64,
         expected_artifacts: &[String],
+        revision_budget: Option<Duration>,
     ) -> Self {
         let root_identity = canonical_root_identity(root);
-        let base_sha = resolve_revision(root, base);
-        let head_sha = resolve_revision(root, head);
+        // #4363 review: the two revision probes must not each block for the
+        // fixed one-minute ceiling when the caller configured a shorter
+        // review-comments budget — the CLI checks its `--timeout-ms`
+        // deadline only after this constructor returns, so two probes at
+        // the fixed ceiling could block 120s against a 1s budget. Each
+        // probe is capped at the remaining budget (still bounded by the
+        // fixed ceiling), and the remaining time is re-derived between the
+        // two probes so the pair cannot outblock the caller's budget.
+        let resolve_started = std::time::Instant::now();
+        let remaining = |spent: std::time::Duration| match revision_budget {
+            Some(budget) => {
+                let remaining = budget.saturating_sub(spent);
+                if remaining.is_zero() {
+                    None
+                } else {
+                    Some(remaining.min(RECEIPT_REVISION_DEADLINE))
+                }
+            }
+            None => Some(RECEIPT_REVISION_DEADLINE),
+        };
+        let base_sha = resolve_revision(root, base, remaining(resolve_started.elapsed()));
+        let head_sha = resolve_revision(root, head, remaining(resolve_started.elapsed()));
         let reusable_cache_identity = reusable_cache_identity(&root_identity, &base_sha, &head_sha);
         Self {
             schema_version: REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
@@ -103,6 +130,27 @@ impl ReviewCommentsRunReceipt {
         };
         self.limitations.push(ReviewCommentsReceiptLimitation {
             category: "analysis_failed".to_string(),
+            repair_route,
+        });
+        self.terminalize_non_claims();
+    }
+
+    /// Typed state for a dispatch refused at the guidance-payload memory
+    /// ceiling (#4388). The run is not truncated and does not build either
+    /// source index after refusal; diff capture precedes this admission.
+    /// The named limitation lets a consumer classify incomplete guidance. Status stays `failed` (the receipt
+    /// vocabulary has no third terminal failure kind), and the limitation
+    /// category carries the classification.
+    pub fn oversized(&mut self, active_phase: &str, error: &str) {
+        self.status = "failed";
+        self.active_phase = Some(active_phase.to_string());
+        let repair_route = if error.trim().is_empty() {
+            "raise the review-guidance ceiling environment variables".to_string()
+        } else {
+            error.to_string()
+        };
+        self.limitations.push(ReviewCommentsReceiptLimitation {
+            category: REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY.to_string(),
             repair_route,
         });
         self.terminalize_non_claims();
@@ -212,13 +260,30 @@ fn reusable_cache_identity(root: &str, base: &str, head: &str) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
-fn resolve_revision(root: &Path, revision: &str) -> String {
+/// Cooperative ceiling for each receipt revision probe (#2303, #4363). The
+/// caller's remaining `--timeout-ms` budget further caps it (#4363 review).
+const RECEIPT_REVISION_DEADLINE: Duration = Duration::from_mins(1);
+
+/// Cooperative deadline for receipt revision resolution (#2303, #4363). The
+/// receipt flow must not block past the deadline on a hung git; an unresolved
+/// revision degrades to the raw revision string exactly as any other
+/// `rev-parse` failure always has. The caller's remaining `--timeout-ms`
+/// budget further caps each probe (#4363 review); `None` means the budget is
+/// exhausted or the caller declared none, and the probe is skipped entirely.
+fn resolve_revision(root: &Path, revision: &str, deadline: Option<Duration>) -> String {
     let object = format!("{revision}^{{commit}}");
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--verify", &object])
-        .output();
+    // `current_dir(root)` in the shared helper is equivalent to the previous
+    // `git -C root` form for every root git could resolve; a missing root now
+    // fails the spawn instead of exiting non-zero, which lands in the same
+    // silent fallback.
+    let output = match deadline {
+        Some(deadline) => crate::git::run_git_output_with_deadline(
+            root,
+            &["rev-parse", "--verify", &object],
+            Some(deadline),
+        ),
+        None => Err("revision resolution budget exhausted (not spawned)".to_string()),
+    };
     output
         .ok()
         .filter(|output| output.status.success())
@@ -249,7 +314,98 @@ mod tests {
             "HEAD",
             30_000,
             &["comments.json".to_string()],
+            None,
         )
+    }
+
+    /// A real single-commit repository, so `HEAD` actually resolves and a
+    /// raw-revision fallback is distinguishable from a resolved SHA.
+    fn single_commit_repo(label: &str) -> Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-receipt-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).map_err(|err| format!("create repo dir failed: {err}"))?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let output =
+                crate::git::run_git_output_with_deadline(&dir, args, Some(Duration::from_secs(30)))
+                    .map_err(|err| format!("run git {args:?} failed: {err}"))?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "git {args:?} failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ))
+            }
+        };
+        git(&["init", "-q"])?;
+        fs::write(dir.join("f.txt"), "value\n")
+            .map_err(|err| format!("write fixture file failed: {err}"))?;
+        git(&["add", "."])?;
+        git(&[
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "user.email=ripr-test@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ])?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn receipt_revision_probes_respect_the_caller_budget() -> Result<(), String> {
+        // #4363 review: each revision probe is capped at the caller's
+        // remaining `--timeout-ms` budget, and an exhausted budget skips
+        // the probe entirely (the raw-revision fallback, exactly like any
+        // other rev-parse failure) — a 1s budget must never block for the
+        // fixed one-minute ceiling twice.
+        let dir = single_commit_repo("budget")?;
+        let artifacts = vec!["comments.json".to_string()];
+        let resolved = ReviewCommentsRunReceipt::new(
+            &dir,
+            "HEAD",
+            "HEAD",
+            30_000,
+            &artifacts,
+            Some(Duration::from_secs(30)),
+        );
+        if resolved.base_sha == "HEAD" || resolved.base_sha.len() != 40 {
+            return Err(format!(
+                "a healthy budget must resolve HEAD to a SHA, got {:?}",
+                resolved.base_sha
+            ));
+        }
+        let skipped = ReviewCommentsRunReceipt::new(
+            &dir,
+            "HEAD",
+            "HEAD",
+            30_000,
+            &artifacts,
+            Some(Duration::ZERO),
+        );
+        if skipped.base_sha != "HEAD" || skipped.head_sha != "HEAD" {
+            return Err(format!(
+                "an exhausted budget must skip both probes and fall back to the raw revision, got base={:?} head={:?}",
+                skipped.base_sha, skipped.head_sha
+            ));
+        }
+        let ceiling = ReviewCommentsRunReceipt::new(&dir, "HEAD", "HEAD", 30_000, &artifacts, None);
+        if ceiling.base_sha != resolved.base_sha {
+            return Err(format!(
+                "the no-budget fixed-ceiling path must still resolve, got {:?}",
+                ceiling.base_sha
+            ));
+        }
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]
@@ -353,6 +509,44 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn oversized_records_named_limitation_while_staying_in_the_receipt_vocabulary() {
+        // #4388: a dispatch refused at the guidance-payload memory ceiling
+        // stays in the contract-valid status vocabulary (`failed`) but its
+        // limitation carries the named category consumers classify on.
+        let mut oversized = sample_receipt();
+        oversized.oversized(
+            "canonical_analysis",
+            "review_guidance_oversized: 3 closure input files exceed the review-guidance \
+             ceiling (RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES=2); the guidance pass was not run \
+             to protect runner memory.",
+        );
+        assert_eq!(oversized.status, "failed");
+        assert_eq!(
+            oversized.active_phase.as_deref(),
+            Some("canonical_analysis")
+        );
+        assert_eq!(
+            oversized.limitations[0].category,
+            REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY
+        );
+        assert!(
+            oversized.limitations[0]
+                .repair_route
+                .contains("RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES"),
+            "repair route must carry the named ceiling error: {:?}",
+            oversized.limitations[0].repair_route
+        );
+        assert_eq!(
+            oversized.non_claims,
+            vec![
+                "static review guidance is advisory evidence only",
+                "no complete route inventory",
+                "no all-clear",
+            ]
+        );
     }
 
     #[test]

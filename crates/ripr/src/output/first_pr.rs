@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "0.1";
 const DEFAULT_ROOT: &str = ".";
@@ -129,17 +129,27 @@ impl ProofPathLabels {
     }
 }
 
+mod freshness;
 mod options;
 mod preflight;
 mod rendering;
 mod validation;
 
+use freshness::{producing_ripr_version, start_here_packet_version_freshness};
+pub(crate) use freshness::{start_here_json_version_freshness, start_here_version_stale_detail};
 pub(crate) use options::FIRST_PR_HELP;
 use options::{FirstPrOptions, parse_options, print_help};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
 use rendering::markdown_code_or_text;
 use rendering::{render_start_here_markdown, start_here_cli_summary};
+/// Test-only path to first-pr's own start-here renderer, so another
+/// surface's tests can pin pairing parity against the real producer
+/// (#4950) instead of restating its expected lines.
+#[cfg(test)]
+pub(crate) fn first_pr_start_here_markdown(packet: &Value) -> String {
+    render_start_here_markdown(packet)
+}
 #[cfg(test)]
 use validation::validate_selected_state;
 use validation::validate_start_here_packet;
@@ -294,6 +304,20 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         check_packet_paths(repo, &root, root_recovery.is_some(), None, options)?;
     let preflight_recovery = root_recovery.or_else(|| git_preflight_recovery(&root, options));
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
+    let out_dir = json_path.parent().ok_or_else(|| {
+        format!(
+            "first-pr start-here packet {} is missing a parent directory",
+            json_path.display()
+        )
+    })?;
+    if let Some(detail) =
+        start_here_version_stale_detail(&start_here_packet_version_freshness(&packet))
+    {
+        return Err(format!(
+            "first-pr start-here packet is {detail}; rerun `{}` before relying on it",
+            first_pr_write_command(options, out_dir, false)
+        ));
+    }
     validate_current_preflight_recovery(&packet, &root, options, preflight_recovery)?;
     print!(
         "{}",
@@ -541,6 +565,7 @@ fn render_start_here_packet_with_selection(
         "schema_version": SCHEMA_VERSION,
         "tool": "ripr",
         "kind": "first_pr_start_here",
+        "ripr_version": producing_ripr_version(),
         "status": selection.status(),
         "posture": "advisory",
         "root": options.root,
@@ -582,7 +607,7 @@ fn materialize_check_output_gap_ledger(
             check_output_path.display()
         )
     })?;
-    let report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+    let mut report = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
         crate::output::gap_decision_ledger::GapDecisionLedgerInput {
             root: options.root.clone(),
             generated_at: "first-pr-check-output".to_string(),
@@ -592,6 +617,10 @@ fn materialize_check_output_gap_ledger(
             records_json: Ok(contents),
         },
     );
+    crate::output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
+        &mut report,
+        root,
+    )?;
     let json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let markdown = crate::output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     let gap_ledger_path = resolve_path(root, &options.gap_ledger);
@@ -645,13 +674,32 @@ impl CommandOutput {
     }
 }
 
+/// Cooperative deadline for the first-pr git probes (#4363): revision,
+/// worktree and ref questions that must not pin the command on a hung git.
+const FIRST_PR_GIT_DEADLINE: Duration = Duration::from_mins(1);
+
+/// Deadline for the diff-range probes, which walk the whole range and can
+/// take far longer than a revision probe on a large pull request.
+const FIRST_PR_GIT_DIFF_DEADLINE: Duration = Duration::from_mins(5);
+
 fn run_git(root: &Path, args: &[String]) -> Result<CommandOutput, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .map_err(|err| err.to_string())?;
+    let deadline = if args.first().map(String::as_str) == Some("diff") {
+        FIRST_PR_GIT_DIFF_DEADLINE
+    } else {
+        FIRST_PR_GIT_DEADLINE
+    };
+    run_git_within(root, args, deadline)
+}
+
+/// [`run_git`] with the deadline as a parameter, so a test can prove the
+/// deadline reaches the shared git runner.
+fn run_git_within(
+    root: &Path,
+    args: &[String],
+    deadline: Duration,
+) -> Result<CommandOutput, String> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = crate::git::run_git_output_with_deadline(root, &args, Some(deadline))?;
     Ok(CommandOutput {
         code: output.status.code(),
         stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
@@ -687,6 +735,28 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
     if !root.join("Cargo.toml").is_file() {
         if detect_python_project(root) || detect_typescript_project(root) {
             return None;
+        }
+        // A Go or Java repository is the right root; sending it to `--root`
+        // and doctor loops. Name the languages ripr cannot analyze instead.
+        // Rust or preview source below the root (a nested crate) means the
+        // root really is wrong, so that case keeps `wrong_root`.
+        let analyzable_below = !crate::analysis::workspace_rust_files(root).is_empty()
+            || !crate::analysis::workspace_preview_language_files(root).is_empty();
+        let unanalyzed = crate::analysis::workspace_unanalyzed_source_languages(root);
+        if !analyzable_below && !unanalyzed.is_empty() {
+            let found = unanalyzed
+                .iter()
+                .map(|(language, count)| format!("{language} ({count} file(s))"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(Selection::no_action(
+                "no_action",
+                format!(
+                    "The first-pr root `{}` has {found} source and no Rust, Python or TypeScript project. ripr does not analyze these languages, so there is no gap to assign; review their changes with their own tests.",
+                    options.root
+                ),
+                0,
+            ));
         }
         return Some(Selection::blocked(
             "wrong_root",
@@ -2489,15 +2559,12 @@ fn git_diff_range_valid(root: &Path, base: &str, head: &str) -> Result<(), Strin
     // still passes `-z` so the grammar is unambiguous and no C-quoted
     // rendering is ever produced on this route.
     let range = format!("{base}...{head}");
-    let output = Command::new("git")
-        .arg("diff")
-        .arg("--name-only")
-        .arg("-z")
-        .arg("--no-ext-diff")
-        .arg(&range)
-        .current_dir(root)
-        .output()
-        .map_err(|err| format!("failed to run git diff: {err}"))?;
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["diff", "--name-only", "-z", "--no-ext-diff", &range],
+        Some(FIRST_PR_GIT_DIFF_DEADLINE),
+    )
+    .map_err(|err| format!("failed to run git diff: {err}"))?;
     if output.status.success() {
         return Ok(());
     }
@@ -2518,14 +2585,17 @@ fn git_success_with_ceiling(
     args: &[&str],
     ceiling: Option<&Path>,
 ) -> Result<bool, String> {
-    let mut cmd = Command::new("git");
-    cmd.args(args).current_dir(root);
-    if let Some(c) = ceiling {
-        cmd.env("GIT_CEILING_DIRECTORIES", c);
-    }
-    let output = cmd
-        .output()
-        .map_err(|err| format!("failed to run git: {err}"))?;
+    let envs: Vec<(&str, &std::ffi::OsStr)> = ceiling
+        .map(|c| ("GIT_CEILING_DIRECTORIES", c.as_os_str()))
+        .into_iter()
+        .collect();
+    let output = crate::git::run_git_output_with_deadline_and_env(
+        root,
+        args,
+        &envs,
+        Some(FIRST_PR_GIT_DEADLINE),
+    )
+    .map_err(|err| format!("failed to run git: {err}"))?;
     Ok(output.status.success())
 }
 
@@ -3595,6 +3665,52 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_language_root_is_no_action_not_wrong_root() -> Result<(), String> {
+        // A Go repository is the right root: sending it to `--root` and
+        // doctor was a loop with no exit.
+        let repo = temp_repo("first-pr-go-root")?;
+        let go_root = repo.join("go-service");
+        fs::create_dir_all(go_root.join("pkg"))
+            .map_err(|err| format!("mkdir {}: {err}", go_root.display()))?;
+        fs::write(go_root.join("go.mod"), "module example.com/svc\n")
+            .map_err(|err| format!("write go.mod: {err}"))?;
+        fs::write(go_root.join("pkg/calc.go"), "package pkg\n")
+            .map_err(|err| format!("write calc.go: {err}"))?;
+        let options = FirstPrOptions {
+            root: "go-service".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert_eq!(
+            packet["selected"]["output_state"], "no_actionable_gap",
+            "{packet}"
+        );
+        let text = packet.to_string();
+        assert!(text.contains("Go (1 file(s))"), "{text}");
+        assert!(!text.contains("Pass the repository root"), "{text}");
+
+        // A nested Cargo crate below the Go root means `--root` should point
+        // at that crate, so the recovery stays `wrong_root`.
+        let nested = go_root.join("rust-core");
+        fs::create_dir_all(nested.join("src"))
+            .map_err(|err| format!("mkdir {}: {err}", nested.display()))?;
+        fs::write(
+            nested.join("Cargo.toml"),
+            "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write nested Cargo.toml: {err}"))?;
+        fs::write(nested.join("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")
+            .map_err(|err| format!("write nested lib.rs: {err}"))?;
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "blocked", "{packet}");
+        assert_eq!(packet["selected"]["state"], "wrong_root", "{packet}");
+        cleanup(&repo)
+    }
+
+    #[test]
     fn non_cargo_root_writes_workspace_recovery_packet_to_invocation_root() -> Result<(), String> {
         let repo = temp_repo("first-pr-not-cargo-root")?;
         let non_workspace = repo.join("not-workspace");
@@ -3689,6 +3805,82 @@ mod tests {
         assert!(
             err.contains("stale for current root/git preflight"),
             "unexpected check error: {err}"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn write_first_pr_records_producing_ripr_version() -> Result<(), String> {
+        let repo = temp_repo("first-pr-records-version")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["ripr_version"], producing_ripr_version());
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn check_first_pr_rejects_missing_ripr_version() -> Result<(), String> {
+        let repo = temp_repo("first-pr-check-missing-version")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let json_path = repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON);
+        let mut packet = read_packet(&json_path)?;
+        packet
+            .as_object_mut()
+            .ok_or_else(|| "packet is not an object".to_string())?
+            .remove("ripr_version");
+        write_json(&json_path, packet)?;
+        let err = match check_first_pr(&repo, &options) {
+            Ok(()) => {
+                return Err("check mode accepted a packet with no ripr_version".to_string());
+            }
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("stale_evidence") && err.contains("missing ripr_version"),
+            "unexpected check error: {err}"
+        );
+        assert!(
+            err.contains("ripr first-pr") && err.contains("before relying on it"),
+            "refresh command missing: {err}"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn check_first_pr_rejects_other_ripr_version() -> Result<(), String> {
+        let repo = temp_repo("first-pr-check-other-version")?;
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger_with_repairable_gap())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let json_path = repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON);
+        let mut packet = read_packet(&json_path)?;
+        let recorded = if producing_ripr_version() == "0.10.0" {
+            "0.9.0"
+        } else {
+            "0.10.0"
+        };
+        packet["ripr_version"] = json!(recorded);
+        write_json(&json_path, packet)?;
+        let err = match check_first_pr(&repo, &options) {
+            Ok(()) => {
+                return Err("check mode accepted a packet from another ripr".to_string());
+            }
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("stale_evidence")
+                && err.contains(recorded)
+                && err.contains(producing_ripr_version()),
+            "unexpected check error: {err}"
+        );
+        assert!(
+            err.contains("ripr first-pr") && err.contains("before relying on it"),
+            "refresh command missing: {err}"
         );
         cleanup(&repo)
     }
@@ -5697,6 +5889,16 @@ mod tests {
         // the checked-in expectation (placeholder rule: loop_commands).
         let mut normalized_json = actual_json;
         project_renderer_cwd(&mut normalized_json);
+        let recorded = normalized_json
+            .get("ripr_version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{case_id} packet missing ripr_version"))?;
+        assert_eq!(
+            recorded,
+            producing_ripr_version(),
+            "start-here JSON ripr_version in {case_id}"
+        );
+        normalized_json["ripr_version"] = json!("<ripr_version>");
         let normalized_md = project_cwd_text(&actual_md);
         let expected_json = read_packet(&case.join("expected/start-here.json"))?;
         assert_eq!(
@@ -5778,6 +5980,20 @@ mod tests {
         init_git_repo_with_initial_files(path, &["Cargo.toml"])
     }
 
+    #[test]
+    fn run_git_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn with the named
+        // timeout error; dropping the deadline would resolve the root.
+        let root = std::env::temp_dir();
+        let args = git_args(&["--version"]);
+        run_git_within(&root, &args, Duration::from_mins(1))
+            .map_err(|err| format!("control: {err}"))?;
+        match run_git_within(&root, &args, Duration::ZERO) {
+            Err(err) if crate::git::is_git_invocation_timeout(&err) => Ok(()),
+            other => Err(format!("zero deadline must be refused, got {other:?}")),
+        }
+    }
+
     fn init_git_repo_with_initial_files(path: &Path, files: &[&str]) -> Result<(), String> {
         run_git_setup(path, &["init"])?;
         run_git_setup(path, &["config", "user.email", "ripr@example.invalid"])?;
@@ -5790,7 +6006,7 @@ mod tests {
     }
 
     fn run_git_setup(path: &Path, args: &[&str]) -> Result<(), String> {
-        let output = Command::new("git")
+        let output = std::process::Command::new("git")
             .args(args)
             .current_dir(path)
             .output()

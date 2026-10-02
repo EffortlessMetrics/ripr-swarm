@@ -165,7 +165,9 @@ Semantics:
   drains piped stdout/stderr so a verbose child cannot deadlock against the
   wait, and kills + reaps the child on deadline expiry;
 - an expired deadline yields the named, matchable error
-  `git_invocation_timeout`; a zero deadline fails before spawning;
+  `git_invocation_timeout`; a zero deadline fails before spawning. The raw
+  error recognizer requires `git_invocation_timeout:` exactly, rejecting
+  bare, lookalike, whitespace-split, and wrapped prefixes;
 - a diff load that fails with the named timeout commits a LIMITED snapshot
   — zero findings plus one typed failed `diff` component outcome
   (`kind: git_invocation_timeout`, `findings_trustworthy: false`, recovery
@@ -410,7 +412,7 @@ then the recorded outcome stays superseded (first-cancel-wins).
   `session_value_sources_disclose_refresh_deadline_ms_origin`, and
   `effective_settings_eq_compares_refresh_deadline` — the seventh governed
   key.
-- `crates/ripr/src/analysis/language/rust.rs::tests::pre_cancelled_token_stops_the_diff_file_load_loop`
+- `crates/ripr/src/analysis/language/rust/mod.rs::tests::pre_cancelled_token_stops_the_diff_file_load_loop`
   and `pre_cancelled_token_stops_the_classify_loop` — the new cooperative
   checkpoints in the two uncovered analysis loops.
 - `crates/ripr/src/lsp/backend.rs::work_done_progress_guard_tests::deadline_expiry_drops_refresh_with_named_outcome_and_one_progress_end`
@@ -445,7 +447,7 @@ then the recorded outcome stays superseded (first-cancel-wins).
   progress-end mapping; `crates/ripr/src/lsp/refresh_scheduler.rs` — the
   `DeadlineExceeded` attempt outcome;
   `crates/ripr/src/lsp/progress.rs` — the "analysis deadline exceeded" end
-  message; `crates/ripr/src/analysis/language/rust.rs`,
+  message; `crates/ripr/src/analysis/language/rust/mod.rs`,
   `crates/ripr/src/analysis/workspace/discover.rs`, and
   `crates/ripr/src/analysis/seam_inventory.rs` — the new cooperative
   checkpoints; `editors/vscode/package.json` — the additive

@@ -35,10 +35,12 @@ Any off-the-shelf LSP client (Neovim, Helix, Eglot, etc.) that implements
 the base LSP specification.
 
 Consumes:
-- full document sync advertised as `{openClose: true, change: 1, save: true}`,
-  so every conforming client sends `textDocument/didSave` (saved content is
-  the analysis input; the bare numeric kind does not request save
-  notifications)
+- incremental document sync advertised as
+  `{openClose: true, change: 2, willSave: false, willSaveWaitUntil: false,
+  save: {includeText: false}}` (#1746), so every conforming client sends
+  `textDocument/didSave` (saved content is the analysis input; the options
+  form's `save` member requests save notifications and `includeText: false`
+  avoids resending the whole document on each save)
 - `MethodNotFound` (`-32601`, method named in `data`) for any unhandled
   request whose method starts with `$/`; unhandled `$/` notifications stay
   silent (LSP 3.17 "$ Notifications and Requests", #4456)
@@ -247,9 +249,9 @@ qualified as static analysis results; diagnostic codes and data remain stable.
 
 - `capabilities.rs` tests verify the capability advertisement shape
   (pull diagnostics, code action kinds, riprAgent capability).
-- `tests/lsp_lifecycle.rs::initialize_advertises_full_sync_with_save_notifications`
+- `tests/lsp_lifecycle.rs::initialize_advertises_incremental_sync_with_save_notifications`
   verifies over the real wire that the document-sync advertisement requests
-  `didSave`.
+  incremental changes and `didSave` without resending the document (#1746).
 - `tests/lsp_lifecycle.rs::dollar_request_is_answered_method_not_found`
   verifies over the real wire that a `$/` request gets `-32601` naming the
   method, while the same `$/` notification gets no response.
@@ -264,7 +266,12 @@ qualified as static analysis results; diagnostic codes and data remain stable.
   and the emitted-kinds ⊆ advertised-kinds parity invariant.
 - `action_contract.rs` tests verify the versioned data payload shape, the
   deterministic `action_id`, and the closed disabled-reason vocabulary
-  (#1892); `actions.rs` tests verify the fail-closed emit guard; further
+  (#1892); identity-law tests (#1932) prove `action_id` ignores title,
+  range, message, snapshot `input_identity`, evidence handles, client
+  capability, and disabled reason, trims/falls through canonical
+  identities, and that `parse_validated_action_data` round-trips the
+  retained production fingerprint and rejects a swapped sibling
+  `action_id`. `actions.rs` tests verify the fail-closed emit guard; further
   `tests.rs` tests verify the omit-vs-disabled policy both directions, the
   disabled-never-executes invariant across scenarios, the kind retention
   under `context.only`, and the named suppression reasons (`stale_snapshot`,
