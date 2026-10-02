@@ -14,6 +14,7 @@ pub(crate) use super::super::{
 pub(crate) use super::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route,
 };
+use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -140,6 +141,27 @@ impl LanguageAdapter for TypeScriptAdapter {
         _oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
     ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_read_limits(
+            options,
+            changed_files,
+            ts_file_read_limit(),
+            ts_workspace_read_budget(),
+        )
+    }
+}
+
+impl TypeScriptAdapter {
+    /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
+    /// with the read caps injected (mirrors
+    /// `PythonAdapter::analyze_diff_with_limits`: the trait method resolves
+    /// the environment, this entry point carries the bounds, so tests can
+    /// inject tiny caps without `set_var`, which edition 2024 forbids).
+    pub(in crate::analysis::language::typescript) fn analyze_diff_with_read_limits(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        file_read_limit: u64,
+        workspace_read_budget: u64,
+    ) -> Result<LanguageDiffResult, String> {
         // Directory-module resolution (#4546) and the tsconfig outDir
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
@@ -174,8 +196,8 @@ impl LanguageAdapter for TypeScriptAdapter {
         let workspace_read = read_workspace_sources_capped(
             &options.root,
             &workspace_files,
-            ts_file_read_limit(),
-            ts_workspace_read_budget(),
+            file_read_limit,
+            workspace_read_budget,
         );
         let source_cache = workspace_read.sources;
         // Normalized-key view of the cache so Phase 2 can look a changed
@@ -595,19 +617,18 @@ impl LanguageAdapter for TypeScriptAdapter {
         }
         // Capped-read bounds are named limitations, never silent skips. The
         // recovery names the env knobs so operators can raise the bounds.
-        limitations.extend(read_limits.iter().map(|limit| {
-            AnalysisLimitation::new(
-                AnalysisLimitationKind::LanguageScopeUnsupported,
-                AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::IncreaseConfiguredLimit,
-                    "Raise RIPR_TS_MAX_FILE_READ_BYTES and/or RIPR_TS_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.",
-                )?,
-            )
-            .with_path(limit.file.to_string_lossy())?
-            .with_affected_items(1)?
-            .with_detail(limit.reason.clone())
-        }).collect::<Result<Vec<_>, String>>()?);
+        // The disclosure itself is bounded (#5022): a stable-sorted sample
+        // of refused paths plus one summary entry carrying the true refused
+        // count, so a correctly-capped monorepo cannot emit one limitation
+        // per refused file (up to the 20,000-file discovery cap).
+        limitations.extend(bounded_read_limit_limitations(
+            "typescript",
+            read_limits
+                .iter()
+                .map(|limit| (normalized_path(&limit.file), limit.reason.clone()))
+                .collect(),
+            "Raise RIPR_TS_MAX_FILE_READ_BYTES and/or RIPR_TS_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.",
+        )?);
         // An over-limit tsconfig/jsconfig fail-closes the alias map; disclose
         // the size limit so the missing alias resolution is not silent.
         if let Some((file, err)) = alias_read_limit.filter(|(_, err)| err.is_size_limit()) {
@@ -710,7 +731,9 @@ impl LanguageAdapter for TypeScriptAdapter {
             rust_consumed_sources: Default::default(),
         })
     }
+}
 
+impl LanguageAdapter for TypeScriptAdapter {
     fn analyze_repo(
         &self,
         _options: &AnalysisOptions,
