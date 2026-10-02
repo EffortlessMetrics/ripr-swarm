@@ -111,7 +111,10 @@ fn clean_open_rust_file_is_indexed_without_seeding_findings() -> Result<(), Stri
     documents.open(quarantine_open_params(&uri, &source_a));
     fs::write(&path, SOURCE_B)
         .map_err(|error| format!("write later clean-path disk B: {error}"))?;
-    documents.change(quarantine_change_params(&uri, 2, SOURCE_B));
+    documents.change(
+        quarantine_change_params(&uri, 2, SOURCE_B),
+        &tower_lsp_server::ls_types::PositionEncodingKind::UTF16,
+    );
     let (pending, _) =
         documents.pending_analyzed_digests(root.path(), &warm.snapshot.rust_consumed_sources);
     if pending.get(&uri).and_then(Option::as_ref) != Some(&expected) {

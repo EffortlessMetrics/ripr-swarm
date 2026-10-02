@@ -18300,7 +18300,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // A rejected incremental change (position past the line end) disowns the
     // retained buffer and enters the fail-closed quarantine.
@@ -18362,7 +18362,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     {
         return Err("saved identity must stay the persisted bytes".to_string());
     }
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
