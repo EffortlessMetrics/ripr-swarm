@@ -637,9 +637,7 @@ mod tests {
             let request = test_request(2);
             tracker.begin(&request, AnalysisProgressPhase::Queued).await;
             tracker.transition_to_analyzing(2).await;
-            tracker
-                .end(2, AnalysisProgressEnd::Limited)
-                .await;
+            tracker.end(2, AnalysisProgressEnd::Limited).await;
 
             let events = sink.events();
             let token = "ripr-analysis-2".to_string();
