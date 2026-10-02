@@ -283,6 +283,7 @@ impl SeamSpec {
                         flow_sink: None,
                     })
                     .collect(),
+                new_test_target: None,
             },
             class: self.class,
         }
