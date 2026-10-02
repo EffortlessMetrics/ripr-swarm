@@ -402,7 +402,8 @@ First-run diagnosis (printed automatically):
     repository's own default branch). When git is not on PATH, the `!` git line
     names install git or `--diff PATH` / `--diff -`, and the recommended
     command is `ripr check --diff PATH`. Outside a Git work tree it names the
-    repository-free scan, and for a missing root it asks for `--root`.
+    repository-free scan, and a missing root is named in the recovery command
+    through its lossless spelling.
 
 Start-here next step:
   - open `target/ripr/reports/start-here.md` first when it exists

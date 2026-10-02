@@ -32,15 +32,12 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
     "! doctor checks failed; each `!` line above names the check and its fix\n";
 
 /// First command doctor prints after the checks. Git-backed routes are only
-/// recommended when the `tool_git` check actually passed (#4735). A root the
-/// checks could not even enter gets no command at all (#4531): a failing
-/// `root_directory` leaves every analyzed route unreachable, and a failing
-/// `git_repository` leaves the git-backed routes unusable there even though
-/// the git binary itself runs.
+/// recommended when the `tool_git` check actually passed (#4735). A root Git
+/// refuses gets the repository-free scan instead of a command that cannot run
+/// there (#4531); a missing root keeps a runnable recovery command naming its
+/// lossless root spelling (#5010), and is never probed for work-tree changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DoctorFirstCommand {
-    /// `root_directory` failed: name the `--root` repair instead of a command.
-    MissingRoot,
     /// `git_repository` failed while git itself runs: the repository-free scan
     /// is the only route that can run here.
     OutsideGit,
@@ -67,10 +64,12 @@ impl DoctorFirstCommand {
     }
 
     /// `resolve` for the diagnosed report. The check states decide before any
-    /// probe runs: a missing root (#4531) must not print a raw work-tree probe
-    /// failure, and a root Git refuses must not be sent to `ripr check`, which
-    /// cannot run there. A git binary that cannot run still outranks the
-    /// repository state (#4735), because `--diff PATH` does not need git.
+    /// probe runs: a missing root (#4531) must not be probed for work-tree
+    /// changes — the probe would print a raw git failure for a problem the
+    /// checks above already name — and a root Git refuses must not be sent to
+    /// `ripr check`, which cannot run there. A git binary that cannot run
+    /// still outranks the repository state (#4735), because `--diff PATH`
+    /// does not need git.
     pub(crate) fn resolve_for_report(
         report: &DoctorReport,
         dirty_worktree: impl FnOnce() -> bool,
@@ -82,7 +81,9 @@ impl DoctorFirstCommand {
                 .any(|check| check.name == name && check.status == DoctorCheckStatus::Pass)
         };
         if !passed("root_directory") {
-            Self::MissingRoot
+            // #5010 renders the lossless root spelling for recovery, so the
+            // route stays runnable; only the work-tree probe is withheld.
+            Self::resolve(git_tool_can_run(report), || false)
         } else if !git_tool_can_run(report) {
             Self::SavedDiff
         } else if !passed("git_repository") {
@@ -92,15 +93,15 @@ impl DoctorFirstCommand {
         }
     }
 
-    /// The runnable `ripr check` form, or `None` for the two state variants,
-    /// which recommend no command; `recommendation_lines` renders those
-    /// directly.
+    /// The runnable `ripr check` form, or `None` for the state variant, which
+    /// recommends no git-backed command; `recommendation_lines_for` renders
+    /// that directly.
     pub(crate) fn command_line(self) -> Option<&'static str> {
         match self {
             Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
             Self::Worktree => Some(Self::WORKTREE_LINE),
             Self::DefaultCheck => Some(Self::DEFAULT_LINE),
-            Self::MissingRoot | Self::OutsideGit => None,
+            Self::OutsideGit => None,
         }
     }
 
@@ -110,7 +111,7 @@ impl DoctorFirstCommand {
     /// Existing directories use filesystem resolution, matching diagnosis
     /// even when a root traverses a symlink before `..`. Unresolved paths
     /// keep an absolute, uncollapsed spelling for error-recovery guidance.
-    /// Empty for the state variants; render those through
+    /// Empty for the state variant; render that through
     /// `recommendation_lines_for`.
     pub(crate) fn command_line_for_root(self, root: &Path) -> Result<String, String> {
         use crate::agent::loop_commands::shell_arg;
@@ -130,16 +131,9 @@ impl DoctorFirstCommand {
 
     /// The full recommendation for `root`: the runnable variants render
     /// through the shared physical-root command line, and the #4531 state
-    /// variants render their own lines.
+    /// variant renders its own line.
     pub(crate) fn recommendation_lines_for(self, root: &Path) -> Vec<String> {
         match self {
-            Self::MissingRoot => {
-                vec![
-                    "- Recommended first command: none yet; pass `--root <path>` naming your \
-                     repository directory"
-                        .to_string(),
-                ]
-            }
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
                 // The repository-free scan is a runnable command, so its root
@@ -2746,11 +2740,6 @@ mod tests {
             Some(DoctorFirstCommand::SAVED_DIFF_LINE)
         );
         assert_eq!(
-            DoctorFirstCommand::MissingRoot.command_line(),
-            None,
-            "a missing root recommends no command"
-        );
-        assert_eq!(
             DoctorFirstCommand::OutsideGit.command_line(),
             None,
             "a refused repository recommends no git-backed command"
@@ -2846,18 +2835,46 @@ mod tests {
         Ok(())
     }
 
-    /// The #4531 report states decide before any probe runs, and a missing
-    /// git binary still outranks the repository state (#4735).
+    /// The report states decide before any probe runs, and a missing git
+    /// binary still outranks the repository state (#4735).
     #[test]
     fn doctor_first_command_report_states_decide_before_probes() {
+        // A missing root keeps a runnable recovery route (#5010) but is never
+        // probed for work-tree changes (#4531): the raw probe failure would
+        // only restate what the failing root_directory check already names.
         let mut probed = false;
+        let mut missing_root_gitless = DoctorReport::new(".");
+        missing_root_gitless.add_check(
+            "root_directory",
+            DoctorStatus::Fail,
+            Some("root directory does not exist".to_string()),
+        );
         assert_eq!(
-            DoctorFirstCommand::resolve_for_report(&DoctorReport::new("."), || {
+            DoctorFirstCommand::resolve_for_report(&missing_root_gitless, || {
                 probed = true;
                 true
             }),
-            DoctorFirstCommand::MissingRoot,
-            "no root_directory pass means no command, without probing the work tree"
+            DoctorFirstCommand::SavedDiff,
+            "a gitless host still routes the missing root to the --diff recovery"
+        );
+        let mut missing_root_git = DoctorReport::new(".");
+        missing_root_git.add_check(
+            "root_directory",
+            DoctorStatus::Fail,
+            Some("root directory does not exist".to_string()),
+        );
+        missing_root_git.add_check(
+            "tool_git",
+            DoctorStatus::Pass,
+            Some("git version 2.43.0".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&missing_root_git, || {
+                probed = true;
+                true
+            }),
+            DoctorFirstCommand::DefaultCheck,
+            "a missing root renders its lossless spelling without probing"
         );
         assert!(!probed, "a missing root must not probe the work tree");
 

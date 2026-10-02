@@ -10032,10 +10032,18 @@ fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -
     assert_failure(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // #5010 keeps a runnable recovery command for a missing root, naming its
+    // lossless physical spelling; #4531's residual is that cargo and rustc
+    // are skipped instead of blamed, and no raw work-tree probe failure is
+    // printed on stderr.
+    let physical = root.strip_prefix(r"\\?\").unwrap_or(&root).to_string();
     if !stdout.contains("- cargo check skipped: the root directory does not exist")
         || !stdout.contains("- rustc check skipped: the root directory does not exist")
         || stdout.contains("not available")
-        || !stdout.contains("- Recommended first command: none yet;")
+        || !stdout.contains(&format!(
+            "- Recommended first command: {}",
+            first_command_at(&physical, "")
+        ))
         || stderr.contains("working-tree change probe failed")
     {
         return Err(format!(
