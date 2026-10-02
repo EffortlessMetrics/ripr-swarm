@@ -378,8 +378,8 @@ to resolve match-arm execution or every other oracle family's provenance.
   availability reuses the canonical lexer; the existing test-only role query
   retains its separate contract. Out-of-line resolution remains owned by
   existing `FileFacts::role_provenance`, not by the admission consumer.
-- `crates/ripr/src/analysis/seam_cache.rs`: classified `1.21`, sharded `0.27`,
-  compact `0.27` invalidate stale false credit. File-fact `1.14` is unchanged;
+- `crates/ripr/src/analysis/seam_cache.rs`: classified `1.23`, sharded `0.29`,
+  compact `0.29` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
 
 ## Metrics
