@@ -212,8 +212,38 @@ rule only for an assertion whose context was admitted.
 - Human/JSON/agent findings disclose `rust_assertion_context_unestablished`
   and ask to establish execution and macro binding, rather than prescribe
   another equality assertion. No runtime outcome is imported into the
-  production classifier. Agent context has no scalar confidence field; it
-  carries the same No/No stages, zero-oracle relation and guidance.
+  production classifier. Agent context has no top-level scalar confidence
+  field; its gap witness carries `confidence.value: 0.79` with
+  `confidence.basis: static_only`, alongside the same No/No stages,
+  zero-oracle relation and guidance. Exposed controls have no gap witness.
+
+### Matched before/after observations
+
+The fourteen fixture inputs were replayed on retained analyzer `e729ca15`,
+the rejected narrow owner-pin-only candidate, and the shared-admission candidate.
+Every run produced one complete `return_value` finding. Each exact test also ran
+against the correct and deliberately wrong library; every correct-library test
+passed. Runtime outcomes remain independent of the static verdict.
+
+| Cases | Count | Old analyzer | Narrow pin-only candidate | Shared admission | Wrong-library runtime |
+|---|---:|---|---|---|---|
+| Direct and called closure, with/without token overlap | 4 | exposed, 1.00 | exposed, 1.00 | exposed, 1.00 | one failure per case |
+| Deferred/conditional/binding/macro negative controls without overlap | 8 | exposed, 1.00 | weakly_exposed, 0.92 | reachable_unrevealed, 0.79 | one pass per case |
+| Deferred closure with named-input token overlap | 1 | exposed, 1.00 | exposed, 1.00 | reachable_unrevealed, 0.79 | one pass |
+| No-assertion removal control | 1 | reachable_unrevealed, 0.79 | reachable_unrevealed, 0.79 | reachable_unrevealed, 0.79 | one pass |
+
+The full fixture scan changes five older guarded-result fixtures: conditional
+bare equality rows lose standalone return-value oracle credit. The dedicated
+`guarded_result_match` authority remains intact, including its positive control.
+Four fixture class outcomes are unchanged; `guarded_result_match_swallowed`'s
+return-value probe becomes unrevealed while its error-path probe stays weak.
+Separate family-filtered honesty cases pin exactly one return-value finding
+and exactly one error-path finding, preserving both distinct class contracts. In
+`guarded_result_match_fail_closed`, filtering also exposes an already extracted
+`let result = expect_response(..)` lexical `mock_expectation` row; that retained
+heuristic is not a newly established real mock, and does not change the stages
+or class. This is bounded admission, not a claim to resolve match-arm execution or every
+other oracle family's provenance.
 
 ## Non-Goals
 
