@@ -282,8 +282,7 @@ fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
             "return" | "break" | "continue" | "yield" | "?"
         )
     }) || tokens.windows(3).any(|tokens| {
-        (tokens[0].kind() == ra_ap_syntax::SyntaxKind::IDENT
-            || tokens[0].kind().is_keyword(ra_ap_syntax::Edition::CURRENT))
+        tokens[0].kind() == ra_ap_syntax::SyntaxKind::IDENT
             && tokens[1].text() == "!"
             && matches!(tokens[2].text(), "(" | "[" | "{")
     })

@@ -4614,10 +4614,8 @@ return Err(\"typed pin\".into());
             &probe.expression,
             &[(&test, RelationReason::DirectOwnerCall)],
             &[],
-            &ReturnOracleAdmission {
-                owner_return_pin: &|_, _| false,
-                assertion_admitted: &|_, _| true,
-            },
+            &|_, _| false,
+            &|_, _| true,
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,

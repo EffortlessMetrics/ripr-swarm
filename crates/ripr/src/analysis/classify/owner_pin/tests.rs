@@ -713,6 +713,7 @@ fn owner_pin_requires_an_executed_assertion_context() {
         "assert_eq!(weight(4), 12);",
         "{ assert_eq!(weight(4), 12); }",
         "assert!(!false); assert_eq!(weight(4), 12);",
+        "assert!(if !(false) { true } else { false }); assert_eq!(weight(4), 12);",
         "assert_eq!(weight(!0u32 & 4), 12);",
         "let check = || assert_eq!(weight(4), 12); check();",
         "let check = || { assert_eq!(weight(4), 12); }; check();",

@@ -270,6 +270,17 @@ rule only for an assertion whose context was admitted.
   and assertions outside the test body; by-value prelude method names;
   constructor signatures; macro-bound, aliased and parameter receivers;
   lexical fallback; the item-container fact.
+- Unit execution and macro context controls: `owner_pin_requires_an_executed_assertion_context`,
+  `owner_pin_requires_unambiguous_standard_assert_eq`, `owner_pin_refuses_ambiguous_oracle_coordinates`,
+  `owner_pin_macro_ambiguity_in_other_files_and_run_memo`,
+  `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
+  `shared_return_admission_uses_the_outer_invocation_identity` in the same test module.
+- Integration (`crates/ripr/tests/owner_pin_execution.rs`):
+  `owner_pin_matched_static_and_runtime_controls` (fourteen fixtures, two library variants),
+  `owner_pin_token_overlap_cannot_bypass_oracle_admission`,
+  `owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle` (six mixed cases), and
+  `owner_pin_refused_rows_do_not_crowd_out_admitted_oracles` (eight related tests).
+  The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
 - Fixtures: `fixtures/owner_return_pin_trait_method`,
   `fixtures/owner_return_pin_identity_traps`; re-blessed
   `fixtures/infect_value_returned`, `fixtures/infect_wildcard_discard`,
