@@ -726,6 +726,30 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
                 format!("let check = || {{ return;\n{direct} }};\ncheck();"),
                 false,
             ),
+            (
+                "nested_helper_return",
+                format!("fn unrelated() {{ return; }}\n{direct}"),
+                true,
+            ),
+            (
+                "disabled_nested_helper_return",
+                format!("#[cfg(any())]\nfn unrelated() {{ return; }}\n{direct}"),
+                true,
+            ),
+            (
+                "invoked_after_nested_helper_return",
+                format!(
+                    "fn unrelated() {{ return; }}\nlet check = || {{ {direct} }};\ncheck();"
+                ),
+                true,
+            ),
+            (
+                "invoked_after_disabled_nested_helper_return",
+                format!(
+                    "#[cfg(any())]\nfn unrelated() {{ return; }}\nlet check = || {{ {direct} }};\ncheck();"
+                ),
+                true,
+            ),
         ] {
             let scratch = Scratch::create()?;
             let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");
