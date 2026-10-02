@@ -1132,7 +1132,6 @@ fn assistant_loop_health(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-
 pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_calibrate_help();
