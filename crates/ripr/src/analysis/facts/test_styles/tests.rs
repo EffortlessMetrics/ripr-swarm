@@ -882,6 +882,10 @@ fn borrowed_normalization_matches_owned_reference_with_duplicate_coordinates() -
     other_body
         .body
         .push_str(" /* distinct body at identical coordinates */");
+    // A prefix-only lookup would incorrectly promote this unmatched body.
+    // Keep a distinct role so equality cannot pass merely because the first
+    // original function already consumed the sole matching TestFact.
+    other_body.source_role = FunctionSourceRole::Production;
     actual.functions.push(other_body);
     actual.functions.push(original);
     let mut expected = actual.clone();
@@ -904,6 +908,20 @@ fn normalization_observes_cancellation_inside_function_walk() -> Result<(), Stri
     };
     use std::time::{Duration, Instant};
     let mut index = normalization_fixture_index()?;
+    // If the first file's inner checkpoints are missing, the later global
+    // checkpoints can still return the same error/count after touching file b.
+    // This sentinel must remain untouched when cancellation happens in file a.
+    index
+        .files
+        .get_mut(Path::new("src/b.rs"))
+        .and_then(|facts| {
+            facts
+                .functions
+                .iter_mut()
+                .find(|function| function.name == "lookalike")
+        })
+        .ok_or("second-file sentinel")?
+        .source_role = FunctionSourceRole::CfgTestModule;
     let start = Instant::now();
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&calls);
@@ -924,5 +942,16 @@ fn normalization_observes_cancellation_inside_function_walk() -> Result<(), Stri
         Some("analysis cancelled: DeadlineExceeded")
     );
     assert_eq!(calls.load(Ordering::SeqCst), 4);
+    let untouched = index
+        .files
+        .get(Path::new("src/b.rs"))
+        .and_then(|facts| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == "lookalike")
+        })
+        .ok_or("retained second-file sentinel")?;
+    assert_eq!(untouched.source_role, FunctionSourceRole::CfgTestModule);
     Ok(())
 }
