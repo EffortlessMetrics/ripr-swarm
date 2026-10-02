@@ -10914,4 +10914,5 @@ outputs = [
   "policy/output_contracts.txt",
 ]
 metrics = [
+  "agent_card_refusal_kind",
 ]
