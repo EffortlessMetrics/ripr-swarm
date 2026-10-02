@@ -1436,9 +1436,13 @@ JSON fields:
   `assertion_shape` derivation (issue #4105): the shape reuses the observed
   oracle expression (`typescript_oracle_observed`) only when the observed call
   input reaches the named missing discriminator, or when that reachability is
-  not statically decidable (non-literal boundaries such as `amount >= threshold`,
-  multi-argument calls without signature evidence, escaped string literals, or
-  callees that do not resolve to the owner). When the observed call input
+  not statically decidable (multi-argument calls without signature evidence,
+  escaped string literals, value keywords such as `true` or `NaN`, or callees
+  that do not resolve to the owner). A plain-identifier boundary such as
+  `amount >= threshold` between two owner parameters is not left undecidable:
+  it is decided only through the `typescript_boundary_parameters` evidence
+  below and fails closed with the boundary placeholder without it (#4759).
+  When the observed call input
   provably does NOT reach the boundary — for example the discriminator is
   `user.length == 3` while the observed call is `login('alice')` (length 5) —
   the shape becomes an explicit boundary placeholder,
@@ -1470,8 +1474,12 @@ JSON fields:
   parameters (`amount == threshold`), the finding may instead carry
   `typescript_boundary_parameters: parameter=<p>;index=<i>;operand=<o>;operand_index=<j>`,
   emitted under the same read-only and runs-on-every-call rules for both
-  parameters. The observed call's integer-literal arguments at `<i>` and
-  `<j>` then decide the verdict: a hit keeps the observed shape, and a missed
+  parameters. Both fact sides are parameters as written, including a
+  CONSTANT_CASE name the text alone would misread as a module constant: the
+  projection parses the discriminator's two sides as parameters whenever the
+  fact names exactly those sides (#4759 review). The observed call's
+  integer-literal arguments at `<i>` and `<j>` then decide the verdict: a hit
+  keeps the observed shape, and a missed
   equality boundary becomes the observed call with the receiver's argument
   set to the boundary's (`expect(discount(100, 100)).toBe(expected)` from
   `discount(50, 100)`). Without the evidence, or when either argument is not

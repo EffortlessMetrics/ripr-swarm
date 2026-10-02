@@ -427,7 +427,7 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
     if !call_callee_is_owner(&call.callee, owner_name) {
         return observed_shape;
     }
-    let Some(comparison) = parse_static_comparison(discriminator) else {
+    let Some(comparison) = parse_static_comparison(discriminator, boundary_parameters) else {
         return observed_shape;
     };
     let placeholder_shape = || {
@@ -680,7 +680,10 @@ enum BoundaryReach {
 /// recognized; anything else stays undecided. A literal or constant side is
 /// preferred as the boundary in either operand order, so `LIMIT == amount`
 /// never reads `amount` as the boundary.
-fn parse_static_comparison(discriminator: &str) -> Option<StaticComparison> {
+fn parse_static_comparison(
+    discriminator: &str,
+    boundary_parameters: Option<&TypeScriptBoundaryParametersFact>,
+) -> Option<StaticComparison> {
     const OPS: [(&str, StaticComparisonOp); 8] = [
         ("===", StaticComparisonOp::Equal),
         ("!==", StaticComparisonOp::NotEqual),
@@ -712,9 +715,39 @@ fn parse_static_comparison(discriminator: &str) -> Option<StaticComparison> {
     // The analysis side keeps operand order (`DISCOUNT_THRESHOLD <= amount`
     // becomes `DISCOUNT_THRESHOLD == amount`), so a boundary written first
     // is read with the operator mirrored (#4215 review).
+    // A parameter-pair fact naming both sides is the analysis side's own
+    // reading that both are read-only owner parameters (#4759 review): a
+    // CONSTANT_CASE parameter would otherwise parse as a module constant
+    // and close the packet the emitted fact is evidence for. The fact's own
+    // module rules (plain positional bindings, read-only, changed line runs
+    // on every call) already held when it was emitted, and the packet still
+    // judges only through integer-literal arguments at the fact's positions.
+    if boundary_parameters.is_some_and(|fact| {
+        (fact.parameter == left && fact.operand == right)
+            || (fact.parameter == right && fact.operand == left)
+    }) {
+        return static_parameter_pair_comparison(left, op, right);
+    }
     static_comparison_from(left, op, right, false)
         .or_else(|| static_comparison_from(right, op.mirrored(), left, false))
         .or_else(|| static_comparison_from(left, op, right, true))
+}
+
+/// Both comparison sides are the parameter-pair fact's own parameters, so
+/// both are plain identifiers by the fact's parse; read them as parameters
+/// regardless of name shape (#4759 review).
+fn static_parameter_pair_comparison(
+    receiver: &str,
+    op: StaticComparisonOp,
+    boundary_raw: &str,
+) -> Option<StaticComparison> {
+    let receiver_is_length = parse_static_receiver(receiver)?;
+    is_plain_identifier(boundary_raw).then(|| StaticComparison {
+        receiver: receiver.trim().to_string(),
+        receiver_is_length,
+        op,
+        boundary: StaticBoundary::Parameter(boundary_raw.to_string()),
+    })
 }
 
 fn static_comparison_from(
@@ -2569,17 +2602,65 @@ mod tests {
         Ok(())
     }
 
+    /// #4759 review: a CONSTANT_CASE owner parameter (`LIMIT`) carries the
+    /// parameter-pair fact on the analysis side, but the constant-shaped
+    /// parse fallback closed the packet. When the fact names both comparison
+    /// sides, they are read as parameters; without a matching fact the
+    /// constant reading stays.
+    #[test]
+    fn parameter_pair_fact_reads_a_constant_shaped_owner_parameter() -> Result<(), String> {
+        let fact = parsed_parameters_fact(&boundary_parameters_fact("amount", 0, "LIMIT", 1))?;
+        // Without the fact, `LIMIT` parses as a constant and the packet
+        // fails closed on the unresolved constant.
+        let without = parameter_pair_shape("discount(50, 100)", "amount == LIMIT", None);
+        assert!(
+            matches!(without, TargetAssertionShape::UnresolvedBoundary { .. }),
+            "{without:?}"
+        );
+        // With the fact, both sides are parameters and the observed integer
+        // literals decide; a miss derives the boundary call.
+        let derived = parameter_pair_shape("discount(50, 100)", "amount == LIMIT", Some(&fact));
+        assert_eq!(derived.shape(), "expect(discount(100, 100)).toBe(expected)");
+        assert!(
+            derived.packet_ineligibility_reason().is_none(),
+            "{derived:?}"
+        );
+        let pair_parse = parse_static_comparison("amount == LIMIT", Some(&fact));
+        assert!(matches!(
+            pair_parse.map(|c| (c.receiver, c.boundary)),
+            Some((receiver, StaticBoundary::Parameter(name)))
+                if receiver == "amount" && name == "LIMIT"
+        ));
+        // A hit keeps the observed call.
+        let hits = parameter_pair_shape("discount(100, 100)", "amount == LIMIT", Some(&fact));
+        assert!(
+            matches!(hits, TargetAssertionShape::Observed { .. }),
+            "{hits:?}"
+        );
+        // The written order `LIMIT == amount` binds the same two positions.
+        let reversed = parameter_pair_shape("discount(50, 100)", "LIMIT == amount", Some(&fact));
+        assert_eq!(reversed.shape(), "expect(discount(50, 50)).toBe(expected)");
+        // A fact naming other parameters leaves the constant reading alone.
+        let other = parsed_parameters_fact(&boundary_parameters_fact("amount", 0, "ceiling", 1))?;
+        let mismatch = parameter_pair_shape("discount(50, 100)", "amount == LIMIT", Some(&other));
+        assert!(
+            matches!(mismatch, TargetAssertionShape::UnresolvedBoundary { .. }),
+            "{mismatch:?}"
+        );
+        Ok(())
+    }
+
     /// Literal and constant sides keep their #4105/#4215 reading in either
     /// order, and value keywords stay undecided, so the identifier reading
     /// only takes comparisons the earlier rules left unparsed.
     #[test]
     fn identifier_boundary_reading_leaves_earlier_comparisons_alone() {
-        let constant_first = parse_static_comparison("LIMIT == amount");
+        let constant_first = parse_static_comparison("LIMIT == amount", None);
         assert!(matches!(
             constant_first.map(|c| (c.receiver, c.boundary)),
             Some((receiver, StaticBoundary::Constant(name))) if receiver == "amount" && name == "LIMIT"
         ));
-        let literal_first = parse_static_comparison("5 == amount");
+        let literal_first = parse_static_comparison("5 == amount", None);
         assert!(matches!(
             literal_first.map(|c| c.boundary),
             Some(StaticBoundary::Int(5))
@@ -2590,7 +2671,10 @@ mod tests {
             "value === undefined",
             "ratio == NaN",
         ] {
-            assert!(parse_static_comparison(keyword).is_none(), "{keyword}");
+            assert!(
+                parse_static_comparison(keyword, None).is_none(),
+                "{keyword}"
+            );
             let shape = typescript_target_assertion_shape(
                 &ProbeFamily::Predicate,
                 "discount(1)",
