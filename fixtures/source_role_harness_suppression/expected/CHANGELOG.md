@@ -189,3 +189,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (12)
+
+Reason:
+RIPR-SPEC-0197/#5027: preserve the admitted earlier exact oracle and propagation_unknown/0.66, but refuse boundary-pairing credit from the later equality after a possible return. The Err guard retains weak static meaning and really detects the executed boundary mutant; the propagation limitation remains distinct.
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
