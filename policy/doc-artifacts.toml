@@ -1055,4 +1055,3 @@ path = "docs/specs/RIPR-SPEC-0200-blind-journey-contract.md"
 status = "proposed"
 owner = "test-infra"
 standalone_reason = "Issue #4603 records the blind journey contract: five versioned V1 shapes (prompt, prompt digest, intervention, transcript receipt, receipt) bind the operator-visible face (goal, public inputs, ordinary permissions, prohibited hints) before the candidate run, fail-closed stamping rejects a prompt/review divergence and any mechanical contamination finding regardless of verdict, the operator product selection must match the recorded selection event, and a 35-scenario corpus of accepted and rejected packets pins the validator independently of the future #4604 named execution consumer, which must consume this exact merged contract identity."
-ain
