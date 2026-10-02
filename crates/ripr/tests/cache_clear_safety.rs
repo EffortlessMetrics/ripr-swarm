@@ -74,6 +74,7 @@ fn cache_help_is_positional_free_and_prints_the_subcommand_help() -> Result<(), 
     // unknown-argument error. Pin the exact printed help body per route.
     let base = temp_dir("help-anywhere");
     let cache_dir = base.join("help-cache");
+    fs::create_dir_all(&cache_dir).map_err(|error| error.to_string())?;
 
     let run = |args: &[&str]| run_ripr(&base, &cache_dir, args);
     let status_help = run(&["cache", "status", "--json", "--help"])?;
