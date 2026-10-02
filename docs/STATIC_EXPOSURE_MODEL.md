@@ -215,7 +215,9 @@ of runtime unreachability. Related-test provenance remains visible without an
 oracle strength. The headline confidence is the existing advisory stage score,
 not a calibrated probability or measured protection percentage.
 Test-build availability uses the shared cfg predicate authority and existing
-module provenance; unknown feature/target gates remain non-confirming. Filtering
+module provenance; unknown feature/target gates and raw attribute spellings remain
+non-confirming. Raw heads are refused in this private query; cached source-role
+classification is unchanged. Filtering
 an assertion cannot make a surviving unrelated oracle the test's sole assertion
 for a singleton heuristic.
 

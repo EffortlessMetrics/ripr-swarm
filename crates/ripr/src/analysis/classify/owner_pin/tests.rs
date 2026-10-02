@@ -836,6 +836,9 @@ fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
         "#[cfg(test)] #[cfg(any())] mod nested { BODY }",
         "#[cfg(feature = \"unknown\")] mod nested { BODY }",
         "#[cfg_attr(test, cfg(any()))] mod nested { BODY }",
+        "#[r#cfg(any())] mod nested { BODY }",
+        "#[cfg_attr(test, r#cfg(any()))] mod nested { BODY }",
+        "#[r#cfg(test)] mod nested { BODY }",
         "fn outer() { BODY }",
     ] {
         let body = "#[test] fn check() { assert_eq!(weight(4), 12); }";
@@ -847,7 +850,7 @@ fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
         "#[cfg(test)]",
         "#[cfg(all())]",
         "#[cfg(any(test, feature = \"unknown\"))]",
-        "#[allow(dead_code)] #[doc = \"cfg(any())\"]",
+        "#[warn(dead_code)] #[doc = \"cfg(any())\"]",
     ] {
         let tests = format!(
             "{attribute} mod outer {{ mod nested {{ use demo::weight; #[test] fn check() {{ assert_eq!(weight(4), 12); }} }} }}"

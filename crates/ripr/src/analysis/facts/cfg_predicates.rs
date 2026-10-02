@@ -178,6 +178,10 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
         return Err(());
     }
     match tokens {
+        // Raw identifiers (and separated lookalikes) need lexical adjacency
+        // authority that this token projection does not retain. They may name
+        // cfg/cfg_attr, so never treat them as inert ordinary attributes.
+        [Token::Word(raw), Token::Punct('#'), ..] if raw == "r" => Err(()),
         [
             Token::Word(name),
             Token::Punct('('),

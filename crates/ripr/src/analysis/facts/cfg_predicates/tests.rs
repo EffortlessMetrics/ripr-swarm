@@ -410,7 +410,7 @@ fn test_build_availability_preserves_unknown_and_boolean_identity() {
         ("#[cfg(any(test, not()))]", None),
         ("#[cfg(not(test, test))]", None),
         ("#[doc = \"cfg(any())\"]", Some(true)),
-        ("#[allow(dead_code)]", Some(true)),
+        ("#[warn(dead_code)]", Some(true)),
         ("#[cfg_attr(test, cfg(any()))]", Some(false)),
         (
             "#[cfg_attr(test, cfg_attr(all(), cfg(any())))]",
@@ -422,5 +422,25 @@ fn test_build_availability_preserves_unknown_and_boolean_identity() {
         ("#[cfg_attr(test,)]", None),
     ] {
         assert_eq!(attribute_test_build_availability(text), expected, "{text}");
+    }
+}
+
+#[test]
+fn test_build_availability_refuses_raw_attribute_heads() {
+    for text in [
+        "#[r#cfg(any())]",
+        "#[r#cfg_attr(test, cfg(any()))]",
+        "#[cfg_attr(test, r#cfg(any()))]",
+        "#[r#cfg(test)]",
+        "#[r#cfg_attr(not(test), cfg(any()))]",
+        "#[cfg(r#test)]",
+        "#[cfg(r#all())]",
+        "#[cfg(r#any())]",
+        "#[r # cfg(any())]",
+        "#[r/*comment*/#cfg(any())]",
+        "#[cfg(r # test)]",
+        "#[cfg_attr(test, r # cfg(any()))]",
+    ] {
+        assert_eq!(attribute_test_build_availability(text), None, "{text}");
     }
 }

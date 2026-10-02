@@ -82,7 +82,9 @@ rule only for an assertion whose context was admitted.
    `test = true`, `all`/`any`/`not` and nested `cfg_attr`; `all()` is true and
    `any()` false. Feature/target/custom atoms remain unknown and cannot grant
    credit. Ordinary lint/doc attributes and definitely enabled forms such as
-   `cfg(test)` or `any(test, feature = "unknown")` remain supported. Malformed
+   `cfg(test)` or `any(test, feature = "unknown")` remain supported. Raw attribute
+   heads (including raw introduced attributes) remain unestablished; refusing
+   them does not alter the cached source-role classifier. Malformed
    operands are not silently discarded. Existing module-provenance edges bind
    out-of-line parents to their indexed source and declaration coordinate;
    missing, unresolved or include-only provenance cannot establish that context.
@@ -333,7 +335,8 @@ to resolve match-arm execution or every other oracle family's provenance.
   `shared_return_admission_uses_the_outer_invocation_identity`, and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - CFG authority (`analysis/facts/cfg_predicates/tests.rs`):
-  `test_build_availability_preserves_unknown_and_boolean_identity` distinguishes
+  `test_build_availability_preserves_unknown_and_boolean_identity` and
+  `test_build_availability_refuses_raw_attribute_heads` distinguish
   enabled, disabled, unknown and malformed inputs without changing role classification.
 - Integration (`crates/ripr/tests/owner_pin_execution.rs`):
   `owner_pin_matched_static_and_runtime_controls` (twenty fixtures, two library variants),

@@ -10569,6 +10569,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_refused_rows_do_not_crowd_out_admitted_oracles",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::owner_pin_requires_test_item_ancestry_and_enabled_cfg",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::test_build_availability_preserves_unknown_and_boolean_identity",
+  "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::test_build_availability_refuses_raw_attribute_heads",
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_review_admission_controls",
 ]
 fixtures = [

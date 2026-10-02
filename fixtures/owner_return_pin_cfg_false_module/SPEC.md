@@ -24,3 +24,6 @@ unrelated unknown helper does not discriminate the changed return.
 - Treat a nested or unconditionally cfg-disabled test item as collected.
 - Manufacture a singleton fallback by removing a refused assertion.
 - Accept a compile failure or zero executed tests as a runtime witness.
+
+Raw configuration attribute identifiers are intentionally non-confirming in the
+availability query; Rust accepts these spellings and excludes the gated test.
