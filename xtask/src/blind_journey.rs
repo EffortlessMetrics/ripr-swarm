@@ -1191,8 +1191,8 @@ pub(crate) const REQUIRED_BLIND_JOURNEY_SCENARIO_IDS: [&str; 24] = [
     "transcript_changed_answer_key",
     "reviewer_overrides_mechanical_finding",
     "operator_projection_hides_answer_key",
-    "equivalent_windows_root_packet",
-    "equivalent_posix_root_packet",
+    "equivalent_root_spelling_a_packet",
+    "equivalent_root_spelling_b_packet",
 ];
 
 /// Required scenario ids absent from one committed corpus id set.
@@ -1398,7 +1398,7 @@ mod tests {
 
     #[test]
     fn clean_generic_prompt_validates_positive() -> Result<(), String> {
-        let packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let packet = stamped_positive_packet("/srv/journey")?;
         let assessment = assess_blind_journey_packet(&packet);
         if !assessment.positive() {
             return Err(format!(
@@ -1434,7 +1434,7 @@ mod tests {
             ),
         ];
         for (category, text) in contaminated_prompts {
-            let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+            let mut packet = stamped_positive_packet("/srv/journey")?;
             packet.prompt.prompt_bytes = text.to_string();
             let assessment = assess_blind_journey_packet(&packet);
             if assessment.accepted {
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn private_hint_after_passing_verification_stays_non_positive() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.push(BlindJourneyEventV1 {
             sequence: 9,
             predecessor_sequence: Some(8),
@@ -1499,7 +1499,7 @@ mod tests {
 
     #[test]
     fn hidden_hint_cannot_hide_behind_passing_axes() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.push(BlindJourneyEventV1 {
             sequence: 9,
             predecessor_sequence: Some(8),
@@ -1533,7 +1533,7 @@ mod tests {
 
     #[test]
     fn manual_artifact_plumbing_is_classified_and_non_positive() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.push(BlindJourneyEventV1 {
             sequence: 9,
             predecessor_sequence: Some(8),
@@ -1563,7 +1563,7 @@ mod tests {
 
     #[test]
     fn workspace_binary_substitution_records_candidate_identity_failure() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.push(BlindJourneyEventV1 {
             sequence: 9,
             predecessor_sequence: Some(8),
@@ -1593,7 +1593,7 @@ mod tests {
 
     #[test]
     fn instrument_watchdog_observes_without_helping() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.push(BlindJourneyEventV1 {
             sequence: 9,
             predecessor_sequence: Some(8),
@@ -1619,7 +1619,7 @@ mod tests {
     #[test]
     fn either_eligible_product_presented_choice_validates() -> Result<(), String> {
         for selected in ["item-a", "item-b"] {
-            let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+            let mut packet = stamped_positive_packet("/srv/journey")?;
             packet.receipt.selected_item = Some(selected.to_string());
             let assessment = assess_blind_journey_packet(&packet);
             if !assessment.positive() {
@@ -1634,7 +1634,7 @@ mod tests {
 
     #[test]
     fn quiet_neighbor_selection_fails_the_answer_key_comparison() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.selected_item = Some("quiet-neighbor".to_string());
         packet.receipt.axes.selection_correctness =
             BlindJourneySelectionCorrectnessV1::QuietNeighborSelected;
@@ -1653,7 +1653,7 @@ mod tests {
 
     #[test]
     fn forbidden_edit_fails_the_edit_cage_comparison() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.selected_edit = Some("src/main.rs".to_string());
         packet.receipt.axes.edit_cage_verdict = BlindJourneyEditCageVerdictV1::Violation;
         packet.receipt.terminal_result = BlindJourneyResultV1::UnsafeOrWrongEdit;
@@ -1671,7 +1671,7 @@ mod tests {
 
     #[test]
     fn honest_limitation_keeps_the_complete_transcript() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events = packet.receipt.events[..3].to_vec();
         for (index, event) in packet.receipt.events.iter_mut().enumerate() {
             event.sequence = index as u64 + 1;
@@ -1722,7 +1722,7 @@ mod tests {
 
     #[test]
     fn missing_predecessor_rejects_the_transcript() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events[4].predecessor_sequence = Some(99);
         let assessment = assess_blind_journey_packet(&packet);
         if assessment.accepted || !reason_contains(&assessment, "event_chain_broken") {
@@ -1733,7 +1733,7 @@ mod tests {
 
     #[test]
     fn reordered_trace_rejects_the_transcript() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.swap(2, 5);
         let assessment = assess_blind_journey_packet(&packet);
         if assessment.accepted || !reason_contains(&assessment, "event_chain_broken") {
@@ -1744,7 +1744,7 @@ mod tests {
 
     #[test]
     fn altered_prompt_bytes_reject_the_digest_binding() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.prompt.prompt_bytes.push_str(" #9999");
         let assessment = assess_blind_journey_packet(&packet);
         if assessment.accepted || !reason_contains(&assessment, "prompt_digest_mismatch") {
@@ -1755,7 +1755,7 @@ mod tests {
 
     #[test]
     fn changed_answer_key_rejects_the_digest_binding() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.answer_key.eligible_items.push("item-c".to_string());
         let assessment = assess_blind_journey_packet(&packet);
         if assessment.accepted || !reason_contains(&assessment, "answer_key_digest_mismatch") {
@@ -1766,7 +1766,7 @@ mod tests {
 
     #[test]
     fn reviewer_label_cannot_override_mechanical_rejection() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.prompt.prompt_bytes = "Fix gap-042 as intended.".to_string();
         // A local repair cannot re-stamp: the recorded review still binds the
         // old bytes, and the recorded scan result disagrees with the scan.
@@ -1781,7 +1781,7 @@ mod tests {
 
     #[test]
     fn answer_key_never_reaches_the_operator_projection() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.push(BlindJourneyEventV1 {
             sequence: 9,
             predecessor_sequence: Some(8),
@@ -1803,14 +1803,14 @@ mod tests {
 
     #[test]
     fn equivalent_roots_share_portable_identity() -> Result<(), String> {
-        let windows_packet = stamped_positive_packet("C:\\tmp\\journey")?;
-        let posix_packet = stamped_positive_packet("/tmp/journey")?;
-        let windows = assess_blind_journey_packet(&windows_packet);
-        let posix = assess_blind_journey_packet(&posix_packet);
-        if !windows.positive() || !posix.positive() {
+        let short_root_packet = stamped_positive_packet("/srv/journey")?;
+        let deep_root_packet = stamped_positive_packet("/tmp/journey")?;
+        let short_root = assess_blind_journey_packet(&short_root_packet);
+        let deep_root = assess_blind_journey_packet(&deep_root_packet);
+        if !short_root.positive() || !deep_root.positive() {
             return Err("equivalent-root packets must both validate positive".to_string());
         }
-        if windows.portable_identity != posix.portable_identity {
+        if short_root.portable_identity != deep_root.portable_identity {
             return Err("equivalent roots must share one portable semantic identity".to_string());
         }
         Ok(())
@@ -1818,7 +1818,7 @@ mod tests {
 
     #[test]
     fn unsupported_future_schema_rejects_every_packet() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.prompt.schema_version = "blind_journey_prompt.v2".to_string();
         let assessment = assess_blind_journey_packet(&packet);
         if assessment.accepted || !reason_contains(&assessment, "unsupported_schema") {
@@ -1829,7 +1829,7 @@ mod tests {
 
     #[test]
     fn positive_receipt_requires_an_accepted_review() -> Result<(), String> {
-        let candidate = candidate_ref("C:\\tmp\\journey");
+        let candidate = candidate_ref("/srv/journey");
         let key = answer_key();
         let bound_prompt_digest = sha256_hex(clean_prompt_bytes().as_bytes());
         let bound_key_digest = blind_journey_answer_key_digest(&key)?;
@@ -1879,7 +1879,7 @@ mod tests {
 
     #[test]
     fn non_product_action_requires_closed_classification() -> Result<(), String> {
-        let mut packet = stamped_positive_packet("C:\\tmp\\journey")?;
+        let mut packet = stamped_positive_packet("/srv/journey")?;
         packet.receipt.events.push(BlindJourneyEventV1 {
             sequence: 9,
             predecessor_sequence: Some(8),

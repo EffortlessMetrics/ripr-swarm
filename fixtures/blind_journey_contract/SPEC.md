@@ -44,7 +44,7 @@ consistency rules.
   complete transcript and exact non-claim.
 - Missing predecessors, reordered traces, altered prompt bindings, changed
   answer keys and reviewer labels overriding mechanical findings all reject.
-- Equivalent Windows/Posix roots share one portable semantic identity.
+- Equivalent concrete root spellings share one portable semantic identity.
 - An unsupported future schema rejects; it cannot aggregate to a clean pass.
 
 ## Must Not

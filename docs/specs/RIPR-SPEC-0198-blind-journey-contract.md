@@ -105,7 +105,7 @@ axis cannot hide operator assistance; an honest limitation stays an accepted
 non-positive receipt with the complete transcript and exact recovery
 non-claim; missing predecessors, reordered traces, altered prompt bindings,
 changed answer keys and human/machine disagreement reject; equivalent
-Windows/Posix roots share one portable semantic identity while concrete root
+concrete root spellings share one portable semantic identity while concrete root
 evidence remains retained; and an unsupported future schema rejects instead of
 aggregating to a clean pass. Answer-key bytes remain evaluator-only: the
 operator-visible projection is scanned for exact absence of answer-key
@@ -158,7 +158,7 @@ carries no limitations, or claims more than the fixture evidence supports.
    receipt positive.
 5. A reordered trace, a missing predecessor, altered prompt bytes or a
    changed answer key rejects with the exact digest or chain reason.
-6. Two packets identical except for Windows versus Posix root spelling share
+6. Two packets identical except for concrete root spelling share
    one portable semantic identity and both validate.
 7. A hand-edited decision receipt that drifts from the contract schema
    versions or drops its limitations fails the report gate.
