@@ -3794,8 +3794,7 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     assert_eq!(envelope["kind"], "agent_card_refusal", "{envelope}");
     assert_eq!(envelope["error"]["kind"], "seam_not_found", "{envelope}");
     assert_eq!(
-        envelope["error"]["seam_id"],
-        "probe:src_lib.rs:predicate:566edf6b",
+        envelope["error"]["seam_id"], "probe:src_lib.rs:predicate:566edf6b",
         "{envelope}"
     );
     assert!(

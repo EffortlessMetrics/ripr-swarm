@@ -14006,9 +14006,20 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
             }
-            "exposure_class" | "severity" | "probe_family" | "delta" | "flow_sink"
-            | "stage_state" | "confidence" | "oracle_kind" | "oracle_strength" | "stop_reason"
-            | "value_context" | "oracle_alignment" | "source_currentness" | "static_limit_kind"
+            "exposure_class"
+            | "severity"
+            | "probe_family"
+            | "delta"
+            | "flow_sink"
+            | "stage_state"
+            | "confidence"
+            | "oracle_kind"
+            | "oracle_strength"
+            | "stop_reason"
+            | "value_context"
+            | "oracle_alignment"
+            | "source_currentness"
+            | "static_limit_kind"
             | "agent_card_refusal_kind" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",

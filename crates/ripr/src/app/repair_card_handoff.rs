@@ -273,7 +273,9 @@ fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
 /// Builder, route-gate, and budget refusals surface as the
 /// [`AgentCardRefusalKind::BudgetOverflow`] refusal kind; detail-source
 /// serialization failures stay operational (#5007).
-pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCardV1, AgentCardError> {
+pub(crate) fn assemble_repair_card(
+    facts: &SeamCardFacts<'_>,
+) -> Result<RepairCardV1, AgentCardError> {
     let entry = facts.entry;
     let eligibility = repair_packet_eligibility(entry);
     let readiness = &eligibility.readiness;
@@ -1140,11 +1142,13 @@ mod tests {
             return Err("the String rendering must stay the human prose".to_string());
         }
         match AgentCardError::identity_unnameable("identity prose".to_string()) {
-            AgentCardError::Refusal { kind, .. } if kind == AgentCardRefusalKind::IdentityUnnameable => {}
+            AgentCardError::Refusal { kind, .. }
+                if kind == AgentCardRefusalKind::IdentityUnnameable => {}
             _ => return Err("identity failure must carry the identity kind".to_string()),
         }
         match AgentCardError::budget_overflow("budget prose".to_string()) {
-            AgentCardError::Refusal { kind, .. } if kind == AgentCardRefusalKind::BudgetOverflow => {}
+            AgentCardError::Refusal { kind, .. }
+                if kind == AgentCardRefusalKind::BudgetOverflow => {}
             _ => return Err("builder failure must carry the budget kind".to_string()),
         }
         match AgentCardError::operational("ops prose".to_string()) {
