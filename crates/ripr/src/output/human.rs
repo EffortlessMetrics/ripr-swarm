@@ -1602,7 +1602,11 @@ mod tests {
         );
     }
 
-
+    /// #4320: the `Hidden:` list is itself a bounded window — beyond the
+    /// `HIDDEN_FINDINGS_LISTED` cap it discloses the remainder instead of
+    /// printing every identity, keeping the default surface bounded.
+    #[test]
+    fn hidden_block_list_discloses_remainder_beyond_its_window() {
         let findings = (0..26)
             .map(|index| {
                 let mut finding = sample_finding();
