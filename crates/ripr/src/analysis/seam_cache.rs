@@ -261,7 +261,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// expression (#4478), so return-value probes can move from
 /// `weakly_exposed` to `exposed`. Old classified entries would keep serving
 /// the unconfirmed discriminator for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.20";
+/// `1.20` -> `1.21`: bare assert_eq return-value evidence requires shared
+/// parser-backed context admission before token or owner-pin credit (#4478).
+/// Old entries could retain observation/strength for deferred or shadowed
+/// assertions. File facts and confidence arithmetic are unchanged.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.21";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -319,7 +323,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.20";
 /// transition as the outer classified-seam cache.
 /// `0.25` -> `0.26`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.26";
+/// `0.26` -> `0.27`: eager owner-pin assertion context; same outer transition.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -379,7 +384,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.26";
 /// transition as the outer classified-seam cache.
 /// `0.25` -> `0.26`: owner-return pins (#4478) — same semantic transition
 /// as the outer classified-seam cache.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.26";
+/// `0.26` -> `0.27`: eager owner-pin assertion context; same outer transition.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.27";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -3571,7 +3577,8 @@ mod tests {
         // `Type::method()` calls.
         // 1.19 -> 1.20: owner-return pins (#4478) confirm return-value
         // probes the token rule left unconfirmed.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.20");
+        // 1.20 -> 1.21: eager, unambiguous assertion context for owner pins.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.21");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3593,8 +3600,9 @@ mod tests {
         // 0.25 (sharded) / 0.25 (compact): function impl context (#4558).
         // 0.26 (sharded) / 0.26 (compact): owner-return pins (#4478) —
         // same semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.26");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.26");
+        // 0.27 (both): eager owner-pin context; file facts are unchanged.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.27");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.27");
     }
 
     #[test]

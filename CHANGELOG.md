@@ -132,6 +132,13 @@ are scoped or reviewed.
   reported `scoped production files: 0/0` with no disclosure. Probes for
   that file are withheld. The repair is to check the file out or disable
   sparse checkout for it.
+- Rust `return_value` evidence from bare `assert_eq!` now shares execution
+  and macro-binding admission across token matching and owner-return pins.
+  Refused deferred/conditional/no-op assertions contribute no oracle credit;
+  when no admitted oracle remains, the finding reads `reachable_unrevealed`
+  with execution/binding guidance. Direct assertions and directly invoked
+  immutable closures retain credit. Fourteen matched correct/wrong-library
+  controls pin this boundary (RIPR-SPEC-0197, #4478).
 - Rust: a test that pins the changed owner's whole return value now
   confirms a changed `return_value` expression, including through a method
   call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes

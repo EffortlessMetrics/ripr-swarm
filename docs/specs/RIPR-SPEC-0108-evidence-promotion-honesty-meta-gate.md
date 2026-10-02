@@ -478,6 +478,13 @@ gate-specific artifacts.
 | rust_unwrap_err_variant_positive_control | rust | unwrap_err_variant_positive |
 | rust_same_method_owner_type_positive_control | rust | rust_same_method_owner_type_positive (`must_promote`; the after-expression return_value finding stays `exposed`, the before-expression sibling stays below `exposed`, no repair packet or receipt command) |
 | rust_split_test_boundary_oracle_return_value_pin | rust | fixtures/split_test_boundary_oracle (`probe_family=return_value`, `must_promote`, `maximum_class=exposed`; the return_value finding reads `exposed` through the RIPR-SPEC-0197 owner-return pin on `assert_eq!(gate(100), true)`, while the same fixture's `predicate` case keeps `same_test_pairing_missing` below `exposed`) |
+| rust_owner_pin_direct / rust_owner_pin_called_closure | rust | matched RIPR-SPEC-0197 effective-test controls: exactly one return-value finding, `must_promote`, `expected_class=exposed` |
+| rust_owner_pin_uncalled_closure / rust_owner_pin_shadowed_assertion | rust | matched ineffective-test controls: exactly one finding, `must_not_promote`, `maximum_class=reachable_unrevealed`; wrong compiled library still passes |
+| rust_owner_pin_expired_closure_binding / rust_owner_pin_deferred_closure_binding / rust_owner_pin_macro_operand_return / rust_owner_pin_macro_return | rust | independent-review execution traps: exactly one finding, `must_not_promote`, `maximum_class=reachable_unrevealed` |
+| rust_owner_pin_if_false / rust_owner_pin_unpolled_async | rust | deferred/conditional execution controls: exactly one finding, `must_not_promote`, `maximum_class=reachable_unrevealed` |
+| rust_owner_pin_token_overlap | rust | token-confirmation bypass control: exactly one finding, `must_not_promote`, `expected_class=reachable_unrevealed` |
+| rust_owner_pin_token_direct / rust_owner_pin_token_called_closure | rust | token-bearing positive controls: exactly one finding, `must_promote`, `expected_class=exposed` |
+| rust_owner_pin_no_assertion | rust | removal control: exactly one finding, `expected_class=reachable_unrevealed` |
 | ts_strong_oracle_control | typescript | typescript_strong_oracle |
 | ts_ava_t_is_exact_value | typescript | ts_runner_detect_ava_devdep (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
 | ts_tape_equal_exact_value | typescript | typescript_tape_equal_oracle (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
