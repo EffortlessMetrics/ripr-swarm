@@ -5045,6 +5045,69 @@ mod tests {
         cleanup(&decoy)
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ledger_command_context_preserves_non_utf8_alias_parent_traversal() -> Result<(), String> {
+        use std::os::unix::ffi::OsStringExt;
+        let original = temp_python_repo("non-utf8 physical")?;
+        let mut bytes = original.as_os_str().as_encoded_bytes().to_vec();
+        bytes.push(0xff);
+        let physical = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+        fs::rename(&original, &physical).map_err(|error| error.to_string())?;
+        let decoy = temp_python_repo("non-utf8 alias decoy")?;
+        run_git_setup(
+            &physical,
+            &["config", "--local", "ripr.context", "physical"],
+        )?;
+        run_git_setup(&decoy, &["config", "--local", "ripr.context", "decoy"])?;
+        fs::create_dir(physical.join("child")).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(physical.join("child"), decoy.join("alias"))
+            .map_err(|error| error.to_string())?;
+        let root = decoy.join("alias/..");
+        assert_eq!(
+            root.canonicalize().map_err(|error| error.to_string())?,
+            physical
+        );
+        let mut ledger = ledger_with_python_repairable_gap();
+        ledger["records"][0]["verification_commands"] =
+            json!(["git config --local --get ripr.context"]);
+        let selected = top_gap_from_record(
+            &ledger["records"][0],
+            &ledger,
+            &root,
+            &FirstPrOptions::default(),
+        )
+        .to_json();
+        assert_eq!(
+            selected["command_context"]["cwd"].as_str(),
+            root.to_str(),
+            "the lossless alias fallback must be reached"
+        );
+        let packet = json!({"status": "actionable", "selected": selected});
+        let summary =
+            start_here_cli_summary(&packet, Path::new("packet.json"), Path::new("packet.md"));
+        let prefix = format!("{VERIFY_AFTER_EDIT_LABEL}: ");
+        let command = summary
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .and_then(crate::output::markdown::code_span_content)
+            .ok_or("missing displayed verification")?;
+        let output = std::process::Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", &command])
+            .current_dir(&decoy)
+            .output()
+            .map_err(|error| error.to_string())?;
+        cleanup(&physical)?;
+        cleanup(&decoy)?;
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "physical",
+            "logical cd selected the alias parent instead of its physical target"
+        );
+        Ok(())
+    }
+
     #[test]
     fn ledger_command_context_underemits_unsupported_forms_without_rewriting_raw_commands()
     -> Result<(), String> {
