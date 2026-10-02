@@ -703,8 +703,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: vec![binding("cache"), binding("table"), binding("table")],
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         assert_eq!(owner_local_binding_names(&owner), vec!["table".to_string()]);
     }

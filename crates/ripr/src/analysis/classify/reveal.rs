@@ -2469,6 +2469,7 @@ mod tests {
                 &owner_locals,
                 &|_, _| false,
                 &|_, _| false,
+                &|_, _| false,
             )
             .1
         };
