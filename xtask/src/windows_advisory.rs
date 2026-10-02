@@ -1228,8 +1228,8 @@ fn render_failure_reasons(
         return;
     }
     out.push_str("### Failure reasons\n\n");
-    for name in reported {
-        out.push_str(&format!("- `{name}`\n"));
+    for name in reported.iter().copied().take(MAX_EVIDENCE_LINES) {
+        out.push_str(&format!("- `{}`\n", evidence_excerpt(&name.to_string())));
         for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
             if !outcome.failed.contains(name) {
                 continue;
@@ -1238,8 +1238,15 @@ fn render_failure_reasons(
                 .reasons
                 .get(name)
                 .map_or("no failure block captured", String::as_str);
-            out.push_str(&format!("  - {label}: {}\n", reason.replace('`', "'")));
+            out.push_str(&format!("  - {label}: {}\n", evidence_excerpt(reason)));
         }
+    }
+    let omitted = reported.len().saturating_sub(MAX_EVIDENCE_LINES);
+    if omitted > 0 {
+        out.push_str(&format!(
+            "- {omitted} additional failed subjects omitted ({} total).\n",
+            reported.len()
+        ));
     }
     out.push('\n');
 }
@@ -1357,8 +1364,15 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
             "**{label} ({})** — {explanation}\n\n",
             names.len()
         ));
-        for name in names {
-            out.push_str(&format!("- `{name}`\n"));
+        for name in names.iter().take(MAX_EVIDENCE_LINES) {
+            out.push_str(&format!("- `{}`\n", evidence_excerpt(&name.to_string())));
+        }
+        let omitted = names.len().saturating_sub(MAX_EVIDENCE_LINES);
+        if omitted > 0 {
+            out.push_str(&format!(
+                "- {omitted} additional {label} subjects omitted ({} total).\n",
+                names.len()
+            ));
         }
         out.push('\n');
     }
@@ -1389,11 +1403,19 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
             outcome
                 .targets
                 .iter()
-                .map(ToString::to_string)
+                .take(MAX_EVIDENCE_LINES)
+                .map(|target| evidence_excerpt(&target.to_string()))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
         out.push_str(&format!("- {label}: {targets}\n"));
+        let omitted = outcome.targets.len().saturating_sub(MAX_EVIDENCE_LINES);
+        if omitted > 0 {
+            out.push_str(&format!(
+                "  - {omitted} additional targets omitted ({} total).\n",
+                outcome.targets.len()
+            ));
+        }
         for header in outcome.raw_headers.iter().take(MAX_EVIDENCE_LINES) {
             out.push_str(&format!(
                 "  - Header text: `{}`\n",

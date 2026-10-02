@@ -15,9 +15,9 @@ are scoped or reviewed.
   identity, including target kind/source and exact executable hash. Required
   release controls must resolve to one owning artifact across both samples;
   missing or ambiguous provenance is refused instead of borrowing another
-  target's pass. Provenance errors and raw target headers use bounded excerpts
-  with explicit truncation and omitted counts; doctest transitions are explicit
-  and never assigned an inferred package (#5043).
+  target's pass. Log-derived report entries use bounded excerpts and section
+  counts with explicit truncation and omissions; doctest transitions are
+  explicit and never assigned an inferred package (#5043).
 
 - LSP: identity-law tests pin that `action_id` excludes title, range,
   message, snapshot handles, client capability, and disabled reason; build
