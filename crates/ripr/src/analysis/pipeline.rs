@@ -2087,6 +2087,12 @@ mod tests {
     #[test]
     fn eol_only_churn_discloses_a_typed_limitation_on_a_complete_outcome() -> Result<(), String> {
         let root = temp_root("outcome-eol-only")?;
+        // The changed file is present: an absent file routes the #4586
+        // absence disclosure instead of this #4952 EOL-churn control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x > 1 }\npub fn g() -> u8 { 2 }\npub fn h() -> u8 { 3 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
@@ -2157,6 +2163,12 @@ mod tests {
             "+pub fn f(x: i32) -> bool { x > 1 }\n",
         );
         let root = temp_root("outcome-bom-only")?;
+        // The changed file is present on disk: an absent file would route the
+        // #4586 absence disclosure, not the #4959 EOL-churn negative control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x > 1 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
@@ -2193,6 +2205,12 @@ mod tests {
             "+pub fn m() -> u8 { 9 }\n",
         );
         let root = temp_root("outcome-moved-line-control")?;
+        // The changed file is present: an absent file routes the #4586
+        // absence disclosure instead of this EOL-pairing negative control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn a() -> u8 { 1 }\npub fn b() -> u8 { 2 }\npub fn m() -> u8 { 9 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
@@ -2344,6 +2362,12 @@ mod tests {
         // A CI script beside Rust is listed as not analyzed but does not
         // downgrade an otherwise complete analysis.
         let root = temp_root("outcome-rust-and-shell")?;
+        // The changed Rust file is present: an absent file routes the #4586
+        // absence disclosure instead of this script-disclosure control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
