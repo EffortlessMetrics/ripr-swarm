@@ -67,7 +67,7 @@ impl RelatedTestCandidateIndex {
     pub(in crate::analysis) fn new(index: &RustIndex) -> Self {
         let mut candidates = Self::default();
 
-        for (function_index, function) in index.functions.iter().enumerate() {
+        for (function_index, function) in index.functions().iter().enumerate() {
             push_index(
                 &mut candidates.by_function_name,
                 function.name.clone(),
@@ -75,7 +75,7 @@ impl RelatedTestCandidateIndex {
             );
         }
 
-        for (test_index, test) in index.tests.iter().enumerate() {
+        for (test_index, test) in index.tests().iter().enumerate() {
             candidates.all_tests.push(test_index);
 
             for call in &test.calls {
@@ -116,7 +116,7 @@ impl RelatedTestCandidateIndex {
                 push_index(&mut candidates.by_test_stem, stem, test_index);
             }
         }
-        candidates.common_tokens = CommonTestTokens::new(&index.tests);
+        candidates.common_tokens = CommonTestTokens::new(index.tests());
 
         candidates
     }
@@ -563,7 +563,7 @@ fn find_related_tests_with_candidates<'a>(
     // the name would falsely appear unique. The caller therefore derives
     // `workspace_complete` from the file selection that actually built the
     // index, and anything narrower fails closed. This follows the
-    // owner_shape.rs precedent of scanning index.functions for same-name
+    // owner_shape.rs precedent of scanning index.functions() for same-name
     // collision.
     //
     // #2972: the same scan also records the nearest-manifest identity of
@@ -597,12 +597,12 @@ fn find_related_tests_with_candidates<'a>(
         match candidates {
             RelatedTestCandidates::Indexed(candidate_index) => {
                 for &function_index in candidate_index.function_indices(owner_name) {
-                    record_same_name(&index.functions[function_index]);
+                    record_same_name(index.functions().at(function_index));
                 }
             }
             #[cfg(test)]
             RelatedTestCandidates::FullScan => {
-                for function in &index.functions {
+                for function in &index.functions() {
                     if function.name == owner_name {
                         record_same_name(function);
                     }
@@ -624,7 +624,7 @@ fn find_related_tests_with_candidates<'a>(
             }
             #[cfg(test)]
             RelatedTestCandidates::FullScan => index
-                .functions
+                .functions()
                 .iter()
                 .filter(|function| function.name == owner_name)
                 .count(),
@@ -662,7 +662,7 @@ fn find_related_tests_with_candidates<'a>(
         RelatedTestCandidates::Indexed(candidate_index) => &candidate_index.common_tokens,
         #[cfg(test)]
         RelatedTestCandidates::FullScan => {
-            computed_common_tokens = CommonTestTokens::new(&index.tests);
+            computed_common_tokens = CommonTestTokens::new(index.tests());
             &computed_common_tokens
         }
     };
@@ -689,7 +689,7 @@ fn find_related_tests_with_candidates<'a>(
             candidate_index.candidate_indices(probe, owner_fn, helper_chain, seam_callee.as_deref())
         }
         #[cfg(test)]
-        RelatedTestCandidates::FullScan => (0..index.tests.len()).collect(),
+        RelatedTestCandidates::FullScan => (0..index.tests().len()).collect(),
     };
     // Tests only the pre-#4434 substring rules relate (a probe token or the
     // source stem anywhere in a test name or path). They are kept only when
@@ -703,7 +703,7 @@ fn find_related_tests_with_candidates<'a>(
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
     for test_index in candidate_indices {
-        let test = &index.tests[test_index];
+        let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
         // test that genuinely calls a uniquely-named owner is not filtered out
         // before the strong signal can save it.
@@ -729,7 +729,7 @@ fn find_related_tests_with_candidates<'a>(
         // empty fact sets on parser-backed files are real "no shadow"
         // results.
         let test_file_is_parser_backed = index
-            .files
+            .files()
             .get(&test.file)
             .is_some_and(|file_facts| !file_facts.used_lexical_fallback);
         let shadow_authority = if test_file_is_parser_backed {
@@ -993,7 +993,7 @@ struct SameNameDefinitions<'s> {
 /// boundary fails closed:
 ///
 /// - a `let` binding of the owner name in the test body (a closure or
-///   shadowing local, invisible to `index.functions`) defeats the admit
+///   shadowing local, invisible to `index.functions()`) defeats the admit
 ///   (#2972 review).
 /// - the graph must be `Complete`. A `limited` capture is a partial edge
 ///   inventory and this surface has no disclosure channel, so it fails
@@ -1076,7 +1076,7 @@ fn dependency_edge_admits_owner_call(
     // credit them (#3619 review, second round).
     let stripped_file = context
         .index
-        .files
+        .files()
         .get(&test.file)
         .map(|facts| strip_comments_and_strings(&facts.source))
         .unwrap_or_else(|| stripped_body.clone());
@@ -1211,7 +1211,7 @@ fn owner_crate_imports_type_name(
     let crate_dir = owner_manifest.strip_suffix("Cargo.toml").unwrap_or("");
     let src_dir = format!("{crate_dir}src/");
     let owner_in_src = normalize_path(owner_file).starts_with(&src_dir);
-    context.index.files.iter().any(|(file, facts)| {
+    context.index.files().iter().any(|(file, facts)| {
         let normalized = normalize_path(file);
         let in_owner_crate = nearest_manifest_identity(context.manifest_dir_prefixes, file)
             .as_deref()
@@ -1460,7 +1460,7 @@ fn nearest_manifest_identity(manifest_dir_prefixes: &[String], file: &Path) -> O
 
 /// Whether `body` introduces a local binding of `owner_name` through a
 /// `let` declaration (including `let mut`). Such a binding — a closure, a
-/// shadowing local — is invisible to `index.functions` and is the most
+/// shadowing local — is invisible to `index.functions()` and is the most
 /// plausible resolution target for the bare call, so the dependency-edge
 /// admit must not fire. Comment text is not distinguished: a spurious
 /// match only ever suppresses the admit (under-emit).
@@ -1738,7 +1738,7 @@ static NO_COMMON_TOKENS: PackageCommonTokens = PackageCommonTokens {
 };
 
 impl CommonTestTokens {
-    fn new(tests: &[TestSummary]) -> Self {
+    fn new<'a>(tests: impl IntoIterator<Item = &'a TestSummary>) -> Self {
         let mut packages: BTreeMap<Option<String>, Vec<&TestSummary>> = BTreeMap::new();
         for test in tests {
             packages
@@ -2192,11 +2192,11 @@ mod tests {
             "target_owner(1)",
             "target_owner",
         ));
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests,
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "target_owner(value)");
         let candidate_index = RelatedTestCandidateIndex::new(&index);
         let seam_callee = wrapper_seam_callee(&probe);
@@ -2226,7 +2226,7 @@ mod tests {
     #[test]
     fn full_scan_oracle_detects_missing_index_candidates() {
         let owner = function("src/lib.rs", "target_owner");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 "tests/target.rs",
@@ -2234,8 +2234,8 @@ mod tests {
                 "target_owner(1)",
                 "target_owner",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "target_owner(value)");
         let broken_index = RelatedTestCandidateIndex::default();
 
@@ -2271,7 +2271,7 @@ mod tests {
     fn indexed_and_full_scan_match_for_helper_owner_call() {
         let owner = function("src/owner.rs", "target_owner");
         let helper = function("src/helper.rs", "helper_entry");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), helper.clone()],
             tests: vec![test_with_call(
                 "tests/helper_bridge.rs",
@@ -2279,8 +2279,8 @@ mod tests {
                 "helper_entry(1)",
                 "helper_entry",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let chain = crate::analysis::classify::helper_transfer::HelperChain {
             hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
                 caller: helper,
@@ -2300,14 +2300,14 @@ mod tests {
 
     #[test]
     fn camel_case_token_relates_no_snake_named_test_on_either_path() {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test(
                 "tests/other_area.rs",
                 "io_error_is_reported",
                 "assert!(run().is_ok());",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/pipeline.rs", "IoError::default()");
 
         let indexed = find_related_tests_with_candidate_index(
@@ -2339,15 +2339,15 @@ mod tests {
     #[test]
     fn indexed_body_call_matches_unicode_whitespace_before_paren() {
         let owner = function("src/owner.rs", "target_owner");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test(
                 "tests/other_area.rs",
                 "nonstandard_whitespace_case",
                 "target_owner\u{00A0}(value);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/owner.rs", "target_owner(value)");
 
         // The legacy body scanner (`body_contains_owner_call`) trims any
@@ -2364,11 +2364,11 @@ mod tests {
     #[test]
     fn candidate_index_falls_back_for_short_owner_query() {
         let owner = function("src/lib.rs", "id");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test("tests/misc.rs", "id_behavior", "helper(1)")],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "id + 1");
         let candidate_index = RelatedTestCandidateIndex::new(&index);
 
@@ -2385,11 +2385,11 @@ mod tests {
     #[test]
     fn candidate_index_falls_back_for_unicode_owner_query() {
         let owner = function("src/lib.rs", "café");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test("tests/misc.rs", "unicode_case", "café(1)")],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "café(value)");
         let candidate_index = RelatedTestCandidateIndex::new(&index);
 
@@ -2406,11 +2406,11 @@ mod tests {
     #[test]
     fn candidate_index_falls_back_for_raw_identifier_owner() {
         let owner = function("src/lib.rs", "r#type");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test("tests/misc.rs", "misc_case", "r#type(1)")],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "r#type(value)");
         let candidate_index = RelatedTestCandidateIndex::new(&index);
 
@@ -2429,7 +2429,7 @@ mod tests {
     fn candidate_index_rebuild_reflects_changed_test_facts() {
         let owner = function("src/lib.rs", "target_owner");
         let probe = probe("src/lib.rs", "target_owner(value)");
-        let mut index = RustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 "tests/misc.rs",
@@ -2437,8 +2437,8 @@ mod tests {
                 "helper(1)",
                 "helper",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         let before = RelatedTestCandidateIndex::new(&index);
         assert!(
@@ -2448,7 +2448,7 @@ mod tests {
             "the old test facts must not fabricate a candidate"
         );
 
-        index.tests[0] = test_with_call(
+        *index.test_at_mut(0) = test_with_call(
             "tests/misc.rs",
             "misc_case",
             "target_owner(1)",
@@ -2465,7 +2465,7 @@ mod tests {
     #[test]
     fn given_owner_function_when_tests_share_name_across_packages_then_filters_to_package() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -2482,8 +2482,8 @@ mod tests {
                     "score(1)",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2499,7 +2499,7 @@ mod tests {
     #[test]
     fn given_unique_owner_when_cross_crate_test_calls_owner_then_retained() {
         let owner = function("crates/digest/src/lib.rs", "compute_hash");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 "crates/digest-tests/tests/integration.rs",
@@ -2507,8 +2507,8 @@ mod tests {
                 "let result = compute_hash(b\"input\");",
                 "compute_hash",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2531,7 +2531,7 @@ mod tests {
     #[test]
     fn given_method_owner_when_test_calls_through_receiver_then_direct_owner_call() {
         let owner = function("src/lib.rs", "apply");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![TestSummary {
                 name: "changes_balance".to_string(),
@@ -2547,8 +2547,8 @@ mod tests {
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
             }],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "self.persist(amount * 9)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2589,7 +2589,7 @@ mod tests {
     fn given_two_impls_when_test_calls_other_type_then_name_only_relation() {
         let owner = impl_function("src/lib.rs", "size_hint", "impl Iterator for WhileSome");
         let other = impl_function("src/lib.rs", "size_hint", "impl Iterator for Combinations");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), other],
             tests: vec![test_with_call(
                 "tests/size_hints.rs",
@@ -2597,8 +2597,8 @@ mod tests {
                 "let it = Combinations { remaining: 3 };\nassert_eq!(it.size_hint().1, Some(3));",
                 "size_hint",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "(0, self.iter.size_hint().1)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2618,7 +2618,7 @@ mod tests {
     fn given_two_impls_when_test_calls_owner_type_then_direct_owner_call() {
         let owner = impl_function("src/lib.rs", "size_hint", "impl Iterator for WhileSome");
         let other = impl_function("src/lib.rs", "size_hint", "impl Iterator for Combinations");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), other],
             tests: vec![test_with_call(
                 "tests/size_hints.rs",
@@ -2626,8 +2626,8 @@ mod tests {
                 "let it = WhileSome { inner: vec![Some(1), Some(2)] };\nassert_eq!(it.size_hint().1, Some(2));",
                 "size_hint",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "(0, self.iter.size_hint().1)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2643,7 +2643,7 @@ mod tests {
     fn given_two_impls_when_receiver_type_is_unresolved_then_name_only_relation() {
         let owner = impl_function("src/lib.rs", "size_hint", "impl Iterator for WhileSome");
         let other = impl_function("src/lib.rs", "size_hint", "impl Iterator for Combinations");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), other],
             tests: vec![test_with_call(
                 "tests/test_std.rs",
@@ -2651,8 +2651,8 @@ mod tests {
                 "let it = (0..3).combinations(2);\nassert_eq!(it.size_hint().1, Some(3));",
                 "size_hint",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "(0, None)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2666,7 +2666,7 @@ mod tests {
     fn given_two_impls_when_test_uses_owner_ufcs_then_direct_owner_call() {
         let owner = impl_function("src/lib.rs", "size_hint", "impl Iterator for WhileSome");
         let other = impl_function("src/lib.rs", "size_hint", "impl Iterator for Combinations");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), other],
             tests: vec![test_with_call(
                 "tests/size_hints.rs",
@@ -2674,8 +2674,8 @@ mod tests {
                 "let it = WhileSome { inner: vec![] };\nassert_eq!(WhileSome::size_hint(&it).1, Some(0));",
                 "size_hint",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "(0, self.iter.size_hint().1)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2690,7 +2690,7 @@ mod tests {
     #[test]
     fn given_unique_impl_method_when_receiver_type_is_unresolved_then_direct_owner_call() {
         let owner = impl_function("src/lib.rs", "apply", "impl Ledger");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 "tests/ledger_tests.rs",
@@ -2698,8 +2698,8 @@ mod tests {
                 "let mut ledger = new_ledger();\nledger.apply(5);",
                 "apply",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "self.persist(amount * 9)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2718,7 +2718,7 @@ mod tests {
     #[test]
     fn given_incomplete_index_when_cross_crate_test_calls_owner_then_filtered() {
         let owner = function("crates/digest/src/lib.rs", "compute_hash");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 "crates/digest-tests/tests/integration.rs",
@@ -2726,8 +2726,8 @@ mod tests {
                 "let result = compute_hash(b\"input\");",
                 "compute_hash",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
 
         // The only difference from the positive control.
@@ -2748,7 +2748,7 @@ mod tests {
     fn given_ambiguous_owner_when_cross_crate_test_calls_same_name_then_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
         let crate_b_fn = function("crates/crate_b/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), crate_b_fn],
             tests: vec![
                 test_with_call(
@@ -2763,8 +2763,8 @@ mod tests {
                     "score(1)",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -2878,7 +2878,7 @@ mod tests {
     #[test]
     fn given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -2895,8 +2895,8 @@ mod tests {
                     "score(1)",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -2927,7 +2927,7 @@ mod tests {
     #[test]
     fn given_forward_dev_dependency_edge_when_cross_crate_test_calls_owner_then_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -2937,8 +2937,8 @@ mod tests {
                 "crate_c_score_test",
                 "use crate_a::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[(
@@ -2978,7 +2978,7 @@ fn crate_c_score_test() {
     score(7);
 }
 ";
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -2996,8 +2996,8 @@ fn crate_c_score_test() {
                     ..FileFacts::default()
                 },
             )]),
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[(
@@ -3038,7 +3038,7 @@ fn crate_c_score_test() {
     score(7);
 }
 ";
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3056,8 +3056,8 @@ fn crate_c_score_test() {
                     ..FileFacts::default()
                 },
             )]),
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[(
@@ -3086,7 +3086,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_nested_use_path_import_when_cross_crate_test_calls_owner_then_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3096,8 +3096,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::math::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3118,7 +3118,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_brace_list_use_import_when_cross_crate_test_calls_owner_then_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3128,8 +3128,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::math::{score, other}; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3150,7 +3150,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_qualified_call_through_dependency_name_when_no_import_exists_then_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3160,8 +3160,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "let ok = crate_a::score(7);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3184,7 +3184,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_ambiguous_owner_when_test_crate_has_no_edge_to_owner_crate_then_stays_filtered() {
         let owner = function("crates/crate_b/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3201,8 +3201,8 @@ fn crate_c_score_test() {
                     "score(2)",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_b/src/lib.rs", "score + 1");
@@ -3225,7 +3225,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_reverse_dependency_edge_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3242,8 +3242,8 @@ fn crate_c_score_test() {
                     "score(1)",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         // crate_a declares a path dependency on crate_c: the reverse direction.
         let adjacency = adjacency_with(
             "complete",
@@ -3275,7 +3275,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_build_only_dependency_edge_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3285,8 +3285,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[(
@@ -3315,7 +3315,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_unavailable_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3332,8 +3332,8 @@ fn crate_c_score_test() {
                     "score(1)",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with("unavailable", &[], false);
         assert_eq!(adjacency.status(), PathDependencyGraphStatus::Unavailable);
         let prefixes =
@@ -3358,7 +3358,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_limited_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3368,8 +3368,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[(
@@ -3400,7 +3400,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_local_same_name_definition_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3411,8 +3411,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3434,7 +3434,7 @@ fn crate_c_score_test() {
     fn given_competing_edge_connected_candidate_when_cross_crate_test_calls_owner_then_stays_filtered()
      {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3444,8 +3444,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[
@@ -3484,7 +3484,7 @@ fn crate_c_score_test() {
     fn given_import_from_another_dependency_when_cross_crate_test_calls_owner_then_stays_filtered()
     {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3494,8 +3494,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use other_dep::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3513,7 +3513,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_aliased_import_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3523,8 +3523,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::score as compute; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3544,7 +3544,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_comment_only_call_evidence_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3555,8 +3555,8 @@ fn crate_c_score_test() {
                 "use crate_a::score; // score(9)",
                 "helper",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3575,7 +3575,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_string_literal_call_evidence_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3586,8 +3586,8 @@ fn crate_c_score_test() {
                 "use crate_a::score; let s = \"score(9)\";",
                 "helper",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3609,7 +3609,7 @@ fn crate_c_score_test() {
     fn given_unattributed_same_name_definition_when_cross_crate_test_calls_owner_then_stays_filtered()
      {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3620,8 +3620,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[(
@@ -3653,7 +3653,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_nested_package_owner_when_test_depends_only_on_outer_crate_then_stays_filtered() {
         let owner = function("crates/outer/inner/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/outer/inner/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3663,8 +3663,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use outer::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         // crate_c declares a normal path dependency on outer — not on the
         // nested inner package that owns the changed function.
         let adjacency = adjacency_with(
@@ -3701,7 +3701,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_nested_package_owner_when_test_depends_on_the_nested_crate_then_admits() {
         let owner = function("crates/outer/inner/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/outer/inner/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3711,8 +3711,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use inner::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let adjacency = adjacency_with(
             "complete",
             &[(
@@ -3744,13 +3744,13 @@ fn crate_c_score_test() {
     }
 
     /// #2972 review (local binding): a `let score = |x| x;` closure in the
-    /// test body is invisible to `index.functions` and is the most plausible
+    /// test body is invisible to `index.functions()` and is the most plausible
     /// resolution target for the bare call, so the edge-connected crate's
     /// owner is not credited even with an import present.
     #[test]
     fn given_local_let_binding_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3760,8 +3760,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::score; let score = |x| x; assert_eq!(score(7), 7);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3780,7 +3780,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_method_call_form_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3790,8 +3790,8 @@ fn crate_c_score_test() {
                 "crate_c_score_test",
                 "use crate_a::score; let report = harness.score(7);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3811,7 +3811,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_custom_cargo_test_target_path_when_edge_connects_then_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("crates/crate_a/src/lib.rs", "score"),
                 function("crates/crate_b/src/lib.rs", "score"),
@@ -3821,8 +3821,8 @@ fn crate_c_score_test() {
                 "crate_c_score_suite",
                 "use crate_a::score; score(7)",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
@@ -3840,13 +3840,13 @@ fn crate_c_score_test() {
     #[test]
     fn given_same_named_tests_when_finding_related_then_orders_by_file_path() {
         let owner = function("src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![
                 test("tests/z_case.rs", "score_shared", "score(3)"),
                 test("tests/a_case.rs", "score_shared", "score(1)"),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -3864,12 +3864,12 @@ fn crate_c_score_test() {
             "checks_value",
             "assert_eq!(value, 3);",
         );
-        let alone = RustIndex {
+        let alone = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![substring_only.clone()],
-            ..RustIndex::default()
-        };
-        let beside = RustIndex {
+            ..Default::default()
+        });
+        let beside = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![
                 substring_only,
@@ -3879,8 +3879,8 @@ fn crate_c_score_test() {
                     "assert!(true);",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("crates/core/src/config.rs", "marker");
 
         let alone = find_related_tests(&probe, Some(&owner), &alone, true, None, None);
@@ -3917,15 +3917,15 @@ fn crate_c_score_test() {
         // substring fallback keeps the proximity relation so reach stays
         // `Weak` for an owner a trait call may reach unseen.
         let owner = function("src/price.rs", "fmt");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test(
                 "tests/prices.rs",
                 "formats_two_decimals",
                 "assert_eq!(Price(100).to_string(), \"1.00\");",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe(
             "src/price.rs",
             "write!(f, \"{}.{:02}\", self.0 / 100, self.0 % 100)",
@@ -3943,7 +3943,7 @@ fn crate_c_score_test() {
     #[test]
     fn canonical_companion_stems_remain_same_test_file() {
         let owner = function("crates/core/src/config.rs", "load_config");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![
                 test(
@@ -3962,8 +3962,8 @@ fn crate_c_score_test() {
                     "assert!(true);",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("crates/core/src/config.rs", "marker");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -3983,15 +3983,15 @@ fn crate_c_score_test() {
         // canonical companion (SameTestFile, medium confidence) instead of
         // degrading to WeakTokenSubstring on a Unix host.
         let owner = function("crates/core/src/config.rs", "load_config");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test(
                 "crates/core/tests/config_tests.rs",
                 "config_tests_file",
                 "assert!(true);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("crates\\core\\src\\config.rs", "marker");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4018,14 +4018,14 @@ fn crate_c_score_test() {
     #[test]
     fn given_probe_token_in_test_name_when_owner_is_not_called_then_test_is_related() {
         let owner = function("src/lib.rs", "tax_total");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test(
                 "tests/tax.rs",
                 "vat_boundary_is_checked_by_macro",
                 "assert_eq!(macro_tax_case!(100), 120);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "vat >= threshold");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4155,7 +4155,7 @@ fn crate_c_score_test() {
     #[test]
     fn given_probe_token_only_inside_another_word_of_test_name_then_test_is_not_related() {
         let owner = function("src/lib.rs", "tax_total");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![
                 test(
                     "tests/lease.rs",
@@ -4168,8 +4168,8 @@ fn crate_c_score_test() {
                     "assert_eq!(tax_total(1), 2);",
                 ),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/lib.rs", "return Renewal::new(format!(\"x\"))");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4203,10 +4203,10 @@ fn crate_c_score_test() {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         };
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![macro_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/internal.rs", "if a >= b");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4233,10 +4233,10 @@ fn crate_c_score_test() {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         };
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![call_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("src/internal.rs", "if a >= b");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4308,7 +4308,7 @@ fn crate_c_score_test() {
             impl_method("crates/crate_b/src/span.rs", "Span", "current"),
         ];
         functions.extend(extra);
-        RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions,
             tests: vec![test_with_call(
                 "crates/crate_c/tests/max_level.rs",
@@ -4316,8 +4316,8 @@ fn crate_c_score_test() {
                 test_body,
                 "current",
             )],
-            ..RustIndex::default()
-        }
+            ..Default::default()
+        })
     }
 
     fn level_filter_related(index: &RustIndex, owner: &FunctionSummary) -> Vec<RelationReason> {
@@ -4415,7 +4415,7 @@ fn crate_c_score_test() {
     }
 
     fn with_source(index: &mut RustIndex, file: &str, source: &str) {
-        index.files.insert(
+        index.insert_file_only(
             PathBuf::from(file),
             FileFacts {
                 source: source.to_string(),
@@ -4510,7 +4510,7 @@ fn crate_c_score_test() {
         let mut unknown_owner = owner.clone();
         unknown_owner.impl_context = FunctionImplContext::Unknown;
         let mut index = level_filter_index(imported, Vec::new());
-        index.functions[0] = unknown_owner.clone();
+        *index.function_at_mut(0) = unknown_owner.clone();
         assert!(level_filter_related(&index, &unknown_owner).is_empty());
     }
 
@@ -4607,7 +4607,7 @@ let r = try_parse_summary();",
     fn given_generic_named_test_calling_seam_callee_when_wrapper_probe_then_related_seam_callee_call()
      {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("src/lib.rs", "parse_summary"),
                 function("src/lib.rs", "try_parse_summary"),
@@ -4618,8 +4618,8 @@ let r = try_parse_summary();",
                 "let result = try_parse_summary(\"@bad;\");",
                 "try_parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4631,7 +4631,7 @@ let r = try_parse_summary();",
     #[test]
     fn given_generic_named_test_calling_nothing_when_wrapper_probe_then_not_related() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![test_with_call(
                 "tests/utils.rs",
@@ -4639,8 +4639,8 @@ let r = try_parse_summary();",
                 "other_helper();",
                 "other_helper",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4654,7 +4654,7 @@ let r = try_parse_summary();",
     #[test]
     fn given_test_calling_both_owner_and_callee_when_wrapper_probe_then_direct_owner_call_wins() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("src/lib.rs", "parse_summary"),
                 function("src/lib.rs", "try_parse_summary"),
@@ -4665,8 +4665,8 @@ let r = try_parse_summary();",
                 "let a = parse_summary(\"x\"); let b = try_parse_summary(\"y\");",
                 "parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4680,7 +4680,7 @@ let r = try_parse_summary();",
         // Round-1 review (devin hC): a same-named fn defined in the test
         // body impersonates the seam callee; the admit is defeated.
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![test_with_call(
                 "tests/utils.rs",
@@ -4689,8 +4689,8 @@ let r = try_parse_summary();",
 let r = try_parse_summary(\"x\");",
                 "try_parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4706,11 +4706,11 @@ let r = try_parse_summary(\"x\");",
         // Round-1 review (devin hC): a local binding named like the callee
         // also defeats the name-level admit (#2972 defeat discipline).
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![shadowing_test_with_call_after_binding()],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4726,11 +4726,11 @@ let r = try_parse_summary(\"x\");",
     #[test]
     fn given_test_shadowing_callee_with_let_mut_when_wrapper_probe_then_no_seam_callee_call() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![let_mut_shadowing_test_with_call_after_binding()],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4764,12 +4764,12 @@ let r = try_parse_summary(\"x\");",
         .map_err(|error| error.to_string())?;
         adapt(&mut file_facts);
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner],
             tests: file_facts.tests.clone(),
             files: std::iter::once((PathBuf::from("tests/utils.rs"), file_facts)).collect(),
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
         Ok((index, probe))
     }
@@ -4787,7 +4787,7 @@ let r = try_parse_summary(\"x\");",
     fn given_parser_backed_file_when_facts_shadow_callee_then_no_seam_callee_call()
     -> Result<(), String> {
         let (index, probe) = shadow_flag_law_index(SHADOWING_TEST_SOURCE, |_facts| {})?;
-        let owner = index.functions[0].clone();
+        let owner = index.functions()[0].clone();
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
@@ -4807,13 +4807,10 @@ let r = try_parse_summary(\"x\");",
     -> Result<(), String> {
         let (mut index, probe) = shadow_flag_law_index(SHADOWING_TEST_SOURCE, |_facts| {})?;
         assert!(
-            index
-                .files
-                .remove(&PathBuf::from("tests/utils.rs"))
-                .is_some(),
+            index.remove_file(&PathBuf::from("tests/utils.rs")),
             "the removal control deletes the parser-backed file facts"
         );
-        let owner = index.functions[0].clone();
+        let owner = index.functions()[0].clone();
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
@@ -4838,7 +4835,7 @@ let r = try_parse_summary(\"x\");",
                 test.let_bindings = Vec::new();
             }
         })?;
-        let owner = index.functions[0].clone();
+        let owner = index.functions()[0].clone();
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
@@ -4858,7 +4855,7 @@ let r = try_parse_summary(\"x\");",
     -> Result<(), String> {
         let clean_source = "#[test]\nfn misc_edge_case() {\n    let result = try_parse_summary(\"@bad;\");\n    assert!(result.is_err());\n}\n";
         let (index, probe) = shadow_flag_law_index(clean_source, |_facts| {})?;
-        let owner = index.functions[0].clone();
+        let owner = index.functions()[0].clone();
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
@@ -4908,11 +4905,11 @@ let r = try_parse_summary;",
             "try_parse_summary",
         );
         summary.calls[0].line = 1;
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![summary],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4926,7 +4923,7 @@ let r = try_parse_summary;",
     #[test]
     fn given_shadow_fn_shape_in_comment_when_wrapper_probe_then_relation_survives() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![test_with_call(
                 "tests/utils.rs",
@@ -4935,8 +4932,8 @@ let r = try_parse_summary;",
 let r = try_parse_summary(\"x\");",
                 "try_parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4951,7 +4948,7 @@ let r = try_parse_summary(\"x\");",
     #[test]
     fn given_shadow_let_shape_in_string_when_wrapper_probe_then_relation_survives() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![test_with_call(
                 "tests/utils.rs",
@@ -4960,8 +4957,8 @@ let r = try_parse_summary(\"x\");",
 let r = try_parse_summary(\"x\");",
                 "try_parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -4979,7 +4976,7 @@ let r = try_parse_summary(\"x\");",
     #[test]
     fn given_quote_char_literal_before_shadow_fn_when_wrapper_probe_then_no_relation() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![test_with_call(
                 "tests/utils.rs",
@@ -4989,8 +4986,8 @@ fn try_parse_summary(raw: &str) -> usize { raw.len() }
 let r = try_parse_summary(\"x\");",
                 "try_parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5023,11 +5020,11 @@ let try_parse_summary = build();",
         // The captured call sits between the initializer-less declaration
         // (body line 1) and the real same-named binding (body line 3).
         summary.calls[0].line = 3;
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![summary],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5042,7 +5039,7 @@ let try_parse_summary = build();",
     #[test]
     fn given_shadow_shape_in_multiline_string_when_wrapper_probe_then_relation_survives() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![test_with_call(
                 "tests/utils.rs",
@@ -5052,8 +5049,8 @@ fn try_parse_summary()\";
 let r = try_parse_summary(\"x\");",
                 "try_parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5068,7 +5065,7 @@ let r = try_parse_summary(\"x\");",
     #[test]
     fn given_near_name_binding_when_wrapper_probe_then_relation_survives() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("src/lib.rs", "parse_summary"),
                 function("src/lib.rs", "try_parse_summary"),
@@ -5079,8 +5076,8 @@ let r = try_parse_summary(\"x\");",
                 "let try_parse_summary_result = try_parse_summary(\"x\");",
                 "try_parse_summary",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5133,7 +5130,7 @@ let r = try_parse_summary(\"x\");",
     #[test]
     fn given_unrelated_function_sharing_token_when_wrapper_probe_then_no_seam_callee_call() {
         let owner = function("src/lib.rs", "parse_summary");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "parse_summary")],
             tests: vec![test_with_call(
                 "tests/utils.rs",
@@ -5141,8 +5138,8 @@ let r = try_parse_summary(\"x\");",
                 "try_parse_summary_impl(\"@bad;\");",
                 "try_parse_summary_impl",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = wrapper_error_probe("src/lib.rs", "try_parse_summary(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5361,10 +5358,10 @@ try_parse_summary(raw).map_err(Into::into)"
                 OracleStrength::Strong,
             )],
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![oracle_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         // Struct field probe: expression contains `open_in` (7 chars, >= 5)
         let probe = struct_field_probe("crates/ripr/src/config.rs", "open_in");
 
@@ -5402,10 +5399,10 @@ try_parse_summary(raw).map_err(Into::into)"
             "",
             assertion("assert_eq!(cfg.severity, Level::Low);"),
         ));
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests,
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = struct_field_probe("crates/a/src/settings.rs", "severity");
 
         let related = find_related_tests(&probe, None, &index, true, None, None);
@@ -5450,10 +5447,10 @@ try_parse_summary(raw).map_err(Into::into)"
                 OracleStrength::Strong,
             )],
         ));
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests,
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         let common = struct_field_probe("crates/ripr/src/config.rs", "severity");
         assert!(
@@ -5479,10 +5476,10 @@ try_parse_summary(raw).map_err(Into::into)"
                 OracleStrength::Strong,
             )],
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![oracle_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let forward_probe = struct_field_probe("crates/ripr/src/config.rs", "marker");
         let windows_probe = struct_field_probe("crates\\ripr\\src\\config.rs", "marker");
 
@@ -5518,10 +5515,10 @@ try_parse_summary(raw).map_err(Into::into)"
             "assert_eq!(value, 3);",
             Vec::new(),
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![matching_test, unrelated_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let forward_probe = struct_field_probe("crates/ripr/src/.config", "marker");
         let windows_probe = struct_field_probe("crates\\ripr\\src\\.config", "marker");
 
@@ -5580,10 +5577,10 @@ try_parse_summary(raw).map_err(Into::into)"
                 ),
             ],
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![oracle_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         let probe_open_in = struct_field_probe("crates/ripr/src/config.rs", "open_in");
         let probe_open_cap = struct_field_probe("crates/ripr/src/config.rs", "open_cap");
@@ -5629,10 +5626,10 @@ try_parse_summary(raw).map_err(Into::into)"
                 OracleStrength::Strong,
             )],
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![unrelated_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         // Probe expression is `port` (4 chars) — below the >= 5 threshold.
         let probe = struct_field_probe("crates/ripr/src/scheduler.rs", "port");
 
@@ -5664,10 +5661,10 @@ try_parse_summary(raw).map_err(Into::into)"
                 OracleStrength::Strong,
             )],
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![unrelated_test],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         // Probe expression contains `discount_threshold` (>= 5 chars) which is
         // also in the assertion observed_tokens — but owner_fn is Some, so the
         // assertions_reference_owner signal must NOT fire.
@@ -5683,14 +5680,14 @@ try_parse_summary(raw).map_err(Into::into)"
 
     #[test]
     fn absolute_root_probe_matches_relative_companion_test_file() -> Result<(), String> {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test(
                 "src/tests/gate_watchdog_tests.rs",
                 "terminal_states_are_exact",
                 "classify_gate_watchdog(&input);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = struct_field_probe(
             "/repo/ub-review/src/gate_watchdog.rs",
             "pub(crate) state: GateWatchdogState",
@@ -5712,14 +5709,14 @@ try_parse_summary(raw).map_err(Into::into)"
 
     #[test]
     fn absolute_workspace_probe_keeps_relative_cross_crate_guard() -> Result<(), String> {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test(
                 "crates/other/tests/state_tests.rs",
                 "state_is_exact",
                 "state();",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = struct_field_probe(
             "/repo/ripr/crates/core/src/state.rs",
             "pub(crate) state: State",
@@ -5740,7 +5737,7 @@ try_parse_summary(raw).map_err(Into::into)"
     #[test]
     fn given_absolute_owner_and_absolute_wrong_package_test_when_weak_match_then_filtered() {
         let owner = function("/ws/pkg-a/src/lib.rs", "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 "/ws/pkg-b/tests/coincidence.rs",
@@ -5748,8 +5745,8 @@ try_parse_summary(raw).map_err(Into::into)"
                 "observe(&input);",
                 "observe",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("/ws/pkg-a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5767,7 +5764,7 @@ try_parse_summary(raw).map_err(Into::into)"
     #[test]
     fn given_absolute_paths_when_unique_owner_is_called_cross_package_then_retained() {
         let owner = function("/ws/pkg-a/src/lib.rs", "compute_hash");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 "/ws/pkg-b/tests/integration.rs",
@@ -5775,8 +5772,8 @@ try_parse_summary(raw).map_err(Into::into)"
                 "let result = compute_hash(b\"input\");",
                 "compute_hash",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe("/ws/pkg-a/src/lib.rs", "compute_hash(input)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5798,7 +5795,7 @@ try_parse_summary(raw).map_err(Into::into)"
         let owner_file = format!("F:{}ws/pkg-a/src/lib.rs", '/');
         let wrong_package_test = format!("F:{}ws/pkg-b/tests/coincidence.rs", '/');
         let owner = function(&owner_file, "score");
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
                 &wrong_package_test,
@@ -5806,8 +5803,8 @@ try_parse_summary(raw).map_err(Into::into)"
                 "observe(&input);",
                 "observe",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = probe(&owner_file, "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
@@ -5823,14 +5820,14 @@ try_parse_summary(raw).map_err(Into::into)"
     #[test]
     fn given_absolute_struct_probe_and_absolute_wrong_package_test_when_weak_match_then_filtered()
     -> Result<(), String> {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test(
                 "/ws/pkg-b/tests/gate_watchdog_tests.rs",
                 "gate_watchdog_is_exact",
                 "observe(&input);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let probe = struct_field_probe("/ws/pkg-a/src/gate_watchdog.rs", "pub(crate) state: State");
 
         let related = find_related_tests(&probe, None, &index, true, None, None);
@@ -5902,12 +5899,12 @@ quickcheck! {
             .find(|function| function.name == "gate")
             .cloned()
             .ok_or("gate owner")?;
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: file_facts.functions.clone(),
             tests: file_facts.tests.clone(),
             files: std::iter::once((PathBuf::from("src/lib.rs"), file_facts)).collect(),
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let mut related_probe = probe("src/lib.rs", "x > 10");
         related_probe.owner = Some(owner.id.clone());
 
