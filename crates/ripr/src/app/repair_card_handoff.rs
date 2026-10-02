@@ -145,6 +145,9 @@ pub(crate) fn evidence_tree_currentness(
 ) -> Result<RepairCardSnapshotCurrentness, String> {
     let paths = evidence_probe_paths(entry);
     let mut args: Vec<String> = vec![
+        // Evidence filenames are literal paths, never patterns: a seam file
+        // named `foo*bar.rs` must not glob-match unrelated files.
+        "--literal-pathspecs".to_string(),
         "status".to_string(),
         "--porcelain".to_string(),
         "--ignored".to_string(),
