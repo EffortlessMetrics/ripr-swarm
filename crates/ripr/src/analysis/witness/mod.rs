@@ -199,6 +199,19 @@ impl BehaviorEvidenceWitnessV1 {
         append_stage(&mut canonical, "propagation", &self.propagation);
         append_stage(&mut canonical, "observation", &self.observation);
         append_stage(&mut canonical, "discrimination", &self.discrimination);
+        match &self.selected_target {
+            TargetState::SelectedExisting { identities } => {
+                append_field(&mut canonical, "selected_existing");
+                append_field(&mut canonical, &identities.len().to_string());
+                for identity in identities {
+                    append_field(&mut canonical, identity);
+                }
+            }
+            TargetState::TypedAbsence { reason } => {
+                append_field(&mut canonical, "typed_absence");
+                append_field(&mut canonical, reason);
+            }
+        }
         append_field(&mut canonical, &self.limitations.len().to_string());
         for limitation in &self.limitations {
             append_field(&mut canonical, limitation);

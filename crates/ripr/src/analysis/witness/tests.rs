@@ -1040,6 +1040,41 @@ fn removing_identity_or_digest_makes_the_row_not_comparable() {
 }
 
 #[test]
+fn changing_selected_target_state_breaks_the_stale_digest() {
+    let mut repo = from_classified_seam(&boundary_related_seam());
+    assert!(matches!(
+        repo.selected_target,
+        super::TargetState::SelectedExisting { .. }
+    ));
+    let unchanged_digest = repo.semantic_digest.clone();
+
+    repo.selected_target = super::TargetState::SelectedExisting {
+        identities: vec!["crates/ripr/src/lib.rs::pricing::score".to_string()],
+    };
+    // A digest computed before the target-state change must stop matching.
+    assert!(!repo.digest_matches());
+
+    // Selected identities are part of the hashed bytes, not silent state.
+    repo.semantic_digest = repo.compute_semantic_digest();
+    assert!(repo.digest_matches());
+    assert_ne!(repo.semantic_digest, unchanged_digest);
+
+    // The typed-absence reason is hashed the same way on the diff path.
+    let mut diff = from_finding(&boundary_related_finding());
+    assert!(matches!(
+        diff.selected_target,
+        super::TargetState::TypedAbsence { .. }
+    ));
+    let diff_digest = diff.semantic_digest.clone();
+    if let super::TargetState::TypedAbsence { reason } = &mut diff.selected_target {
+        reason.push_str("-changed");
+    }
+    assert!(!diff.digest_matches());
+    diff.semantic_digest = diff.compute_semantic_digest();
+    assert_ne!(diff.semantic_digest, diff_digest);
+}
+
+#[test]
 fn json_and_markdown_derive_from_the_same_normalized_dto() {
     let row = compare_pair(
         "dto",
