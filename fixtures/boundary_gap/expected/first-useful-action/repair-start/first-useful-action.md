@@ -10,13 +10,15 @@ Start the focused-test repair for this seam.
 
 ## One-Screen Recommendation
 
-- Changed behavior: Changed behavior `amount >= discount_threshold` lacks a discriminator for `amount == discount_threshold`; the review card names its repair start.
+- Changed behavior: `amount >= discount_threshold`
+- Why: The changed behavior — a related test reaches this change but does not observe the exact changed value; missing discriminator `amount == discount_threshold`. The review card names its repair start.
 - Current evidence strength: `Static evidence found related test context, but the current check is weak because the discriminator is missing.`
 - Missing discriminator: amount == discount_threshold
 - Focused proof intent: assert_eq!(discounted_total(/* boundary input where amount == discount_threshold */), /* expected */)
 - Repair start: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
 - After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
-- Manual verify without a repair attempt (needs before and after snapshots taken around the test edit): `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
+- Analysis outcome for the receipt: `ripr check --root . --base main --mode draft --format json > <cwd>/target/ripr/workflow/analysis-outcome.json`
+- Manual verify without a repair attempt (needs before and after snapshots taken around the test edit): `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/target/ripr/workflow/agent-verify.json`
 - Manual receipt without a repair attempt (after the manual verify): `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json`
 - Artifacts: `fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json`
 - Boundary: static advisory evidence only; not runtime, coverage, mutation, or gate proof.
@@ -40,9 +42,13 @@ Start the focused-test repair for this seam.
 
 After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
 
+## Analysis Outcome For The Receipt
+
+`ripr check --root . --base main --mode draft --format json > <cwd>/target/ripr/workflow/analysis-outcome.json`
+
 ## Manual Verify Without A Repair Attempt
 
-`ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
+`ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > <cwd>/target/ripr/workflow/agent-verify.json`
 
 ## Manual Receipt Without A Repair Attempt
 

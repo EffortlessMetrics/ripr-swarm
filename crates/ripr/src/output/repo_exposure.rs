@@ -18,11 +18,12 @@ use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identit
 use crate::analysis::seams::SeamGripClass;
 use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
 use crate::output::json::escape as json_escape;
+use crate::output::markdown::{code_span, inline_prose_literal, table_cell_text};
 use crate::output::path::display_path;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Guidance disclosure emitted when a predominantly TypeScript/JavaScript
 /// workspace is scanned in repo-exposure mode and contributes zero seams.
@@ -49,7 +50,7 @@ impl TsFullRepoGuidance {
 
     /// The human-readable repair route for this disclosure.
     pub(crate) const REPAIR_ROUTE: &'static str = "TypeScript is analyzed diff-first; run \
-         'ripr check --base origin/main' or '--diff <file>' to evaluate \
+         'ripr check' or '--diff <file>' to evaluate \
          changed TypeScript behavior. Full-repo TypeScript exposure is not \
          yet modeled (named limitation).";
 }
@@ -79,10 +80,77 @@ impl PythonRepoExposureGuidance {
     /// preview repo producer exists, but this seam inventory does not render
     /// its findings.
     pub(crate) const REPAIR_ROUTE: &'static str = "Python changed behavior is reviewed \
-         diff-first on this seam report; run 'ripr check --base origin/main' \
+         diff-first on this seam report; run 'ripr check' \
          or '--diff <file>' to evaluate it. This report counts Rust and Perl \
          seams only and does not render Python findings, so a zero-seam \
          result is not a clean Python result (named limitation).";
+}
+
+/// Disclosure when repo exposure skipped generated Rust that `ripr check`
+/// already leaves out of scope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GeneratedRustSkip {
+    pub(crate) paths: Vec<PathBuf>,
+}
+
+impl GeneratedRustSkip {
+    pub(crate) const CATEGORY: &'static str = "generated_rust_source_skipped";
+
+    pub(crate) fn from_paths(paths: Vec<PathBuf>) -> Option<Self> {
+        if paths.is_empty() {
+            None
+        } else {
+            Some(Self { paths })
+        }
+    }
+
+    fn listed_paths(&self) -> String {
+        bounded_generated_path_listing(&self.paths)
+    }
+
+    pub(crate) fn repair_route(&self) -> String {
+        let listed = self.listed_paths();
+        format!(
+            "Not analyzed as generated code: {listed}. ripr treats `gen/`, \
+             `generated/` and `out/` directories and `generated.rs`, `schema.rs`, \
+             `bindings.rs`, `*.gen.rs`, `*_generated.rs` and `generated_*` files, \
+             plus `[languages.rust] generated_file_patterns`, as generated; if one of these \
+             is hand-written, its changes stay outside this analysis."
+        )
+    }
+
+    fn detail(&self) -> String {
+        format!(
+            "{} generated Rust file(s) were intentionally skipped by the generated-file \
+             conventions or configured patterns: {}",
+            self.paths.len(),
+            self.listed_paths()
+        )
+    }
+}
+
+fn bounded_generated_path_listing(paths: &[PathBuf]) -> String {
+    let normalized: Vec<String> = paths
+        .iter()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let shown = normalized
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = normalized.len().saturating_sub(3);
+    let listed = if more > 0 {
+        format!("{shown} and {more} more")
+    } else {
+        shown
+    };
+    if listed.chars().count() > 160 {
+        format!("{}…", listed.chars().take(159).collect::<String>())
+    } else {
+        listed
+    }
 }
 
 pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.3";
@@ -98,11 +166,28 @@ const MAX_RELATED_TESTS_PER_SEAM_JSON: usize = 8;
 const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 
 /// Render the repo exposure JSON.
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_json(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+) -> String {
+    render_repo_exposure_json_with_generated_skip(
+        classified,
+        limit_info,
+        ts_guidance,
+        python_guidance,
+        None,
+    )
+}
+
+pub(crate) fn render_repo_exposure_json_with_generated_skip(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
 ) -> String {
     let mut bytes = Vec::new();
     if write_repo_exposure_json(
@@ -110,6 +195,7 @@ pub(crate) fn render_repo_exposure_json(
         limit_info,
         ts_guidance,
         python_guidance,
+        generated_skip,
         &mut bytes,
     )
     .is_err()
@@ -133,13 +219,18 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
     out: &mut W,
 ) -> io::Result<()> {
     write_repo_exposure_json_document(
         classified,
         limit_info,
-        ts_guidance,
-        python_guidance,
+        RepoExposureJsonDisclosures {
+            ts_guidance,
+            python_guidance,
+            generated_skip,
+        },
+        None,
         None,
         out,
     )
@@ -154,17 +245,24 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
     context: &RepoExposureArtifactContext,
     out: &mut W,
 ) -> Result<(), String> {
     let placeholder = repo_exposure_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
+    let source_subject = repo_exposure_source_subject(classified, &context.root);
     let mut hasher = Sha256Writer::new();
+    let disclosures = RepoExposureJsonDisclosures {
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+    };
     write_repo_exposure_json_document(
         classified,
         limit_info,
-        ts_guidance,
-        python_guidance,
+        disclosures,
         Some(&placeholder),
+        source_subject.as_ref(),
         &mut hasher,
     )
     .map_err(|err| format!("hash repo exposure JSON failed: {err}"))?;
@@ -174,9 +272,9 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     write_repo_exposure_json_document(
         classified,
         limit_info,
-        ts_guidance,
-        python_guidance,
+        disclosures,
         Some(&metadata),
+        source_subject.as_ref(),
         out,
     )
     .map_err(|err| format!("write repo exposure JSON failed: {err}"))
@@ -189,6 +287,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
     context: &RepoExposureArtifactContext,
 ) -> Result<String, String> {
     let mut bytes = Vec::new();
@@ -197,20 +296,60 @@ pub(crate) fn render_repo_exposure_json_with_context(
         limit_info,
         ts_guidance,
         python_guidance,
+        generated_skip,
         context,
         &mut bytes,
     )?;
     String::from_utf8(bytes).map_err(|err| format!("repo exposure JSON was not UTF-8: {err}"))
 }
 
+/// #4544: the content digests of every workspace file the seam entries name,
+/// read in this analysis run. A gap ledger or actionable-gaps report derived
+/// from this artifact copies these digests; it never hashes the workspace
+/// itself. `None` when no seam names a file or a file cannot be read, so the
+/// derived reports disclose `unverifiable_subject` instead of a partial stamp.
+fn repo_exposure_source_subject(
+    classified: &[ClassifiedSeam],
+    root: &std::path::Path,
+) -> Option<serde_json::Value> {
+    let canonical_gaps = canonical_gap_identities(classified);
+    let mut files = std::collections::BTreeSet::new();
+    for entry in classified {
+        let mut seam_json = String::new();
+        push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
+        let seam = serde_json::from_str::<serde_json::Value>(&seam_json).ok()?;
+        crate::output::gap_source_subject::named_files_in_value(root, &seam, &mut files);
+    }
+    if files.is_empty() {
+        return None;
+    }
+    let stamp = crate::output::gap_source_subject::stamp_source_subject(root, &files).ok()?;
+    serde_json::to_value(stamp).ok()
+}
+
+/// Additive disclosures that stay in `limitations[]` without changing
+/// `run_status`. Grouped so the document writer does not grow a new
+/// argument for each skip or guidance category.
+#[derive(Clone, Copy)]
+struct RepoExposureJsonDisclosures<'a> {
+    ts_guidance: Option<&'a TsFullRepoGuidance>,
+    python_guidance: Option<&'a PythonRepoExposureGuidance>,
+    generated_skip: Option<&'a GeneratedRustSkip>,
+}
+
 fn write_repo_exposure_json_document<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
-    ts_guidance: Option<&TsFullRepoGuidance>,
-    python_guidance: Option<&PythonRepoExposureGuidance>,
+    disclosures: RepoExposureJsonDisclosures<'_>,
     artifact: Option<&serde_json::Value>,
+    source_subject: Option<&serde_json::Value>,
     out: &mut W,
 ) -> io::Result<()> {
+    let RepoExposureJsonDisclosures {
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+    } = disclosures;
     let metrics = ExposureMetrics::from(classified);
     let canonical_gaps = canonical_gap_identities(classified);
 
@@ -223,6 +362,9 @@ fn write_repo_exposure_json_document<W: io::Write>(
     if let Some(artifact) = artifact {
         writeln!(out, "  \"artifact\": {},", artifact)?;
     }
+    if let Some(source_subject) = source_subject {
+        writeln!(out, "  \"source_subject\": {},", source_subject)?;
+    }
     writeln!(out, "  \"scope\": \"repo\",")?;
 
     // run_status and limitations[]:
@@ -233,8 +375,12 @@ fn write_repo_exposure_json_document<W: io::Write>(
     //     not change run_status (the Rust scan itself completed normally).
     //   - "python_diff_first" is the same kind of additive entry for a
     //     Python workspace with zero seams. It does not render Python findings.
-    let has_limitations =
-        limit_info.is_some() || ts_guidance.is_some() || python_guidance.is_some();
+    //   - "generated_rust_source_skipped" names generated Rust files that
+    //     `ripr check` also skips. It does not change run_status.
+    let has_limitations = limit_info.is_some()
+        || ts_guidance.is_some()
+        || python_guidance.is_some()
+        || generated_skip.is_some();
     match limit_info {
         None => {
             writeln!(out, "  \"run_status\": \"complete\",")?;
@@ -250,10 +396,10 @@ fn write_repo_exposure_json_document<W: io::Write>(
         if let Some(info) = limit_info {
             let repair_route = match info.source {
                 SeamLimitSource::Default => {
-                    "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or use `ripr check --diff` to scope the run."
+                    "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
                 }
                 SeamLimitSource::Configured => {
-                    "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or use `ripr check --diff`."
+                    "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
                 }
             };
             writeln!(out, "    {{")?;
@@ -371,6 +517,47 @@ fn write_repo_exposure_json_document<W: io::Write>(
                 "      \"repair_route\": \"{}\"",
                 json_escape(PythonRepoExposureGuidance::REPAIR_ROUTE)
             )?;
+            writeln!(out, "    }}")?;
+            first = false;
+        }
+        if let Some(skip) = generated_skip {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
+            writeln!(out, "    {{")?;
+            writeln!(
+                out,
+                "      \"category\": \"{}\",",
+                GeneratedRustSkip::CATEGORY
+            )?;
+            writeln!(out, "      \"skipped_file_count\": {},", skip.paths.len())?;
+            writeln!(out, "      \"skipped_files\": [")?;
+            for (idx, path) in skip.paths.iter().take(3).enumerate() {
+                let trailing = if idx + 1 == skip.paths.len().min(3) {
+                    ""
+                } else {
+                    ","
+                };
+                writeln!(
+                    out,
+                    "        \"{}\"{trailing}",
+                    json_escape(&path.to_string_lossy().replace('\\', "/"))
+                )?;
+            }
+            writeln!(out, "      ],")?;
+            if skip.paths.len() > 3 {
+                writeln!(
+                    out,
+                    "      \"skipped_files_omitted\": {},",
+                    skip.paths.len() - 3
+                )?;
+            }
+            writeln!(
+                out,
+                "      \"repair_route\": \"{}\",",
+                json_escape(&skip.repair_route())
+            )?;
+            writeln!(out, "      \"detail\": \"{}\"", json_escape(&skip.detail()))?;
             writeln!(out, "    }}")?;
         }
         writeln!(out, "  ],")?;
@@ -736,14 +923,38 @@ fn push_classified_json(
     out.push_str("    }");
 }
 
+/// Next step printed when the repo inventory found nothing to analyze and no
+/// language guidance applies.
+const REPO_EXPOSURE_EMPTY_NEXT_STEP: &str = "\nNothing was found to analyze under this root. \
+Next: point `--root` at the directory holding `Cargo.toml` (or at TypeScript or Python \
+sources with that language enabled in `ripr.toml`), then run `ripr doctor --root <DIR>` \
+to see what the root can analyze.\n";
+
 /// Render the repo exposure Markdown report. The output uses the
 /// static seam evidence vocabulary only — no runtime-mutation outcome
 /// words per RIPR-SPEC-0005 § Static-Language Boundaries.
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_md(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
+) -> String {
+    render_repo_exposure_md_with_generated_skip(
+        classified,
+        limit_info,
+        ts_guidance,
+        python_guidance,
+        None,
+    )
+}
+
+pub(crate) fn render_repo_exposure_md_with_generated_skip(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
 ) -> String {
     let metrics = ExposureMetrics::from(classified);
     let mut out = String::new();
@@ -769,18 +980,20 @@ pub(crate) fn render_repo_exposure_md(
         ));
     }
 
-    let has_limitations =
-        limit_info.is_some() || ts_guidance.is_some() || python_guidance.is_some();
+    let has_limitations = limit_info.is_some()
+        || ts_guidance.is_some()
+        || python_guidance.is_some()
+        || generated_skip.is_some();
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
         // Seam-limit disclosure: emit only when a real cap fired.
         if let Some(info) = limit_info {
             let control = match info.source {
                 SeamLimitSource::Default => {
-                    "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or use `ripr check --diff` to scope the run"
+                    "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
                 }
                 SeamLimitSource::Configured => {
-                    "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or use `ripr check --diff`"
+                    "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
                 }
             };
             out.push_str(&format!(
@@ -813,6 +1026,15 @@ pub(crate) fn render_repo_exposure_md(
                  and no gate or badge authority.\n",
             );
         }
+        if let Some(skip) = generated_skip {
+            out.push_str(&format!(
+                "**{}** (skipped_file_count: {})\n\n",
+                GeneratedRustSkip::CATEGORY,
+                skip.paths.len(),
+            ));
+            out.push_str(&skip.repair_route());
+            out.push('\n');
+        }
     }
 
     if classified.is_empty() {
@@ -820,6 +1042,12 @@ pub(crate) fn render_repo_exposure_md(
             "\nNo classified seams. The repo seam inventory is empty or no \
              production seams were detected.\n",
         );
+        // An empty report must still name a next step (an empty directory
+        // used to end here with nothing to do). Language guidance above
+        // already names its own next step.
+        if ts_guidance.is_none() && python_guidance.is_none() && generated_skip.is_none() {
+            out.push_str(REPO_EXPOSURE_EMPTY_NEXT_STEP);
+        }
         return out;
     }
 
@@ -867,14 +1095,18 @@ pub(crate) fn render_repo_exposure_md(
 fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
+    // Path in a code span, like the owner line: odd names can contain
+    // `[y](z)` and `*` that would otherwise render as a link or emphasis.
+    // Do not fold this into #4473's prose neutralization; that owner still
+    // leaves link/emphasis syntax live in headings (#4605).
     out.push_str(&format!(
         "### {}:{} {}\n\n",
-        md_escape(&display_path(seam.file())),
+        code_span(&display_path(seam.file())),
         seam.display_line(),
         seam.kind().as_str()
     ));
-    out.push_str(&format!("- seam: `{}`\n", md_escape(seam.expression())));
-    out.push_str(&format!("- owner: `{}`\n", md_escape(seam.owner())));
+    out.push_str(&format!("- seam: {}\n", code_span(seam.expression())));
+    out.push_str(&format!("- owner: {}\n", code_span(seam.owner())));
     out.push_str(&format!("- grip: {}\n", entry.class.as_str()));
     out.push_str("- evidence:\n");
     out.push_str(&format!("  - reach: {}\n", evidence.reach.state.as_str()));
@@ -899,8 +1131,8 @@ fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
         out.push_str("- related tests:\n");
         for grip in evidence.related_tests.iter().take(5) {
             out.push_str(&format!(
-                "  - `{}` ({}, {}) · {} / {}\n",
-                md_escape(grip.test_name.as_str()),
+                "  - {} ({}, {}) · {} / {}\n",
+                code_span(grip.test_name.as_str()),
                 grip.oracle_kind.as_str(),
                 grip.oracle_strength.as_str(),
                 grip.relation_reason.as_str(),
@@ -911,16 +1143,16 @@ fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
     if !evidence.observed_values.is_empty() {
         out.push_str("- observed values:\n");
         for value in evidence.observed_values.iter().take(5) {
-            out.push_str(&format!("  - `{}`\n", md_escape(value.value.as_str())));
+            out.push_str(&format!("  - {}\n", code_span(value.value.as_str())));
         }
     }
     if !evidence.missing_discriminators.is_empty() {
         out.push_str("- missing discriminators:\n");
         for missing in &evidence.missing_discriminators {
             out.push_str(&format!(
-                "  - `{}` — {}\n",
-                md_escape(missing.value.as_str()),
-                md_escape_paragraph(missing.reason.as_str())
+                "  - {} — {}\n",
+                code_span(missing.value.as_str()),
+                inline_prose_literal(missing.reason.as_str())
             ));
         }
     }
@@ -941,11 +1173,11 @@ fn push_typescript_readiness_md(out: &mut String, readiness: &TypeScriptRepoRead
     ));
     out.push_str(&format!(
         "| package confidence | {} |\n",
-        md_escape_table_cell(&readiness.package_confidence)
+        table_cell_text(&readiness.package_confidence)
     ));
     out.push_str(&format!(
         "| runner status | {} |\n",
-        md_escape_table_cell(&readiness.runner_status)
+        table_cell_text(&readiness.runner_status)
     ));
     out.push_str(&format!(
         "| verify commands | {} |\n",
@@ -956,7 +1188,7 @@ fn push_typescript_readiness_md(out: &mut String, readiness: &TypeScriptRepoRead
         readiness
             .top_blocker
             .as_deref()
-            .map(md_escape_table_cell)
+            .map(table_cell_text)
             .unwrap_or_else(|| "none".to_string())
     ));
     out.push_str(
@@ -964,35 +1196,6 @@ fn push_typescript_readiness_md(out: &mut String, readiness: &TypeScriptRepoRead
          It does not emit full-repo TypeScript seams, run TypeScript tests, or \
          create gate or badge authority.\n",
     );
-}
-
-fn md_escape_table_cell(text: &str) -> String {
-    text.replace('|', "\\|").replace('\n', " ")
-}
-
-/// Escape values that get wrapped in inline-code spans. Inside
-/// backticks every character is literal except the closing backtick
-/// and the table-cell pipe, so we only swap those plus newlines.
-/// Backslash-escaping `*`/`_`/`[`/`]` here would render as literal
-/// `\*` in the inline-code span — see `md_escape_paragraph` for the
-/// non-code variant.
-fn md_escape(value: &str) -> String {
-    value
-        .replace('`', "\u{2018}")
-        .replace('|', "\\|")
-        .replace('\n', " ")
-}
-
-/// Escape values that appear in paragraph text (no surrounding
-/// backticks). Adds backslash escapes for emphasis and link tokens so
-/// a future analyzer-emitted reason string containing snake_case or
-/// `*` does not silently trigger italic/bold/link rendering.
-fn md_escape_paragraph(value: &str) -> String {
-    md_escape(value)
-        .replace('*', "\\*")
-        .replace('_', "\\_")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
 }
 
 /// Per-class metric bucket for the repo exposure report.
@@ -1054,6 +1257,7 @@ mod tests {
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueFact,
     };
+    use crate::output::markdown::{code_span, inline_prose_literal};
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
@@ -1132,6 +1336,7 @@ mod tests {
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
             }],
+            new_test_target: None,
         };
         ClassifiedSeam {
             seam,
@@ -1210,6 +1415,54 @@ mod tests {
     }
 
     #[test]
+    fn json_discloses_generated_rust_skip_without_changing_run_status() -> Result<(), String> {
+        let skip = GeneratedRustSkip::from_paths(vec![
+            PathBuf::from("src/bindings.rs"),
+            PathBuf::from("src/schema.rs"),
+        ])
+        .ok_or_else(|| "generated skip must be Some for nonempty paths".to_string())?;
+        let json = render_repo_exposure_json_with_generated_skip(
+            &[weakly_gripped_classified()],
+            None,
+            None,
+            None,
+            Some(&skip),
+        );
+        assert!(
+            json.contains("\"run_status\": \"complete\""),
+            "generated skip must not look like a truncated scan:\n{json}"
+        );
+        assert!(
+            json.contains("\"category\": \"generated_rust_source_skipped\""),
+            "category missing in:\n{json}"
+        );
+        assert!(
+            json.contains("src/bindings.rs") && json.contains("src/schema.rs"),
+            "skipped paths missing in:\n{json}"
+        );
+        assert!(
+            !json.contains("src/lib.rs"),
+            "hand-written files must not be listed as skipped:\n{json}"
+        );
+        let md = render_repo_exposure_md_with_generated_skip(
+            &[weakly_gripped_classified()],
+            None,
+            None,
+            None,
+            Some(&skip),
+        );
+        assert!(
+            md.contains("generated_rust_source_skipped"),
+            "markdown skip category missing in:\n{md}"
+        );
+        assert!(
+            md.contains("src/bindings.rs"),
+            "markdown skip path missing in:\n{md}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn json_emits_ts_guidance_limitations_when_ts_workspace_and_empty_seams() {
         let guidance = ts_guidance(3);
         let json = render_repo_exposure_json(&[], None, Some(&guidance), None);
@@ -1250,7 +1503,7 @@ mod tests {
             "top_blocker null missing in:\n{json}"
         );
         assert!(
-            json.contains("ripr check --base origin/main"),
+            json.contains("run 'ripr check' or") && !json.contains("--base origin/main"),
             "repair_route missing in:\n{json}"
         );
         // run_status must still be complete (TS guidance does not change Rust scan status)
@@ -1468,6 +1721,84 @@ mod tests {
         assert!(md.contains("discount_threshold (equality boundary)"));
     }
 
+    fn top_gap_heading(md: &str) -> &str {
+        md.lines()
+            .find(|line| line.starts_with("### "))
+            .unwrap_or("")
+    }
+
+    #[test]
+    fn markdown_top_gap_heading_puts_the_path_in_a_code_span() {
+        let md = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
+        let heading = top_gap_heading(&md);
+        assert_eq!(
+            heading,
+            format!(
+                "### {}:{} {}",
+                code_span("src/pricing.rs"),
+                42,
+                "predicate_boundary",
+            ),
+            "ordinary path must be a code span in the heading, like owner:\n{md}"
+        );
+        assert!(
+            md.contains(&format!(
+                "- owner: {}\n",
+                code_span("pricing::discounted_total")
+            )),
+            "owner line remains a code span:\n{md}"
+        );
+        assert_ne!(
+            heading,
+            format!("### {}", code_span("src/pricing.rs:42 predicate_boundary")),
+            "line and kind stay outside the path span:\n{md}"
+        );
+        assert_ne!(
+            heading, "### src/pricing.rs:42 predicate_boundary",
+            "bare path in the heading lets Markdown parse the file name:\n{md}"
+        );
+    }
+
+    #[test]
+    fn markdown_top_gap_heading_code_span_holds_link_emphasis_and_backticks() {
+        // Unix-legal name reachable through #[path]: inner backtick, emphasis,
+        // and a Markdown link. #4473's inline_prose leaves [y](z) and * live
+        // in a heading; wrapping the path in code_span (same owner as owner:)
+        // is the heading-only fix (#4605).
+        let path = "src/a|b`x]*[y](z).rs";
+        let md = render_repo_exposure_md(
+            &[classified_at(
+                path,
+                "odd::owner",
+                2,
+                SeamGripClass::WeaklyGripped,
+            )],
+            None,
+            None,
+            None,
+        );
+        let heading = top_gap_heading(&md);
+        let expected = format!("### {}:{} {}", code_span(path), 2, "predicate_boundary");
+        assert_eq!(
+            heading, expected,
+            "odd path must use the owner-line code-span fence:\n{md}"
+        );
+        assert_ne!(
+            heading,
+            format!("### {path}:2 predicate_boundary"),
+            "bare [y](z) and * in the heading render as a link and emphasis:\n{md}"
+        );
+        assert_ne!(
+            heading,
+            format!("### {}:2 predicate_boundary", inline_prose_literal(path)),
+            "literal-markup neutralization is not this heading's contract:\n{md}"
+        );
+        assert!(
+            md.contains(&format!("- owner: {}\n", code_span("odd::owner"))),
+            "owner line stays a code span for the odd owner too:\n{md}"
+        );
+    }
+
     #[test]
     fn markdown_explains_when_inventory_is_empty() {
         let md = render_repo_exposure_md(&[], None, None, None);
@@ -1503,7 +1834,7 @@ mod tests {
             "guidance category missing in:\n{md}"
         );
         assert!(
-            md.contains("ripr check --base origin/main"),
+            md.contains("run 'ripr check' or") && !md.contains("--base origin/main"),
             "repair route missing in:\n{md}"
         );
         assert!(
@@ -1627,6 +1958,45 @@ mod tests {
             md.contains("analyzed 3 of 500 seams"),
             "seam counts missing in:\n{md}"
         );
+    }
+
+    #[test]
+    fn empty_markdown_report_names_a_next_step() {
+        let md = render_repo_exposure_md(&[], None, None, None);
+        assert!(md.contains("No classified seams."), "{md}");
+        assert!(
+            md.ends_with(REPO_EXPOSURE_EMPTY_NEXT_STEP),
+            "empty report must end with a next step: {md}"
+        );
+        assert!(md.contains("ripr doctor --root <DIR>"), "{md}");
+        // A non-empty report does not carry the empty-report next step.
+        let populated = render_repo_exposure_md(&[weakly_gripped_classified()], None, None, None);
+        assert!(!populated.contains("Nothing was found to analyze"));
+    }
+
+    #[test]
+    fn seam_limit_hint_names_a_runnable_check_command() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        for source in [SeamLimitSource::Default, SeamLimitSource::Configured] {
+            let info = SeamLimitInfo {
+                analyzed: 3,
+                total: 500,
+                source,
+            };
+            for rendered in [
+                render_repo_exposure_md(&[], Some(&info), None, None),
+                render_repo_exposure_json(&[], Some(&info), None, None),
+            ] {
+                assert!(
+                    rendered.contains("`ripr check --base <REV>` (or `ripr check --diff <PATH>`)"),
+                    "hint must be runnable: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("`ripr check --diff`"),
+                    "--diff without PATH is not runnable: {rendered}"
+                );
+            }
+        }
     }
 
     #[test]

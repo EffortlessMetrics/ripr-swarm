@@ -1,5 +1,5 @@
 use crate::cli::command::CliCommand;
-use crate::cli::{CommandError, commands, help, rerun};
+use crate::cli::{CommandError, commands, help, help_json, rerun};
 
 pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
     match command {
@@ -11,8 +11,12 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
             help::print_help_all();
             Ok(())
         }
+        CliCommand::HelpWorkflow(name) => {
+            help::print_workflow(name.as_deref()).map_err(CommandError::from)
+        }
+        CliCommand::HelpJson => help_json::print_help_json().map_err(CommandError::from),
         CliCommand::Version => {
-            println!("ripr {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", crate::build_identity::version_line());
             Ok(())
         }
         CliCommand::Init(args) => commands::init(&args).map_err(CommandError::from),
@@ -44,6 +48,7 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         CliCommand::Reports(args) => commands::reports(&args).map_err(CommandError::from),
         CliCommand::Calibrate(args) => commands::calibrate(&args).map_err(CommandError::from),
         CliCommand::Receipt(args) => commands::receipt(&args).map_err(CommandError::from),
+        CliCommand::Feedback(args) => commands::feedback(&args).map_err(CommandError::from),
         // Agent typed refusals carry the Decision variant (exit code 3).
         CliCommand::Agent(args) => commands::agent(&args),
         CliCommand::Swarm(args) => commands::swarm(&args).map_err(CommandError::from),
@@ -96,7 +101,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Check(args(&["--format", "xml"]))),
             Err(CommandError::Failure(
-                "unknown format \"xml\"; see `ripr check --help` for the accepted formats"
+                "unknown format \"xml\". Accepted: human, text, human-full, text-full, json, github, sarif, badge-json, badge-shields, badge-plus-json, badge-plus-shields, repo-badge-json, repo-badge-shields, repo-badge-plus-json, repo-badge-plus-shields, repo-seams-json, repo-seams-md, repo-exposure-json, repo-exposure-summary-json, repo-exposure-md, repo-sarif, agent-seam-packets-json."
                     .to_string()
             ))
         );
@@ -128,13 +133,13 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Pilot(args(&["--max-seams", "0"]))),
             Err(CommandError::Failure(
-                "invalid --max-seams: expected a positive integer".to_string()
+                "--max-seams requires a positive integer; got \"0\"".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Outcome(args(&["--format", "xml"]))),
             Err(CommandError::Failure(
-                "unknown outcome format \"xml\"".to_string()
+                "unknown outcome format \"xml\". Accepted: md, markdown, text, json.".to_string()
             ))
         );
         assert_eq!(
@@ -223,7 +228,7 @@ mod tests {
                 "xml"
             ]))),
             Err(CommandError::Failure(
-                "unknown calibrate format \"xml\"".to_string()
+                "unknown calibrate format \"xml\". Accepted: md, markdown, text, json.".to_string()
             ))
         );
         assert_eq!(
@@ -235,14 +240,14 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Agent(args(&["unknown"]))),
             Err(CommandError::Failure(
-                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Swarm(args(&["queue", "--top", "0"]))),
             Err(CommandError::Failure(
-                "invalid swarm queue --top: expected a positive integer".to_string()
+                "swarm queue --top requires a positive integer; got \"0\"".to_string()
             ))
         );
         assert_eq!(
@@ -255,6 +260,14 @@ mod tests {
             execute(CliCommand::Cache(Vec::new())),
             Err(CommandError::Failure(
                 "cache requires subcommand `status` or `clear`".to_string()
+            ))
+        );
+        assert_eq!(execute(CliCommand::Feedback(Vec::new())), Ok(()));
+        assert_eq!(
+            execute(CliCommand::Feedback(args(&["record"]))),
+            Err(CommandError::Failure(
+                "feedback record requires --snapshot; file and line are not a result identity"
+                    .to_string()
             ))
         );
     }

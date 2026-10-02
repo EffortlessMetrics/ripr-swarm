@@ -46,21 +46,113 @@ fn write_with_sync(
     sync_before_publish: bool,
     error_path_policy: ErrorPathPolicy,
 ) -> Result<(), String> {
+    replace_with(path, sync_before_publish, |file| file.write_all(bytes)).map_err(|failure| {
+        let subject = error_path_policy.suffix(&failure.subject);
+        let err = failure.error;
+        match failure.stage {
+            Stage::CreateDirectory => format!("failed to create {label} directory{subject}: {err}"),
+            Stage::NoFileName => format!("atomic write path{subject} has no file name"),
+            Stage::CreateTemp => format!("failed to create {label} temp file{subject}: {err}"),
+            Stage::Fill => format!("failed to write {label} temp file{subject}: {err}"),
+            Stage::Permissions => {
+                format!("failed to preserve {label} permissions for{subject}: {err}")
+            }
+            Stage::Sync => format!("failed to fsync {label} temp file{subject}: {err}"),
+            Stage::Finalize => format!("failed to finalize {label}{subject}: {err}"),
+        }
+    })
+}
+
+/// Stream `fill` into a same-directory temporary file, then atomically
+/// replace `path` with it, so a reader sees the old file or the complete new
+/// one and an interrupted or failed write leaves the old file in place. The
+/// temporary file is created exclusively under a short name that does not
+/// grow with the destination's name, and is removed on failure.
+pub(crate) fn replace_streamed(
+    path: &Path,
+    fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    replace_with(path, true, fill).map_err(|failure| failure.error)
+}
+
+/// Publish `bytes` at `path` only when nothing is there yet. The bytes are
+/// written and fsynced in a same-directory temporary file first, so a failed
+/// write never leaves a partial file at `path`, and the final hard link fails
+/// with `AlreadyExists` rather than replace an entry that appeared meanwhile.
+pub(crate) fn create_new(path: &Path, bytes: &[u8]) -> Result<(), CreateNewError> {
+    publish_with(path, true, Publish::NoReplace, |file| file.write_all(bytes)).map_err(|failure| {
+        match failure.stage {
+            Stage::Finalize => CreateNewError::Link(failure.error),
+            _ => CreateNewError::Staging(failure.error),
+        }
+    })
+}
+
+/// Why [`create_new`] published nothing.
+#[derive(Debug)]
+pub(crate) enum CreateNewError {
+    /// Preparing the complete temporary file failed (for example a full
+    /// disk); nothing was written at the destination.
+    Staging(std::io::Error),
+    /// The hard link into place failed: the destination exists
+    /// (`AlreadyExists`) or the filesystem has no hard links.
+    Link(std::io::Error),
+}
+
+#[derive(Clone, Copy)]
+enum Stage {
+    CreateDirectory,
+    NoFileName,
+    CreateTemp,
+    Fill,
+    Permissions,
+    Sync,
+    Finalize,
+}
+
+struct ReplaceFailure {
+    stage: Stage,
+    subject: std::path::PathBuf,
+    error: std::io::Error,
+}
+
+fn replace_with(
+    path: &Path,
+    sync_before_publish: bool,
+    fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), ReplaceFailure> {
+    publish_with(path, sync_before_publish, Publish::Replace, fill)
+}
+
+/// How a complete temporary file reaches its destination.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Publish {
+    /// Rename over whatever entry is at the destination.
+    Replace,
+    /// Hard-link into place, failing with `AlreadyExists` if any entry
+    /// (including a dangling symlink) appeared at the destination.
+    NoReplace,
+}
+
+fn publish_with(
+    path: &Path,
+    sync_before_publish: bool,
+    publish: Publish,
+    fill: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), ReplaceFailure> {
+    let fail = |stage, subject: &Path, error| ReplaceFailure {
+        stage,
+        subject: subject.to_path_buf(),
+        error,
+    };
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());
     let dir = parent.unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|err| {
-        format!(
-            "failed to create {label} directory{}: {err}",
-            error_path_policy.suffix(dir)
-        )
-    })?;
+    std::fs::create_dir_all(dir).map_err(|err| fail(Stage::CreateDirectory, dir, err))?;
     if path.file_name().is_none() {
-        return Err(format!(
-            "atomic write path{} has no file name",
-            error_path_policy.suffix(path)
-        ));
+        let err = std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name");
+        return Err(fail(Stage::NoFileName, path, err));
     }
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -71,44 +163,47 @@ fn write_with_sync(
         ".ripr-atomic-{}-{nanos}-{sequence}.tmp",
         std::process::id()
     ));
-    let result = (|| -> Result<(), String> {
-        let mut file = std::fs::File::create(&tmp_path).map_err(|err| {
-            format!(
-                "failed to create {label} temp file{}: {err}",
-                error_path_policy.suffix(&tmp_path)
-            )
-        })?;
-        file.write_all(bytes).map_err(|err| {
-            format!(
-                "failed to write {label} temp file{}: {err}",
-                error_path_policy.suffix(&tmp_path)
-            )
-        })?;
-        if let Ok(metadata) = std::fs::metadata(path) {
+    let result = (|| {
+        // `create_new` never opens an existing path, so a file or link
+        // planted at the temporary name cannot redirect the write.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+            .map_err(|err| fail(Stage::CreateTemp, &tmp_path, err))?;
+        fill(&mut file).map_err(|err| fail(Stage::Fill, &tmp_path, err))?;
+        // Only an existing *file* has permissions to carry over. A directory
+        // at the destination makes the rename below fail with the finalize
+        // error; copying its attributes first would fail earlier on Windows,
+        // where they include FILE_ATTRIBUTE_DIRECTORY (os error 87), and
+        // misreport the cause as a permission problem.
+        //
+        // `symlink_metadata` does not follow a symlink at the destination:
+        // the rename replaces the link itself, so the new file must not take
+        // on the permissions of whatever the link pointed at.
+        if publish == Publish::Replace
+            && let Ok(metadata) = std::fs::symlink_metadata(path)
+            && metadata.is_file()
+        {
             file.set_permissions(metadata.permissions())
-                .map_err(|err| {
-                    format!(
-                        "failed to preserve {label} permissions for{}: {err}",
-                        error_path_policy.suffix(path)
-                    )
-                })?;
+                .map_err(|err| fail(Stage::Permissions, path, err))?;
         }
         if sync_before_publish {
-            file.sync_all().map_err(|err| {
-                format!(
-                    "failed to fsync {label} temp file{}: {err}",
-                    error_path_policy.suffix(&tmp_path)
-                )
-            })?;
+            file.sync_all()
+                .map_err(|err| fail(Stage::Sync, &tmp_path, err))?;
         }
         drop(file);
-        std::fs::rename(&tmp_path, path).map_err(|err| {
-            format!(
-                "failed to finalize {label}{}: {err}",
-                error_path_policy.suffix(path)
-            )
-        })?;
-        Ok(())
+        match publish {
+            Publish::Replace => {
+                std::fs::rename(&tmp_path, path).map_err(|err| fail(Stage::Finalize, path, err))
+            }
+            Publish::NoReplace => {
+                std::fs::hard_link(&tmp_path, path)
+                    .map_err(|err| fail(Stage::Finalize, path, err))?;
+                let _ = std::fs::remove_file(&tmp_path);
+                Ok(())
+            }
+        }
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp_path);
@@ -118,7 +213,7 @@ fn write_with_sync(
 
 #[cfg(test)]
 mod tests {
-    use super::{TEMP_FILE_SEQUENCE, write, write_cache};
+    use super::{CreateNewError, TEMP_FILE_SEQUENCE, create_new, write, write_cache};
     use std::path::{Path, PathBuf};
 
     fn isolated_dir(label: &str) -> PathBuf {
@@ -233,6 +328,104 @@ mod tests {
         let first_error = directory_failure(&first)?;
         let second_error = directory_failure(&second)?;
         assert_eq!(first_error, second_error);
+        Ok(())
+    }
+
+    fn temp_leftovers(dir: &Path) -> Result<Vec<String>, String> {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(dir).map_err(|err| format!("read_dir: {err}"))? {
+            let name = entry
+                .map_err(|err| format!("dir entry: {err}"))?
+                .file_name()
+                .to_string_lossy()
+                .into_owned();
+            if name.ends_with(".tmp") {
+                names.push(name);
+            }
+        }
+        Ok(names)
+    }
+
+    #[test]
+    fn create_new_publishes_once_and_never_replaces() -> Result<(), String> {
+        let dir = isolated_dir("create-new");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("setup: {err}"))?;
+        let path = dir.join("ripr.toml");
+        create_new(&path, b"first\n").map_err(|err| format!("first create: {err:?}"))?;
+        let second = create_new(&path, b"second\n");
+        let contents = std::fs::read(&path).map_err(|err| format!("read: {err}"));
+        let leftovers = temp_leftovers(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        match second {
+            Err(CreateNewError::Link(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            other => return Err(format!("an existing file must refuse the link: {other:?}")),
+        }
+        assert_eq!(contents?, b"first\n");
+        assert_eq!(leftovers?, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_new_refuses_a_dangling_symlink() -> Result<(), String> {
+        let dir = isolated_dir("create-new-dangling");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("setup: {err}"))?;
+        let target = dir.join("missing-target");
+        let link = dir.join("ripr.toml");
+        std::os::unix::fs::symlink(&target, &link).map_err(|err| format!("symlink: {err}"))?;
+        let outcome = create_new(&link, b"body\n");
+        let target_created = target.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        match outcome {
+            Err(CreateNewError::Link(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            other => {
+                return Err(format!(
+                    "a dangling symlink must refuse the link: {other:?}"
+                ));
+            }
+        }
+        assert!(
+            !target_created,
+            "create_new wrote through a dangling symlink"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_a_symlink_does_not_copy_its_target_permissions() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = isolated_dir("replace-symlink-mode");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("setup: {err}"))?;
+        let target = dir.join("target");
+        std::fs::write(&target, b"keep").map_err(|err| format!("seed: {err}"))?;
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))
+            .map_err(|err| format!("chmod: {err}"))?;
+        let link = dir.join("report.json");
+        std::os::unix::fs::symlink(&target, &link).map_err(|err| format!("symlink: {err}"))?;
+        let probe = dir.join("probe");
+        std::fs::write(&probe, b"").map_err(|err| format!("probe: {err}"))?;
+        let default_mode = std::fs::metadata(&probe)
+            .map_err(|err| format!("stat probe: {err}"))?
+            .permissions()
+            .mode()
+            & 0o777;
+        let outcome = write(&link, b"new", "test");
+        let mode = std::fs::symlink_metadata(&link)
+            .map(|metadata| (metadata.is_file(), metadata.permissions().mode() & 0o777));
+        let kept = std::fs::read(&target);
+        let _ = std::fs::remove_dir_all(&dir);
+        outcome?;
+        let (is_file, mode) = mode.map_err(|err| format!("stat: {err}"))?;
+        assert!(is_file, "the link must be replaced by a regular file");
+        assert_eq!(
+            mode, default_mode,
+            "the replacement took the link target's mode"
+        );
+        assert_eq!(kept.map_err(|err| format!("read target: {err}"))?, b"keep");
         Ok(())
     }
 }

@@ -1,10 +1,14 @@
 use crate::analysis::classify::{
-    ProbeContext, PropagationWitnessV1, activation_evidence, classify, confidence_score,
-    current_path_witness, file_imports_foreign_callee_name, infection_evidence, local_flow_sinks,
-    package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_evidence_with_expression,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, activation_evidence_with_value_facts,
+    classify, confidence_score, current_path_witness, has_same_test_boundary_oracle_pairing,
+    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    same_test_pairing_missing_summary,
 };
 use crate::domain::*;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 mod tuple_match;
 
@@ -22,16 +26,25 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) propagate: StageEvidence,
     pub(in crate::analysis) observe: StageEvidence,
     pub(in crate::analysis) discriminate: StageEvidence,
+    /// Reach is `No` for a resolved owner that nothing in the workspace
+    /// names (see `owner_may_be_reached_unseen`), so no test can run the
+    /// change. An owner with an unresolved caller chain keeps its
+    /// shape-based class even when no related test was found.
+    pub(in crate::analysis) reach_ruled_out: bool,
 }
 
 impl ClassifiedProbeEvidence {
     pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
         let test_summaries = context.related_test_summaries();
-        let reach = reach_evidence(&context.related_tests, context.owner_fn);
+        let reach = reach_evidence(&context.related_tests, context.owner_fn, || {
+            context
+                .owner_fn
+                .is_some_and(|owner| owner_may_be_reached_unseen(owner, context.index))
+        });
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence(
+        let activation = activation_evidence_with_value_facts(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -39,6 +52,7 @@ impl ClassifiedProbeEvidence {
             context.helper_chain.as_ref(),
             context.index,
             context.workspace_complete,
+            context.test_value_facts,
         );
         let infect = infection_evidence(context.probe, &test_summaries, &activation);
         let valid_witness = propagation_witness
@@ -55,6 +69,21 @@ impl ClassifiedProbeEvidence {
         let owner_package = context
             .owner_fn
             .and_then(|owner| package_prefix(&owner.file));
+        // Both defeats below depend only on the test's file (and the probe's
+        // constant owner callee), never on the individual test. A
+        // high-traffic owner relates to thousands of tests spread over a
+        // few files; without memoization every test re-masked and
+        // re-scanned its whole file source (profiled: ~80% of a 60 s
+        // `ripr check` on a 505-line diff of this repository). The package
+        // defeat is memoized per probe because it also depends on the
+        // owner's package; the import scan does not, so it uses the
+        // run-scoped per-file memo on the context.
+        // #4478: the owner-side half of the owner-return pin, established
+        // once per probe; `None` keeps every assertion on the token rule.
+        let owner_return_pin = context
+            .owner_fn
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        let package_defeats_by_file = FileDefeatMemo::default();
         let (observe, discriminate, related_tests) = reveal_evidence_with_expression(
             context.probe,
             reveal_expression,
@@ -64,11 +93,7 @@ impl ClassifiedProbeEvidence {
             // defeat per test instead of restructuring the reveal inputs.
             &|test, callee| {
                 context.index.files.get(&test.file).is_some_and(|facts| {
-                    file_imports_foreign_callee_name(
-                        &facts.source,
-                        callee,
-                        &context.index.package_names,
-                    )
+                    context.test_file_imports_foreign_callee_name(&test.file, &facts.source, callee)
                 })
             },
             // #3731 review (G1): the test's OWN package defining a
@@ -82,24 +107,95 @@ impl ClassifiedProbeEvidence {
             // unscopable side (single-crate relative paths, absolute
             // paths) keeps today's behavior.
             &|test, callee| {
-                let Some(test_package) = package_prefix(&test.file) else {
-                    return false;
-                };
-                let Some(owner_package) = owner_package.as_deref() else {
-                    return false;
-                };
-                if test_package == owner_package {
-                    return false;
-                }
-                context.index.functions.iter().any(|function| {
-                    function.name == callee
-                        && package_prefix(&function.file).as_deref() == Some(test_package.as_str())
+                memoized_file_defeat(&package_defeats_by_file, &test.file, callee, || {
+                    let Some(test_package) = package_prefix(&test.file) else {
+                        return false;
+                    };
+                    let Some(owner_package) = owner_package.as_deref() else {
+                        return false;
+                    };
+                    if test_package == owner_package {
+                        return false;
+                    }
+                    context.index.functions.iter().any(|function| {
+                        function.name == callee
+                            && package_prefix(&function.file).as_deref()
+                                == Some(test_package.as_str())
+                    })
+                })
+            },
+            &|test, assertion| {
+                owner_return_pin.as_ref().is_some_and(|pin| {
+                    pin.admits(test, assertion, context.index, &|file, name| {
+                        context.index.files.get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    })
                 })
             },
         );
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        // #4828: a boundary-class probe may not read `exposed` by taking a
+        // boundary input from one test and a discriminating oracle from
+        // another. Infection and discrimination stay independently scored;
+        // only the combined `exposed` path requires same-test pairing on
+        // the owner call that sits on the boundary. Pairing reuses
+        // activation's `==` facts so named constants and helper hops that
+        // already infected stay paired when the same test holds the oracle.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
+            && infect.state == StageState::Yes
+            && discriminate.state == StageState::Yes
+            && !has_same_test_boundary_oracle_pairing(
+                context.probe,
+                context.owner_fn,
+                &test_summaries,
+                &activation,
+            ) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                same_test_pairing_missing_summary(),
+            )
+        } else {
+            discriminate
+        };
+        // The missing-field fact is the authority on whether an assertion
+        // observes the constructed field. A token that merely coincides with
+        // the field value (`Box` in `downcast_ref::<Box<dyn E>>()`) must not
+        // make the finding `exposed` while that fact says nothing observes it.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::FieldConstruction)
+            && discriminate.state == StageState::Yes
+            && activation.missing_discriminators.iter().any(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_some_and(|sink| sink.kind == FlowSinkKind::StructField)
+            }) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Discriminator unconfirmed: no field-value assertion observes the constructed field",
+            )
+        } else {
+            discriminate
+        };
+        // Tests kept only as suggested locations never run the owner, so
+        // they neither activate the change nor observe it.
+        let reach_ruled_out = reach.state == StageState::No
+            && context
+                .owner_fn
+                .is_some_and(|owner| !owner_may_be_reached_unseen(owner, context.index));
+        let unreached = |stage: StageEvidence, verb: &str| {
+            if reach_ruled_out && stage.state == StageState::Yes {
+                unreached_stage(verb)
+            } else {
+                stage
+            }
+        };
+        let infect = unreached(infect, "activate");
+        let observe = unreached(observe, "observe");
+        let discriminate = unreached(discriminate, "discriminate");
 
         let ripr = RiprEvidence {
             reach: reach.clone(),
@@ -124,10 +220,17 @@ impl ClassifiedProbeEvidence {
             propagate,
             observe,
             discriminate,
+            reach_ruled_out,
         }
     }
 
     pub(in crate::analysis) fn classify(&self, probe: &Probe) -> ExposureClass {
+        // A changed line inside a function no test reaches has no static path
+        // whatever its shape: "cannot classify, escalate" would send the
+        // reader after mutation testing when the plain gap is a missing test.
+        if self.reach_ruled_out {
+            return ExposureClass::NoStaticPath;
+        }
         classify(
             &self.reach,
             &self.infect,
@@ -179,6 +282,14 @@ impl PropagationWitnessDiagnostic {
     }
 }
 
+fn unreached_stage(stage: &str) -> StageEvidence {
+    StageEvidence::new(
+        StageState::No,
+        Confidence::Medium,
+        format!("No test reaches the changed owner, so no test can {stage} this change"),
+    )
+}
+
 fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -> Vec<String> {
     let mut summaries = stages
         .into_iter()
@@ -187,6 +298,31 @@ fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -
     summaries.sort();
     summaries.dedup();
     summaries
+}
+
+/// Per-file defeat results for one probe, keyed by test file then callee.
+type FileDefeatMemo = RefCell<BTreeMap<PathBuf, BTreeMap<String, bool>>>;
+
+/// Returns the cached defeat for `(file, callee)`, computing it once.
+fn memoized_file_defeat(
+    memo: &FileDefeatMemo,
+    file: &Path,
+    callee: &str,
+    compute: impl FnOnce() -> bool,
+) -> bool {
+    if let Some(cached) = memo
+        .borrow()
+        .get(file)
+        .and_then(|by_callee| by_callee.get(callee))
+    {
+        return *cached;
+    }
+    let defeats = compute();
+    memo.borrow_mut()
+        .entry(file.to_path_buf())
+        .or_default()
+        .insert(callee.to_string(), defeats);
+    defeats
 }
 
 #[cfg(test)]
@@ -248,8 +384,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 
@@ -288,8 +427,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let context = ProbeContext::new(
             &probe,
@@ -303,6 +445,31 @@ mod tests {
             &context,
             "if trimmed != Some(expected_id.trim()).as_str() {",
         )
+    }
+
+    /// The memo computes a defeat once per (file, callee) and keeps
+    /// different files and callees apart, so a cached answer never leaks
+    /// from one test file to another.
+    #[test]
+    fn file_defeat_memo_computes_once_per_file_and_callee() {
+        use std::cell::Cell;
+        use std::path::Path;
+
+        let memo = super::FileDefeatMemo::default();
+        let calls = Cell::new(0);
+        let lookup = |file: &str, callee: &str, answer: bool| {
+            super::memoized_file_defeat(&memo, Path::new(file), callee, || {
+                calls.set(calls.get() + 1);
+                answer
+            })
+        };
+
+        assert!(lookup("tests/a.rs", "score", true));
+        // Cached: the second compute would answer false but never runs.
+        assert!(lookup("tests/a.rs", "score", false));
+        assert!(!lookup("tests/b.rs", "score", false));
+        assert!(!lookup("tests/a.rs", "total", false));
+        assert_eq!(calls.get(), 3);
     }
 
     /// G1 falsifier: two packages each define `expect_response`; the test
@@ -412,8 +579,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
@@ -456,8 +626,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);

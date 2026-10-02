@@ -37,6 +37,19 @@ pub(crate) fn is_test_file(path: &Path) -> bool {
         && (has_test_file_stem(path) || has_test_directory_component(path))
 }
 
+/// `true` for a TypeScript declaration file (`.d.ts`, `.d.mts`, `.d.cts`):
+/// type-only, erased at compile time, so its changes carry no runtime
+/// behavior.
+pub(crate) fn is_typescript_declaration_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            [".d.ts", ".d.mts", ".d.cts"]
+                .iter()
+                .any(|s| name.ends_with(s))
+        })
+}
+
 fn is_typescript_or_javascript_source(path: &Path) -> bool {
     let adapter = TypeScriptAdapter;
     adapter.accepts_path(path)
@@ -95,7 +108,7 @@ pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES
 const DEFAULT_TS_MAX_WORKSPACE_FILES: usize = 20_000;
 
 /// Parse a positive workspace file-count limit, failing closed to the error
-/// string on invalid input (mirrors `rust.rs::positive_limit_from_env`).
+/// string on invalid input (mirrors `rust/mod.rs::positive_limit_from_env`).
 pub(crate) fn ts_workspace_file_limit_from_env(
     value: Result<String, std::env::VarError>,
 ) -> Result<usize, String> {

@@ -22,7 +22,8 @@ use crate::app::pr_evidence::PR_EVIDENCE_HELP;
 use crate::app::pr_summary::PR_SUMMARY_HELP;
 use crate::app::ripr_plus::PLUS_HELP;
 use crate::cli::commands::{
-    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
+    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP,
+    RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP,
 };
 use crate::output::first_pr::FIRST_PR_HELP;
 
@@ -38,6 +39,7 @@ use crate::output::first_pr::FIRST_PR_HELP;
 #[cfg(test)]
 const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "agent brief",
+    "agent card",
     "agent packet",
     "agent repair",
     "agent receipt",
@@ -63,6 +65,8 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "doctor",
     "evidence-health",
     "explain",
+    "feedback export",
+    "feedback record",
     "first-action",
     "first-pr",
     "gate",
@@ -106,6 +110,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
 /// suggestions; callers fall back to naming `ripr <path> --help`.
 pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
     let help_text = match command {
+        "agent card" => AGENT_CARD_HELP,
         "agent brief" => AGENT_BRIEF_HELP,
         "agent packet" => AGENT_PACKET_HELP,
         "agent repair" => AGENT_REPAIR_HELP,
@@ -129,6 +134,8 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "doctor" => DOCTOR_HELP,
         "evidence-health" => EVIDENCE_HEALTH_HELP,
         "explain" => EXPLAIN_HELP,
+        "feedback export" => FEEDBACK_EXPORT_HELP,
+        "feedback record" => FEEDBACK_RECORD_HELP,
         "first-action" => FIRST_ACTION_HELP,
         "first-pr" => FIRST_PR_HELP,
         "gate" => GATE_HELP,
@@ -179,6 +186,19 @@ pub(super) fn print_help() {
 
 pub(super) fn print_help_all() {
     println!("{HELP_ALL}");
+}
+
+/// `ripr help workflow [name]`: bounded, non-executing workflow guidance
+/// (RIPR-SPEC-0189). The render is pure static text from the typed workflow
+/// catalog; it performs no repository discovery, analysis, compilation, test,
+/// child-process, network, mutation, or product-artifact work.
+pub(super) fn print_workflow(name: Option<&str>) -> Result<(), String> {
+    let rendered = match name {
+        Some(name) => crate::cli::workflow_catalog::render_workflow(name)?,
+        None => crate::cli::workflow_catalog::render_workflow_listing(),
+    };
+    println!("{rendered}");
+    Ok(())
 }
 
 pub(super) fn print_check_help() {
@@ -277,6 +297,10 @@ pub(super) fn print_agent_packet_help() {
     println!("{AGENT_PACKET_HELP}");
 }
 
+pub(super) fn print_agent_card_help() {
+    println!("{AGENT_CARD_HELP}");
+}
+
 pub(super) fn print_agent_verify_help() {
     println!("{AGENT_VERIFY_HELP}");
 }
@@ -333,19 +357,42 @@ pub(super) fn print_rerun_help() {
     println!("{RERUN_HELP}");
 }
 
+/// Test-only access to the two rendered human discovery surfaces, for the
+/// projection-agreement checks in `command_metadata` (issue #4823).
+#[cfg(test)]
+pub(crate) fn discovery_surfaces() -> (&'static str, &'static str) {
+    (overview::HELP, overview::HELP_ALL)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn review_comments_help_discloses_cooperative_budget_boundary() -> Result<(), String> {
+        let text = super::help_text_for("review-comments").ok_or("missing review-comments help")?;
+        for required in [
+            "default 120000ms",
+            "safe boundaries",
+            "Non-preemptible operations can overrun",
+            "outer orchestration wrapper for a hard process bound",
+        ] {
+            if !text.contains(required) {
+                return Err(format!("review-comments help omitted {required:?}"));
+            }
+        }
+        Ok(())
+    }
     use super::{
-        AGENT_BRIEF_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
+        AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP, AGENT_VERIFY_HELP,
         ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP, CACHE_STATUS_HELP,
         CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP,
-        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP,
-        GATE_HELP, HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP,
-        PILOT_HELP, PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP,
-        PR_REVIEW_HELP, PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP,
-        SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
-        print_agent_help, print_agent_packet_help, print_agent_receipt_help,
+        DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP, FEEDBACK_EXPORT_HELP,
+        FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP, HELP, HELP_ALL,
+        IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP, PLUS_HELP,
+        POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
+        PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
+        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
+        print_agent_card_help, print_agent_help, print_agent_packet_help, print_agent_receipt_help,
         print_agent_repair_help, print_agent_review_summary_help, print_agent_start_help,
         print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
         print_baseline_help, print_calibrate_help, print_check_help, print_config_help,
@@ -356,7 +403,7 @@ mod tests {
         print_pr_review_help, print_reports_help, print_rerun_help, print_review_comments_help,
         print_swarm_help, print_swarm_ingest_help, print_swarm_queue_help, print_zero_help,
     };
-    use crate::cli::command::KNOWN_COMMANDS;
+    use crate::cli::command::known_commands;
 
     /// The exhaustive reference owns the full inventory. This assertion used to
     /// target the default screen, which is why that screen had grown to 91
@@ -395,6 +442,8 @@ mod tests {
         assert!(HELP_ALL.contains("ripr calibrate"));
         assert!(HELP_ALL.contains("ripr receipt write"));
         assert!(HELP_ALL.contains("ripr receipt check"));
+        assert!(HELP_ALL.contains("ripr feedback record"));
+        assert!(HELP_ALL.contains("ripr feedback export"));
         assert!(HELP_ALL.contains("ripr agent start"));
         assert!(HELP_ALL.contains("ripr agent brief"));
         assert!(HELP_ALL.contains("ripr agent packet"));
@@ -467,16 +516,15 @@ mod tests {
         // `help` documents itself in the header and `More:` lines rather than as
         // a catalog entry.
         let documented_elsewhere = ["help"];
-        let missing: Vec<&str> = KNOWN_COMMANDS
-            .iter()
-            .copied()
+        let missing: Vec<&str> = known_commands()
+            .into_iter()
             .filter(|command| !documented_elsewhere.contains(command))
             .filter(|command| !HELP_ALL.contains(&format!("ripr {command}")))
             .collect();
         assert!(
             missing.is_empty(),
             "ripr help --all omits reachable command(s): {missing:?}; \
-             every KNOWN_COMMANDS entry must appear in the full reference"
+             every catalog-derived known command must appear in the full reference"
         );
     }
 
@@ -496,8 +544,28 @@ mod tests {
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));
+        assert!(CHECK_HELP.contains("--quiet"));
+        assert!(CHECK_HELP.contains("ripr progress:"));
+        assert!(CHECK_HELP.contains("percentage or ETA"));
+        assert!(CHECK_HELP.contains("does not mean analysis is faster"));
+        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
+    }
+
+    #[test]
+    fn check_help_names_the_latency_trace_env_and_mode_cost_class() {
+        // #4946(d): every repo-exposure env var a check user can set is
+        // documented on the same "Environment variables:" surface; this one
+        // was the last omission.
+        assert!(CHECK_HELP.contains("RIPR_REPO_EXPOSURE_LATENCY_TRACE"));
+        assert!(CHECK_HELP.contains("emits diagnostic phase/cache"));
+        assert!(CHECK_HELP.contains("Presence enables tracing"));
+        // #4946(c): the --mode entry orients on the cost class, not only the
+        // index scope, so a caller can predict the wall-clock difference.
+        assert!(CHECK_HELP.contains("Cost class: whole-workspace modes"));
+        assert!(CHECK_HELP.contains("order of magnitude longer"));
     }
 
     #[test]
@@ -582,6 +650,8 @@ mod tests {
         assert!(PR_LEDGER_HELP.contains("Usage: ripr pr-ledger record"));
         assert!(PR_LEDGER_HELP.contains("pr-evidence-ledger.json"));
         assert!(PR_LEDGER_HELP.contains("read-only advisory history"));
+        assert!(PR_LEDGER_HELP.contains("--out-jsonl"));
+        assert!(POLICY_HELP.contains("--out-jsonl"));
         assert!(PR_COMMENTS_HELP.starts_with("Plan or publish bounded inline PR comments"));
         assert!(PR_COMMENTS_HELP.contains("Usage: ripr pr-comments plan"));
         assert!(PR_COMMENTS_HELP.contains("comment-publish-plan.json"));
@@ -633,6 +703,11 @@ mod tests {
         assert!(AGENT_PACKET_HELP.starts_with("Write a per-change handoff packet"));
         assert!(AGENT_PACKET_HELP.contains("Usage: ripr agent packet"));
         assert!(AGENT_PACKET_HELP.contains("agent-seam-packets-json"));
+        assert!(
+            AGENT_CARD_HELP.starts_with("Hand off one seam as the compact default repair card")
+        );
+        assert!(AGENT_CARD_HELP.contains("Usage: ripr agent card"));
+        assert!(AGENT_CARD_HELP.contains("repair_card.v1"));
         assert!(AGENT_VERIFY_HELP.starts_with("Verify static-evidence movement"));
         assert!(AGENT_VERIFY_HELP.contains("Usage: ripr agent verify"));
         assert!(AGENT_VERIFY_HELP.contains("repo-exposure-json"));
@@ -673,6 +748,8 @@ mod tests {
         assert!(LSP_HELP.starts_with("Start the experimental ripr LSP server"));
         assert!(LSP_HELP.contains("--stdio"));
         assert!(LSP_HELP.contains("--version"));
+        assert!(LSP_HELP.contains("ripr.collectContext           one object"));
+        assert!(LSP_HELP.contains("InvalidParams"));
         // Pin: cache status/clear help lives beside the parser and is imported
         // here. Drop CACHE_STATUS_HELP / CACHE_CLEAR_HELP from this test module
         // import list and this test fails to compile.
@@ -712,6 +789,14 @@ mod tests {
             Some(IMPACTED_EVIDENCE_HELP)
         );
         assert_eq!(super::help_text_for("plus"), Some(PLUS_HELP));
+        assert_eq!(
+            super::help_text_for("feedback record"),
+            Some(FEEDBACK_RECORD_HELP)
+        );
+        assert_eq!(
+            super::help_text_for("feedback export"),
+            Some(FEEDBACK_EXPORT_HELP)
+        );
         for (name, help_text, flag) in [
             ("first-pr", FIRST_PR_HELP, "--gap-ledger"),
             ("pr-summary", PR_SUMMARY_HELP, "--baseline"),
@@ -725,6 +810,36 @@ mod tests {
                     .lines()
                     .any(|line| line.trim_start().starts_with(flag)),
                 "{name} help must document {flag} on an option-list line: {help_text}"
+            );
+        }
+    }
+
+    /// The Usage synopsis names every Record option, so a flag the parser
+    /// accepts is never documented only below the fold (#4391).
+    #[test]
+    fn pr_ledger_usage_names_every_record_option() {
+        let usage = PR_LEDGER_HELP
+            .lines()
+            .find(|line| line.starts_with("Usage: ripr pr-ledger record"))
+            .unwrap_or_default();
+        let options: Vec<&str> = PR_LEDGER_HELP
+            .split("Record options:")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.trim().is_empty())
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|flag| flag.starts_with("--"))
+            .collect();
+        assert!(
+            !options.is_empty(),
+            "Record options section must list flags"
+        );
+        for flag in options {
+            assert!(
+                usage.contains(&format!("{flag} ")) || usage.ends_with(flag),
+                "Usage line omits {flag}: {usage}"
             );
         }
     }
@@ -759,6 +874,7 @@ mod tests {
         print_agent_start_help();
         print_agent_brief_help();
         print_agent_packet_help();
+        print_agent_card_help();
         print_agent_verify_help();
         print_agent_receipt_help();
         print_agent_status_help();
@@ -775,41 +891,720 @@ mod tests {
         print_lsp_help();
     }
 
-    /// Extract all `--flag` tokens from a help text (#2342).
-    #[expect(
-        dead_code,
-        reason = "flag-parity test helper; used by #2342 test suite"
-    )]
+    // ── flag/help parity gate (#2342, revived by #4317) ──────────────────────
+
+    /// `include_str!` of every file that owns a command's argv parsing. Paths
+    /// resolve relative to this file's directory (`src/cli`), so the parity
+    /// gate reads the exact parser text that ships in this crate and cannot
+    /// drift away from it.
+    const AGENT_PARSER_RS: &str = include_str!("agent.rs");
+    const CLI_COMMANDS_RS: &str = include_str!("commands.rs");
+    const CHECK_PARSER_RS: &str = include_str!("commands/check.rs");
+    const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
+    const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
+    const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
+    const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
+    const GATE_PARSER_RS: &str = include_str!("commands/gate.rs");
+    const INIT_PARSER_RS: &str = include_str!("commands/init.rs");
+    const PILOT_PARSER_RS: &str = include_str!("commands/pilot.rs");
+    const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
+    const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
+    const RECEIPT_PARSER_RS: &str = include_str!("commands/receipt.rs");
+    const FEEDBACK_PARSER_RS: &str = include_str!("commands/feedback.rs");
+    const POLICY_PARSE_RS: &str = include_str!("commands/policy/parse.rs");
+    const SWARM_QUEUE_PARSER_RS: &str = include_str!("commands/swarm/queue.rs");
+    const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
+    const RERUN_PARSER_RS: &str = include_str!("rerun.rs");
+    const MCP_PARSER_RS: &str = include_str!("../mcp/mod.rs");
+    const PR_SUMMARY_PARSER_RS: &str = include_str!("../app/pr_summary/mod.rs");
+    const ANNOTATIONS_PARSER_RS: &str = include_str!("../app/annotations.rs");
+    const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
+    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
+    const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
+    const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+
+    /// Each registered command path and the function(s) in its parser source
+    /// that accept argv flags.
+    ///
+    /// The accepted set is the flag-shaped string literals (`--name`) inside
+    /// those function bodies, so a new parse arm joins the parity comparison
+    /// with no second edit, and a renamed or deleted function fails the gate
+    /// loudly instead of silently skipping the command. Commands whose flags
+    /// are parsed behind a dispatcher keep the dispatcher's function only
+    /// when it accepts flags of its own (`doctor`, `lsp`); pure subcommand
+    /// routers add nothing.
+    const PARSER_SOURCES: &[(&str, &str, &[&str])] = &[
+        (
+            "agent brief",
+            AGENT_PARSER_RS,
+            &["parse_agent_brief_options"],
+        ),
+        (
+            "agent packet",
+            AGENT_PARSER_RS,
+            &["parse_agent_packet_options"],
+        ),
+        ("agent card", AGENT_PARSER_RS, &["parse_agent_card_options"]),
+        (
+            "agent repair",
+            AGENT_PARSER_RS,
+            &["parse_agent_repair_command"],
+        ),
+        (
+            "agent receipt",
+            AGENT_PARSER_RS,
+            &["parse_agent_receipt_options"],
+        ),
+        (
+            "agent review-summary",
+            AGENT_PARSER_RS,
+            &["parse_agent_review_summary_options"],
+        ),
+        (
+            "agent start",
+            AGENT_PARSER_RS,
+            &["parse_agent_start_options"],
+        ),
+        (
+            "agent status",
+            AGENT_PARSER_RS,
+            &["parse_agent_status_options"],
+        ),
+        (
+            "agent verify",
+            AGENT_PARSER_RS,
+            &["parse_agent_verify_options"],
+        ),
+        (
+            "agent verify-execute",
+            AGENT_PARSER_RS,
+            &["parse_agent_verify_execute_options"],
+        ),
+        (
+            "annotations",
+            ANNOTATIONS_PARSER_RS,
+            &["run_annotations", "parse_options"],
+        ),
+        (
+            "assistant-loop health",
+            CLI_COMMANDS_RS,
+            &["parse_assistant_loop_health_options"],
+        ),
+        (
+            "assistant-loop proof",
+            CLI_COMMANDS_RS,
+            &["parse_assistant_loop_proof_options"],
+        ),
+        (
+            "baseline create",
+            BASELINE_PARSER_RS,
+            // The create flags are matched in the parse-state's apply_arg
+            // method, not in the free parse function.
+            &["parse_baseline_create_options", "apply_arg"],
+        ),
+        (
+            "baseline diff",
+            BASELINE_PARSER_RS,
+            &["parse_baseline_diff_options"],
+        ),
+        (
+            "baseline update",
+            BASELINE_PARSER_RS,
+            &["parse_baseline_update_options"],
+        ),
+        ("cache clear", CACHE_PARSER_RS, &["parse_clear_args"]),
+        ("cache status", CACHE_PARSER_RS, &["parse_status_args"]),
+        (
+            "calibrate cargo-mutants",
+            CLI_COMMANDS_RS,
+            &["parse_calibrate_cargo_mutants_options"],
+        ),
+        ("check", CHECK_PARSER_RS, &["check"]),
+        (
+            "config validate",
+            CONFIG_PARSER_RS,
+            &["config", "parse_validate_root"],
+        ),
+        ("context", CONTEXT_PARSER_RS, &["context"]),
+        (
+            "coverage-grip frontier",
+            CLI_COMMANDS_RS,
+            &["parse_coverage_grip_frontier_options"],
+        ),
+        ("diff", CLI_COMMANDS_RS, &["parse_diff_options"]),
+        ("doctor", DOCTOR_PARSER_RS, &["doctor"]),
+        (
+            "evidence-health",
+            CLI_COMMANDS_RS,
+            &["parse_evidence_health_options"],
+        ),
+        ("explain", CLI_COMMANDS_RS, &["explain"]),
+        (
+            "feedback export",
+            FEEDBACK_PARSER_RS,
+            &["parse_export_options"],
+        ),
+        (
+            "feedback record",
+            FEEDBACK_PARSER_RS,
+            &["parse_record_options"],
+        ),
+        (
+            "first-action",
+            CLI_COMMANDS_RS,
+            &["parse_first_action_options"],
+        ),
+        ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
+        ("gate", GATE_PARSER_RS, &["parse_gate_options"]),
+        (
+            "impacted-evidence",
+            IMPACTED_EVIDENCE_PARSER_RS,
+            &["run_impacted_evidence", "parse_options"],
+        ),
+        ("init", INIT_PARSER_RS, &["parse_init_options"]),
+        ("lsp", CLI_COMMANDS_RS, &["lsp"]),
+        ("mcp", MCP_PARSER_RS, &["run"]),
+        ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
+        ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
+        (
+            "plus",
+            RIPR_PLUS_PARSER_RS,
+            &["run_ripr_plus", "parse_options"],
+        ),
+        (
+            "policy history",
+            POLICY_PARSE_RS,
+            &["parse_policy_history_options"],
+        ),
+        (
+            "policy operations",
+            POLICY_PARSE_RS,
+            &["parse_policy_operations_options"],
+        ),
+        (
+            "policy preview-promote",
+            POLICY_PARSE_RS,
+            &["parse_policy_preview_promotion_options"],
+        ),
+        (
+            "policy promote",
+            POLICY_PARSE_RS,
+            &["parse_policy_promotion_options"],
+        ),
+        (
+            "policy readiness",
+            POLICY_PARSE_RS,
+            &["parse_policy_readiness_options"],
+        ),
+        (
+            "policy suppression-health",
+            POLICY_PARSE_RS,
+            &["parse_policy_suppression_health_options"],
+        ),
+        (
+            "policy waiver-aging",
+            POLICY_PARSE_RS,
+            &["parse_policy_waiver_aging_options"],
+        ),
+        (
+            "pr-comments plan",
+            CLI_COMMANDS_RS,
+            &["parse_pr_comments_plan_options"],
+        ),
+        (
+            "pr-evidence",
+            PR_EVIDENCE_PARSER_RS,
+            &["run_pr_evidence", "parse_options"],
+        ),
+        (
+            "pr-ledger record",
+            CLI_COMMANDS_RS,
+            &["parse_pr_evidence_ledger_options"],
+        ),
+        (
+            "pr-review front-panel",
+            CLI_COMMANDS_RS,
+            &["parse_pr_review_front_panel_options"],
+        ),
+        (
+            "pr-summary",
+            PR_SUMMARY_PARSER_RS,
+            &["run_pr_summary", "parse_options"],
+        ),
+        (
+            "receipt check",
+            RECEIPT_PARSER_RS,
+            &["parse_receipt_check_options"],
+        ),
+        (
+            "receipt write",
+            RECEIPT_PARSER_RS,
+            &["parse_receipt_write_options"],
+        ),
+        (
+            "reports gap-ledger",
+            CLI_COMMANDS_RS,
+            &["parse_gap_decision_ledger_options"],
+        ),
+        (
+            "reports index",
+            CLI_COMMANDS_RS,
+            &["parse_report_packet_index_options"],
+        ),
+        (
+            "reports ts-false-actionable",
+            CLI_COMMANDS_RS,
+            &["parse_typescript_false_actionable_options"],
+        ),
+        (
+            "reports ts-limitations",
+            CLI_COMMANDS_RS,
+            &["parse_typescript_limitations_options"],
+        ),
+        ("rerun", RERUN_PARSER_RS, &["parse_options"]),
+        (
+            "review-comments",
+            REVIEW_COMMENTS_PARSER_RS,
+            &["parse_review_comments_options"],
+        ),
+        ("swarm ingest", SWARM_INGEST_PARSER_RS, &["parse_options"]),
+        ("swarm queue", SWARM_QUEUE_PARSER_RS, &["parse_options"]),
+        (
+            "zero status",
+            CLI_COMMANDS_RS,
+            &["parse_ripr_zero_status_options"],
+        ),
+    ];
+
+    /// Extract the flags a help body documents (#2342).
+    ///
+    /// A flag counts as documented when it opens a line (the Options list) or
+    /// appears inside the `Usage:` block. Prose and examples do not document
+    /// a flag: #4317 showed that a mention inside another option's essay
+    /// (`--perl-facts` inside CHECK_HELP's `--write-artifact` entry) leaves
+    /// the flag undiscoverable and unsuggestible, so the miner reads only
+    /// the two surfaces a reader scans for accepted syntax. This is the same
+    /// documented-surface definition `suggest.rs` mines for suggestion
+    /// candidates (Options lines plus the command's own usage lines, scoped
+    /// per sibling there), so a flag this gate counts as documented is
+    /// suggestible on a typo with no second edit.
     fn extract_flags(help: &str) -> Vec<String> {
-        let mut flags = Vec::new();
+        let mut flags: Vec<String> = Vec::new();
+        let mut in_usage_block = false;
         for line in help.lines() {
-            let trimmed = line.trim();
-            // Match lines starting with `--` (flag definitions in help text)
-            if let Some(rest) = trimmed.strip_prefix("--") {
-                // Take the flag name up to the first space or end of line
-                let name = rest.split_whitespace().next().unwrap_or(rest);
-                if !name.is_empty() {
-                    flags.push(format!("--{name}"));
-                }
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("Usage:") {
+                in_usage_block = true;
+                scan_usage_flag_tokens(line, &mut flags);
+                continue;
             }
-            // Also match `--flag` embedded in usage lines like `[--flag VALUE]`
-            for word in trimmed.split_whitespace() {
-                if word.starts_with("--") && word.len() > 2 {
-                    let name = word
-                        .trim_start_matches('-')
-                        .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
-                        .next()
-                        .unwrap_or("");
-                    if !name.is_empty() {
-                        let flag = format!("--{name}");
-                        if !flags.contains(&flag) {
-                            flags.push(flag);
-                        }
+            // Wrapped usage blocks list one `ripr <command>` line per
+            // subcommand until the first blank line.
+            if in_usage_block && trimmed.starts_with("ripr ") {
+                scan_usage_flag_tokens(line, &mut flags);
+                continue;
+            }
+            in_usage_block = false;
+            // Options definitions are indented; a column-start `--` line is
+            // prose, which known_flags in suggest.rs also skips. The two
+            // miners must agree or the "documented here means suggestible
+            // there" promise above breaks.
+            if !line.starts_with(' ') {
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("--") {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    let flag = format!("--{name}");
+                    if !flags.contains(&flag) {
+                        flags.push(flag);
                     }
                 }
             }
         }
         flags
+    }
+
+    /// `--flag` tokens inside a `Usage:` line: `--` preceded by the line
+    /// start, whitespace, `[`, `(`, or `|`, so bracketed and alternation
+    /// forms like `[--base REV|--diff PATH]` are covered.
+    fn scan_usage_flag_tokens(line: &str, flags: &mut Vec<String>) {
+        let bytes = line.as_bytes();
+        let mut index = 0usize;
+        while index + 1 < bytes.len() {
+            if bytes[index] != b'-' || bytes[index + 1] != b'-' {
+                index += 1;
+                continue;
+            }
+            let previous_ok =
+                index == 0 || matches!(bytes[index - 1], b' ' | b'\t' | b'[' | b'(' | b'|');
+            if !previous_ok {
+                index += 1;
+                continue;
+            }
+            let mut end = index + 2;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'-' || bytes[end] == b'_')
+            {
+                end += 1;
+            }
+            let token = &line[index..end];
+            if token.len() > 2 && !flags.iter().any(|known| known == token) {
+                flags.push(token.to_string());
+            }
+            index = end;
+        }
+    }
+
+    /// A string literal shaped exactly like a parser match arm: `--` plus
+    /// flag-name characters, nothing else. Prose fragments that merely start
+    /// with `--` (`--worktree cannot be combined with --diff`) carry spaces
+    /// and are filtered out here.
+    fn flag_shaped_literal(literal: &str) -> bool {
+        match literal.strip_prefix("--") {
+            Some(name) => {
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            }
+            None => false,
+        }
+    }
+
+    /// One pass over Rust source producing `(skeleton, literals)`.
+    ///
+    /// The skeleton blanks comment bodies and string-literal contents while
+    /// keeping the byte layout, so code searches and brace matching see only
+    /// code; `literals` carries each string literal's byte offset and decoded
+    /// content. Raw strings (`r#"…"#`) and raw identifiers (`r#type`) are
+    /// told apart from plain identifiers starting with `r`.
+    fn scan_rust_source(source: &str) -> (String, Vec<(usize, String)>) {
+        let bytes = source.as_bytes();
+        let mut skeleton = vec![b' '; bytes.len()];
+        let mut literals: Vec<(usize, String)> = Vec::new();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+                continue;
+            }
+            let raw_candidate = bytes[i] == b'r'
+                && i + 1 < bytes.len()
+                && (bytes[i + 1] == b'"' || bytes[i + 1] == b'#');
+            if raw_candidate {
+                let mut hashes = 0usize;
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] == b'#' {
+                    hashes += 1;
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'"' {
+                    let content_start = j + 1;
+                    let mut k = content_start;
+                    let mut close: Option<(usize, usize)> = None;
+                    while k < bytes.len() {
+                        if bytes[k] == b'"' {
+                            let mut end = k + 1;
+                            let mut seen = 0usize;
+                            while end < bytes.len() && bytes[end] == b'#' && seen < hashes {
+                                seen += 1;
+                                end += 1;
+                            }
+                            if seen == hashes {
+                                close = Some((k, end));
+                                break;
+                            }
+                        }
+                        k += 1;
+                    }
+                    if let Some((content_end, after)) = close {
+                        literals.push((
+                            content_start,
+                            source[content_start..content_end].to_string(),
+                        ));
+                        i = after;
+                        continue;
+                    }
+                }
+                // Not a raw string after all (`r#type`-style identifier), or
+                // the raw string never terminates: treat the `r` as code.
+                skeleton[i] = b'r';
+                i += 1;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                let content_start = i + 1;
+                let mut k = content_start;
+                while k < bytes.len() {
+                    if bytes[k] == b'\\' {
+                        k += 2;
+                        continue;
+                    }
+                    if bytes[k] == b'"' {
+                        break;
+                    }
+                    k += 1;
+                }
+                let mut content_end = k.min(bytes.len());
+                while content_end > content_start && !source.is_char_boundary(content_end) {
+                    content_end += 1;
+                }
+                literals.push((
+                    content_start,
+                    source[content_start..content_end].to_string(),
+                ));
+                i = (content_end + 1).min(bytes.len());
+                continue;
+            }
+            skeleton[i] = bytes[i];
+            i += 1;
+        }
+        (String::from_utf8_lossy(&skeleton).into_owned(), literals)
+    }
+
+    /// Byte range of a named function's body in the blanked skeleton.
+    ///
+    /// Word boundaries on both sides keep `parse_agent_verify` from matching
+    /// inside `parse_agent_verify_execute_options`.
+    fn function_body_span(skeleton: &str, function: &str) -> Option<(usize, usize)> {
+        let needle = format!("fn {function}");
+        let skeleton_bytes = skeleton.as_bytes();
+        let mut search_from = 0usize;
+        while let Some(relative) = skeleton[search_from..].find(&needle) {
+            let start = search_from + relative;
+            let before_ok = start == 0 || {
+                let previous = skeleton_bytes[start - 1];
+                !(previous.is_ascii_alphanumeric() || previous == b'_')
+            };
+            let after = start + needle.len();
+            let after_ok = after >= skeleton_bytes.len() || {
+                let next = skeleton_bytes[after];
+                !(next.is_ascii_alphanumeric() || next == b'_')
+            };
+            if !before_ok || !after_ok {
+                search_from = start + needle.len();
+                continue;
+            }
+            let open = start + skeleton[start..].find('{')?;
+            let mut depth = 0usize;
+            for (offset, byte) in skeleton_bytes[open..].iter().enumerate() {
+                if *byte == b'{' {
+                    depth += 1;
+                } else if *byte == b'}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((open, open + offset));
+                    }
+                }
+            }
+            return None;
+        }
+        None
+    }
+
+    /// The flags one command's parser accepts: flag-shaped string literals
+    /// in the listed function bodies of its parser source.
+    ///
+    /// Honest boundary of this net: it has no notion of match-arm scrutinee
+    /// position. It collects every string literal in a listed body whose
+    /// decoded content is exactly `--` plus name characters, wherever that
+    /// literal sits — an argv match arm, an `expect_value(args, i, "--flag")`
+    /// value label, or any other position, including inside a nested helper
+    /// as long as the helper's body lies within a listed function's span. A
+    /// literal in prose position survives only when the whole literal is
+    /// flag-shaped: `"--flag"` counts, but a format string like
+    /// `"invalid --flag: {err}"` carries spaces and braces and does not.
+    ///
+    /// The practical decay vector is that a literal which outlives its parse
+    /// arm — kept alive by a diagnostic, an error label, or a helper — keeps
+    /// this direction of the gate green for one more edit. The second layer
+    /// that catches the actual parser change is the per-command argv tests,
+    /// which drive the real parsers and fail once an arm stops matching:
+    /// `*_requires_values_for_value_flags`, `*_rejects_unknown_argument`, and
+    /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
+    /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
+    /// `commands/config.rs`, `commands/receipt.rs`, `commands/review_comments.rs`,
+    /// `commands.rs`, and
+    /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
+    /// those flags belong to which sibling of a shared help body. Tightening
+    /// this scanner to scrutinee position without a real Rust parser would
+    /// risk silently dropping genuine arms — a false "documented but accepted
+    /// by no parser" drift — so the imprecision is disclosed instead of
+    /// pretended away.
+    ///
+    /// `None` means the table lookup or a function-body span failed to
+    /// resolve; the parity test asserts both cases with the offending name
+    /// before it calls this, so `None` never reaches the comparison.
+    fn parser_accepted_flags(command: &str) -> Option<Vec<String>> {
+        let (_, source, functions) = PARSER_SOURCES
+            .iter()
+            .find(|(known, _, _)| *known == command)?;
+        let (skeleton, literals) = scan_rust_source(source);
+        let mut flags: Vec<String> = Vec::new();
+        for function in functions.iter() {
+            let (body_start, body_end) = function_body_span(&skeleton, function)?;
+            for (at, literal) in &literals {
+                if *at >= body_start
+                    && *at < body_end
+                    && flag_shaped_literal(literal)
+                    && !flags.contains(literal)
+                {
+                    flags.push(literal.clone());
+                }
+            }
+        }
+        Some(flags)
+    }
+
+    /// The revived #2342 gate (#4317): for every command that ships a help
+    /// body, the flags its parser accepts and the flags its help documents
+    /// must agree in both directions. A parsed-but-undocumented flag is
+    /// invisible to readers and unsuggestible on typos (the `--perl-facts`
+    /// and `--finding` gaps in #4317); a documented-but-unparsed flag is
+    /// advice the CLI refuses. Siblings that share one help body (policy,
+    /// reports, baseline, assistant-loop) are compared at body level — one
+    /// documented surface, one union of accepted flags — while the
+    /// per-sibling split inside shared bodies is pinned by the suggestion
+    /// scoping tests in `suggest.rs`.
+    #[test]
+    fn every_parsed_flag_agrees_with_its_help_documentation() {
+        for command in super::registered_command_paths() {
+            assert!(
+                PARSER_SOURCES.iter().any(|(known, _, _)| known == command),
+                "no parser source registered for {command:?}; every documented \
+                 command needs a PARSER_SOURCES entry"
+            );
+        }
+        for (command, _, _) in PARSER_SOURCES {
+            assert!(
+                super::registered_command_paths().contains(command),
+                "PARSER_SOURCES names {command:?}, which REGISTERED_COMMAND_PATHS does not"
+            );
+        }
+        // Every listed function must resolve in its source. A rename without
+        // a table update would otherwise silently drop the command from the
+        // comparison below.
+        for (command, source, functions) in PARSER_SOURCES {
+            let (skeleton, _) = scan_rust_source(source);
+            for function in functions.iter() {
+                assert!(
+                    function_body_span(&skeleton, function).is_some(),
+                    "parser source for {command:?} has no function {function:?}; \
+                     update PARSER_SOURCES after the rename"
+                );
+            }
+        }
+
+        let mut drift: Vec<String> = Vec::new();
+        let mut groups: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+        for command in super::registered_command_paths() {
+            match super::help_text_for(command) {
+                Some(body) => match groups
+                    .iter_mut()
+                    .find(|(known, _)| std::ptr::eq(*known, body))
+                {
+                    Some((_, group)) => group.push(command),
+                    None => groups.push((body, vec![command])),
+                },
+                None => drift.push(format!(
+                    "registered path {command:?} resolves to no help body"
+                )),
+            }
+        }
+
+        // (command, flag, reason) pairs allowed on one side only. Every
+        // entry must carry the reason it cannot drift into a user-facing
+        // gap.
+        let exceptions: &[(&str, &str, &str)] = &[
+            // Hidden read-only aliases of `--mutants-json` and
+            // `--repo-exposure-json`, kept undocumented on purpose: the help
+            // body shows the canonical names, and listing both spellings
+            // would present one surface as two.
+            (
+                "calibrate cargo-mutants",
+                "--cargo-mutants-json",
+                "hidden alias of --mutants-json",
+            ),
+            (
+                "calibrate cargo-mutants",
+                "--input",
+                "hidden alias of --mutants-json",
+            ),
+            (
+                "calibrate cargo-mutants",
+                "--static-json",
+                "hidden alias of --repo-exposure-json",
+            ),
+        ];
+
+        for (body, commands) in &groups {
+            let documented = extract_flags(body);
+            let mut accepted: Vec<String> = Vec::new();
+            for command in commands {
+                // The resolution sweep above guarantees the lookup succeeds.
+                if let Some(flags) = parser_accepted_flags(command) {
+                    for flag in flags {
+                        if !accepted.contains(&flag) {
+                            accepted.push(flag);
+                        }
+                    }
+                }
+            }
+            let excepted = |command: &str, flag: &str| {
+                // `--help` is accepted by every command's dispatch but is
+                // deliberately documented nowhere: help bodies route readers
+                // to it with the `Run `ripr <command> --help`` pointer
+                // instead of an Options entry.
+                flag == "--help"
+                    || exceptions
+                        .iter()
+                        .any(|(owner, name, _)| *owner == command && *name == flag)
+            };
+            let undocumented: Vec<String> = accepted
+                .iter()
+                .filter(|flag| !documented.contains(flag))
+                .filter(|flag| !commands.iter().any(|command| excepted(command, flag)))
+                .cloned()
+                .collect();
+            let unaccepted: Vec<String> = documented
+                .iter()
+                .filter(|flag| !accepted.contains(flag))
+                .filter(|flag| !commands.iter().any(|command| excepted(command, flag)))
+                .cloned()
+                .collect();
+            if !undocumented.is_empty() {
+                drift.push(format!(
+                    "parsed but absent from help for {commands:?}: {undocumented:?}; \
+                     add the Options entry the flag is missing"
+                ));
+            }
+            if !unaccepted.is_empty() {
+                drift.push(format!(
+                    "documented but accepted by no parser for {commands:?}: {unaccepted:?}; \
+                     drop the stale entry or restore the parse arm"
+                ));
+            }
+        }
+        assert!(
+            drift.is_empty(),
+            "flag/help parity drift across {} help bodies:\n{}",
+            groups.len(),
+            drift.join("\n")
+        );
     }
 
     #[test]
@@ -824,7 +1619,7 @@ mod tests {
             (
                 "check",
                 CHECK_HELP,
-                &["--base", "--diff", "--mode", "--json"],
+                &["--base", "--diff", "--mode", "--json", "--quiet"],
             ),
             (
                 "explain",
@@ -849,7 +1644,7 @@ mod tests {
                 ],
             ),
             ("gate", GATE_HELP, &["--pr-guidance", "--mode"]),
-            ("doctor", DOCTOR_HELP, &["--root", "--json"]),
+            ("doctor", DOCTOR_HELP, &["--root", "--json", "--profile"]),
             ("config validate", CONFIG_HELP, &["--root"]),
             (
                 "pilot",

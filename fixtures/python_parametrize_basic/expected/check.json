@@ -46,7 +46,7 @@
       "flow_sinks": [
         {"kind":"unknown","text":"if amount >= 100:","line":2}
       ],
-      "evidence": ["owner: tax_band", "owner_kind: function", "missing_discriminator: amount == 100", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_tax.py", "suggested_test_name: test_tax_band", "suggested_test_node_id: tests/test_tax.py::test_tax_band", "suggested_verify_command: pytest tests/test_tax.py::test_tax_band", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_tax_band)", "test_fixtures: amount (test_tax_band)", "test_parametrized: pytest (test_tax_band)", "test_verify_command: pytest tests/test_tax.py::test_tax_band (test_tax_band)", "related_test_relation: syntactic_call (test_tax_band)", "test_oracle_shape: reach_only (test_tax_band)"],
+      "evidence": ["owner: tax_band", "owner_kind: function", "missing_discriminator: amount == 100", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_tax.py", "suggested_test_name: test_tax_band", "suggested_test_node_id: tests/test_tax.py::test_tax_band", "suggested_verify_command: python -m pytest tests/test_tax.py::test_tax_band", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_tax_band)", "test_fixtures: amount (test_tax_band)", "test_parametrized: pytest (test_tax_band)", "test_verify_command: python -m pytest tests/test_tax.py::test_tax_band (test_tax_band)", "related_test_relation: syntactic_call (test_tax_band)", "test_oracle_shape: reach_only (test_tax_band)"],
       "missing": ["Related Python test reaches `tax_band` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the changed boundary."],
       "assertion_texts": {
       },
@@ -85,7 +85,7 @@
         "suggested_test_file": "tests/test_tax.py",
         "suggested_test_name": "test_tax_band",
         "suggested_test_node_id": "tests/test_tax.py::test_tax_band",
-        "verify_command": "pytest tests/test_tax.py::test_tax_band",
+        "verify_command": "python -m pytest tests/test_tax.py::test_tax_band",
         "verify_command_confidence": "high"
        },
       "python_repair_card": {
@@ -108,7 +108,7 @@
           "pytest_node_id": "tests/test_tax.py::test_tax_band"
          },
         "verify": {
-          "command": "pytest tests/test_tax.py::test_tax_band",
+          "command": "python -m pytest tests/test_tax.py::test_tax_band",
           "confidence": "high"
          },
         "receipt": {
@@ -143,5 +143,6 @@
       "category": "preview_language_advisory",
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
-  ]
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/tax.py","digest":"sha256:11aaa3c9a2eb69d583d3af982f9323e7bbc78ed8b39b207b6ac29fd5a9a4ec65"},{"path":"tests/test_tax.py","digest":"sha256:ed9bef92fdd3de945f51b5841bdaef2d0fd23418a1275a6844250775dbc135cb"}]}
 }
