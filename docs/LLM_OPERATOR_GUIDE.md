@@ -473,7 +473,7 @@ the same command and artifact model shown above.
 When handing work to a human or external LLM tool, include:
 
 ```text
-target/ripr/workflow/agent-card.json from `ripr agent card --seam-id <seam-id> --json` (default compact handoff)
+target/ripr/workflow/agent-card.json from `ripr agent card --seam-id <seam-id> --json > target/ripr/workflow/agent-card.json` (default compact handoff)
 target/ripr/workflow/workflow.json
 target/ripr/workflow/commands.md
 target/ripr/workflow/agent-brief.json
