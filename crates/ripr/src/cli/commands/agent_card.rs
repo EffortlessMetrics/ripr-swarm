@@ -112,13 +112,19 @@ fn refusal_remedy_route(
             format!("ripr pilot --root {root}")
         }
         AgentCardRefusalKind::PolicyOmitted => {
-            format!("ripr agent brief --root {root} --json")
+            format!(
+                "ripr agent brief --root {root} --seam-id {} --json",
+                crate::agent::loop_commands::shell_arg(seam_id)
+            )
         }
         AgentCardRefusalKind::WitnessUnavailable => {
             format!("ripr check --root {root} --json")
         }
         AgentCardRefusalKind::IdentityUnnameable | AgentCardRefusalKind::BudgetOverflow => {
-            format!("ripr agent packet --seam-id {seam_id} --json")
+            format!(
+                "ripr agent packet --root {root} --seam-id {} --json",
+                crate::agent::loop_commands::shell_arg(seam_id)
+            )
         }
     }
 }
@@ -340,12 +346,12 @@ mod tests {
             (
                 AgentCardRefusalKind::IdentityUnnameable,
                 "identity_unnameable",
-                "ripr agent packet --seam-id seam-a --json",
+                "ripr agent packet --root ",
             ),
             (
                 AgentCardRefusalKind::BudgetOverflow,
                 "budget_overflow",
-                "ripr agent packet --seam-id seam-a --json",
+                "ripr agent packet --root ",
             ),
         ] {
             let options = AgentCardOptions {
@@ -383,6 +389,18 @@ mod tests {
             if !remedy.starts_with(expected_remedy) {
                 return Err(format!("{expected_kind}: unexpected remedy route {remedy}"));
             }
+            // #5007 review: the packet and brief remedies must stay directly
+            // executable — they bind the invocation's root and seam id, never
+            // the process working directory or a bare seam.
+            if matches!(
+                expected_kind,
+                "policy_omitted" | "identity_unnameable" | "budget_overflow"
+            ) && !remedy.contains("--seam-id seam-a")
+            {
+                return Err(format!(
+                    "{expected_kind}: remedy must carry the asked-for seam id: {remedy}"
+                ));
+            }
         }
         Ok(())
     }
@@ -404,6 +422,14 @@ mod tests {
         }
         if !policy_omitted.starts_with("ripr agent brief --root ") {
             return Err("policy-omitted remedy must name the policy config surface".to_string());
+        }
+        if !policy_omitted.contains("--seam-id seam-a") {
+            return Err("policy-omitted remedy must carry the asked-for seam id".to_string());
+        }
+        let packet = refusal_remedy_route(root, "seam-a", AgentCardRefusalKind::IdentityUnnameable);
+        if !packet.starts_with("ripr agent packet --root ") || !packet.contains("--seam-id seam-a")
+        {
+            return Err("packet remedy must bind the invocation root and seam id".to_string());
         }
         Ok(())
     }
