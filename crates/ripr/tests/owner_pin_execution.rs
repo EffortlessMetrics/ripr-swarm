@@ -758,6 +758,40 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
                 ),
                 true,
             ),
+            (
+                "async_return_direct",
+                format!("let _future = async {{ return; }};\n{direct}"),
+                true,
+            ),
+            (
+                "async_return_invoked",
+                format!(
+                    "let _future = async {{ return; }};\nlet check = || {{ {direct} }}; check();"
+                ),
+                true,
+            ),
+            (
+                "async_move_return_direct",
+                format!("let _future = async move {{ return; }};\n{direct}"),
+                true,
+            ),
+            (
+                "async_move_return_invoked",
+                format!(
+                    "let _future = async move {{ return; }};\nlet check = || {{ {direct} }}; check();"
+                ),
+                true,
+            ),
+            (
+                "async_return_then_outer_return",
+                format!("let _future = async {{ return; }};\nreturn;\n{direct}"),
+                false,
+            ),
+            (
+                "assertion_inside_unpolled_async",
+                format!("let _future = async {{ return;\n{direct} }};"),
+                false,
+            ),
         ] {
             let scratch = Scratch::create()?;
             let source = format!("{prefix}    #[test]\n    fn checks() {{\n{body}\n    }}\n}}\n");
@@ -803,56 +837,17 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
             );
             assert_eq!(source.matches(correct_expression).count(), 1);
             for wrong in [false, true] {
-                let runtime = Scratch::create()?;
-                let path = runtime.0.join("subject.rs");
-                std::fs::write(
-                    &path,
-                    if wrong {
-                        source.replace(correct_expression, wrong_expression)
-                    } else {
-                        source.clone()
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                let executable = runtime
-                    .0
-                    .join(format!("test{}", std::env::consts::EXE_SUFFIX));
-                compiles(
-                    run(
-                        Path::new("rustc"),
-                        &[
-                            "--edition=2024".as_ref(),
-                            "--test".as_ref(),
-                            path.as_os_str(),
-                            "-o".as_ref(),
-                            executable.as_os_str(),
-                        ],
-                    )?,
-                    "statement-prefix runtime control",
+                let runtime_source = if wrong {
+                    source.replace(correct_expression, wrong_expression)
+                } else {
+                    source.clone()
+                };
+                source_runtime_control(
+                    &runtime_source,
+                    &format!("prefix runtime: {family}/{case}, wrong={wrong}"),
+                    1,
+                    wrong && exposed,
                 )?;
-                let listed = run(&executable, &["--list".as_ref()])?;
-                assert!(listed.status.success());
-                assert!(
-                    String::from_utf8_lossy(&listed.stdout)
-                        .trim_end()
-                        .ends_with("1 test, 0 benchmarks")
-                );
-                let result = run(&executable, &["--nocapture".as_ref()])?;
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                assert!(
-                    stdout.contains("running 1 test"),
-                    "{family}/{case}: {stdout}"
-                );
-                assert_eq!(
-                    result.status.code(),
-                    Some(if wrong && exposed { 101 } else { 0 }),
-                    "{family}/{case}: {stdout}; {}",
-                    String::from_utf8_lossy(&result.stderr)
-                );
-                eprintln!(
-                    "prefix runtime: {family}/{case}, wrong={wrong}, {}, executed=1",
-                    result.status
-                );
             }
         }
     }
@@ -890,5 +885,183 @@ fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), Str
     // #5040 owns establishing the missing macro-binding/polling edge. The
     // independently executed Tokio removal controls show the real test works;
     // source discovery alone must not manufacture that execution provenance.
+    Ok(())
+}
+
+fn source_runtime_control(
+    source: &str,
+    label: &str,
+    expected_tests: usize,
+    should_fail: bool,
+) -> Result<(), String> {
+    let runtime = Scratch::create()?;
+    let path = runtime.0.join("subject.rs");
+    std::fs::write(&path, source).map_err(|error| error.to_string())?;
+    let executable = runtime
+        .0
+        .join(format!("test{}", std::env::consts::EXE_SUFFIX));
+    compiles(
+        run(
+            Path::new("rustc"),
+            &[
+                "--edition=2024".as_ref(),
+                "--test".as_ref(),
+                path.as_os_str(),
+                "-o".as_ref(),
+                executable.as_os_str(),
+            ],
+        )?,
+        label,
+    )?;
+    let listed = run(&executable, &["--list".as_ref()])?;
+    assert!(listed.status.success(), "{label}");
+    let suffix = format!(
+        "{expected_tests} test{}, 0 benchmarks",
+        if expected_tests == 1 { "" } else { "s" }
+    );
+    assert!(
+        String::from_utf8_lossy(&listed.stdout)
+            .trim_end()
+            .ends_with(&suffix),
+        "{label}: wrong runtime subject inventory"
+    );
+    let result = run(&executable, &["--nocapture".as_ref()])?;
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains(&format!("running {expected_tests} test")),
+        "{label}: {stdout}"
+    );
+    let failed = usize::from(should_fail);
+    assert!(
+        stdout.contains(&format!(
+            "{} passed; {failed} failed;",
+            expected_tests - failed
+        )),
+        "{label}: expected all declared subjects to execute: {stdout}"
+    );
+    assert_eq!(
+        result.status.code(),
+        Some(if should_fail { 101 } else { 0 }),
+        "{label}: {stdout}; {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    eprintln!("{label}, {}, executed={expected_tests}", result.status);
+    Ok(())
+}
+
+#[test]
+fn predicate_pairing_cannot_reuse_refused_boundary_equalities() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/predicate_oracle_execution_direct");
+    let original = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let (production, _) = original
+        .split_once("#[cfg(test)]")
+        .ok_or("missing test boundary")?;
+    let boundary = "assert_eq!(discounted_total(100, 100), 90);";
+    let far = "assert_eq!(discounted_total(101, 100), 91);";
+    for separate in [true, false] {
+        for (case, body, exposed) in [
+            ("false_branch", format!("if false {{ {boundary} }}"), false),
+            (
+                "uncalled",
+                format!("let _unused = || {{ {boundary} }};"),
+                false,
+            ),
+            (
+                "unpolled",
+                format!("let _future = async {{ {boundary} }};"),
+                false,
+            ),
+            ("direct", boundary.to_string(), true),
+            (
+                "invoked",
+                format!("let check = || {{ {boundary} }}; check();"),
+                true,
+            ),
+            (
+                "removed",
+                "let _ = discounted_total(100, 100);".to_string(),
+                false,
+            ),
+        ] {
+            let tests = if separate {
+                format!("#[test]\nfn boundary() {{ {body} }}\n#[test]\nfn far() {{ {far} }}")
+            } else {
+                format!("#[test]\nfn mixed() {{ {body}\n{far} }}")
+            };
+            let source =
+                format!("{production}#[cfg(test)]\nmod tests {{\nuse super::*;\n{tests}\n}}\n");
+            let scratch = Scratch::create()?;
+            std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+            std::fs::copy(
+                fixture.join("input/Cargo.toml"),
+                scratch.0.join("Cargo.toml"),
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::write(scratch.0.join("src/lib.rs"), &source)
+                .map_err(|error| error.to_string())?;
+            let report = check_workspace(CheckInput {
+                root: scratch.0.clone(),
+                diff_file: Some(fixture.join("diff.patch")),
+                mode: Mode::Fast,
+                format: OutputFormat::Json,
+                include_unchanged_tests: true,
+                ..CheckInput::default()
+            })?;
+            let json: serde_json::Value =
+                serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                    .map_err(|error| error.to_string())?;
+            assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
+            let findings = json["findings"]
+                .as_array()
+                .ok_or("missing findings")?
+                .iter()
+                .filter(|f| f["probe"]["family"] == "predicate")
+                .collect::<Vec<_>>();
+            assert_eq!(findings.len(), 1, "{case}, separate={separate}");
+            let finding = findings[0];
+            assert_eq!(
+                finding["classification"],
+                if exposed { "exposed" } else { "weakly_exposed" },
+                "{case}, separate={separate}"
+            );
+            // The far oracle remains real strong evidence. It cannot donate
+            // its strength to a refused boundary oracle or be erased wholesale.
+            assert_eq!(finding["oracle_strength"], "strong", "{case}");
+            assert_eq!(finding["ripr"]["observe"]["state"], "yes", "{case}");
+            assert_eq!(
+                finding["ripr"]["discriminate"]["state"],
+                if exposed { "yes" } else { "weak" },
+                "{case}"
+            );
+            if !exposed {
+                assert!(
+                    finding["ripr"]["discriminate"]["summary"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("same_test_pairing_missing")
+                            && !s.contains("different tests")),
+                    "{case}"
+                );
+            }
+            assert_eq!(source.matches("amount >= discount_threshold").count(), 1);
+            for wrong in [false, true] {
+                let runtime_source = if wrong {
+                    source.replace(
+                        "amount >= discount_threshold",
+                        "amount > discount_threshold",
+                    )
+                } else {
+                    source.clone()
+                };
+                source_runtime_control(
+                    &runtime_source,
+                    &format!("pairing runtime: {case}, separate={separate}, wrong={wrong}"),
+                    if separate { 2 } else { 1 },
+                    wrong && exposed,
+                )?;
+            }
+        }
+    }
     Ok(())
 }

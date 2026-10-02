@@ -5,6 +5,62 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_predicate_boundary_oracle_refused",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_boundary_oracle_refused",
+      "vector": "admitted_boundary_oracle_required_after_reveal_refused",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_boundary_oracle_admitted",
+      "language": "rust",
+      "tier": "control",
+      "source_fixture": "fixtures/predicate_boundary_oracle_admitted",
+      "vector": "admitted_boundary_oracle_required_after_reveal_admitted",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_error_path_diagnostic_absent",
       "language": "rust",
       "tier": "pure",

@@ -10687,6 +10687,7 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities",
   "crates/ripr/tests/owner_pin_execution.rs::async_test_discovery_does_not_supply_execution_provenance",
   "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",
   "crates/ripr/tests/owner_pin_execution.rs::equality_oracle_family_matched_static_and_runtime_controls",
@@ -10725,6 +10726,8 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_review_admission_controls",
 ]
 fixtures = [
+  "fixtures/predicate_boundary_oracle_refused",
+  "fixtures/predicate_boundary_oracle_admitted",
   "fixtures/error_path_oracle_execution_called",
   "fixtures/error_path_oracle_execution_direct",
   "fixtures/error_path_oracle_execution_false_branch",
@@ -10766,6 +10769,7 @@ fixtures = [
   "fixtures/owner_return_pin_out_of_line_cfg",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
@@ -10777,6 +10781,12 @@ code = [
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
 ]
 outputs = [
+  "fixtures/predicate_boundary_oracle_refused/expected/check.json",
+  "fixtures/predicate_boundary_oracle_refused/expected/human.txt",
+  "fixtures/predicate_boundary_oracle_refused/expected/human-full.txt",
+  "fixtures/predicate_boundary_oracle_admitted/expected/check.json",
+  "fixtures/predicate_boundary_oracle_admitted/expected/human.txt",
+  "fixtures/predicate_boundary_oracle_admitted/expected/human-full.txt",
   "fixtures/error_path_oracle_execution_called/expected/check.json",
   "fixtures/error_path_oracle_execution_called/expected/human.txt",
   "fixtures/error_path_oracle_execution_called/expected/human-full.txt",

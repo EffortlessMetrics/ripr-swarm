@@ -269,7 +269,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// or ambiguously bound assertions cannot retain warm oracle credit.
 /// `1.23` -> `1.24`: ErrorPath and Predicate bare equality oracles reuse the
 /// same execution/macro admission (#5027), invalidating favorable old results.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.24";
+/// `1.24` -> `1.25`: pairing consumes admitted equalities; async-block returns
+/// cannot suppress outer assertions (#5027 review). Reject published stale credit.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.25";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -331,7 +333,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.24";
 /// `0.28`: diagnostic-free extraction/ErrorPath confirmation (#4748).
 /// `0.28` -> `0.29`: shared return-oracle admission (#4478), same outer transition.
 /// `0.29` -> `0.30`: ErrorPath/Predicate equality admission (#5027).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.30";
+/// `0.30` -> `0.31`: same pairing/return-context admission transition.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.31";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -395,7 +398,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.30";
 /// `0.28`: diagnostic-free extraction/ErrorPath confirmation (#4748).
 /// `0.28` -> `0.29`: shared return-oracle admission (#4478), same outer transition.
 /// `0.29` -> `0.30`: ErrorPath/Predicate equality admission (#5027).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.30";
+/// `0.30` -> `0.31`: same pairing/return-context admission transition.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.31";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -3591,7 +3595,7 @@ mod tests {
         // probes the token rule left unconfirmed.
         // 1.22 -> 1.23: integrate shared return-oracle admission after #4748.
         // 1.24: ErrorPath/Predicate share the execution-admission boundary.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.24");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.25");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3615,8 +3619,8 @@ mod tests {
         // same semantic transition as the outer cache.
         // 0.28 -> 0.29: same combined semantic transition as the outer cache.
         // 0.30: same family-admission transition.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.30");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.30");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.31");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.31");
     }
 
     #[test]

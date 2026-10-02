@@ -147,8 +147,10 @@ are scoped or reviewed.
   false-branch and shadowed assertions retain their test relation without
   observation or oracle credit; direct and invoked positives remain supported.
   Family-selected runtime/honesty controls preserve static-only confidence.
+  Boundary pairing now consumes that same admission decision, so refused
+  boundary assertions cannot borrow a far oracle to restore exposure.
   A bounded statement-prefix refinement preserves earlier synchronous equality
-  before a later return. Async/test-macro execution remains unsupported: the
+  before a later return and ignores returns owned by nested helpers/futures. Async/test-macro execution remains unsupported: the
   real Tokio fixture keeps discovery but loses strong static oracle credit, an
   explicit conservative usefulness tradeoff tracked by #5040.
 

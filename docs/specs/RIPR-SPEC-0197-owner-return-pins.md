@@ -309,16 +309,21 @@ helper into a singleton. Ten related tests exercise the eight-row JSON projectio
 cap without crowding out admitted evidence. All cells are independently guarded
 by family-selected RIPR-SPEC-0108 corpus assertions.
 
-A separate fifty-four-subject compiled matrix covers all three admitted families:
+A separate ninety-subject compiled matrix covers all three admitted families:
 a direct assertion before/after a root return, a bound closure invoked before/after
 a root return, a closure that returns before its assertion, and unrelated ordinary
-or CFG-disabled nested helpers before direct/invoked assertions. Effective direct
+or CFG-disabled nested helpers before direct/invoked assertions, and unrelated
+`async`/`async move` return contexts. Effective direct
 and invoked positives are admitted; prior outer returns and closure escapes are
 refused. The statement-prefix query retains
 all macro, CFG, collection and closure-escape gates; it does not evaluate arbitrary
 branch conditions. The existing Result harness retains its earlier strong equality
 and its class/confidence; a possible return still refuses a later equality.
 Only returns owned by the collected function enter its statement-prefix boundary.
+A return in an unrelated async block belongs to that future, even before it is
+polled; it cannot hide a later executed outer assertion. Assertions inside an
+unpolled future remain refused, and an actual outer return still defeats a later
+assertion. This is return-scope information, not an async-harness execution claim.
 An ordinary or CFG-disabled nested helper's return cannot escape the outer test;
 direct and invoked-closure positives remain admitted with either helper present.
 This does not admit an assertion inside an uncalled nested helper, and the earlier
@@ -341,6 +346,37 @@ The same existing human/JSON/context projections explain a refused invocation
 and keep confidence advisory and `static_only`. This change does not assert
 that all oracle families, assertion macros or arbitrary Rust control flow have
 execution provenance.
+
+### Admission consumers and cross-test pairing
+
+Predicate boundary pairing consumes the exact same admission callback as reveal.
+A false-branch, uncalled-closure or unpolled-future boundary equality cannot regain
+credit after reveal refuses it by borrowing a strong far-input oracle. Matched
+same-test and separate-test layouts retain that far oracle's strong evidence and
+Observe=yes, while Discriminate stays weak with `same_test_pairing_missing`.
+Direct and invoked boundary positives remain exposed. Twelve paired layouts
+compile correct/wrong implementations and execute exactly one or two tests per
+program, rather than treating a zero-subject or compile failure as a control.
+The summary describes an absent admitted boundary-call discriminator without
+falsely claiming that every failure involves different tests.
+
+The covered route is Rust diff classification. Its consumer inventory is:
+
+| Consumer | Authority and boundary |
+| --- | --- |
+| `OwnerPinSyntax` / `OwnerReturnPin` | One parser-backed admission decision; owner-return binding remains a separate narrower proof. |
+| `classify/reveal.rs` | Filters before kind, strength, token matching, observation and owner-pin credit. Original assertion cardinality remains separate and unchanged. |
+| `classify/boundary_pairing.rs` | Uses the same callback before strength or boundary-subject pairing; raw refused assertions cannot restore exposure. |
+| `classifier/evidence.rs` / `classify/decision.rs` | Compose admitted stages; the tuple-specific witness is MatchArm-only and outside these covered families. |
+| `classifier/finding.rs` | Strong sink guidance starts from the already-filtered `evidence.related_tests`, not raw assertions. |
+| `classify/activation.rs` / `classify/related_tests.rs` | Raw source value/missing-fact and relationship scans remain their own static authorities. They are not oracle admission or runtime execution proof and cannot bypass the final admitted pairing requirement. |
+| `test_grip_evidence.rs` | Repository grip has a separate raw-oracle consumer. This diff-path repair does not claim repository-grip execution parity; #4793 owns the shared-witness migration. |
+
+The two executed bypasses, family dispatch before reveal and raw boundary pairing
+after reveal, motivate an admitted-oracle iteration contract under #4793. That
+follow-up must carry original cardinality separately and preserve source facts
+for diagnosis; it must not introduce another execution checker or globally erase
+assertions. This repair shares the existing callback without that larger migration.
 
 ## Non-Goals
 
@@ -447,9 +483,11 @@ execution provenance.
   availability reuses the canonical lexer; the existing test-only role query
   retains its separate contract. Out-of-line resolution remains owned by
   existing `FileFacts::role_provenance`, not by the admission consumer.
-- `crates/ripr/src/analysis/seam_cache.rs`: classified `1.24`, sharded `0.30`,
-  compact `0.30` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
+- `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
+  compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
+  The new classified generation also rejects favorable results from published
+  candidate 740098f5, whose post-reveal pairing could re-use refused assertions.
   The statement-prefix refinement changes no serialized fact shape.
 
 ## Metrics

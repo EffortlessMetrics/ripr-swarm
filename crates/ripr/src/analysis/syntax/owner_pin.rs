@@ -246,7 +246,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .collect();
         // Compute the conservative prefix boundary once per function, rather
         // than rescanning its body for every candidate assertion/invocation.
-        // A nested helper returns to its own caller, not from this function.
+        // A nested helper or async block has its own return context.
         // The earlier escape gate still refuses returns in any closure.
         let first_return = body
             .syntax()
@@ -256,8 +256,12 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 expression
                     .syntax()
                     .ancestors()
-                    .find_map(ast::Fn::cast)
-                    .is_some_and(|owner| owner == function)
+                    .find(|node| {
+                        ast::Fn::can_cast(node.kind())
+                            || ast::BlockExpr::cast(node.clone())
+                                .is_some_and(|block| block.async_token().is_some())
+                    })
+                    .is_some_and(|owner| owner == *function.syntax())
             })
             .map(|expression| expression.syntax().text_range().start())
             .min();
