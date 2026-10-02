@@ -13,6 +13,17 @@ pub(crate) fn validate_row(row: &FeedbackRow) -> Vec<String> {
     if row.owner.designated.trim().is_empty() {
         violations.push(format!("{}: designated owner is required", row.case_id));
     }
+    if row
+        .owner
+        .competing
+        .iter()
+        .any(|item| item == &row.owner.designated)
+    {
+        violations.push(format!(
+            "{}: competing owners cannot include the designated owner",
+            row.case_id
+        ));
+    }
     if is_analyzer_defect(&row.failure_direction)
         && row.owner.designated == "unowned_no_github_mutation"
         && row.owner.existing.is_some()
@@ -26,11 +37,10 @@ pub(crate) fn validate_row(row: &FeedbackRow) -> Vec<String> {
         && is_analyzer_defect(&row.failure_direction)
         && row.owner.designated != existing.as_str()
         && row.owner.designated != "unowned_no_github_mutation"
-        && !row.owner.competing.iter().any(|item| item == existing)
     {
         violations.push(format!(
-            "{}: competing/donor owner `{existing}` must stay visible",
-            row.case_id
+            "{}: existing focused owner `{existing}` must remain designated (found `{}`); listing it under `competing` does not record a supersession",
+            row.case_id, row.owner.designated
         ));
     }
     violations

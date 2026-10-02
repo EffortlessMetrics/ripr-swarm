@@ -83,8 +83,8 @@ GitHub objects.
 `cargo xtask rust-judged-panel feedback [--out] [--check]` derives JSON and
 Markdown from one DTO. Reports carry counts by direction, status, reduction,
 and owner class. They carry no overall analyzer score. Runtime calibration
-status is `#4795` metadata (`not_run` until that producer lands) and cannot set
-the static class.
+status is `#4795` metadata (`not_run` while that producer's release-challenge
+receipts stay unauthorized) and cannot set the static class.
 
 ## Non-Goals
 

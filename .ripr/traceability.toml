@@ -10639,6 +10639,8 @@ metrics = [
   "rust_judged_panel_feedback_rows",
   "rust_judged_panel_feedback_analyzer_defects",
   "rust_judged_panel_feedback_unowned",
+]
+
 [[behavior]]
 id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"

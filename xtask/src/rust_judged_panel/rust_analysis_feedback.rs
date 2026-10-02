@@ -12,7 +12,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::parse_json_without_duplicate_keys;
-use super::release_judgments::RELEASE_JUDGMENTS_PATH;
+use super::release_judgments::{RELEASE_JUDGMENTS_PATH, check_release_judgments_at};
 
 mod lifecycle;
 mod owners;
@@ -106,6 +106,11 @@ struct ValidatedBundle {
 }
 
 fn load_and_validate(root: &Path) -> Result<ValidatedBundle, String> {
+    // The frozen #3806 packet is validated by its own semantic owner first:
+    // selection binding, typed rows, and one judgment per case are enforced
+    // there, so this ledger never derives facts from a state the judgment
+    // authority would reject.
+    check_release_judgments_at(root)?;
     let judgments_path = root.join(RELEASE_JUDGMENTS_PATH);
     let judgments_bytes = fs::read(&judgments_path)
         .map_err(|error| format!("read `{RELEASE_JUDGMENTS_PATH}`: {error}"))?;
@@ -126,7 +131,7 @@ fn load_and_validate(root: &Path) -> Result<ValidatedBundle, String> {
     let ledger: FeedbackLedger = serde_json::from_value(ledger_value)
         .map_err(|error| format!("parse `{LEDGER_PATH}`: {error}"))?;
 
-    let mut violations = validate_bundle(&ledger, &facts, &judgments_sha256);
+    let mut violations = validate_bundle(root, &ledger, &facts, &judgments_sha256);
     violations.sort();
     violations.dedup();
     if violations.is_empty() {
@@ -145,6 +150,7 @@ fn load_and_validate(root: &Path) -> Result<ValidatedBundle, String> {
 }
 
 fn validate_bundle(
+    root: &Path,
     ledger: &FeedbackLedger,
     facts: &[schema::JudgmentFact],
     judgments_sha256: &str,
@@ -201,7 +207,13 @@ fn validate_bundle(
         let Some(fact) = facts.iter().find(|fact| fact.case_id == row.case_id) else {
             continue;
         };
-        violations.extend(schema::validate_row(row, fact));
+        if row.runtime_calibration.status != ledger.calibration.status {
+            violations.push(format!(
+                "{}: runtime_calibration.status `{}` contradicts the ledger-level calibration status `{}`",
+                row.case_id, row.runtime_calibration.status, ledger.calibration.status
+            ));
+        }
+        violations.extend(schema::validate_row(row, fact, root));
         violations.extend(lifecycle::validate_row(row));
         violations.extend(owners::validate_row(row));
     }
@@ -218,6 +230,14 @@ fn write_staging(out_path: &Path, rendered: &report::RenderedFeedback) -> Result
         ("feedback.md", rendered.markdown.as_bytes()),
     ] {
         let path = out_path.join(name);
+        if let Ok(metadata) = fs::symlink_metadata(&path)
+            && metadata.file_type().is_symlink()
+        {
+            return Err(format!(
+                "write `{}`: refusing to follow an existing symlink; remove it and rerun",
+                path.display()
+            ));
+        }
         fs::write(&path, bytes).map_err(|error| format!("write `{}`: {error}", path.display()))?;
     }
     Ok(())
@@ -276,7 +296,14 @@ fn validate_bundle_for_test(
     facts: &[schema::JudgmentFact],
     judgments_sha256: &str,
 ) -> Vec<String> {
-    validate_bundle(ledger, facts, judgments_sha256)
+    validate_bundle(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap_or(Path::new(".")),
+        ledger,
+        facts,
+        judgments_sha256,
+    )
 }
 
 #[cfg(test)]

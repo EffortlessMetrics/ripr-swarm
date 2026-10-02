@@ -1,6 +1,7 @@
 //! Vocabulary, row contract, and derivation from immutable judgment labels.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -37,10 +38,9 @@ pub(crate) const REDUCTIONS: [&str; 4] =
     ["fixture_backed", "replay_only", "unreduced", "not_a_defect"];
 
 const CALIBRATION_STATUSES: [&str; 3] = ["not_run", "unavailable", "recorded"];
-const RUNTIME_CALIBRATION_IMPORTS: [&str; 2] = [
-    "caught",
-    "survived", // ripr-allow: static-language: rejecting imported #4795 runtime-calibration labels, not emitting them as static output
-];
+/// Row-level calibration may only carry absent metadata; `recorded` results
+/// belong to the #4795 producer even when the vocabulary names them.
+const ROW_CALIBRATION_STATUSES: [&str; 2] = ["not_run", "unavailable"];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +134,7 @@ pub(crate) struct JudgmentFact {
     pub(crate) case_id: String,
     pub(crate) expected_direction: String,
     pub(crate) terminal: String,
+    pub(crate) observer: String,
     pub(crate) false_actionable: Option<bool>,
     pub(crate) false_exposed: Option<bool>,
     pub(crate) under_credit: Option<bool>,
@@ -153,10 +154,14 @@ pub(crate) fn judgment_facts(value: &Value) -> Result<Vec<JudgmentFact>, String>
         let outcome = row
             .get("reference_outcome")
             .ok_or_else(|| format!("{case_id}: missing reference_outcome"))?;
+        let structural = row
+            .get("structural")
+            .ok_or_else(|| format!("{case_id}: missing structural"))?;
         facts.push(JudgmentFact {
             case_id,
             expected_direction,
             terminal,
+            observer: required_str(structural, "observer")?,
             false_actionable: bool_or_null(outcome, "false_actionable")?,
             false_exposed: bool_or_null(outcome, "false_exposed")?,
             under_credit: bool_or_null(outcome, "under_credit")?,
@@ -255,7 +260,7 @@ pub(crate) fn validate_order(rows: &[FeedbackRow]) -> Vec<String> {
     }
 }
 
-pub(crate) fn validate_row(row: &FeedbackRow, fact: &JudgmentFact) -> Vec<String> {
+pub(crate) fn validate_row(row: &FeedbackRow, fact: &JudgmentFact, root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     if row.case_id != fact.case_id {
         violations.push(format!(
@@ -311,13 +316,13 @@ pub(crate) fn validate_row(row: &FeedbackRow, fact: &JudgmentFact) -> Vec<String
             row.case_id
         ));
     }
-    if RUNTIME_CALIBRATION_IMPORTS.contains(&row.runtime_calibration.status.as_str()) {
+    if !ROW_CALIBRATION_STATUSES.contains(&row.runtime_calibration.status.as_str()) {
         violations.push(format!(
-            "{}: runtime calibration records belong to #4795, not this ledger",
-            row.case_id
+            "{}: runtime_calibration.status `{}` is outside the ledger vocabulary {ROW_CALIBRATION_STATUSES:?}; recorded results belong to #4795, not this ledger",
+            row.case_id, row.runtime_calibration.status
         ));
     }
-    violations.extend(validate_reduction(row, derived));
+    violations.extend(validate_reduction(row, derived, root));
     violations.extend(validate_status(row, derived, fact));
     if derived == "wrong_target" {
         match row.target_identity.as_deref() {
@@ -325,7 +330,15 @@ pub(crate) fn validate_row(row: &FeedbackRow, fact: &JudgmentFact) -> Vec<String
                 "{}: wrong_target requires an exact target_identity",
                 row.case_id
             )),
-            Some(_) => {}
+            Some(target) => {
+                let claimed = target.rsplit("::").next().unwrap_or(target);
+                if claimed != fact.observer {
+                    violations.push(format!(
+                        "{}: wrong_target target_identity `{target}` is not the adjudicated observer `{}` of the frozen judgment; a ledger-authored target cannot create the defect",
+                        row.case_id, fact.observer
+                    ));
+                }
+            }
         }
     }
     for (field, value) in [
@@ -350,7 +363,7 @@ pub(crate) fn validate_row(row: &FeedbackRow, fact: &JudgmentFact) -> Vec<String
     violations
 }
 
-fn validate_reduction(row: &FeedbackRow, derived: &str) -> Vec<String> {
+fn validate_reduction(row: &FeedbackRow, derived: &str, root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     let defect = is_analyzer_defect(derived);
     match row.reduction.disposition.as_str() {
@@ -363,11 +376,29 @@ fn validate_reduction(row: &FeedbackRow, derived: &str) -> Vec<String> {
             row.case_id
         )),
         "fixture_backed" => {
-            if row.reduction.fixture_id.as_deref().unwrap_or("").is_empty() {
+            let fixture_id = row.reduction.fixture_id.as_deref().unwrap_or("");
+            if fixture_id.is_empty() {
                 violations.push(format!(
                     "{}: fixture_backed reduction needs a fixture identity",
                     row.case_id
                 ));
+            } else {
+                let relative = Path::new(fixture_id);
+                if relative.is_absolute()
+                    || relative
+                        .components()
+                        .any(|component| component == Component::ParentDir)
+                {
+                    violations.push(format!(
+                        "{}: fixture identity `{fixture_id}` must be a repository-relative path",
+                        row.case_id
+                    ));
+                } else if !root.join(relative).is_file() {
+                    violations.push(format!(
+                        "{}: fixture_backed reduction names fixture `{fixture_id}`, which does not resolve to a repository file; a fixture claim requires a real producer path",
+                        row.case_id
+                    ));
+                }
             }
             if row
                 .reduction
@@ -428,18 +459,15 @@ fn validate_status(row: &FeedbackRow, derived: &str, fact: &JudgmentFact) -> Vec
             "{}: analyzer defect cannot be `no_repair_required`",
             row.case_id
         )),
-        "accepted_limitation"
-            if derived != "no_confirmed_failure" || fact.limitation_correct != Some(true) =>
-        {
+        "accepted_limitation" => {
             if defect {
                 violations.push(format!(
                     "{}: analyzer defect cannot close as `accepted_limitation` without a limitation_correct judgment",
                     row.case_id
                 ));
-            } else if fact.limitation_correct != Some(true) && derived != "inconclusive_no_feedback"
-            {
+            } else if fact.limitation_correct != Some(true) {
                 violations.push(format!(
-                    "{}: `accepted_limitation` requires a correct-limitation judgment",
+                    "{}: `accepted_limitation` requires a correct-limitation judgment; an unjudged or inconclusive limitation cannot be presented as accepted",
                     row.case_id
                 ));
             }

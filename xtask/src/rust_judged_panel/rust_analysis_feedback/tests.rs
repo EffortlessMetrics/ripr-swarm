@@ -1,5 +1,7 @@
 //! Discriminating controls for the Rust analysis-feedback ledger (#4796).
 
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use super::lifecycle;
@@ -24,6 +26,7 @@ fn fact(
         case_id: case_id.into(),
         expected_direction: "should_gap".into(),
         terminal: terminal.into(),
+        observer: "observer".into(),
         false_actionable,
         false_exposed,
         under_credit,
@@ -188,7 +191,7 @@ fn rust_analysis_feedback_wrong_target_requires_exact_identity() -> Result<(), S
     let mut row = row_json("wt", "wrong_target", "open", "replay_only");
     row["terminal_judgment"] = json!("confirmed_should_stay_quiet");
     row["target_identity"] = Value::Null;
-    let violations = schema::validate_row(&parse_row(row)?, &fact);
+    let violations = schema::validate_row(&parse_row(row)?, &fact, repo_root()?);
     if violations
         .iter()
         .any(|item| item.contains("target_identity"))
@@ -251,7 +254,7 @@ fn rust_analysis_feedback_incorrect_limitation_cannot_close_as_accepted() -> Res
         "replay_only",
     );
     row["terminal_judgment"] = json!("confirmed_should_limit");
-    let violations = schema::validate_row(&parse_row(row)?, &fact);
+    let violations = schema::validate_row(&parse_row(row)?, &fact, repo_root()?);
     if violations
         .iter()
         .any(|item| item.contains("accepted_limitation"))
@@ -313,7 +316,7 @@ fn rust_analysis_feedback_fixture_hardcoded_to_case_id_is_rejected() -> Result<(
     row["reduction"]["fixture_id"] = json!("case-x");
     row["reduction"]["positive_control"] = json!("pos");
     row["reduction"]["negative_control"] = json!("neg");
-    let violations = schema::validate_row(&parse_row(row)?, &fact);
+    let violations = schema::validate_row(&parse_row(row)?, &fact, repo_root()?);
     if violations
         .iter()
         .any(|item| item.contains("hard-coded to case/feedback id"))
@@ -450,12 +453,12 @@ fn rust_analysis_feedback_human_notes_cannot_strengthen_inconclusive_or_limitati
     row["terminal_judgment"] = json!("inconclusive_missing_evidence");
     row["notes"] = json!("this is obviously false_exposed and should be repaired");
     row["owner"]["designated"] = json!("none");
-    let violations = schema::validate_row(&parse_row(row.clone())?, &fact);
+    let violations = schema::validate_row(&parse_row(row.clone())?, &fact, repo_root()?);
     if !violations.is_empty() {
         return Err(format!("notes must be ignored: {violations:?}"));
     }
     row["failure_direction"] = json!("false_exposed");
-    let strengthened = schema::validate_row(&parse_row(row)?, &fact);
+    let strengthened = schema::validate_row(&parse_row(row)?, &fact, repo_root()?);
     if strengthened
         .iter()
         .any(|item| item.contains("notes cannot strengthen"))
@@ -544,7 +547,7 @@ fn rust_analysis_feedback_calibration_cannot_set_static_class() -> Result<(), St
     );
     let mut row = row_json("fe", "false_exposed", "open", "replay_only");
     row["runtime_calibration"] = json!({ "status": "caught", "result": "caught" });
-    let violations = schema::validate_row(&parse_row(row)?, &fact);
+    let violations = schema::validate_row(&parse_row(row)?, &fact, repo_root()?);
     if violations.iter().any(|item| item.contains("#4795")) {
         Ok(())
     } else {
@@ -585,7 +588,7 @@ fn rust_analysis_feedback_expected_class_shortcut_is_rejected() -> Result<(), St
     );
     let mut row = row_json("fe", "false_exposed", "open", "replay_only");
     row["reduction"]["expected_class"] = json!("exposed");
-    let violations = schema::validate_row(&parse_row(row)?, &fact);
+    let violations = schema::validate_row(&parse_row(row)?, &fact, repo_root()?);
     if violations
         .iter()
         .any(|item| item.contains("expected_class shortcut"))
@@ -611,7 +614,7 @@ fn rust_analysis_feedback_non_defect_cannot_enter_repair_lifecycle() -> Result<(
     let mut row = row_json("quiet", "no_confirmed_failure", "open", "not_a_defect");
     row["terminal_judgment"] = json!("confirmed_should_stay_quiet");
     row["owner"]["designated"] = json!("none");
-    let violations = schema::validate_row(&parse_row(row)?, &fact);
+    let violations = schema::validate_row(&parse_row(row)?, &fact, repo_root()?);
     if violations
         .iter()
         .any(|item| item.contains("non-defect row cannot enter the repair lifecycle"))
@@ -634,6 +637,17 @@ fn rust_analysis_feedback_json_and_markdown_agree_on_counts() -> Result<(), Stri
     }
     if json["counts"]["by_analyzer_family"]["rust-static"] != 1 {
         return Err("family count was omitted from the DTO".into());
+    }
+    for (map_name, key) in [
+        ("by_reduction", "replay_only"),
+        ("by_semantic_owner", "crates/ripr/src/analysis"),
+    ] {
+        if json["counts"][map_name][key] != 1 {
+            return Err(format!("{map_name} count was omitted from the DTO"));
+        }
+        if !rendered.markdown.contains(&format!("`{key}`: 1")) {
+            return Err(format!("{map_name} count `{key}` missing from Markdown"));
+        }
     }
     if !rendered.markdown.contains("Rows: 1")
         || !rendered.markdown.contains("Analyzer defects: 1")
@@ -741,5 +755,316 @@ fn rust_analysis_feedback_out_and_check_parse_together() -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("parsed out_dir={out_dir} check={check}"))
+    }
+}
+
+#[test]
+fn rust_analysis_feedback_wrong_target_cannot_be_authored_without_judgment_evidence()
+-> Result<(), String> {
+    let root = repo_root()?;
+    let quiet = JudgmentFact {
+        observer: "real_observer".into(),
+        ..fact(
+            "wt2",
+            "confirmed_should_stay_quiet",
+            Some(false),
+            Some(false),
+            Some(false),
+            None,
+        )
+    };
+    assert_eq!(
+        derived_failure_direction(&quiet, "wrong_target"),
+        "wrong_target"
+    );
+    let forged = {
+        let mut row = row_json("wt2", "wrong_target", "open", "replay_only");
+        row["terminal_judgment"] = json!("confirmed_should_stay_quiet");
+        row["target_identity"] = json!("nearby::test");
+        row
+    };
+    let violations = schema::validate_row(&parse_row(forged)?, &quiet, root);
+    if !violations
+        .iter()
+        .any(|item| item.contains("is not the adjudicated observer"))
+    {
+        return Err(format!(
+            "ledger-authored target was accepted: {violations:?}"
+        ));
+    }
+    let evidenced = {
+        let mut row = row_json("wt2", "wrong_target", "open", "replay_only");
+        row["terminal_judgment"] = json!("confirmed_should_stay_quiet");
+        row["target_identity"] = json!("crates/ripr/src/analysis::real_observer");
+        row
+    };
+    let clean = schema::validate_row(&parse_row(evidenced)?, &quiet, root);
+    if clean
+        .iter()
+        .any(|item| item.contains("adjudicated observer"))
+    {
+        return Err(format!(
+            "exact adjudicated observer was rejected: {clean:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_analysis_feedback_inconclusive_cannot_close_as_accepted_limitation() -> Result<(), String> {
+    let root = repo_root()?;
+    let inconclusive = fact(
+        "inc",
+        "inconclusive_missing_evidence",
+        None,
+        None,
+        None,
+        None,
+    );
+    let row = {
+        let mut row = row_json(
+            "inc",
+            "inconclusive_no_feedback",
+            "accepted_limitation",
+            "not_a_defect",
+        );
+        row["terminal_judgment"] = json!("inconclusive_missing_evidence");
+        row["owner"]["designated"] = json!("none");
+        row
+    };
+    let violations = schema::validate_row(&parse_row(row)?, &inconclusive, root);
+    if violations
+        .iter()
+        .any(|item| item.contains("requires a correct-limitation judgment"))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "unjudged limitation closed as accepted: {violations:?}"
+        ))
+    }
+}
+
+#[test]
+fn rust_analysis_feedback_row_calibration_status_is_bound_to_the_ledger_state() -> Result<(), String>
+{
+    let fact_row = fact(
+        "fe",
+        "confirmed_should_gap",
+        None,
+        Some(true),
+        Some(false),
+        None,
+    );
+    let build = |status: &str| {
+        let mut row = row_json("fe", "false_exposed", "open", "replay_only");
+        row["runtime_calibration"] = json!({ "status": status, "result": null });
+        row
+    };
+    for status in ["recorded", "survived_mutation"] {
+        let parsed = parse_row(build(status))?;
+        let violations = schema::validate_row(&parsed, &fact_row, repo_root()?);
+        if !violations
+            .iter()
+            .any(|item| item.contains("outside the ledger vocabulary") && item.contains("#4795"))
+        {
+            return Err(format!(
+                "calibration status `{status}` was accepted: {violations:?}"
+            ));
+        }
+    }
+    let mut body = ledger(vec![{
+        let mut row = row_json("fe", "false_exposed", "open", "replay_only");
+        row["runtime_calibration"] = json!({ "status": "unavailable", "result": null });
+        row
+    }]);
+    body["calibration"]["status"] = json!("not_run");
+    let parsed = parse_ledger(body)?;
+    let violations = validate_bundle_for_test(&parsed, &[fact_row], JUDGMENTS_SHA);
+    if violations
+        .iter()
+        .any(|item| item.contains("contradicts the ledger-level calibration status"))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "row calibration status escaped the ledger-level state: {violations:?}"
+        ))
+    }
+}
+
+#[test]
+fn rust_analysis_feedback_existing_owner_cannot_be_displaced_by_a_rival() -> Result<(), String> {
+    let mut row = row_json("fe", "false_exposed", "open", "replay_only");
+    row["owner"]["existing"] = json!("issue:111");
+    row["owner"]["designated"] = json!("issue:222");
+    row["owner"]["competing"] = json!(["issue:111"]);
+    let violations = owners::validate_row(&parse_row(row)?);
+    if violations
+        .iter()
+        .any(|item| item.contains("must remain designated"))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "rival owner displaced the existing owner: {violations:?}"
+        ))
+    }
+}
+
+#[test]
+fn rust_analysis_feedback_fixture_must_resolve_to_a_repository_file() -> Result<(), String> {
+    let root = repo_root()?;
+    let fact_row = fact(
+        "fe",
+        "confirmed_should_gap",
+        None,
+        Some(true),
+        Some(false),
+        None,
+    );
+    let build = |fixture_id: &str| {
+        let mut row = row_json("fe", "false_exposed", "open", "fixture_backed");
+        row["reduction"]["fixture_id"] = json!(fixture_id);
+        row["reduction"]["positive_control"] = json!("pos");
+        row["reduction"]["negative_control"] = json!("neg");
+        row
+    };
+    let missing = schema::validate_row(
+        &parse_row(build("fixtures/no-such-fixture-file.rs"))?,
+        &fact_row,
+        root,
+    );
+    if !missing
+        .iter()
+        .any(|item| item.contains("does not resolve to a repository file"))
+    {
+        return Err(format!(
+            "unresolvable fixture claim was accepted: {missing:?}"
+        ));
+    }
+    let escaping = schema::validate_row(&parse_row(build("../outside.rs"))?, &fact_row, root);
+    if !escaping
+        .iter()
+        .any(|item| item.contains("must be a repository-relative path"))
+    {
+        return Err(format!("escaping fixture path was accepted: {escaping:?}"));
+    }
+    let resolved = schema::validate_row(&parse_row(build("xtask/Cargo.toml"))?, &fact_row, root);
+    if resolved
+        .iter()
+        .any(|item| item.contains("does not resolve") || item.contains("repository-relative"))
+    {
+        return Err(format!(
+            "resolvable fixture path was rejected: {resolved:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_analysis_feedback_judgment_packet_is_validated_by_its_owner() -> Result<(), String> {
+    let root = repo_root()?;
+    let panel = "metrics/rust-judged-behavior-panel";
+    let staging = std::env::temp_dir().join(format!(
+        "ripr-rust-feedback-packet-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    let target = staging.join(panel);
+    copy_dir(&root.join(panel), &target)?;
+    super::load_and_validate(&staging)
+        .map_err(|error| format!("unmutated copy rejected: {error}"))?;
+
+    let mut judgments: Value = serde_json::from_str(
+        &std::fs::read_to_string(target.join("release-judgments.json"))
+            .map_err(|error| format!("read copied judgments: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    let duplicated = judgments["judgments"][0].clone();
+    judgments["judgments"]
+        .as_array_mut()
+        .ok_or_else(|| "judgments array missing".to_string())?
+        .push(duplicated);
+    let mutated = serde_json::to_string_pretty(&judgments).map_err(|error| error.to_string())?;
+    std::fs::write(target.join("release-judgments.json"), &mutated)
+        .map_err(|error| format!("write mutated judgments: {error}"))?;
+    let digest = sha256_bytes(mutated.as_bytes());
+    let mut ledger_value: Value = serde_json::from_str(
+        &std::fs::read_to_string(target.join("feedback-ledger.json"))
+            .map_err(|error| format!("read copied ledger: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    ledger_value["release_judgments_sha256"] = json!(digest);
+    std::fs::write(
+        target.join("feedback-ledger.json"),
+        serde_json::to_string_pretty(&ledger_value).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write rebound ledger: {error}"))?;
+
+    let error = super::load_and_validate(&staging).err().ok_or_else(|| {
+        "packet the judgment authority rejects was accepted by feedback".to_string()
+    })?;
+    let _ = std::fs::remove_dir_all(&staging);
+    if error.contains("duplicate judgment") {
+        Ok(())
+    } else {
+        Err(format!("unexpected rejection: {error}"))
+    }
+}
+
+fn copy_dir(source: &Path, target: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(target)
+        .map_err(|error| format!("create {}: {error}", target.display()))?;
+    for entry in
+        std::fs::read_dir(source).map_err(|error| format!("read {}: {error}", source.display()))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let entry_target = target.join(entry.file_name());
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            copy_dir(&entry.path(), &entry_target)?;
+        } else {
+            std::fs::copy(entry.path(), &entry_target)
+                .map_err(|error| format!("copy `{}`: {error}", entry.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn rust_analysis_feedback_staging_refuses_symlink_targets() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+
+    let row = parse_row(row_json("fe", "false_exposed", "open", "replay_only"))?;
+    let rendered = report::render_from_rows_for_test(vec![row], 1, JUDGMENTS_SHA)?;
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-rust-feedback-symlink-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let victim = dir.join("victim.txt");
+    std::fs::write(&victim, b"do not overwrite").map_err(|error| error.to_string())?;
+    symlink(&victim, dir.join("feedback.json")).map_err(|error| error.to_string())?;
+    let error = super::write_staging_for_test(&dir, &rendered)
+        .err()
+        .ok_or_else(|| "symlinked report path was followed".to_string())?;
+    let preserved = std::fs::read(&victim).map_err(|error| error.to_string())?;
+    let _ = std::fs::remove_dir_all(&dir);
+    if preserved == b"do not overwrite" && error.contains("symlink") {
+        Ok(())
+    } else {
+        Err(format!("symlink disposition unexpected: {error}"))
     }
 }

@@ -139,6 +139,12 @@ fn render_markdown(dto: &Value, json_text: &str) -> Result<String, String> {
         "Counts by analyzer family",
         &counts["by_analyzer_family"],
     );
+    append_count_section(&mut body, "Counts by reduction", &counts["by_reduction"]);
+    append_count_section(
+        &mut body,
+        "Counts by semantic owner",
+        &counts["by_semantic_owner"],
+    );
     body.push_str("## Rows\n\n");
     if let Some(rows) = dto["rows"].as_array() {
         for row in rows {

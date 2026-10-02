@@ -14,7 +14,7 @@
   "calibration": {
     "status": "not_run",
     "authority": "EffortlessMetrics/ripr-swarm#4795",
-    "reason": "The denominator-bearing calibration/scorecard producer (#4795) has not landed. Runtime results remain unavailable metadata and cannot set the static failure direction."
+    "reason": "The #4795 calibration producer has landed (`cargo xtask rust-judged-panel calibrate`), but release-challenge receipts stay proposed_unauthorized, so runtime results remain not_run metadata and cannot set the static failure direction."
   },
   "limits": [
     "Every row is a disposition over the frozen #3806 packet. Independent judgments are not rewritten.",
