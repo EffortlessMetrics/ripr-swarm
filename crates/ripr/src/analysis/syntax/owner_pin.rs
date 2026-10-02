@@ -313,7 +313,14 @@ fn has_escape(body: &SyntaxNode, trusted: &[&str]) -> bool {
             }
         }
 
-        ast::ReturnExpr::can_cast(node.kind())
+        // Root returns are checked against the actual invocation's statement
+        // prefix below. A later return cannot undo an earlier assertion.
+        // Closure returns retain the existing conservative refusal, including
+        // returns in closures other than the selected one.
+        (ast::ReturnExpr::can_cast(node.kind())
+            && node
+                .ancestors()
+                .any(|parent| ast::ClosureExpr::can_cast(parent.kind())))
             || (ast::TryExpr::can_cast(node.kind())
                 && node
                     .ancestors()
@@ -350,6 +357,9 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
 }
 
 fn eager_path(mut node: SyntaxNode, function: &ast::Fn, through_closure: bool) -> bool {
+    // When this query follows a bound closure, recursion below resets this
+    // coordinate to the real invocation, not the earlier closure definition.
+    let execution_start = node.text_range().start();
     loop {
         if node
             .children()
@@ -361,7 +371,13 @@ fn eager_path(mut node: SyntaxNode, function: &ast::Fn, through_closure: bool) -
             return false;
         };
         if parent == *function.syntax() {
-            return function.body().is_some_and(|body| body.syntax() == &node);
+            return function.body().is_some_and(|body| {
+                body.syntax() == &node
+                    && !body.syntax().descendants().any(|candidate| {
+                        ast::ReturnExpr::can_cast(candidate.kind())
+                            && candidate.text_range().start() < execution_start
+                    })
+            });
         }
         if let Some(closure) = ast::ClosureExpr::cast(parent.clone()) {
             if through_closure {
