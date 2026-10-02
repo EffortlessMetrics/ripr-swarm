@@ -4535,8 +4535,7 @@ fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), Strin
         .any(|(title, _, _)| title == "Agent handoff: copy repair card")
     {
         return Err(
-            "the repair card action must fail closed when the head cannot be resolved"
-                .to_string(),
+            "the repair card action must fail closed when the head cannot be resolved".to_string(),
         );
     }
     Ok(())
@@ -4547,11 +4546,13 @@ fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), Strin
 /// identity, live-head snapshot binding, the ratified detail budget, and the
 /// fail-closed route gate all ride on the wire unchanged.
 #[test]
-fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace(
-) -> Result<(), String> {
+fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace() -> Result<(), String> {
     let root = unique_lsp_test_root("repair-card-action")?;
     run_lsp_scope_git(root.path(), &["init"])?;
-    run_lsp_scope_git(root.path(), &["config", "user.email", "ripr@example.invalid"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
     run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
     std::fs::write(root.path().join("fixture.txt"), "fixture\n")?;
     run_lsp_scope_git(root.path(), &["add", "."])?;
@@ -4612,7 +4613,9 @@ fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace(
         return Err("repair card subject does not name the seam".to_string());
     }
     let head_output = lsp_scope_git_output(root.path(), &["rev-parse", "HEAD"])?;
-    let head = String::from_utf8_lossy(&head_output.stdout).trim().to_string();
+    let head = String::from_utf8_lossy(&head_output.stdout)
+        .trim()
+        .to_string();
     if wire.snapshot.repository_head != head {
         return Err(
             "repair card must bind the live repository head like the CLI producer".to_string(),
@@ -4633,8 +4636,7 @@ fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace(
     if wire.next_action.is_some() {
         return Err("a closed route gate must not surface a next action".to_string());
     }
-    if wire.detail_summary.selected_bytes
-        > crate::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES
+    if wire.detail_summary.selected_bytes > crate::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES
         || wire.detail_references.len() > crate::domain::DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS
     {
         return Err("the projected card exceeded the ratified default budget".to_string());
@@ -4682,7 +4684,10 @@ fn repair_card_action_suppressed_for_stale_seam_diagnostic() -> Result<(), Strin
 fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Result<(), String> {
     let root = unique_lsp_test_root("repair-card-hover")?;
     run_lsp_scope_git(root.path(), &["init"])?;
-    run_lsp_scope_git(root.path(), &["config", "user.email", "ripr@example.invalid"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
     run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
     std::fs::write(root.path().join("fixture.txt"), "fixture\n")?;
     run_lsp_scope_git(root.path(), &["add", "."])?;
@@ -4699,11 +4704,10 @@ fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Resul
         Vec::new(),
     );
     snapshot.classified_seams = vec![seam.clone()];
-    let markdown = match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot))
-        .contents
-    {
-        HoverContents::Markup(markup) => markup.value,
-        other => return Err(format!("expected markdown hover, got {other:?}")),
+    let markdown =
+        match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+            HoverContents::Markup(markup) => markup.value,
+            other => return Err(format!("expected markdown hover, got {other:?}")),
     };
     for needle in [
         "## Repair card",
@@ -4725,8 +4729,7 @@ fn seam_hover_omits_repair_card_section_outside_a_git_workspace() -> Result<(), 
     let markdown = seam_hover_markdown_for(&sample_classified_seam())?;
     if markdown.contains("## Repair card") {
         return Err(
-            "the repair card section must fail closed when the head cannot be resolved"
-                .to_string(),
+            "the repair card section must fail closed when the head cannot be resolved".to_string(),
         );
     }
     Ok(())

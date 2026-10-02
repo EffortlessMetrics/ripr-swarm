@@ -761,12 +761,9 @@ fn push_seam_actions(
     // own authorities through `app::repair_card_handoff`, never re-derived.
     // Fail-closed omission when a producer fact cannot be bound; the card's
     // own route gate decides whether a next action rides on the wire.
-    if let Some(action) = copy_repair_card_action(
-        params,
-        context.diagnostic,
-        context.seam,
-        context.snapshot,
-    ) {
+    if let Some(action) =
+        copy_repair_card_action(params, context.diagnostic, context.seam, context.snapshot)
+    {
         actions.push(action);
     }
     if let Some(assertion) = suggested_assertion {

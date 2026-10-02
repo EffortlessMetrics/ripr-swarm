@@ -200,8 +200,7 @@ mod tests {
                     detail_digest: "digest-a".to_string(),
                     omitted_bytes: 100,
                     ordinal: 0,
-                    omission_class:
-                        crate::domain::RepairCardOmissionClass::AuthorityOwnedDetail,
+                    omission_class: crate::domain::RepairCardOmissionClass::AuthorityOwnedDetail,
                 },
                 crate::domain::RepairCardDetailRef {
                     family: crate::domain::RepairCardDetailFamily::RepairAttemptStatus,
@@ -211,8 +210,7 @@ mod tests {
                     detail_digest: "digest-b".to_string(),
                     omitted_bytes: 50,
                     ordinal: 1,
-                    omission_class:
-                        crate::domain::RepairCardOmissionClass::AuthorityOwnedDetail,
+                    omission_class: crate::domain::RepairCardOmissionClass::AuthorityOwnedDetail,
                 },
                 crate::domain::RepairCardDetailRef {
                     family: crate::domain::RepairCardDetailFamily::MutationCalibration,
@@ -231,8 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn hover_lines_project_identity_state_next_action_and_detail_counts(
-    ) -> Result<(), String> {
+    fn hover_lines_project_identity_state_next_action_and_detail_counts() -> Result<(), String> {
         let card = digest_fixture_card();
         let lines = repair_card_hover_lines(&card);
         let text = lines.join("\n");
@@ -271,8 +268,8 @@ mod tests {
     }
 
     #[test]
-    fn limited_route_gate_projects_closed_next_action_without_strengthening(
-    ) -> Result<(), String> {
+    fn limited_route_gate_projects_closed_next_action_without_strengthening() -> Result<(), String>
+    {
         let mut card = digest_fixture_card();
         // A ready instruction whose route gate closed keeps the state honest
         // and names the closure instead of inventing a route.

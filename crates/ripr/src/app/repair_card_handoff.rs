@@ -386,7 +386,11 @@ fn witness_for_seam(
         config,
     )
     .map_err(|error| format!("agent card could not run the witness analysis: {error}"))?;
-    Ok(witness_from_findings(&output.findings, entry, canonical_gap_id))
+    Ok(witness_from_findings(
+        &output.findings,
+        entry,
+        canonical_gap_id,
+    ))
 }
 
 /// Project the witness for the finding that names this seam's canonical gap
