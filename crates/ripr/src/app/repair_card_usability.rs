@@ -154,6 +154,7 @@ fn measurement_attempt(
             .map_err(|error| format!("synthetic measurement attempt id: {error}"))?,
         state: RepairAttemptState::AwaitingEdit,
         root: ".".to_string(),
+        store: None,
         repository_head: repository_head.to_string(),
         producer_version: "measurement".to_string(),
         seam_id: seam_id.to_string(),
