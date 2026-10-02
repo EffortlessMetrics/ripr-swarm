@@ -12798,7 +12798,20 @@ fn normalize_lsp_action_argument(
     // machine-independent while still pinning the bound shape.
     let mut normalized = serde_json::Map::new();
     for (key, value) in object {
-        if key == "uri"
+        // RIPR-SPEC-0198: the repair-card packet binds the enclosing
+        // checkout's live HEAD plus workspace-absolute redirect targets,
+        // which a committed fixture cannot pin. The wire shape, head
+        // binding, budget, and family detail references are pinned by the
+        // dedicated repair-card tests, so the golden only records the
+        // placeholder for the copied packet.
+        if key == "packet"
+            && object.get("label").and_then(|label| label.as_str()) == Some("repair_card")
+        {
+            normalized.insert(
+                key.clone(),
+                serde_json::json!("<repair-card-wire-pinned-by-dedicated-tests>"),
+            );
+        } else if key == "uri"
             && let Some(uri) = value.as_str()
             && uri.starts_with("file://")
         {
