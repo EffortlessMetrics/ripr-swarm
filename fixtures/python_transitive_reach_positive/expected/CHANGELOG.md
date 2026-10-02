@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_transitive_reach_positive (6)
+
+Reason:
+RIPR-SPEC-0122: #5049 renamed the human Summary denominator to unsuppressed and re-blessed 413 golden headers but missed the two python_transitive_reach fixtures added the same day by #4845; re-bless their human.txt to the renamed denominator (formatting_only drift)
+
+Command:
+`cargo xtask goldens bless python_transitive_reach_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
