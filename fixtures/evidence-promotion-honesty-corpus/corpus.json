@@ -35,7 +35,7 @@
     {
       "id": "rust_predicate_boundary_oracle_admitted",
       "language": "rust",
-      "tier": "control",
+      "tier": "pure",
       "source_fixture": "fixtures/predicate_boundary_oracle_admitted",
       "vector": "admitted_boundary_oracle_required_after_reveal_admitted",
       "probe_family": "predicate",
