@@ -13,6 +13,13 @@
 //! derived from the pair, with an explicit `masked_unknown` outcome when one side
 //! never observed the test at all.
 //!
+//! A test subject includes its Cargo target kind, source path and exact
+//! executable basename, including the Cargo hash. The two runs execute the same
+//! compiled workspace: a different artifact cannot borrow evidence. Cargo text
+//! does not expose package IDs for integration targets, so none is invented.
+//! Doctests use only their explicit `Doc-tests` header. Unknown or ambiguous
+//! provenance is incomplete evidence rather than a name-only legacy fallback.
+//!
 //! Verdicts are deliberately named for what two samples establish:
 //! `repeated_failure` (reproduced in both samples) rather than "deterministic
 //! defect", because a shared race can reproduce twice.
@@ -55,7 +62,37 @@ pub(crate) struct SeamControl {
     /// caught by an ordinary (non-Windows) test run rather than only by the
     /// Windows lane refusing its evidence.
     pub(crate) source: &'static str,
+    /// Cargo target that owns the control, independently of the test name.
+    target: ControlTarget,
 }
+
+#[derive(Clone, Copy)]
+struct ControlTarget {
+    kind: TargetKind,
+    source: &'static str,
+    executable: &'static str,
+}
+
+const RIPR_LIB: ControlTarget = ControlTarget {
+    kind: TargetKind::Unit,
+    source: "src/lib.rs",
+    executable: "ripr",
+};
+const XTASK_BIN: ControlTarget = ControlTarget {
+    kind: TargetKind::Unit,
+    source: "src/main.rs",
+    executable: "xtask",
+};
+const NATIVE_PATH_ROOTS: ControlTarget = ControlTarget {
+    kind: TargetKind::Integration,
+    source: "tests/native_path_roots.rs",
+    executable: "native_path_roots",
+};
+const LSP_LIFECYCLE: ControlTarget = ControlTarget {
+    kind: TargetKind::Integration,
+    source: "tests/lsp_lifecycle.rs",
+    executable: "lsp_lifecycle",
+};
 
 /// Tests that are the native Windows proof for a release seam. Most are
 /// `#[cfg(windows)]` or `#[cfg(not(unix))]`, so no other lane executes them.
@@ -65,90 +102,105 @@ pub(crate) const RELEASE_SEAM_CONTROLS: &[SeamControl] = &[
         issue: "#3803",
         test: "process_owner::tests::owner_drop_terminates_a_still_running_child",
         source: "crates/ripr/src/process_owner.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "process",
         issue: "#3803",
         test: "process_owner::tests::terminate_tree_kills_pipe_inheriting_descendants",
         source: "crates/ripr/src/process_owner.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "process",
         issue: "#3803",
         test: "process_owner::tests::terminate_tree_leaves_unrelated_processes_alive",
         source: "crates/ripr/src/process_owner.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "process",
         issue: "#3803",
         test: "process_owner::tests::owner_drop_kills_descendants_after_the_primary_exits",
         source: "crates/ripr/src/process_owner.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "process",
         issue: "#3803",
         test: "process_owner::tests::terminate_tree_after_primary_exit_kills_descendants",
         source: "crates/ripr/src/process_owner.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "process",
         issue: "#3096",
         test: "run::tests::capture_output_with_timeout_terminates_pipe_inheriting_descendants",
         source: "xtask/src/run.rs",
+        target: XTASK_BIN,
     },
     SeamControl {
         seam: "lsp",
         issue: "#3802",
         test: "lsp::tests::initialize_surfaces_poisoned_client_features_store_as_a_session_failure",
         source: "crates/ripr/src/lsp/tests.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "lsp",
         issue: "#3802",
         test: "lsp::tests::poisoned_initialize_failure_commit_survives_a_wedged_client_channel",
         source: "crates/ripr/src/lsp/tests.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "cache",
         issue: "#3848",
         test: "analysis::seam_cache::tests::corpus_fingerprint_is_none_without_a_content_change_witness",
         source: "crates/ripr/src/analysis/seam_cache.rs",
+        target: RIPR_LIB,
     },
     SeamControl {
         seam: "paths",
         issue: "#3922",
         test: "spaced_root_check_and_file_fact_cache_round_trip",
         source: "crates/ripr/tests/native_path_roots.rs",
+        target: NATIVE_PATH_ROOTS,
     },
     SeamControl {
         seam: "paths",
         issue: "#3922",
         test: "unicode_root_check_and_file_fact_cache_round_trip",
         source: "crates/ripr/tests/native_path_roots.rs",
+        target: NATIVE_PATH_ROOTS,
     },
     SeamControl {
         seam: "paths",
         issue: "#3922",
         test: "long_root_check_round_trips_or_names_the_windows_path_limit",
         source: "crates/ripr/tests/native_path_roots.rs",
+        target: NATIVE_PATH_ROOTS,
     },
     SeamControl {
         seam: "paths",
         issue: "#3922",
         test: "powershell_launch_passes_a_quoted_unicode_root_to_ripr",
         source: "crates/ripr/tests/native_path_roots.rs",
+        target: NATIVE_PATH_ROOTS,
     },
     SeamControl {
         seam: "paths",
         issue: "#3922",
         test: "refresh_publishes_diagnostics_under_a_spaced_unicode_root",
         source: "crates/ripr/tests/lsp_lifecycle.rs",
+        target: LSP_LIFECYCLE,
     },
     SeamControl {
         seam: "paths",
         issue: "#3922",
         test: "refresh_under_a_root_beyond_max_path_publishes_or_names_the_windows_path_limit",
         source: "crates/ripr/tests/lsp_lifecycle.rs",
+        target: LSP_LIFECYCLE,
     },
 ];
 
@@ -209,16 +261,69 @@ impl RunState {
     }
 }
 
+/// Cargo logs do not provide package IDs for integration targets. Preserve the
+/// exact executable artifact token rather than inventing one or erasing the
+/// hash that can distinguish same-named targets in different packages. This
+/// lane compares two executions of the same compiled workspace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum TargetKind {
+    Unit,
+    Integration,
+    DocTest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct TargetIdentity {
+    kind: TargetKind,
+    source: String,
+    artifact: String,
+}
+
+impl TargetIdentity {
+    fn owns(&self, control: ControlTarget) -> bool {
+        self.kind == control.kind
+            && self.source == control.source
+            && self
+                .artifact
+                .rsplit_once('-')
+                .is_some_and(|(stem, _)| stem == control.executable)
+    }
+}
+
+impl std::fmt::Display for TargetIdentity {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            TargetKind::Unit => write!(out, "unittests {} ({})", self.source, self.artifact),
+            TargetKind::Integration => write!(out, "{} ({})", self.source, self.artifact),
+            TargetKind::DocTest => write!(out, "Doc-tests {}", self.artifact),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct TestIdentity {
+    target: TargetIdentity,
+    name: String,
+}
+
+impl std::fmt::Display for TestIdentity {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(out, "{} :: {}", self.target, self.name)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct RunOutcome {
     pub(crate) state: RunState,
     pub(crate) exit_status: Option<i32>,
-    pub(crate) failed: BTreeSet<String>,
-    pub(crate) passed: BTreeSet<String>,
-    pub(crate) targets: Vec<String>,
+    failed: BTreeSet<TestIdentity>,
+    passed: BTreeSet<TestIdentity>,
+    targets: Vec<TargetIdentity>,
     pub(crate) results: Vec<String>,
     /// First explanatory line of each failed test's captured libtest block.
-    pub(crate) reasons: BTreeMap<String, String>,
+    reasons: BTreeMap<TestIdentity, String>,
+    provenance_errors: Vec<String>,
+    raw_headers: Vec<String>,
 }
 
 impl RunOutcome {
@@ -231,10 +336,12 @@ impl RunOutcome {
             targets: Vec::new(),
             results: Vec::new(),
             reasons: BTreeMap::new(),
+            provenance_errors: Vec::new(),
+            raw_headers: Vec::new(),
         }
     }
 
-    fn observe(&self, name: &str) -> TestObservation {
+    fn observe(&self, name: &TestIdentity) -> TestObservation {
         if self.failed.contains(name) {
             TestObservation::Failed
         } else if self.passed.contains(name) {
@@ -471,7 +578,10 @@ fn classify_isolated(log: Option<&str>, raw_status: Option<&str>) -> IsolatedObs
             rows.len()
         ));
     }
-    if outcome.targets.len() != 1 || outcome.results.len() != 1 {
+    if outcome.targets.len() != 1
+        || outcome.results.len() != 1
+        || !outcome.provenance_errors.is_empty()
+    {
         return IsolatedObservation::EvidenceFailure(format!(
             "expected one test target and one result total, found {} target(s) and {} result(s)",
             outcome.targets.len(),
@@ -552,6 +662,29 @@ pub(crate) fn run_isolated(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Text logs cannot distinguish packages whose target signatures are equal.
+/// Admit a release control only when its selector identifies one exact artifact
+/// across the pair, never a different hash in each run or multiple owners.
+fn control_identity(
+    first: &RunOutcome,
+    second: &RunOutcome,
+    control: &SeamControl,
+) -> Option<TestIdentity> {
+    let owners: BTreeSet<&TargetIdentity> = first
+        .targets
+        .iter()
+        .chain(&second.targets)
+        .filter(|target| target.owns(control.target))
+        .collect();
+    if owners.len() != 1 {
+        return None;
+    }
+    owners.first().map(|target| TestIdentity {
+        target: (*target).clone(),
+        name: control.test.to_string(),
+    })
+}
+
 /// Every usable run must have observed every release-seam control, passing or
 /// failing. An unusable run is already refused on its own, so it is not
 /// reported a second time per control.
@@ -566,9 +699,11 @@ fn unobserved_controls(
             continue;
         }
         for control in controls {
-            if outcome.observe(control.test) == TestObservation::NotObserved {
+            if control_identity(first, second, control)
+                .is_none_or(|subject| outcome.observe(&subject) == TestObservation::NotObserved)
+            {
                 missing.push(format!(
-                    "{label} did not observe {} control `{}` ({}, defined in {})",
+                    "{label} did not observe {} control `{}` ({}, defined in {}; owning target absent or ambiguous)",
                     control.seam, control.test, control.issue, control.source
                 ));
             }
@@ -619,7 +754,9 @@ fn load_run(log: &Path, status: &Path) -> RunOutcome {
     // before calling a run clean; otherwise an empty, truncated, or non-test log
     // beside a `0` status would be reported as a clean workspace run.
     let demonstrates_a_test_run = !outcome.targets.is_empty() && !outcome.results.is_empty();
-    outcome.state = if exit_status == 0 {
+    outcome.state = if !outcome.provenance_errors.is_empty() {
+        RunState::IncompleteEvidence
+    } else if exit_status == 0 {
         if demonstrates_a_test_run {
             RunState::CompletedClean
         } else {
@@ -667,35 +804,69 @@ fn strip_ansi(line: &str) -> String {
 pub(crate) fn parse_log(text: &str) -> RunOutcome {
     let mut outcome = RunOutcome::missing(RunState::StatusMissing);
     let mut block: Option<FailureBlock> = None;
+    let mut current: Option<TargetIdentity> = None;
     for raw_line in text.lines() {
         let line = strip_ansi(raw_line);
         let trimmed = line.trim();
-        if let Some(name) = failure_block_header(trimmed) {
+        let boundary = trimmed == "Running"
+            || trimmed.starts_with("Running ")
+            || trimmed == "Doc-tests"
+            || trimmed.starts_with("Doc-tests ");
+        if boundary || trimmed == "failures:" || trimmed.starts_with("test result:") {
             close_failure_block(&mut outcome, block.take());
-            block = Some(FailureBlock::new(name));
+        }
+        if boundary {
+            outcome.raw_headers.push(raw_line.to_string());
+            current = running_target(trimmed);
+            if let Some(target) = &current {
+                if outcome.targets.contains(target) {
+                    outcome
+                        .provenance_errors
+                        .push(format!("repeated target header: {target}"));
+                }
+                outcome.targets.push(target.clone());
+            } else {
+                outcome
+                    .provenance_errors
+                    .push(format!("unrecognized target header: {trimmed}"));
+            }
             continue;
         }
-        // A block ends at the next libtest section or cargo target line, so an
-        // aborted harness cannot swallow the targets that follow it.
-        if trimmed == "failures:"
-            || trimmed.starts_with("test result:")
-            || running_target(trimmed).is_some()
-        {
+        if let Some(name) = failure_block_header(trimmed) {
             close_failure_block(&mut outcome, block.take());
+            block = current.as_ref().map(|target| {
+                FailureBlock::new(TestIdentity {
+                    target: target.clone(),
+                    name,
+                })
+            });
+            continue;
         }
         if let Some(open) = block.as_mut() {
             open.push(trimmed);
             continue;
         }
         if let Some((name, failed)) = test_result_line(trimmed) {
-            if failed {
-                outcome.failed.insert(name);
+            if let Some(target) = &current {
+                let subject = TestIdentity {
+                    target: target.clone(),
+                    name,
+                };
+                if outcome.failed.contains(&subject) || outcome.passed.contains(&subject) {
+                    outcome
+                        .provenance_errors
+                        .push(format!("duplicate test observation: {subject}"));
+                }
+                if failed {
+                    outcome.failed.insert(subject);
+                } else {
+                    outcome.passed.insert(subject);
+                }
             } else {
-                outcome.passed.insert(name);
+                outcome
+                    .provenance_errors
+                    .push(format!("test without an admitted target: {name}"));
             }
-        }
-        if let Some(target) = running_target(trimmed) {
-            outcome.targets.push(target);
         }
         if trimmed.starts_with("test result:") {
             outcome.results.push(trimmed.to_string());
@@ -712,7 +883,7 @@ const MAX_REASON_CHARS: usize = 240;
 
 /// One libtest `---- name stdout ----` block from the `failures:` section.
 struct FailureBlock {
-    name: String,
+    name: TestIdentity,
     error: Option<String>,
     panic: Option<String>,
     awaiting_panic_message: bool,
@@ -720,7 +891,7 @@ struct FailureBlock {
 }
 
 impl FailureBlock {
-    fn new(name: String) -> Self {
+    fn new(name: TestIdentity) -> Self {
         Self {
             name,
             error: None,
@@ -786,11 +957,13 @@ fn close_failure_block(outcome: &mut RunOutcome, block: Option<FailureBlock>) {
     }
 }
 
-fn observation_label(outcome: &RunOutcome, name: &str) -> &'static str {
+fn observation_label(outcome: &RunOutcome, subject: Option<&TestIdentity>) -> &'static str {
     if !outcome.state.is_usable() {
         return "no_evidence";
     }
-    match outcome.observe(name) {
+    match subject.map_or(TestObservation::NotObserved, |subject| {
+        outcome.observe(subject)
+    }) {
         TestObservation::Failed => "FAILED",
         TestObservation::ObservedPass => "pass",
         TestObservation::NotObserved => "not_observed",
@@ -820,19 +993,60 @@ fn test_result_line(line: &str) -> Option<(String, bool)> {
     (!name.is_empty()).then(|| (name.to_string(), failed))
 }
 
-/// `Running unittests src\lib.rs (target\debug\deps\ripr-abc.exe)` -> the
-/// source path, which identifies the target more stably than the hashed binary.
-///
-/// The ` (` requirement matters: other lines can begin with `Running ` (build
-/// scripts, custom commands), and only a cargo test-target line carries the
-/// binary in parentheses.
-fn running_target(line: &str) -> Option<String> {
-    let rest = line
-        .strip_prefix("Running unittests ")
-        .or_else(|| line.strip_prefix("Running "))?;
-    let (path, _binary) = rest.split_once(" (")?;
-    let path = path.trim();
-    (!path.is_empty()).then(|| path.replace('\\', "/"))
+/// Admit Cargo test headers, keeping artifact hashes as identity. Absolute
+/// artifact directories and platform separators/extensions are presentation;
+/// the basename is the exact compiled artifact shared by the two executions.
+/// A changed hash must not borrow observations from another build or package.
+fn running_target(line: &str) -> Option<TargetIdentity> {
+    if let Some(name) = line.strip_prefix("Doc-tests ") {
+        return valid_target_name(name).then(|| TargetIdentity {
+            kind: TargetKind::DocTest,
+            source: String::new(),
+            artifact: name.to_string(),
+        });
+    }
+    let (kind, rest) = if let Some(rest) = line.strip_prefix("Running unittests ") {
+        (TargetKind::Unit, rest)
+    } else {
+        (TargetKind::Integration, line.strip_prefix("Running ")?)
+    };
+    let (source, binary) = rest.rsplit_once(" (")?;
+    let binary = binary.strip_suffix(')')?;
+    let windows = binary.ends_with(".exe");
+    if !windows && (source.contains('\\') || binary.contains('\\')) {
+        return None;
+    }
+    let source = source.replace('\\', "/");
+    if !source.ends_with(".rs")
+        || source
+            .split('/')
+            .any(|part| part.is_empty() || part == ".." || part == ".")
+        || source.contains(':')
+    {
+        return None;
+    }
+    let binary = binary.replace('\\', "/");
+    let artifact = binary.rsplit('/').next()?;
+    let artifact = artifact.strip_suffix(".exe").unwrap_or(artifact);
+    let (stem, hash) = artifact.rsplit_once('-')?;
+    if !valid_target_name(stem)
+        || hash.len() != 16
+        || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(TargetIdentity {
+        kind,
+        source,
+        artifact: artifact.to_string(),
+    })
+}
+
+fn valid_target_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 /// Why each reported test failed, per run, so the verdict stays readable
@@ -842,9 +1056,9 @@ fn render_failure_reasons(
     out: &mut String,
     first: &RunOutcome,
     second: &RunOutcome,
-    verdicts: &BTreeMap<&'static str, Vec<String>>,
+    verdicts: &BTreeMap<&'static str, Vec<TestIdentity>>,
 ) {
-    let reported: BTreeSet<&String> = verdicts.values().flatten().collect();
+    let reported: BTreeSet<&TestIdentity> = verdicts.values().flatten().collect();
     if reported.is_empty() {
         return;
     }
@@ -888,11 +1102,24 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
         out.push_str("**Infrastructure failure.** A run exited non-zero with no parsed test failure, which indicates a compile, link, harness, or runner problem rather than a product regression.\n\n");
     }
 
+    for (label, outcome) in [("Run 1", first), ("Run 2", second)] {
+        for error in &outcome.provenance_errors {
+            out.push_str(&format!("- {label} provenance: {error}\n"));
+        }
+    }
     out.push_str("### Verdicts\n\n");
-    let mut verdicts: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
-    let candidates: BTreeSet<&String> = first.failed.iter().chain(second.failed.iter()).collect();
+    let mut verdicts: BTreeMap<&'static str, Vec<TestIdentity>> = BTreeMap::new();
+    let candidates: BTreeSet<&TestIdentity> =
+        first.failed.iter().chain(second.failed.iter()).collect();
     for name in candidates {
-        if let Some(verdict) = classify(first.observe(name), second.observe(name)) {
+        let observed = |outcome: &RunOutcome| {
+            if outcome.state.is_usable() {
+                outcome.observe(name)
+            } else {
+                TestObservation::NotObserved
+            }
+        };
+        if let Some(verdict) = classify(observed(first), observed(second)) {
             verdicts
                 .entry(verdict.label())
                 .or_default()
@@ -946,8 +1173,8 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
             control.seam,
             control.issue,
             control.test,
-            observation_label(first, control.test),
-            observation_label(second, control.test)
+            observation_label(first, control_identity(first, second, control).as_ref()),
+            observation_label(second, control_identity(first, second, control).as_ref())
         ));
     }
     out.push('\n');
@@ -958,9 +1185,20 @@ fn render(first: &RunOutcome, second: &RunOutcome) -> String {
         let targets = if outcome.targets.is_empty() {
             "none reported".to_string()
         } else {
-            outcome.targets.join(", ")
+            outcome
+                .targets
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         out.push_str(&format!("- {label}: {targets}\n"));
+        for header in &outcome.raw_headers {
+            out.push_str(&format!(
+                "  - Cargo header: `{}`\n",
+                strip_ansi(header).replace('`', "'")
+            ));
+        }
     }
     out.push('\n');
 
@@ -1005,7 +1243,7 @@ mod tests {
 
     fn isolated_log(row: &str, result: &str) -> String {
         format!(
-            "Running unittests src/lib.rs (target/debug/deps/ripr-test.exe)\ntest {NESTED_ALIAS_TEST} ... {row}\n{result}\n"
+            "Running unittests src/lib.rs (target/debug/deps/ripr-0000000000000001.exe)\ntest {NESTED_ALIAS_TEST} ... {row}\n{result}\n"
         )
     }
 
@@ -1091,7 +1329,7 @@ mod tests {
         );
         let extra_test = pass.replace("test result:", "test unrelated::test ... ok\ntest result:");
         let no_target = pass.replacen(
-            "Running unittests src/lib.rs (target/debug/deps/ripr-test.exe)\n",
+            "Running unittests src/lib.rs (target/debug/deps/ripr-0000000000000001.exe)\n",
             "",
             1,
         );
@@ -1142,15 +1380,36 @@ mod tests {
         "test result: FAILED. 25 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.30s\n",
     );
 
+    fn target(source: &str, artifact: &str) -> TargetIdentity {
+        TargetIdentity {
+            kind: if source.starts_with("tests/") {
+                TargetKind::Integration
+            } else {
+                TargetKind::Unit
+            },
+            source: source.to_string(),
+            artifact: artifact.to_string(),
+        }
+    }
+
+    fn subject(name: &str) -> TestIdentity {
+        TestIdentity {
+            target: target("src/lib.rs", "ripr-0000000000000001"),
+            name: name.to_string(),
+        }
+    }
+
     fn outcome(state: RunState, failed: &[&str], passed: &[&str]) -> RunOutcome {
         RunOutcome {
             state,
             exit_status: Some(if failed.is_empty() { 0 } else { 101 }),
-            failed: failed.iter().map(|name| (*name).to_string()).collect(),
-            passed: passed.iter().map(|name| (*name).to_string()).collect(),
-            targets: vec!["src/lib.rs".to_string()],
+            failed: failed.iter().map(|name| subject(name)).collect(),
+            passed: passed.iter().map(|name| subject(name)).collect(),
+            targets: vec![subject("").target],
             results: vec!["test result: FAILED. 1 passed; 1 failed".to_string()],
             reasons: BTreeMap::new(),
+            provenance_errors: Vec::new(),
+            raw_headers: Vec::new(),
         }
     }
 
@@ -1158,7 +1417,7 @@ mod tests {
     /// `Error:`, a panic with its message on the next line, and a block whose
     /// only content is printed output.
     const FAILURE_SECTION_LOG: &str = concat!(
-        "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m unittests src\\lib.rs (target\\debug\\deps\\ripr-1.exe)\n",
+        "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m unittests src\\lib.rs (target\\debug\\deps\\ripr-0000000000000001.exe)\n",
         "test a::returns_error ... FAILED\n",
         "test b::panics ... FAILED\n",
         "test c::prints_only ... FAILED\n",
@@ -1188,18 +1447,27 @@ mod tests {
     fn failure_blocks_yield_the_most_explanatory_reason() {
         let outcome = parse_log(FAILURE_SECTION_LOG);
         assert_eq!(
-            outcome.reasons.get("a::returns_error").map(String::as_str),
+            outcome
+                .reasons
+                .get(&subject("a::returns_error"))
+                .map(String::as_str),
             Some("Error: \"descendant PID marker: marker not written\""),
         );
         assert_eq!(
-            outcome.reasons.get("b::panics").map(String::as_str),
+            outcome
+                .reasons
+                .get(&subject("b::panics"))
+                .map(String::as_str),
             Some("panicked at crates\\ripr\\src\\b.rs:263:5: expected command to succeed"),
         );
         assert_eq!(
-            outcome.reasons.get("c::prints_only").map(String::as_str),
+            outcome
+                .reasons
+                .get(&subject("c::prints_only"))
+                .map(String::as_str),
             Some("only this line"),
         );
-        assert!(!outcome.reasons.contains_key("d::passes"));
+        assert!(!outcome.reasons.contains_key(&subject("d::passes")));
         assert_eq!(outcome.failed.len(), 3);
         assert_eq!(outcome.results.len(), 1);
     }
@@ -1207,20 +1475,32 @@ mod tests {
     #[test]
     fn an_unterminated_failure_block_does_not_swallow_later_targets() {
         let log = concat!(
-            "     Running unittests src\\lib.rs (target\\debug\\deps\\ripr-1.exe)\n",
+            "     Running unittests src\\lib.rs (target\\debug\\deps\\ripr-0000000000000001.exe)\n",
             "test a::aborts ... FAILED\n",
             "failures:\n",
             "---- a::aborts stdout ----\n",
             "Error: \"harness aborted\"\n",
-            "     Running tests\\later.rs (target\\debug\\deps\\later-2.exe)\n",
+            "     Running tests\\later.rs (target\\debug\\deps\\later-0000000000000002.exe)\n",
             "test later::ok ... ok\n",
             "test result: ok. 1 passed; 0 failed\n",
         );
         let outcome = parse_log(log);
-        assert_eq!(outcome.targets, vec!["src/lib.rs", "tests/later.rs"]);
-        assert!(outcome.passed.contains("later::ok"));
         assert_eq!(
-            outcome.reasons.get("a::aborts").map(String::as_str),
+            outcome.targets,
+            vec![
+                subject("").target,
+                target("tests/later.rs", "later-0000000000000002")
+            ]
+        );
+        assert!(outcome.passed.contains(&TestIdentity {
+            target: target("tests/later.rs", "later-0000000000000002"),
+            name: "later::ok".to_string()
+        }));
+        assert_eq!(
+            outcome
+                .reasons
+                .get(&subject("a::aborts"))
+                .map(String::as_str),
             Some("Error: \"harness aborted\""),
         );
     }
@@ -1228,10 +1508,12 @@ mod tests {
     #[test]
     fn a_long_reason_is_truncated_to_the_bound() {
         let long = format!("Error: \"{}\"", "x".repeat(MAX_REASON_CHARS * 2));
-        let log = format!("test a::long ... FAILED\nfailures:\n---- a::long stdout ----\n{long}\n");
+        let log = format!(
+            "Running unittests src/lib.rs (target/debug/deps/ripr-0000000000000001.exe)\ntest a::long ... FAILED\nfailures:\n---- a::long stdout ----\n{long}\n"
+        );
         let reason = parse_log(&log)
             .reasons
-            .remove("a::long")
+            .remove(&subject("a::long"))
             .unwrap_or_default();
         assert_eq!(reason.chars().count(), MAX_REASON_CHARS + 1);
         assert!(reason.ends_with('…'), "{reason}");
@@ -1245,7 +1527,7 @@ mod tests {
             &[],
         );
         first.reasons.insert(
-            "seam::flaky".to_string(),
+            subject("seam::flaky"),
             "Error: \"marker `x` missing\"".to_string(),
         );
         let second = outcome(
@@ -1256,12 +1538,12 @@ mod tests {
         let rendered = render(&first, &second);
         assert!(rendered.contains("### Failure reasons"), "{rendered}");
         assert!(
-            rendered.contains("- `seam::flaky`\n  - Run 1: Error: \"marker 'x' missing\"\n"),
+            rendered.contains("- `unittests src/lib.rs (ripr-0000000000000001) :: seam::flaky`\n  - Run 1: Error: \"marker 'x' missing\"\n"),
             "{rendered}"
         );
         assert!(
             rendered.contains(
-                "- `seam::silent`\n  - Run 1: no failure block captured\n  - Run 2: no failure block captured\n"
+                "- `unittests src/lib.rs (ripr-0000000000000001) :: seam::silent`\n  - Run 1: no failure block captured\n  - Run 2: no failure block captured\n"
             ),
             "{rendered}"
         );
@@ -1275,17 +1557,19 @@ mod tests {
         assert_eq!(
             parsed.targets,
             vec![
-                "src/lib.rs".to_string(),
-                "tests/lsp_lifecycle.rs".to_string()
+                target("src/lib.rs", "ripr-b675962642118180"),
+                target("tests/lsp_lifecycle.rs", "lsp_lifecycle-d7f865dad16cc0c7")
             ]
         );
+        assert!(parsed.failed.contains(&TestIdentity {
+            target: target("tests/lsp_lifecycle.rs", "lsp_lifecycle-d7f865dad16cc0c7"),
+            name: "compat_journey_collect_workspace_status_over_real_wire".to_string()
+        }));
         assert!(
-            parsed
-                .failed
-                .contains("compat_journey_collect_workspace_status_over_real_wire")
-        );
-        assert!(
-            parsed.passed.contains("some::alpha"),
+            parsed.passed.contains(&TestIdentity {
+                target: target("src/lib.rs", "ripr-b675962642118180"),
+                name: "some::alpha".to_string()
+            }),
             "observed passes must be collected too: {:?}",
             parsed.passed
         );
@@ -1299,7 +1583,10 @@ mod tests {
         let first = outcome(RunState::NonZeroWithObservedTestFailures, &["x::y"], &[]);
         let second = outcome(RunState::CompletedClean, &[], &[]); // never reported x::y
         assert_eq!(
-            classify(first.observe("x::y"), second.observe("x::y")),
+            classify(
+                first.observe(&subject("x::y")),
+                second.observe(&subject("x::y"))
+            ),
             Some(Verdict::MaskedUnknown)
         );
         let rendered = render(&first, &second);
@@ -1313,7 +1600,10 @@ mod tests {
         let first = outcome(RunState::NonZeroWithObservedTestFailures, &["x::y"], &[]);
         let second = outcome(RunState::CompletedClean, &[], &["x::y"]);
         assert_eq!(
-            classify(first.observe("x::y"), second.observe("x::y")),
+            classify(
+                first.observe(&subject("x::y")),
+                second.observe(&subject("x::y"))
+            ),
             Some(Verdict::Unstable)
         );
         let rendered = render(&first, &second);
@@ -1325,7 +1615,10 @@ mod tests {
     fn failing_twice_is_reported_as_repeated_not_deterministic() {
         let both = outcome(RunState::NonZeroWithObservedTestFailures, &["x::y"], &[]);
         assert_eq!(
-            classify(both.observe("x::y"), both.observe("x::y")),
+            classify(
+                both.observe(&subject("x::y")),
+                both.observe(&subject("x::y"))
+            ),
             Some(Verdict::RepeatedFailure)
         );
         let rendered = render(&both, &both);
@@ -1436,6 +1729,7 @@ mod tests {
             issue: "#3803",
             test,
             source: "crates/ripr/src/process_owner.rs",
+            target: RIPR_LIB,
         }
     }
 
@@ -1456,7 +1750,7 @@ mod tests {
             missing,
             vec![
                 "run 2 did not observe process control `seam::absent` \
-                 (#3803, defined in crates/ripr/src/process_owner.rs)"
+                 (#3803, defined in crates/ripr/src/process_owner.rs; owning target absent or ambiguous)"
                     .to_string()
             ],
             "a failed control is observed; only the run that never reported one is refused"
@@ -1616,6 +1910,8 @@ mod tests {
                 targets: Vec::new(),
                 results: Vec::new(),
                 reasons: BTreeMap::new(),
+                provenance_errors: Vec::new(),
+                raw_headers: Vec::new(),
             },
             &outcome,
         );
@@ -1674,15 +1970,29 @@ mod tests {
     #[test]
     fn doctest_names_containing_spaces_are_observed() {
         let parsed = parse_log(
-            "test src/lib.rs - foo::bar (line 12) ... ok\ntest src/lib.rs - baz::qux (line 30) ... FAILED\n",
+            "Doc-tests ripr\ntest src/lib.rs - foo::bar (line 12) ... ok\ntest src/lib.rs - baz::qux (line 30) ... FAILED\n",
         );
         assert!(
-            parsed.passed.contains("src/lib.rs - foo::bar (line 12)"),
+            parsed.passed.contains(&TestIdentity {
+                target: TargetIdentity {
+                    kind: TargetKind::DocTest,
+                    source: String::new(),
+                    artifact: "ripr".to_string()
+                },
+                name: "src/lib.rs - foo::bar (line 12)".to_string()
+            }),
             "{:?}",
             parsed.passed
         );
         assert!(
-            parsed.failed.contains("src/lib.rs - baz::qux (line 30)"),
+            parsed.failed.contains(&TestIdentity {
+                target: TargetIdentity {
+                    kind: TargetKind::DocTest,
+                    source: String::new(),
+                    artifact: "ripr".to_string()
+                },
+                name: "src/lib.rs - baz::qux (line 30)".to_string()
+            }),
             "{:?}",
             parsed.failed
         );
@@ -1718,8 +2028,10 @@ mod tests {
     #[test]
     fn running_target_requires_a_parenthesised_binary() {
         assert_eq!(
-            running_target("Running unittests src/lib.rs (target/debug/deps/a-1.exe)"),
-            Some("src/lib.rs".to_string())
+            running_target(
+                "Running unittests src/lib.rs (target/debug/deps/a-0000000000000001.exe)"
+            ),
+            Some(target("src/lib.rs", "a-0000000000000001"))
         );
         assert_eq!(running_target("Running a custom build command"), None);
         assert_eq!(running_target("Running"), None);

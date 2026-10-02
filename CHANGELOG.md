@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
+  identity, including target kind/source and exact executable hash. Required
+  release controls must resolve to one owning artifact across both samples;
+  missing or ambiguous provenance is refused instead of borrowing another
+  target's pass. Raw target headers remain visible; doctest transitions are
+  explicit and never assigned an inferred package (#5043).
+
 - LSP: identity-law tests pin that `action_id` excludes title, range,
   message, snapshot handles, client capability, and disabled reason; build
   and parse share one fingerprint; analysis input identity excludes

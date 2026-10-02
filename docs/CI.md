@@ -327,6 +327,32 @@ and single-platform CI was the root cause enabling both.
   only by a native-Windows audit, so native-Windows verification of new
   product behavior remains an author and audit responsibility.
 
+- **Subject identity (#5043).** Observations and failure reasons are keyed by
+  Cargo target kind, source path, exact executable basename (including its
+  Cargo hash), and test name. Both samples execute the same compiled workspace;
+  a changed hash cannot borrow a pass or manufacture a repeated failure. Cargo
+  text does not expose integration-target package IDs, so the report does not
+  invent them. Artifact directories, validated Windows separators and the
+  `.exe` suffix are presentation; raw Cargo headers remain visible beside the
+  normalized target identity. Doctests use their explicit `Doc-tests` name as
+  a distinct target kind, without inferred package ownership.
+- **Owning-target evidence.** Each release-seam control declares its Cargo
+  target kind, source and executable stem as well as its exact test name. The
+  selector must identify one exact artifact across both logs. Zero or multiple
+  candidate artifacts, including hash drift across samples, cannot satisfy a
+  required control. A control failure stays advisory; an absent or ambiguous
+  owner is refused. Name-only legacy logs, malformed target headers, duplicate
+  target transitions (including doctests), duplicate observations and orphan
+  test rows are `incomplete_evidence` with actionable provenance reasons.
+  Recollect both complete logs from one build rather than mixing histories.
+  The summary still counts observed subjects rather than failure-section echoes.
+
+The production-command corpus in `xtask/tests/windows_advisory_identity.rs`
+checks colliding names, cross-target pass/failure substitution, independent
+failure reasons, same-source executables, hash/path boundaries, owning-control
+absence/ambiguity, ANSI logs and doctest transitions. These synthetic text
+controls qualify the parser; they do not claim native Windows test execution.
+
 Promotion to required is gated on #2430 and on stability across repeated runs on
 hardware that reproduces the failures — the hosted runner does not reproduce the
 parallel-load class in #2419 at all, so green runs there prove nothing about it.
