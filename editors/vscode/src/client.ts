@@ -3403,7 +3403,10 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
 function degradedAnalysisComponents(
   components: readonly AnalysisStatusComponent[] | undefined
 ): AnalysisStatusComponent[] {
-  if (!components) {
+  // The payload crosses a process boundary and is only shallowly validated,
+  // so a truthy non-array must take the same fail-closed path as a missing
+  // field before `.filter` runs.
+  if (!Array.isArray(components)) {
     return [];
   }
   return components.filter(
@@ -3523,6 +3526,7 @@ export function statusForRunStatus(
     const recoveries = uniqueStrings(
       degraded.map((component) => component.recovery)
     );
+    const recoveryStep = recoveries.map(capitalizeFirst).join('; ');
     const detail = [
       input.detail,
       limited.detail,
@@ -3534,9 +3538,16 @@ export function statusForRunStatus(
       kind: 'analysisLimited',
       summary: limited.summary,
       detail,
-      nextStep: recoveries.length > 0
-        ? recoveries.map(capitalizeFirst).join(' ')
-        : limited.nextStep
+      // The generic `limited` presentations only name a refresh, so a server
+      // recovery replaces them outright. `limited_partial_scope`'s canned step
+      // names the budget remedy, which no component recovery addresses (the
+      // scope budget is snapshot-level, not a component outcome), so the
+      // recovery is composed after it instead of dropping the budget action.
+      nextStep: recoveries.length === 0
+        ? limited.nextStep
+        : runStatus === 'limited_partial_scope'
+          ? `${limited.nextStep} ${recoveryStep}`
+          : recoveryStep
     };
   }
   return {
