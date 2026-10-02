@@ -584,3 +584,19 @@ fn a_captured_header_cannot_authenticate_another_target() -> Result<(), String> 
         &[],
     )
 }
+
+#[test]
+fn doctest_end_marker_cannot_hide_missing_rows_and_summary() -> Result<(), String> {
+    let log = controls(None)
+        + "Doc-tests ripr\nrunning 2 tests\ntest src/lib.rs - example (line 1) ... ok\nall doctests ran in 0.01s; merged doctests compilation took 0.01s\n";
+    verify(
+        log.clone(),
+        log,
+        1,
+        &[
+            "incomplete_evidence",
+            "doctest completion without completed owning batches",
+        ],
+        &[],
+    )
+}

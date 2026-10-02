@@ -2341,6 +2341,22 @@ mod tests {
     }
 
     #[test]
+    fn a_doctest_end_marker_cannot_hide_an_incomplete_batch() -> Result<(), String> {
+        let prefix = format!("{XTASK_HEADER}running 1 test\ntest unrelated ... ok\n{ONE_PASS}");
+        for unfinished in [
+            "Doc-tests ripr\nrunning 2 tests\ntest src/lib.rs - example (line 1) ... ok\n",
+            "Running unittests src/lib.rs (target/debug/deps/ripr-1111111111111111.exe)\nrunning 1 test\n",
+        ] {
+            let log = format!(
+                "{prefix}{unfinished}all doctests ran in 0.01s; merged doctests compilation took 0.01s\n"
+            );
+            let outcome = load_synthetic(&log)?;
+            assert_eq!(outcome.state, RunState::IncompleteEvidence, "{outcome:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn ignores_lines_that_only_resemble_a_test_result() {
         let parsed = parse_log("failures:\n    some::name\ntest result: FAILED. 1 failed\n");
         assert!(parsed.failed.is_empty(), "{:?}", parsed.failed);
