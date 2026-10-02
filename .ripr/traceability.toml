@@ -23,6 +23,8 @@ tests = [
   "crates/ripr/src/build_identity.rs::tests::cache_identity_binds_the_build_not_only_the_version",
   "crates/ripr/src/analysis/classify/flow.rs",
   "crates/ripr/src/analysis/classifier.rs",
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_parser_indexed_proptest_and_quickcheck_when_relating_then_only_marked_tests",
   "crates/ripr/src/analysis/probes/lexical.rs",
   "crates/ripr/src/analysis/rust_index.rs",
   "crates/ripr/src/analysis/mod.rs",
@@ -63,6 +65,7 @@ fixtures = [
   "fixtures/strong_boundary_oracle",
   "fixtures/strong_error_oracle",
   "fixtures/unrelated_test_mentions_token",
+  "fixtures/rust_proptest_quickcheck_tests",
   "fixtures/weak_error_oracle",
   "fixtures/weak_error_oracle_assert_matches"
 ]
@@ -103,6 +106,8 @@ outputs = [
   "fixtures/strong_error_oracle/expected/human.txt",
   "fixtures/unrelated_test_mentions_token/expected/check.json",
   "fixtures/unrelated_test_mentions_token/expected/human.txt",
+  "fixtures/rust_proptest_quickcheck_tests/expected/check.json",
+  "fixtures/rust_proptest_quickcheck_tests/expected/human.txt",
   "fixtures/weak_error_oracle/expected/check.json",
   "fixtures/weak_error_oracle/expected/human.txt",
   "fixtures/weak_error_oracle_assert_matches/expected/check.json",
@@ -501,7 +506,12 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::typed succeeded status discloses deferred seam evidence instead of completed",
   "editors/vscode/test/suite/extension.test.ts::limited run statuses do not gate repair packet copies as stale",
   "editors/vscode/test/suite/extension.test.ts::typed succeeded status keeps healthy presentation for full and unknown run statuses",
-  "editors/vscode/test/suite/extension.test.ts::dirty routed files compose ahead of the deferred seam disclosure"
+  "editors/vscode/test/suite/extension.test.ts::dirty routed files compose ahead of the deferred seam disclosure",
+  "editors/vscode/test/suite/extension.test.ts::limited status prefers the degraded component recovery route over the canned refresh step (#5004)",
+  "editors/vscode/test/suite/extension.test.ts::limited status surfaces findings_trustworthy false as untrustworthy snapshot evidence (#5004)",
+  "editors/vscode/test/suite/extension.test.ts::limited status keeps the canned refresh step when no degraded component names a recovery (#5004)",
+  "editors/vscode/test/suite/extension.test.ts::limited partial scope keeps the budget remedy alongside the component recovery (#5004)",
+  "editors/vscode/test/suite/extension.test.ts::limited status fails closed to the canned step for a malformed components payload (#5004)"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -1161,6 +1171,14 @@ id = "RIPR-SPEC-0012"
 name = "PR test guidance annotations"
 spec = "docs/specs/RIPR-SPEC-0012-pr-test-guidance.md"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::unqualified_helper_calls_have_no_module_candidates",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::qualified_helper_filter_matches_unbounded_relations",
+  "crates/ripr/src/analysis/cancellation.rs::tests::optional_worker_context_clears_and_restores_an_outer_request",
+  "crates/ripr/src/analysis/cancellation.rs::tests::optional_worker_context_restores_after_unwind",
+  "crates/ripr/src/analysis/facts/build.rs::tests::cached_parse_workers_observe_request_cancellation_before_cache_store",
+  "crates/ripr/src/analysis/facts/build.rs::tests::cached_source_failure_precedes_join_deadline",
+  "crates/ripr/src/analysis/facts/build.rs::tests::uncached_source_failure_precedes_join_deadline",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::normalization_observes_cancellation_inside_function_walk",
   "crates/ripr/src/analysis/generated_rust_corpus.rs::payload_census_matches_handwritten_and_stronger_exclusion_policy",
   "crates/ripr/src/analysis/generated_rust_corpus.rs::payload_census_distinguishes_absent_owner_from_disappeared_corpus",
   "crates/ripr/src/analysis/generated_rust_corpus.rs::payload_census_observes_cancellation_before_metadata",
@@ -8987,6 +9005,8 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::normalization_identity_keys_borrow_body_storage",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::borrowed_normalization_matches_owned_reference_with_duplicate_coordinates",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::layout_classifies_evidence_and_production",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::cargo_autodiscovery_shapes_govern_benches_and_examples",
   "crates/ripr/src/analysis/workspace/source_role.rs::tests::declared_targets_and_opt_in_override_layout",
@@ -10342,6 +10362,12 @@ id = "RIPR-SPEC-0191"
 name = "Portable native RIPR consumer packet"
 spec = "docs/specs/RIPR-SPEC-0191-portable-native-consumer-packet.md"
 tests = [
+  "xtask/src/tests.rs::file_policy_allowlist_accepts_host_scoped_coverage",
+  "xtask/src/tests.rs::file_policy_allowlist_rejects_malformed_host_coverage",
+  "xtask/src/tests.rs::policy_checker_facade_runs_current_repo_checks",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_host_selection_retains_common_and_discloses_inapplicable",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_empty_applicable_host_selector_is_rejected",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_unknown_host_family_is_rejected",
   "xtask/src/portable_consumer.rs::tests::run_py_compiles_with_stdlib_python",
   "xtask/src/portable_consumer.rs::tests::consumer_source_does_not_search_path_or_open_a_network_client",
   "xtask/src/portable_consumer.rs::tests::product_json_classes_are_discriminated_without_launch",
@@ -10383,6 +10409,9 @@ fixtures = [
   "fixtures/boundary_gap/input",
 ]
 code = [
+  "xtask/src/main.rs",
+  "xtask/src/policy/file_policy.rs",
+  "policy/non-rust-allowlist.toml",
   "tools/python/portable-ripr-consumer/run.py",
   "xtask/src/portable_consumer.rs",
   "crates/ripr/tests/portable_consumer_packet.rs",
