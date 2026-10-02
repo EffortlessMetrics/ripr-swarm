@@ -1061,7 +1061,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0204-blind-journey-execute-consumer.md"
 status = "proposed"
 owner = "test-infra"
-standalone_reason = "Issue #4604 records the blind journey execution consumer: the deterministic executor turns scripted journeys (reviewed prompt surface, separately stored answer key, ordered actions with exact bytes, axis observations) into stamped, validator-accepted RIPR-SPEC-0200 receipts; it enforces the per-kind digest presence the contract receipt deferred, binds every observation to its execution event, derives the terminal in one fixed precedence so no script can claim a result, and refuses contaminated prompts, missing or stale reviews and honest terminals without exact limitations; a 20-scenario corpus of emitted and refused journeys pins the executor while the real candidate run waits on #4510/#1609."
+standalone_reason = "Issue #4604 records the blind journey execution consumer: the deterministic executor turns scripted journeys (reviewed prompt surface, separately stored answer key, ordered actions with exact bytes, axis observations) into stamped, validator-accepted RIPR-SPEC-0200 receipts; it enforces the per-kind digest presence the contract receipt deferred, binds every observation to its execution event, derives the terminal in one fixed precedence so no script can claim a result, and refuses contaminated prompts, missing or stale reviews and honest terminals without exact limitations; a scripted corpus of emitted and refused journeys pins the executor while the real candidate run waits on #4510/#1609."
 [[artifact]]
 id = "RIPR-SPEC-0201"
 kind = "spec"
