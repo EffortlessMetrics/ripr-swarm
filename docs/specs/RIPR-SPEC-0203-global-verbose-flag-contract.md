@@ -16,7 +16,8 @@ Support-tier impact:
 
 - None. The flag only adds stderr diagnostics; it accepts no authority,
   starts no server, and writes nothing. The MCP protocol stream on stdout
-  stays clean because the diagnostic goes to stderr.
+  stays clean because the diagnostic goes to stderr. See
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
