@@ -965,9 +965,15 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("2 typescript files"), "{rendered}");
-        assert!(rendered.contains("not enabled"), "{rendered}");
+        assert!(
+            rendered.contains("files detected but not analyzed"),
+            "{rendered}"
+        );
         assert!(rendered.contains("not Rust-grade clean"), "{rendered}");
-        assert!(rendered.contains("ripr.toml"), "{rendered}");
+        // The recovery text is feature-dependent: a binary with the adapter
+        // compiled in names the ripr.toml route, a lang-rust-only binary
+        // names the Cargo feature. Both name the TypeScript adapter.
+        assert!(rendered.contains("TypeScript"), "{rendered}");
     }
 
     #[test]
