@@ -2,6 +2,9 @@ use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
 };
 
+use super::propagation_witness::{
+    assertion_observes_direct_collection, direct_collection_mutation_receiver,
+};
 use super::reach::is_proximity_only;
 use super::rust_string_literals;
 use crate::domain::*;
@@ -164,6 +167,13 @@ fn effect_observer_confirms(assertion: &OracleFact) -> bool {
         assertion.kind,
         OracleKind::MockExpectation | OracleKind::Snapshot | OracleKind::WholeObjectEquality
     )
+}
+
+fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> bool {
+    let Some(receiver) = direct_collection_mutation_receiver(expression) else {
+        return false;
+    };
+    assertion_observes_direct_collection(&assertion.text, receiver)
 }
 
 /// For a `MatchArm` probe expression, extract only the "variant" tokens —
@@ -380,8 +390,11 @@ fn analyze_related_assertions(
                 });
             } else if matched {
                 let observation_confirmed = !confirm_required
-                    || has_token_match
-                    || (is_effect_family(&probe.family) && effect_observer_confirms(assertion));
+                    || collection_observer_confirms(&probe.expression, assertion)
+                    || (direct_collection_mutation_receiver(&probe.expression).is_none()
+                        && (has_token_match
+                            || (is_effect_family(&probe.family)
+                                && effect_observer_confirms(assertion))));
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
                     // references the changed sub-expression. For value families
@@ -1769,7 +1782,44 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> Vec<RelatedTest> {
     // strongest relation leads. The sort is stable: name and line order holds
     // within one confidence tier, and the dedup above is unchanged.
     related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
+    // JSON/human renderers cap at eight rows. When one test's assertions would
+    // fill that window, unique tests go first (#4760). Under the cap, keep
+    // per-assertion rows so existing goldens and #1728 witnesses stay intact.
+    if related.len() > RELATED_TESTS_RENDER_CAP {
+        related = pack_unique_tests_first(related, RELATED_TESTS_RENDER_CAP);
+    }
     related
+}
+
+const RELATED_TESTS_RENDER_CAP: usize = 8;
+
+fn pack_unique_tests_first(related: Vec<RelatedTest>, cap: usize) -> Vec<RelatedTest> {
+    let mut packed = Vec::with_capacity(cap.min(related.len()));
+    let mut seen = std::collections::BTreeSet::new();
+    for test in &related {
+        if packed.len() >= cap {
+            break;
+        }
+        let key = (test.name.as_str(), test.file.as_path(), test.line);
+        if seen.insert(key) {
+            packed.push(test.clone());
+        }
+    }
+    for test in &related {
+        if packed.len() >= cap {
+            break;
+        }
+        if packed.iter().any(|kept| {
+            kept.name == test.name
+                && kept.file == test.file
+                && kept.line == test.line
+                && kept.oracle == test.oracle
+        }) {
+            continue;
+        }
+        packed.push(test.clone());
+    }
+    packed
 }
 
 /// Sort rank of an emitted related test: higher relation confidence ranks
@@ -2402,6 +2452,51 @@ mod tests {
         assert_eq!(related[0].name, "a_error_path");
         assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
         assert_eq!(related[1].name, "z_error_path");
+    }
+
+    /// #4760: per-assertion rows stay under the render cap. When one test has
+    /// more matching oracles than the cap, unique tests still occupy a slot.
+    #[test]
+    fn related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles() {
+        let probe = probe(ProbeFamily::ReturnValue, "(0, self.iter.size_hint().1)");
+        let multi = test_with_assertions(
+            "combinations_inexact_size_hints",
+            (0..9)
+                .map(|index| {
+                    oracle(
+                        &format!("assert_eq!(it.size_hint().1, Some({index}));"),
+                        OracleKind::ExactValue,
+                        OracleStrength::Strong,
+                    )
+                })
+                .collect(),
+        );
+        let other = test_with_assertions(
+            "while_some_is_untested",
+            vec![oracle(
+                "assert_eq!(1, 1);",
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+            )],
+        );
+        let (_, _, related) = reveal_evidence(
+            &probe,
+            &[
+                (&multi, RelationReason::DirectOwnerCall),
+                (&other, RelationReason::SameTestFile),
+            ],
+        );
+
+        let named: Vec<&str> = related.iter().map(|test| test.name.as_str()).collect();
+        assert_eq!(
+            related.len(),
+            RELATED_TESTS_RENDER_CAP,
+            "packed to the render cap: {named:?}"
+        );
+        assert!(
+            named.contains(&"while_some_is_untested"),
+            "a second test must survive the 8-row cap: {named:?}"
+        );
     }
 
     #[test]
@@ -4917,5 +5012,150 @@ return Err(\"typed pin\".into());
             "заказ"
         ));
         assert!(contains_as_whole_word("new_заказ + заказ", "заказ"));
+    }
+
+    #[test]
+    fn mutating_collection_a_while_asserting_b_stays_unverified() {
+        let probe = probe(ProbeFamily::SideEffect, "items.push(5)");
+        for (name, assertions) in [
+            (
+                "wrong_collection",
+                vec![oracle(
+                    "assert_eq!(other, expected);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            ),
+            (
+                "expected_side_token",
+                vec![oracle(
+                    "assert_eq!(other, items);",
+                    OracleKind::WholeObjectEquality,
+                    OracleStrength::Strong,
+                )],
+            ),
+            (
+                "return_only",
+                vec![oracle(
+                    "assert_eq!(result, 5);",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+            ),
+            (
+                "callee_name_string",
+                vec![oracle(
+                    "assert!(label.contains(\"record_items\"));",
+                    OracleKind::RelationalCheck,
+                    OracleStrength::Weak,
+                )],
+            ),
+            (
+                "unrelated_mock",
+                vec![oracle(
+                    "mock.verify();",
+                    OracleKind::MockExpectation,
+                    OracleStrength::Medium,
+                )],
+            ),
+        ] {
+            let test = test_with_assertions(name, assertions);
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            assert_eq!(
+                discriminate.state,
+                StageState::Weak,
+                "{name} must stay weakly discriminating"
+            );
+            assert!(
+                discriminate.summary.contains("observation_unverified"),
+                "{name} must not confirm a different observer: got `{}`",
+                discriminate.summary
+            );
+        }
+    }
+
+    #[test]
+    fn asserting_affected_collection_retains_confirmation_in_either_order() {
+        let probe = probe(ProbeFamily::SideEffect, "items.push(5)");
+        let actual = oracle(
+            "assert_eq!(items, expected);",
+            OracleKind::WholeObjectEquality,
+            OracleStrength::Strong,
+        );
+        let wrong = oracle(
+            "assert_eq!(other, expected);",
+            OracleKind::WholeObjectEquality,
+            OracleStrength::Strong,
+        );
+        for (name, assertions) in [
+            ("actual_only", vec![actual.clone()]),
+            ("wrong_then_actual", vec![wrong.clone(), actual.clone()]),
+            ("actual_then_wrong", vec![actual.clone(), wrong.clone()]),
+        ] {
+            let test = test_with_assertions(name, assertions);
+            let (_observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            assert!(
+                !discriminate.summary.contains("observation_unverified"),
+                "{name} must retain the actual collection observer: got `{}`",
+                discriminate.summary
+            );
+            assert_eq!(
+                discriminate.state,
+                StageState::Yes,
+                "{name} must keep strong discrimination"
+            );
+        }
+
+        let removed = test_with_assertions("removed_actual", vec![wrong]);
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&removed, RelationReason::DirectOwnerCall)]);
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "removing the actual observer must fail closed: got `{}`",
+            discriminate.summary
+        );
+    }
+
+    #[test]
+    fn sibling_effect_whole_object_without_collection_identity_still_confirms() {
+        // Preserve delivered CallDeletion whole-object observer behavior.
+        let cache = probe(
+            ProbeFamily::CallDeletion,
+            "cache.insert(\"result_key\", result)",
+        );
+        let cache_test = test_with_assertions(
+            "store_result_inserts_result_key_with_value",
+            vec![oracle(
+                "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&cache, &[(&cache_test, RelationReason::DirectOwnerCall)]);
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "delivered cache.insert confirmation must stay on Part C: got `{}`",
+            discriminate.summary
+        );
+
+        let probe = probe(ProbeFamily::CallDeletion, "persist_audit(record)");
+        let test = test_with_assertions(
+            "store_matches_expected",
+            vec![oracle(
+                "assert_eq!(store, expected);",
+                OracleKind::WholeObjectEquality,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert!(
+            !discriminate.summary.contains("observation_unverified"),
+            "non-collection effect observers stay on the existing Part C path: got `{}`",
+            discriminate.summary
+        );
     }
 }

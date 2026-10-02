@@ -55,11 +55,24 @@ pub(crate) fn run_ripr_plus(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let repo = repo_root()?;
     let head = git_head(&repo);
-    match ripr_plus_receipt_from_options(&options, &head) {
-        Ok(receipt) => write_receipt(&repo, &receipt),
+    compose_and_write_receipt(&repo, &options, &head)
+}
+
+/// Writes the receipt for `options`. When the named artifact cannot be read
+/// or composed, the `indeterminate` receipt is still written so CI keeps a
+/// record, and the error is returned so the command exits 2 (could not
+/// complete) rather than 0 (#4727).
+fn compose_and_write_receipt(
+    repo: &Path,
+    options: &RiprPlusOptions,
+    head: &str,
+) -> Result<(), String> {
+    match ripr_plus_receipt_from_options(options, head) {
+        Ok(receipt) => write_receipt(repo, &receipt),
         Err(err) => {
-            let receipt = error_ripr_plus_receipt(&head, &err);
-            write_receipt(&repo, &receipt)
+            let receipt = error_ripr_plus_receipt(head, &err);
+            write_receipt(repo, &receipt)?;
+            Err(err)
         }
     }
 }
@@ -130,6 +143,9 @@ Options:
   --repo-exposure-summary <path>  Compose the receipt from a repo-exposure-summary-json artifact (pure composition).
   --gap-ledger <path>             Compose the receipt from a gap decision ledger (ledger-only composition; no repo scan).
   --check                         Accepted for xtask parity (no-op).
+
+Exit status: 0 when the receipt was composed; 2 when the named artifact
+cannot be read or composed (an `indeterminate` receipt is still written).
 
 Outputs:
   target/ripr/reports/ripr-plus.json
@@ -655,12 +671,18 @@ fn normalize_path(path: &Path) -> String {
         .to_string()
 }
 
+/// Cooperative deadline for the receipt HEAD stamp (#4363): a hung git
+/// records `unknown` instead of pinning `ripr plus`.
+const RIPR_PLUS_GIT_HEAD_DEADLINE: std::time::Duration = std::time::Duration::from_mins(1);
+
 fn git_head(repo: &Path) -> String {
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", "HEAD"])
-        .output()
+    git_head_within(repo, RIPR_PLUS_GIT_HEAD_DEADLINE)
+}
+
+/// [`git_head`] with the deadline as a parameter, so a test can prove the
+/// deadline reaches the shared git runner.
+fn git_head_within(repo: &Path, deadline: std::time::Duration) -> String {
+    crate::git::run_git_output_with_deadline(repo, &["rev-parse", "HEAD"], Some(deadline))
         .ok()
         .and_then(|output| {
             if output.status.success() {
@@ -860,6 +882,40 @@ mod tests {
         }
     }
 
+    /// #4727: a named `--gap-ledger` that cannot be read must not exit 0.
+    /// The indeterminate receipt is still written for CI, and the error is
+    /// returned so the process exits 2.
+    #[test]
+    fn unreadable_gap_ledger_writes_indeterminate_receipt_and_fails() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-unreadable-ledger-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&repo).map_err(|err| format!("mkdir {}: {err}", repo.display()))?;
+        let options = RiprPlusOptions {
+            repo_exposure_summary: None,
+            gap_ledger: Some(repo.join("nope.json")),
+        };
+        let result = compose_and_write_receipt(&repo, &options, "deadbeef");
+        let written = fs::read_to_string(repo.join(RIPR_PLUS_JSON));
+        let _ = fs::remove_dir_all(&repo);
+        match result {
+            Err(msg) if msg.contains("failed to read gap ledger") => {}
+            other => return Err(format!("expected read failure, got {other:?}")),
+        }
+        let receipt: Value = serde_json::from_str(
+            &written.map_err(|err| format!("indeterminate receipt was not written: {err}"))?,
+        )
+        .map_err(|err| format!("receipt is not JSON: {err}"))?;
+        assert_eq!(receipt["status"], "indeterminate");
+        assert_eq!(receipt["machine_readable_cause"], "evaluation_error");
+        Ok(())
+    }
+
     #[test]
     fn error_receipt_is_indeterminate() -> Result<(), String> {
         let receipt = error_ripr_plus_receipt("unknown", "the scan timed out after 1000 ms");
@@ -913,5 +969,51 @@ mod tests {
         assert!(markdown.contains("## Evaluation Status"));
         assert!(markdown.contains("Indeterminate"));
         assert!(markdown.contains("N/A"));
+    }
+
+    #[test]
+    fn git_head_forwards_its_deadline_to_git() -> Result<(), String> {
+        // #4363: a zero deadline is refused before spawn, so the stamp must
+        // fall back to `unknown` even where HEAD resolves; dropping the
+        // deadline would stamp the real commit.
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-git-head-deadline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&repo).map_err(|err| err.to_string())?;
+        let result = (|| {
+            fixture_git_ok(&repo, &["init", "--quiet"])?;
+            fixture_git_ok(
+                &repo,
+                &[
+                    "-c",
+                    "user.email=ripr@example.invalid",
+                    "-c",
+                    "user.name=RIPR Test",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "--no-gpg-sign",
+                    "-m",
+                    "init",
+                ],
+            )?;
+            let bounded = git_head_within(&repo, std::time::Duration::from_mins(1));
+            if bounded.len() != 40 {
+                return Err(format!("control: expected a commit id, got {bounded}"));
+            }
+            let refused = git_head_within(&repo, std::time::Duration::ZERO);
+            if refused != "unknown" {
+                return Err(format!("zero deadline must stamp unknown, got {refused}"));
+            }
+            Ok(())
+        })();
+        let _ = remove_fixture_tree(&repo);
+        result
     }
 }

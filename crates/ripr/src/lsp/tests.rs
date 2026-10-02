@@ -1,7 +1,7 @@
 use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
 use super::backend::{
-    Backend, RefreshLogSummary, refresh_completed_log_message, refresh_failed_log_message,
-    workspace_input_path_is_relevant,
+    Backend, RefreshLogSummary, WatchedFileChanges, refresh_completed_log_message,
+    refresh_failed_log_message, workspace_input_path_is_relevant,
 };
 use super::capabilities::{
     ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
@@ -10,11 +10,12 @@ use super::capabilities::{
 use super::client_features::ClientFeatureProfile;
 use super::config::LspAnalysisConfig;
 use super::diagnostics::{
-    DiagnosticBatch, WorkspaceDiagnostics, add_canonical_group_data, canonical_finding_groups,
-    canonical_group_has_mixed_classes, diagnostic_for_classified_seam, diagnostic_for_finding,
-    diagnostic_refresh_plan, diagnostic_severity_for_class, finding_diagnostics_by_uri,
-    finding_diagnostics_by_uri_with_profile, take_all_uris, workspace_diagnostic_batches,
-    workspace_diagnostic_batches_with_config, workspace_diagnostics_with_config,
+    DiagnosticBatch, FindingDiagnosticProjection, WorkspaceDiagnostics, add_canonical_group_data,
+    canonical_finding_groups, canonical_group_has_mixed_classes, diagnostic_for_classified_seam,
+    diagnostic_for_finding, diagnostic_refresh_plan, diagnostic_severity_for_class,
+    finding_diagnostics_by_uri, finding_diagnostics_by_uri_with_profile, take_all_uris,
+    workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
+    workspace_diagnostics_with_config,
 };
 use super::gap_artifacts::{
     GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
@@ -93,19 +94,12 @@ fn server_path_text(path: &Path) -> String {
 fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
     let result = initialize_result();
 
-    assert_eq!(
-        result.capabilities.text_document_sync,
-        Some(TextDocumentSyncCapability::Options(
-            tower_lsp_server::ls_types::TextDocumentSyncOptions {
-                open_close: Some(true),
-                change: Some(TextDocumentSyncKind::FULL),
-                save: Some(
-                    tower_lsp_server::ls_types::TextDocumentSyncSaveOptions::Supported(true)
-                ),
-                ..tower_lsp_server::ls_types::TextDocumentSyncOptions::default()
-            }
-        ))
-    );
+    let Some(TextDocumentSyncCapability::Options(sync)) = result.capabilities.text_document_sync
+    else {
+        return Err("expected explicit textDocumentSync options".to_string());
+    };
+    assert_eq!(sync.open_close, Some(true));
+    assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
     assert_eq!(
         result.capabilities.hover_provider,
         Some(HoverProviderCapability::Simple(true))
@@ -209,7 +203,14 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
         },
     ];
 
-    assert_eq!(backend.watched_file_change_kinds(&changes), (true, true));
+    assert_eq!(
+        backend.watched_file_change_kinds(&changes),
+        WatchedFileChanges {
+            config_changed: true,
+            workspace_graph_changed: true,
+            diagnostics_input_changed: false,
+        }
+    );
     Ok(())
 }
 
@@ -233,7 +234,10 @@ fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), Stri
     }];
     assert_eq!(
         backend.watched_file_change_kinds(&changes),
-        (true, false),
+        WatchedFileChanges {
+            config_changed: true,
+            ..WatchedFileChanges::default()
+        },
         "src/app.py events must classify as configuration reload inputs"
     );
 
@@ -246,7 +250,7 @@ fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), Stri
     }];
     assert_eq!(
         backend.watched_file_change_kinds(&changes),
-        (false, false),
+        WatchedFileChanges::default(),
         "Python outside root src/tests must not trigger any invalidation"
     );
 
@@ -259,10 +263,275 @@ fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), Stri
     }];
     assert_eq!(
         backend.watched_file_change_kinds(&changes),
-        (false, false),
+        WatchedFileChanges::default(),
         "generated Python sources are excluded from detection inputs"
     );
     Ok(())
+}
+
+#[test]
+fn watched_gap_ledger_and_git_head_route_to_diagnostics_refresh_only() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // #4896: the root gap ledger and root `.git/HEAD` change published
+    // diagnostics, but neither reloads configuration nor invalidates the
+    // Cargo workspace graph.
+    for relative in [
+        ["target", "ripr", "reports", "gap-decision-ledger.json"].as_slice(),
+        [".git", "HEAD"].as_slice(),
+    ] {
+        let path = relative
+            .iter()
+            .fold(root.clone(), |path, component| path.join(component));
+        let uri = file_uri_for_path(&path).map_err(|err| format!("URI failed: {err}"))?;
+        let changes = vec![FileEvent {
+            uri,
+            typ: FileChangeType::CHANGED,
+        }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                diagnostics_input_changed: true,
+                ..WatchedFileChanges::default()
+            },
+            "{} must route to a diagnostics refresh only",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Read until one accepted refresh has ended on the wire, answering its
+/// `window/workDoneProgress/create` request. Returns the refresh's begin
+/// message and every `window/workDoneProgress/create` seen.
+async fn read_one_wire_refresh<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(String, usize), String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut creates = 0_usize;
+    let mut begin = None;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let message = read_lsp_message(reader).await?;
+            match message.get("method").and_then(serde_json::Value::as_str) {
+                Some("window/workDoneProgress/create") => {
+                    creates += 1;
+                    let id = message
+                        .get("id")
+                        .cloned()
+                        .ok_or_else(|| "create request carried no id".to_string())?;
+                    write_lsp_message(
+                        writer,
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+                    )
+                    .await?;
+                }
+                Some("$/progress") => {
+                    let value = &message["params"]["value"];
+                    match value["kind"].as_str() {
+                        Some("begin") => begin = value["message"].as_str().map(str::to_string),
+                        Some("end") => return Ok::<(), String>(()),
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .map_err(|_elapsed| "watched-input refresh timed out".to_string())??;
+    let begin = begin.ok_or_else(|| "refresh ended without a begin message".to_string())?;
+    Ok((begin, creates))
+}
+
+/// Read `count` `client/registerCapability` requests, answering each so the
+/// server's registration round trip completes, and return every
+/// registration they carried.
+async fn read_and_answer_registrations<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    count: usize,
+) -> Result<Vec<serde_json::Value>, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut registrations = Vec::new();
+    for _ in 0..count {
+        let request = tokio::time::timeout(
+            Duration::from_secs(10),
+            read_lsp_request(reader, "client/registerCapability"),
+        )
+        .await
+        .map_err(|_elapsed| "a watcher registration never arrived".to_string())??;
+        let id = request
+            .get("id")
+            .cloned()
+            .ok_or_else(|| "registration request carried no id".to_string())?;
+        write_lsp_message(
+            writer,
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+        )
+        .await?;
+        registrations.extend(
+            request["params"]["registrations"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
+    Ok(registrations)
+}
+
+#[test]
+fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
+-> Result<(), String> {
+    work_done_progress_runtime()?.block_on(async {
+        let root = unique_lsp_test_root("watched-diagnostics-input")?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let backend_root = root.path().to_path_buf();
+        let (service, socket) =
+            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(root.path())?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    // An unresolvable base makes the real analysis fail
+                    // fast instead of scanning the enclosing repository.
+                    "initializationOptions": {"baseRef": "ripr-lsp-watch-missing-base"},
+                    "capabilities": {
+                        "window": {"workDoneProgress": true},
+                        "workspace": {"didChangeWatchedFiles": {
+                            "dynamicRegistration": true,
+                            "relativePatternSupport": true
+                        }}
+                    }
+                }
+            }),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 1).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // #4896: the diagnostics inputs register separately from the
+        // config/graph watchers, anchored at the workspace root, because
+        // VS Code matches bare string globs against absolute paths.
+        let registrations =
+            read_and_answer_registrations(&mut client_read, &mut client_write, 2).await?;
+        let diagnostics = registrations
+            .iter()
+            .find(|registration| registration["id"] == "ripr-diagnostics-input-watch")
+            .ok_or_else(|| format!("no diagnostics-input registration: {registrations:?}"))?;
+        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"]
+            .iter()
+            .map(|relative| {
+                serde_json::json!({
+                    "globPattern": {"baseUri": root_uri.as_str(), "pattern": relative}
+                })
+            })
+            .collect::<Vec<_>>();
+        if diagnostics["registerOptions"]["watchers"] != serde_json::json!(expected) {
+            return Err(format!(
+                "diagnostics watchers not root-anchored: {diagnostics}"
+            ));
+        }
+
+        let watched_event = |path: PathBuf| -> Result<serde_json::Value, String> {
+            let uri = file_uri_for_path(&path)?;
+            Ok(serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": uri.as_str(), "type": 2}]}
+            }))
+        };
+
+        // Unrelated files, other reports, and nested copies of the watched
+        // paths never schedule a refresh.
+        let reports = root.path().join("target").join("ripr").join("reports");
+        for unrelated in [
+            root.path().join("README.md"),
+            reports.join("repo-exposure.json"),
+            root.path()
+                .join("sub")
+                .join("target")
+                .join("ripr")
+                .join("reports")
+                .join("gap-decision-ledger.json"),
+            root.path().join("sub").join(".git").join("HEAD"),
+        ] {
+            write_lsp_message(&mut client_write, watched_event(unrelated)?).await?;
+        }
+        let quiet = read_lsp_messages_for(&mut client_read, Duration::from_millis(500)).await?;
+        if quiet.iter().any(|message| {
+            message.get("method").and_then(serde_json::Value::as_str)
+                == Some("window/workDoneProgress/create")
+        }) {
+            return Err(format!(
+                "unrelated watched files started a refresh: {quiet:?}"
+            ));
+        }
+
+        // The root ledger rewrite and a branch checkout each run one
+        // refresh, although the refresh input identity is unchanged.
+        for input in [
+            reports.join("gap-decision-ledger.json"),
+            root.path().join(".git").join("HEAD"),
+        ] {
+            write_lsp_message(&mut client_write, watched_event(input.clone())?).await?;
+            let (begin, creates) =
+                read_one_wire_refresh(&mut client_read, &mut client_write).await?;
+            if creates != 1 || !begin.contains("watched_input") {
+                return Err(format!(
+                    "{} must run one watched_input refresh; creates={creates} begin={begin}",
+                    input.display()
+                ));
+            }
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        read_lsp_response(&mut client_read, 3).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await?;
+        tokio::time::timeout(Duration::from_secs(10), server_task)
+            .await
+            .map_err(|_elapsed| "server did not stop after exit".to_string())?
+            .map_err(|err| format!("server task failed: {err}"))?;
+        Ok(())
+    })
 }
 
 #[test]
@@ -7143,9 +7412,11 @@ fn diagnostic_for_finding_measures_saved_prefix_in_negotiated_encoding() -> Resu
             std::slice::from_ref(&finding),
             &crate::config::SeverityConfig::default(),
             true,
-            crate::config::LspDiagnosticProfile::Full,
-            None,
-            encoding,
+            FindingDiagnosticProjection::new(
+                crate::config::LspDiagnosticProfile::Full,
+                encoding,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
         )?;
         let diagnostic = grouped
             .values()
@@ -7620,14 +7891,17 @@ fn document_store_tracks_open_change_and_close() -> Result<(), String> {
     assert_eq!(opened.version, Some(1));
     assert_eq!(opened.text, "fn old() {}");
 
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn new() {}".to_string(),
-        }],
-    });
+    store.change(
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "fn new() {}".to_string(),
+            }],
+        },
+        &PositionEncodingKind::UTF16,
+    );
 
     let Some(changed) = store.documents.get(&uri) else {
         return Err("expected changed document".to_string());
@@ -7648,14 +7922,17 @@ fn document_store_creates_document_from_full_change_when_missing() -> Result<(),
     let uri = test_uri("file:///workspace/src/lib.rs")?;
     let mut store = DocumentStore::default();
 
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 7),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn discovered() {}".to_string(),
-        }],
-    });
+    store.change(
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 7),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "fn discovered() {}".to_string(),
+            }],
+        },
+        &PositionEncodingKind::UTF16,
+    );
 
     let Some(document) = store.documents.get(&uri) else {
         return Err("expected document from full change".to_string());
@@ -8146,6 +8423,16 @@ fn initialize_discloses_bounded_client_feature_profile_in_workspace_status() -> 
             work_done_progress: Some(true),
             ..tower_lsp_server::ls_types::WindowClientCapabilities::default()
         });
+        params.capabilities.workspace =
+            Some(tower_lsp_server::ls_types::WorkspaceClientCapabilities {
+                did_change_watched_files: Some(
+                    tower_lsp_server::ls_types::DidChangeWatchedFilesClientCapabilities {
+                        dynamic_registration: Some(true),
+                        relative_pattern_support: Some(true),
+                    },
+                ),
+                ..tower_lsp_server::ls_types::WorkspaceClientCapabilities::default()
+            });
         params.capabilities.experimental = Some(serde_json::json!({
             "riprEditor": {
                 "version": "0.10.0",
@@ -8172,6 +8459,10 @@ fn initialize_discloses_bounded_client_feature_profile_in_workspace_status() -> 
         assert_eq!(features["pull_diagnostics"], true);
         assert_eq!(features["work_done_progress"], true);
         assert_eq!(features["configuration_mode"], "initialization_only");
+        assert_eq!(features["watched_files_dynamic_registration"], true);
+        // #4896: whether diagnostics-input watchers anchor at the root is
+        // decided by this negotiated value, so status must disclose it.
+        assert_eq!(features["watched_files_relative_pattern_support"], true);
         assert_eq!(features["ripr_editor"]["version"], "0.10.0");
         assert_eq!(features["ripr_editor"]["guarded_test_edit"], true);
         assert_eq!(features["ripr_editor"]["command_count"], 1);
@@ -8227,6 +8518,8 @@ fn receipt_status_discloses_bounded_client_feature_profile() -> Result<(), Strin
             serde_json::json!(["status_notifications"])
         );
         assert_eq!(features["ripr_editor"], serde_json::Value::Null);
+        assert_eq!(features["watched_files_dynamic_registration"], false);
+        assert_eq!(features["watched_files_relative_pattern_support"], false);
         Ok(())
     })
 }
@@ -8302,6 +8595,11 @@ fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> 
             ))
             .await
             .map_err(|err| format!("initialize failed: {err}"))?;
+        if backend.selected_position_encoding_for_test().is_some() {
+            return Err(
+                "poisoned immutable client profile must not guess a position encoding".to_string(),
+            );
+        }
 
         // The store failure must surface through the blocking-failure
         // channel instead of leaving the pre-initialize profile beside
@@ -9686,6 +9984,98 @@ fn status_candidate_roots(status: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[test]
+fn workspace_folder_transitions_root_switch_reanchors_diagnostics_input_watchers()
+-> Result<(), String> {
+    // #4896: the diagnostics-input watchers are anchored at one root, so a
+    // root switch must release the old registration and anchor a new one
+    // at the new root; otherwise the new root's ledger and branch changes
+    // never refresh diagnostics.
+    run_workspace_folder_transitions_exchange(
+        "diagnostics-input watcher re-anchoring did not complete",
+        async {
+            let root_a = unique_lsp_test_root("wft-watch-reanchor-a")?;
+            let root_b = unique_lsp_test_root("wft-watch-reanchor-b")?;
+            let root_a_uri = file_uri_for_path(root_a.path())?;
+            let root_b_uri = file_uri_for_path(root_b.path())?;
+            let mut client = WorkspaceFolderTransitionsClient::spawn();
+            client
+                .initialize_with_capabilities(
+                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
+                    serde_json::json!({"workspace": {"didChangeWatchedFiles": {
+                        "dynamicRegistration": true,
+                        "relativePatternSupport": true
+                    }}}),
+                )
+                .await?;
+            let registrations =
+                read_and_answer_registrations(&mut client.reader, &mut client.writer, 2).await?;
+            let base_of = |registrations: &[serde_json::Value]| {
+                registrations
+                    .iter()
+                    .find(|registration| registration["id"] == "ripr-diagnostics-input-watch")
+                    .and_then(|registration| {
+                        registration["registerOptions"]["watchers"][0]["globPattern"]["baseUri"]
+                            .as_str()
+                            .map(str::to_string)
+                    })
+            };
+            if base_of(&registrations).as_deref() != Some(root_a_uri.as_str()) {
+                return Err(format!(
+                    "diagnostics watchers must start anchored at root A: {registrations:?}"
+                ));
+            }
+
+            let request = client
+                .send_folder_event(
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
+                )
+                .await?;
+            client
+                .answer_workspace_folders(
+                    &request,
+                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
+                )
+                .await?;
+
+            let unregistration = tokio::time::timeout(
+                Duration::from_secs(10),
+                read_lsp_request(&mut client.reader, "client/unregisterCapability"),
+            )
+            .await
+            .map_err(|_elapsed| "root switch left the root-A watchers registered".to_string())??;
+            if unregistration["params"]["unregisterations"]
+                != serde_json::json!([{
+                    "id": "ripr-diagnostics-input-watch",
+                    "method": "workspace/didChangeWatchedFiles"
+                }])
+            {
+                return Err(format!(
+                    "root switch must release only the diagnostics watchers: {unregistration}"
+                ));
+            }
+            write_lsp_message(
+                &mut client.writer,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": unregistration["id"].clone(),
+                    "result": null
+                }),
+            )
+            .await?;
+            let registrations =
+                read_and_answer_registrations(&mut client.reader, &mut client.writer, 1).await?;
+            if base_of(&registrations).as_deref() != Some(root_b_uri.as_str()) {
+                return Err(format!(
+                    "diagnostics watchers must re-anchor at root B: {registrations:?}"
+                ));
+            }
+            client.finish().await
+        },
+    )
 }
 
 #[test]
@@ -13123,7 +13513,7 @@ fn execute_command_collect_context_returns_agent_seam_packet_for_known_seam() ->
         let Some(packet) = packet else {
             return Err("expected seam packet".to_string());
         };
-        assert_eq!(packet["schema_version"], "0.4");
+        assert_eq!(packet["schema_version"], "0.5");
         assert_eq!(packet["packets_total"], 1);
         assert_eq!(packet["packets"][0]["seam_id"], seam_id);
         assert_eq!(
@@ -17540,6 +17930,97 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
 }
 
 #[tokio::test]
+async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarantine()
+-> Result<(), String> {
+    let fixture = quarantine_fixture("did-save-disowned")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    // The loopback client channel is bounded and nothing drains it in an
+    // in-process test, so client sends would block once it fills. Dropping
+    // the socket makes the server-to-client sends fail fast; the quarantine
+    // bookkeeping under test runs before and after each send regardless.
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture)?;
+
+    // A rejected incremental change (position past the line end) disowns the
+    // retained buffer and enters the fail-closed quarantine.
+    backend
+        .did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(fixture.uri_a.clone(), 2),
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position {
+                        line: 0,
+                        character: 500,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 501,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+        })
+        .await;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason)
+        != Some(crate::lsp::state::DocumentStalenessReason::InvalidIncrementalChange)
+    {
+        return Err("expected the invalid-change quarantine".to_string());
+    }
+
+    // includeText: false: didSave carries no text, so the server cannot
+    // observe the persisted bytes. It must adopt no save identity from the
+    // disowned buffer and hold the quarantine across both the save and the
+    // refresh commit the save schedules (#1746).
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier {
+                uri: fixture.uri_a.clone(),
+            },
+            text: None,
+        })
+        .await;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason)
+        != Some(crate::lsp::state::DocumentStalenessReason::InvalidIncrementalChange)
+    {
+        return Err("an unobserved save must keep the fail-closed quarantine".to_string());
+    }
+    if state.saved_digest.as_deref() != Some(content_digest(QUARANTINE_TEXT_A.as_bytes()).as_str())
+    {
+        return Err("saved identity must stay the persisted bytes".to_string());
+    }
+    commit_quarantine_snapshot(backend, &fixture)?;
+    let state = backend
+        .document_state_for_test(&fixture.uri_a)
+        .ok_or_else(|| "expected document state".to_string())?;
+    if state
+        .quarantine
+        .as_ref()
+        .map(|quarantine| quarantine.reason)
+        != Some(crate::lsp::state::DocumentStalenessReason::InvalidIncrementalChange)
+    {
+        return Err("refresh commit must not lift unknown buffer authority".to_string());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn save_with_unchanged_content_dedups_and_keeps_lifted_quarantine() -> Result<(), String> {
     let fixture = quarantine_fixture("save-unchanged-dedup")?;
     let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
@@ -19554,9 +20035,11 @@ fn profile_status(
             &findings,
             &crate::config::SeverityConfig::default(),
             true,
-            profile,
-            None,
-            &PositionEncodingKind::UTF16,
+            FindingDiagnosticProjection::new(
+                profile,
+                &PositionEncodingKind::UTF16,
+                &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            ),
         )?;
         let published = grouped.get(&uri).cloned().unwrap_or_default();
         let published_count = published.len();

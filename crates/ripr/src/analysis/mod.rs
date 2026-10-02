@@ -3,12 +3,14 @@ pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
+pub(crate) mod diagnostic_origin;
 mod diff;
 mod extract;
 mod facts;
+mod generated_rust_corpus;
 pub(crate) mod harness_projection;
 mod language;
-mod new_test_target;
+pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
@@ -67,10 +69,11 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 #[cfg(test)]
 pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::{
-    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages, ScopedClassifiedSeamInventory,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    inventory_changed_test_classified_seams_at_with_config_node,
-    inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
+    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, DiffScopeEvidenceStages,
+    ScopedClassifiedSeamInventory, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, inventory_changed_test_classified_seams_at_with_config_node,
+    inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
+    inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_staged_at_with_config, inventory_seams_at_with_config,
     workspace_cache_key_at_with_config,
@@ -79,6 +82,7 @@ pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
+pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::seeds_diff_probes;
@@ -563,6 +567,12 @@ pub struct PreviewLanguageAdvisory {
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,
+    /// How many of the `file_count` files are JavaScript-family sources
+    /// (`.js`, `.jsx`, `.mjs`, `.cjs`). The TypeScript adapter analyzes both
+    /// halves of the family under the `typescript` wire name, so this lets
+    /// prose call a JavaScript-only diff JavaScript (#4555). Always `0` for
+    /// other languages.
+    pub javascript_file_count: usize,
     /// Whether this preview adapter was configured and available for this
     /// analysis.
     ///
@@ -716,6 +726,8 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// Crate-private numeric diagnostic origins for Rust findings (#4464).
+    pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

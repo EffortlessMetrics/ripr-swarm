@@ -81,6 +81,7 @@ cargo xtask check-local-context
 cargo xtask check-network-policy
 cargo xtask check-no-panic-family [--propose]
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-positioning-language
 cargo xtask check-pr
 cargo xtask check-process-policy
@@ -127,6 +128,7 @@ cargo xtask lane1-evidence-audit
 cargo xtask lsp-cockpit-report
 cargo xtask lsp-performance-report
 cargo xtask markdown-links
+cargo xtask merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]
 cargo xtask metrics
 cargo xtask module-health [--threshold <n>]
 cargo xtask mutation-calibration [root] --mutants-json <path>
@@ -283,6 +285,12 @@ advisory and never updates the branch, comments, approves, or merges.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.
+
+`merge-queue capture` is the MQ0 read-only current-state receipt. It writes
+desired settings, live observation, apply-route capability, and rollback
+identity as separate facts under `--out` (default
+`target/ripr/reports/merge-queue`). Tests use `--input`; live mode uses GET-only
+`gh api` calls. It never applies settings or enables a queue.
 
 `suggested-fixes` writes `target/ripr/reports/suggested-fixes.patch` and
 `target/ripr/reports/suggested-fixes.md` with safe deterministic repair
@@ -575,6 +583,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
@@ -615,6 +624,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-index
 cargo xtask check-readme-state
 cargo xtask markdown-links
@@ -765,6 +775,7 @@ cargo xtask check-workspace-shape
 cargo xtask check-architecture
 cargo xtask check-public-api
 cargo xtask check-output-contracts
+cargo xtask check-identity-registry
 cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-readme-state

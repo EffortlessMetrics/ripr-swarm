@@ -266,6 +266,23 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     command
 }
 
+/// [`run_git_output_with_deadline`] with extra environment variables set on
+/// the child, for probes that must scope repository discovery (for example
+/// `GIT_CEILING_DIRECTORIES`).
+pub(crate) fn run_git_output_with_deadline_and_env(
+    root: &Path,
+    args: &[&str],
+    envs: &[(&str, &std::ffi::OsStr)],
+    timeout: Option<Duration>,
+) -> Result<Output, String> {
+    let describe = format!("git -C {} {:?}", root.display(), args);
+    let mut command = git_command(root, args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    collect_output_with_deadline(command, timeout, &describe)
+}
+
 /// Run Git through the shared deadline/process-tree authority while retaining
 /// at most `max_output_bytes` from each output stream.
 ///
@@ -623,7 +640,12 @@ pub(crate) fn poll_child(
                         describe,
                         "timeout",
                         ChildWait::TimedOut(format!(
-                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
+                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the \
+                             {timeout_ms}ms deadline (process terminated). Repair route: \
+                             raise or disable the git deadline (0 disables it) — \
+                             --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI \
+                             runs, the gitTimeoutMs initialization option for editor \
+                             sessions — then re-run."
                         )),
                         || child.terminate_tree(),
                     );
@@ -1288,6 +1310,27 @@ mod tests {
         if !err.contains("exceeded the 50ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
+            ));
+        }
+        // #4946(b): the timeout message names both deadline knobs and the
+        // 0-disables escape, matching diff_scope_oversized's in-message
+        // repair-route pattern — the error alone must be repairable. The
+        // same shared wait also serves the editor sidecar, whose deadline is
+        // configured by `gitTimeoutMs`, so the route names that knob too
+        // (#4946 review).
+        if !err.contains("--git-timeout") || !err.contains("RIPR_GIT_TIMEOUT") {
+            return Err(format!(
+                "timeout error should name the deadline knobs, got: {err}"
+            ));
+        }
+        if !err.contains("0 disables it") {
+            return Err(format!(
+                "timeout error should name the 0-disables escape, got: {err}"
+            ));
+        }
+        if !err.contains("gitTimeoutMs") {
+            return Err(format!(
+                "timeout error should name the editor-session deadline knob, got: {err}"
             ));
         }
         // Kill+reap proof without a wall-clock bound: drive the same

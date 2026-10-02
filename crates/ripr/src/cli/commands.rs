@@ -1,219 +1,23 @@
 use crate::analysis;
-use crate::app::agent_brief::{
-    AgentBriefChangedScope, AgentBriefPolicy, AgentBriefResolvedWorkingSet,
-    select_agent_brief_seams,
-};
 use crate::app::{self, CheckInput, Mode, OutputFormat};
-use crate::cli::commands_numeric::parse_positive_u64;
 use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
 };
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
-use crate::cli::commands_agent_support::{
-    agent_brief_lines_from_diff, agent_brief_owner_attribution_for_lines,
-};
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 
-const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
-
-fn record_review_comments_error(
-    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
-    receipt_path: &Path,
-    phase: &str,
-    error: String,
-) -> String {
-    receipt.failed(phase, &error);
-    match receipt.write_atomic(receipt_path) {
-        Ok(()) => error,
-        Err(receipt_error) => {
-            format!("{error}; failed to persist terminal receipt: {receipt_error}")
-        }
-    }
-}
-
-fn enforce_review_comments_deadline(
-    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
-    receipt_path: &Path,
-    started: Instant,
-    now: Instant,
-    timeout_ms: u64,
-    phase: &str,
-) -> Result<(), String> {
-    if now.saturating_duration_since(started) < Duration::from_millis(timeout_ms) {
-        return Ok(());
-    }
-    Err(record_review_comments_timeout(receipt, receipt_path, phase))
-}
-
-fn record_review_comments_timeout(
-    receipt: &mut output::review_comments_receipt::ReviewCommentsRunReceipt,
-    receipt_path: &Path,
-    phase: &str,
-) -> String {
-    receipt.limited_timeout(phase);
-    let error = format!("review-comments timed out during {phase}");
-    match receipt.write_atomic(receipt_path) {
-        Ok(()) => error,
-        Err(receipt_error) => {
-            format!("{error}; failed to persist terminal receipt: {receipt_error}")
-        }
-    }
-}
-
-fn load_review_comments_analysis_outcome(
-    path: Option<&Path>,
-    root: &Path,
-    base: &str,
-    diff_text: &str,
-) -> Result<Option<crate::analysis_outcome::AnalysisOutcome>, String> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
-        format!(
-            "review-comments --check-output {} is invalid: read failed: {error}",
-            path.display()
-        )
-    })?;
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
-        format!(
-            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
-            path.display()
-        )
-    })?;
-    let _producer_schema_version = value
-        .get("schema_version")
-        .and_then(serde_json::Value::as_str)
-        .filter(|version| !version.trim().is_empty())
-        .ok_or_else(|| {
-            format!(
-                "review-comments --check-output {} is invalid: missing producer schema_version",
-                path.display()
-            )
-        })?;
-    if value.get("tool").and_then(serde_json::Value::as_str) != Some("ripr") {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: producer tool must be ripr",
-            path.display()
-        ));
-    }
-    for field in ["mode", "root", "base"] {
-        if value
-            .get(field)
-            .and_then(serde_json::Value::as_str)
-            .is_none()
-        {
-            return Err(format!(
-                "review-comments --check-output {} is invalid: producer envelope is missing string field {field}",
-                path.display()
-            ));
-        }
-    }
-    if value.get("root").and_then(serde_json::Value::as_str)
-        != Some(output::outcome::display_path(root).as_str())
-    {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: producer root does not match requested root",
-            path.display()
-        ));
-    }
-    if value.get("base").and_then(serde_json::Value::as_str) != Some(base) {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: producer base does not match requested base",
-            path.display()
-        ));
-    }
-    if !value
-        .get("summary")
-        .is_some_and(serde_json::Value::is_object)
-        || !value
-            .get("findings")
-            .is_some_and(serde_json::Value::is_array)
-    {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: producer envelope requires summary and findings",
-            path.display()
-        ));
-    }
-    let Some(envelope) = value.get("analysis_outcome") else {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: missing analysis_outcome",
-            path.display()
-        ));
-    };
-    if envelope.is_null() {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: analysis_outcome is null",
-            path.display()
-        ));
-    }
-    let declared_complete = envelope
-        .get("analysis_complete")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or_else(|| {
-            format!(
-                "review-comments --check-output {} is invalid: analysis_complete is missing or not boolean",
-                path.display()
-            )
-        })?;
-    let outcome = envelope.get("outcome").cloned().ok_or_else(|| {
-        format!(
-            "review-comments --check-output {} is invalid: analysis_outcome.outcome is missing",
-            path.display()
-        )
-    })?;
-    let outcome: crate::analysis_outcome::AnalysisOutcome =
-        serde_json::from_value(outcome).map_err(|error| {
-            format!(
-                "review-comments --check-output {} is invalid: typed outcome failed validation: {error}",
-                path.display()
-            )
-        })?;
-    let expected_input_identity = format!(
-        "sha256:{}",
-        Sha256::digest(diff_text.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    );
-    if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: producer input identity does not match the requested diff",
-            path.display()
-        ));
-    }
-    if outcome
-        .identity
-        .base_revision
-        .as_deref()
-        .is_some_and(|revision| revision != base)
-    {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: typed outcome base revision does not match requested base",
-            path.display()
-        ));
-    }
-    if declared_complete != outcome.kind.is_complete() {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: analysis_complete does not match typed outcome kind",
-            path.display()
-        ));
-    }
-    Ok(Some(outcome))
-}
-
 #[path = "commands/agent.rs"]
 mod agent;
+#[path = "commands/agent_card.rs"]
+mod agent_card;
 #[path = "commands/agent_dispatch.rs"]
 mod agent_dispatch;
 #[path = "commands/agent_gap_packet.rs"]
@@ -233,7 +37,7 @@ mod receipt_command;
 #[path = "commands/swarm/mod.rs"]
 mod swarm_command;
 
-pub(super) use agent::agent;
+pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
 // suggestions mine the same text `--help` prints.
@@ -282,6 +86,24 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
     })
 }
 
+fn append_jsonl_record(path: &Path, record: &str) -> Result<(), String> {
+    output::file_write::append_line(path, record).map_err(|err| {
+        format!(
+            "append jsonl {} failed: {err}",
+            output::outcome::display_path(path)
+        )
+    })
+}
+
+fn maybe_append_jsonl(path: Option<&Path>, record: &str) -> Result<(), String> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    append_jsonl_record(path, record)?;
+    println!("Appended {}", path.display());
+    Ok(())
+}
+
 #[path = "commands/baseline.rs"]
 mod baseline;
 pub(super) use baseline::baseline;
@@ -289,6 +111,10 @@ pub(super) use baseline::baseline;
 #[path = "commands/check.rs"]
 mod check;
 pub(super) use check::check;
+
+#[path = "commands/review_comments.rs"]
+mod review_comments;
+pub(super) use review_comments::review_comments;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
@@ -302,7 +128,14 @@ pub(super) use gate::gate;
 mod init;
 pub(super) use init::init;
 #[cfg(test)]
-use init::{generated_github_actions_workflow, parse_init_options};
+use init::parse_init_options;
+
+// The generated `ripr init --ci github` workflow template lives beside the
+// init command; its tests here pin rendered placeholders against it.
+#[path = "commands/init_workflow.rs"]
+mod init_workflow;
+#[cfg(test)]
+use init_workflow::generated_github_actions_workflow;
 
 #[path = "commands/pilot.rs"]
 mod pilot;
@@ -401,10 +234,6 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     println!("Wrote {}", options.out.display());
     println!("Wrote {}", options.out_md.display());
     Ok(())
-}
-
-pub(super) fn review_comments(args: &[String]) -> Result<(), String> {
-    review_comments_with_diff_loader(args, load_review_comments_diff)
 }
 
 pub(super) fn zero(args: &[String]) -> Result<(), String> {
@@ -945,6 +774,10 @@ fn pr_evidence_ledger_record(args: &[String]) -> Result<(), String> {
     let rendered_md = output::pr_evidence_ledger::render_pr_evidence_ledger_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
+    maybe_append_jsonl(
+        options.out_jsonl.as_deref(),
+        &output::pr_evidence_ledger::render_pr_evidence_ledger_jsonl_record(&report)?,
+    )?;
     println!("Wrote {}", options.out.display());
     println!("Wrote {}", options.out_md.display());
     Ok(())
@@ -1759,10 +1592,11 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
 }
 
 fn parse_calibrate_format(value: &str) -> Result<CalibrateFormat, String> {
+    const ACCEPTED: &[&str] = &["md", "markdown", "text", "json"];
     match value {
         "md" | "markdown" | "text" => Ok(CalibrateFormat::Markdown),
         "json" => Ok(CalibrateFormat::Json),
-        _ => Err(format!("unknown calibrate format {value:?}")),
+        _ => Err(unknown_value("calibrate format", value, ACCEPTED)),
     }
 }
 
@@ -1891,87 +1725,6 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
     })
 }
 
-fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOptions, String> {
-    let mut root = PathBuf::from(".");
-    let mut base: Option<String> = None;
-    let mut head: Option<String> = None;
-    let mut gap_ledger = None;
-    let mut check_output = None;
-    let mut out = PathBuf::from("target/ripr/review/comments.json");
-    let mut timeout_ms = DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS;
-
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--root" => {
-                i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
-            }
-            "--base" => {
-                i += 1;
-                let value = expect_value(args, i, "--base")?;
-                if value.trim().is_empty() {
-                    return Err("review-comments --base requires a non-empty revision".to_string());
-                }
-                base = Some(value.to_string());
-            }
-            "--head" => {
-                i += 1;
-                let value = expect_value(args, i, "--head")?;
-                if value.trim().is_empty() {
-                    return Err("review-comments --head requires a non-empty revision".to_string());
-                }
-                head = Some(value.to_string());
-            }
-            "--gap-ledger" => {
-                i += 1;
-                let value = expect_value(args, i, "--gap-ledger")?;
-                if value.trim().is_empty() {
-                    return Err(
-                        "review-comments --gap-ledger requires a non-empty path".to_string()
-                    );
-                }
-                gap_ledger = Some(PathBuf::from(value));
-            }
-            "--check-output" => {
-                i += 1;
-                let value = expect_value(args, i, "--check-output")?;
-                if value.trim().is_empty() {
-                    return Err(
-                        "review-comments --check-output requires a non-empty path".to_string()
-                    );
-                }
-                check_output = Some(PathBuf::from(value));
-            }
-            "--out" => {
-                i += 1;
-                let value = expect_value(args, i, "--out")?;
-                if value.trim().is_empty() {
-                    return Err("review-comments --out requires a non-empty path".to_string());
-                }
-                out = PathBuf::from(value);
-            }
-            "--timeout-ms" => {
-                i += 1;
-                timeout_ms =
-                    parse_positive_u64(expect_value(args, i, "--timeout-ms")?, "--timeout-ms")?;
-            }
-            other => return Err(unknown_argument("review-comments", other)),
-        }
-        i += 1;
-    }
-
-    Ok(ReviewCommentsOptions {
-        root,
-        base: base.ok_or_else(|| "review-comments requires --base <sha>".to_string())?,
-        head: head.ok_or_else(|| "review-comments requires --head <sha>".to_string())?,
-        gap_ledger,
-        check_output,
-        out,
-        timeout_ms,
-    })
-}
-
 fn parse_ripr_zero_status_options(args: &[String]) -> Result<RiprZeroStatusOptions, String> {
     let mut baseline = None;
     let mut delta = None;
@@ -2055,6 +1808,7 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
     let mut history = None;
     let mut out = PathBuf::from(output::pr_evidence_ledger::DEFAULT_PR_EVIDENCE_LEDGER_OUT);
     let mut out_md = PathBuf::from(output::pr_evidence_ledger::DEFAULT_PR_EVIDENCE_LEDGER_MD_OUT);
+    let mut out_jsonl = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -2169,6 +1923,15 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
                 i += 1;
                 out_md = non_empty_path_arg(args, i, "--out-md", "pr-ledger record")?;
             }
+            "--out-jsonl" => {
+                i += 1;
+                out_jsonl = Some(non_empty_path_arg(
+                    args,
+                    i,
+                    "--out-jsonl",
+                    "pr-ledger record",
+                )?);
+            }
             other => return Err(unknown_argument("pr-ledger record", other)),
         }
         i += 1;
@@ -2184,6 +1947,34 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
             "pr-ledger record requires at least one of --gate, --baseline-delta, --zero-status, --pr-guidance, or --gap-ledger"
                 .to_string(),
         );
+    }
+
+    if let Some(jsonl) = out_jsonl.as_ref() {
+        let mut forbidden = vec![&out, &out_md];
+        for input in [
+            gate.as_ref(),
+            baseline_delta.as_ref(),
+            zero_status.as_ref(),
+            pr_guidance.as_ref(),
+            gap_ledger.as_ref(),
+            recommendation_calibration.as_ref(),
+            agent_receipt.as_ref(),
+            coverage.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            forbidden.push(input);
+        }
+        if forbidden
+            .iter()
+            .any(|path| output::path::same_output_leaf(jsonl, path))
+        {
+            return Err(
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
+                    .to_string(),
+            );
+        }
     }
 
     Ok(PrEvidenceLedgerOptions {
@@ -2203,6 +1994,7 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
         history,
         out,
         out_md,
+        out_jsonl,
     })
 }
 
@@ -3277,35 +3069,12 @@ fn non_empty_string_arg(
 }
 
 fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
+    const ACCEPTED: &[&str] = &["md", "markdown", "text", "json"];
     match value {
         "md" | "markdown" | "text" => Ok(OutcomeFormat::Markdown),
         "json" => Ok(OutcomeFormat::Json),
-        _ => Err(format!("unknown outcome format {value:?}")),
+        _ => Err(unknown_value("outcome format", value, ACCEPTED)),
     }
-}
-
-/// Review-comments diff through the shared range authority (#4538): the base
-/// and head are verified like `ripr check` verifies its base, and the range
-/// uses the pinned diff presentation, so ambient `color.diff` or
-/// `diff.submodule` config cannot empty or widen the changed-line set.
-fn load_review_comments_diff(root: &Path, base: &str, head: &str) -> Result<String, String> {
-    let base = analysis::resolve_effective_base(
-        root,
-        Some(base),
-        analysis::cancellation::remaining_budget(),
-    )?;
-    analysis::load_diff_range_with_deadline(
-        root,
-        &base,
-        head,
-        analysis::cancellation::remaining_budget(),
-    )
-}
-
-fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
-    let mut path = json_path.to_path_buf();
-    path.set_extension("md");
-    path
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3711,18 +3480,11 @@ pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    struct OwnedDeadlineFixture(PathBuf);
-    impl Drop for OwnedDeadlineFixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
     use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
     use crate::output::first_pr::{
         MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
         REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
     };
-    use sha2::{Digest, Sha256};
 
     pub(super) fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -4519,6 +4281,7 @@ mod tests {
                 limit_info.as_ref(),
                 None,
                 None,
+                None,
                 &context,
             )?;
         let repo_exposure = dir.join("repo-exposure.json");
@@ -4975,210 +4738,6 @@ mod tests {
     }
 
     #[test]
-    fn review_comments_parses_required_revisions_and_out() {
-        assert_eq!(
-            parse_review_comments_options(&args(&[
-                "--root",
-                "repo",
-                "--base",
-                "origin/main",
-                "--head",
-                "HEAD",
-                "--out",
-                "target/ripr/review/comments.json",
-            ])),
-            Ok(ReviewCommentsOptions {
-                root: PathBuf::from("repo"),
-                base: "origin/main".to_string(),
-                head: "HEAD".to_string(),
-                gap_ledger: None,
-                check_output: None,
-                out: PathBuf::from("target/ripr/review/comments.json"),
-                timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
-            })
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&[
-                "--base",
-                "origin/main",
-                "--head",
-                "HEAD",
-                "--gap-ledger",
-                "target/ripr/reports/gap-decision-ledger.json",
-            ])),
-            Ok(ReviewCommentsOptions {
-                root: PathBuf::from("."),
-                base: "origin/main".to_string(),
-                head: "HEAD".to_string(),
-                gap_ledger: Some(PathBuf::from(
-                    "target/ripr/reports/gap-decision-ledger.json"
-                )),
-                check_output: None,
-                out: PathBuf::from("target/ripr/review/comments.json"),
-                timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
-            })
-        );
-    }
-
-    #[test]
-    fn review_comments_requires_base_and_head() {
-        assert_eq!(
-            parse_review_comments_options(&args(&["--head", "HEAD"])),
-            Err("review-comments requires --base <sha>".to_string())
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&["--base", "main"])),
-            Err("review-comments requires --head <sha>".to_string())
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&["--base"])),
-            Err("missing value for --base".to_string())
-        );
-    }
-
-    #[test]
-    fn review_comments_rejects_empty_values_and_unknown_args() {
-        assert_eq!(
-            parse_review_comments_options(&args(&["--base", "", "--head", "HEAD"])),
-            Err("review-comments --base requires a non-empty revision".to_string())
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&["--base", "main", "--head", ""])),
-            Err("review-comments --head requires a non-empty revision".to_string())
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&[
-                "--base", "main", "--head", "HEAD", "--out", "",
-            ])),
-            Err("review-comments --out requires a non-empty path".to_string())
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&[
-                "--base",
-                "main",
-                "--head",
-                "HEAD",
-                "--gap-ledger",
-                "",
-            ])),
-            Err("review-comments --gap-ledger requires a non-empty path".to_string())
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&[
-                "--base",
-                "main",
-                "--head",
-                "HEAD",
-                "--check-output",
-                "",
-            ])),
-            Err("review-comments --check-output requires a non-empty path".to_string())
-        );
-        assert_eq!(
-            parse_review_comments_options(&args(&["--base", "main", "--head", "HEAD", "--bad"])),
-            Err(
-                "unknown review-comments argument \"--bad\". Run `ripr review-comments --help`."
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn review_comments_loads_typed_outcome_from_check_artifact() -> Result<(), String> {
-        let root = unique_command_test_dir("review-comments-check-output");
-        std::fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
-        let path = root.join("check.json");
-        let diff_text = "fixture diff";
-        let input_identity = format!(
-            "sha256:{}",
-            Sha256::digest(diff_text.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-        );
-        let mut artifact = serde_json::json!({
-            "schema_version": "0.2",
-            "tool": "ripr",
-            "mode": "draft",
-            "root": ".",
-            "base": "main",
-            "summary": {},
-            "findings": [],
-            "analysis_outcome": {
-                "analysis_complete": false,
-                "outcome": {
-                    "schema_version": "0.1",
-                    "kind": "partial_with_limitations",
-                    "identity": {
-                        "repository_identity": null,
-                        "root_identity": null,
-                        "config_identity": null,
-                        "base_revision": "main",
-                        "input_identity": input_identity,
-                        "snapshot_identity": null,
-                        "git_candidate_subject": null
-                    },
-                    "counts": {
-                        "changed_file_count": 0,
-                        "changed_line_count": 0,
-                        "candidate_line_count": 0,
-                        "probe_count": 0,
-                        "finding_count": 0
-                    },
-                    "limitations": [{
-                        "kind": "producer_timeout",
-                        "producer_stage": "analysis_pipeline",
-                        "path": null,
-                        "affected_items": null,
-                        "bounded_detail": null,
-                        "recovery": {
-                            "kind": "retry",
-                            "detail": "rerun the producer"
-                        }
-                    }],
-                    "claim_boundary": crate::analysis_outcome::ANALYSIS_OUTCOME_CLAIM_BOUNDARY
-                }
-            }
-        });
-        std::fs::write(
-            &path,
-            serde_json::to_vec(&artifact).map_err(|err| err.to_string())?,
-        )
-        .map_err(|err| format!("write check artifact: {err}"))?;
-        let outcome =
-            load_review_comments_analysis_outcome(Some(&path), Path::new("."), "main", diff_text)?
-                .ok_or_else(|| "expected typed outcome".to_string())?;
-        assert_eq!(outcome.kind.as_str(), "partial_with_limitations");
-        assert_eq!(outcome.limitations[0].recovery.kind.as_str(), "retry");
-        artifact["analysis_outcome"]["analysis_complete"] = serde_json::json!(true);
-        std::fs::write(
-            &path,
-            serde_json::to_vec(&artifact).map_err(|err| err.to_string())?,
-        )
-        .map_err(|err| format!("rewrite mismatched check artifact: {err}"))?;
-        let mismatch = match load_review_comments_analysis_outcome(
-            Some(&path),
-            Path::new("."),
-            "main",
-            diff_text,
-        ) {
-            Ok(_) => return Err("mismatched completeness must fail closed".to_string()),
-            Err(error) => error,
-        };
-        assert!(mismatch.contains("does not match typed outcome kind"));
-        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
-        Ok(())
-    }
-
-    #[test]
-    fn review_comments_markdown_path_replaces_json_extension() {
-        assert_eq!(
-            review_comments_markdown_path(Path::new("target/ripr/review/comments.json")),
-            PathBuf::from("target/ripr/review/comments.md")
-        );
-    }
-
-    #[test]
     fn pr_review_bare_dispatches_to_front_panel() {
         // Bare `ripr pr-review` is the `front-panel` alias (#2013).
         assert_eq!(
@@ -5483,6 +5042,7 @@ mod tests {
                 pr_number: Some("123".to_string()),
                 out: PathBuf::from("target/ripr/reports/policy-history.json"),
                 out_md: PathBuf::from("target/ripr/reports/policy-history.md"),
+                out_jsonl: None,
             })
         );
         assert_eq!(
@@ -5499,6 +5059,76 @@ mod tests {
                 "unknown policy history argument \"--bad\". Run `ripr policy history --help`."
                     .to_string()
             )
+        );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--out-jsonl",
+                ".ripr/policy-history.jsonl",
+            ])),
+            Ok(PolicyHistoryOptions {
+                root: ".".to_string(),
+                current: PathBuf::from("ops.json"),
+                history: None,
+                commit: None,
+                pr_number: None,
+                out: PathBuf::from(output::policy_history::DEFAULT_POLICY_HISTORY_OUT),
+                out_md: PathBuf::from(output::policy_history::DEFAULT_POLICY_HISTORY_MD_OUT),
+                out_jsonl: Some(PathBuf::from(".ripr/policy-history.jsonl")),
+            })
+        );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--out",
+                "policy-history.json",
+                "--out-jsonl",
+                "policy-history.json",
+            ])),
+            Err(
+                "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--out",
+                "./policy-history.json",
+                "--out-jsonl",
+                "policy-history.json",
+            ])),
+            Err(
+                "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--out-jsonl",
+                "ops.json",
+            ])),
+            Err(
+                "policy history --out-jsonl must not be the same path as --out, --out-md, or --current"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_history_options(&args(&[
+                "--current",
+                "ops.json",
+                "--history",
+                ".ripr/policy-history.jsonl",
+                "--out-jsonl",
+                ".ripr/policy-history.jsonl",
+            ]))
+            .map(|options| options.out_jsonl),
+            Ok(Some(PathBuf::from(".ripr/policy-history.jsonl")))
         );
     }
 
@@ -5890,6 +5520,158 @@ mod tests {
             std::fs::read_to_string(&history).map_err(|err| format!("read history: {err}"))?,
             history_text
         );
+        assert!(
+            !dir.join("produced.jsonl").exists(),
+            "default policy history must not write JSONL without --out-jsonl"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove history dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn policy_history_out_jsonl_is_opt_in_and_feeds_non_null_trend() -> Result<(), String> {
+        let dir = unique_command_test_dir("policy-history-jsonl");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create history dir: {err}"))?;
+        let current = dir.join("policy-operations.json");
+        let jsonl = dir.join("policy-history.jsonl");
+        let first_out = dir.join("first.json");
+        let first_md = dir.join("first.md");
+        let second_out = dir.join("second.json");
+        let second_md = dir.join("second.md");
+        std::fs::write(
+            &current,
+            r#"{
+              "schema_version": "0.1",
+              "kind": "policy_operations",
+              "generated_at": "unix_ms:10",
+              "current_policy_ceiling": "ready_for_acknowledgeable",
+              "safe_to_promote_to": [
+                {"mode": "visible-only", "allowed_now": true, "reason": "ok", "source_artifacts": []},
+                {"mode": "acknowledgeable", "allowed_now": true, "reason": "ok", "source_artifacts": []}
+              ],
+              "not_safe_to_promote_to": [],
+              "promotion_blockers": [],
+              "input_artifacts": [
+                {"kind":"baseline_delta","path":"baseline.json","status":"read"},
+                {"kind":"waiver_aging","path":"waiver.json","status":"read"},
+                {"kind":"suppression_health","path":"suppression.json","status":"read"},
+                {"kind":"recommendation_calibration","path":"recommendation.json","status":"omitted"}
+              ],
+              "current": {
+                "new_policy_eligible_count": 1,
+                "waiver_count": 2,
+                "stale_suppression_count": 0,
+                "baseline_still_present": 4,
+                "baseline_resolved": 1
+              }
+            }"#,
+        )
+        .map_err(|err| format!("write current: {err}"))?;
+
+        policy(&args(&[
+            "history",
+            "--current",
+            &current.display().to_string(),
+            "--commit",
+            "HEAD",
+            "--pr-number",
+            "1",
+            "--out",
+            &first_out.display().to_string(),
+            "--out-md",
+            &first_md.display().to_string(),
+            "--out-jsonl",
+            &jsonl.display().to_string(),
+        ]))?;
+
+        let first_json =
+            std::fs::read_to_string(&first_out).map_err(|err| format!("read first json: {err}"))?;
+        assert!(
+            first_json.contains("\"history_not_supplied\"")
+                || first_json.contains("\"direction\": \"unknown\""),
+            "first snapshot without history stays unknown: {first_json}"
+        );
+        let produced =
+            std::fs::read_to_string(&jsonl).map_err(|err| format!("read produced jsonl: {err}"))?;
+        let first_line = produced
+            .lines()
+            .next()
+            .ok_or_else(|| "produced jsonl must have one line".to_string())?;
+        assert!(
+            !first_line.contains("\"kind\""),
+            "policy history jsonl is a snapshot, not the full report: {first_line}"
+        );
+
+        policy(&args(&[
+            "history",
+            "--current",
+            &current.display().to_string(),
+            "--history",
+            &jsonl.display().to_string(),
+            "--commit",
+            "HEAD",
+            "--pr-number",
+            "2",
+            "--out",
+            &second_out.display().to_string(),
+            "--out-md",
+            &second_md.display().to_string(),
+            "--out-jsonl",
+            &jsonl.display().to_string(),
+        ]))?;
+
+        let second_json = std::fs::read_to_string(&second_out)
+            .map_err(|err| format!("read second json: {err}"))?;
+        assert!(
+            second_json.contains("\"entries\": 2"),
+            "history from --out-jsonl must populate entries: {second_json}"
+        );
+        assert!(
+            second_json.contains("\"direction\": \"unchanged\""),
+            "supplied history must populate trend, not unknown: {second_json}"
+        );
+        let appended =
+            std::fs::read_to_string(&jsonl).map_err(|err| format!("read appended jsonl: {err}"))?;
+        let lines: Vec<&str> = appended.lines().filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines.len(), 2, "second --out-jsonl must append: {appended}");
+        assert_eq!(
+            lines[0], first_line,
+            "append must preserve the prior record"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove history dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn policy_history_out_jsonl_refuses_unavailable_current() -> Result<(), String> {
+        let dir = unique_command_test_dir("policy-history-jsonl-refuse");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create history dir: {err}"))?;
+        let current = dir.join("missing-policy-operations.json");
+        let jsonl = dir.join("policy-history.jsonl");
+        let out = dir.join("policy-history.json");
+        let out_md = dir.join("policy-history.md");
+        let error = match policy(&args(&[
+            "history",
+            "--current",
+            &current.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+            "--out-jsonl",
+            &jsonl.display().to_string(),
+        ])) {
+            Err(error) => error,
+            Ok(()) => return Err("unavailable current must refuse --out-jsonl".to_string()),
+        };
+        assert!(
+            error.contains("refuses to append"),
+            "expected refuse error, got {error}"
+        );
+        assert!(
+            !jsonl.exists(),
+            "unavailable current must not produce a durable JSONL line"
+        );
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove history dir: {err}"))?;
         Ok(())
     }
@@ -6224,6 +6006,7 @@ language = "rust"
                 history: Some(PathBuf::from(".ripr/pr-evidence-ledger.jsonl")),
                 out: PathBuf::from("target/ripr/reports/pr-evidence-ledger.json"),
                 out_md: PathBuf::from("target/ripr/reports/pr-evidence-ledger.md"),
+                out_jsonl: None,
             })
         );
     }
@@ -6300,6 +6083,98 @@ language = "rust"
                 "unknown pr-ledger record argument \"--bad\". Run `ripr pr-ledger record --help`."
                     .to_string()
             )
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--out-jsonl",
+                ".ripr/pr-evidence-ledger.jsonl",
+            ]))
+            .map(|options| options.out_jsonl),
+            Ok(Some(PathBuf::from(".ripr/pr-evidence-ledger.jsonl")))
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--out",
+                "ledger.json",
+                "--out-jsonl",
+                "ledger.json",
+            ])),
+            Err(
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--out",
+                "./ledger.json",
+                "--out-jsonl",
+                "ledger.json",
+            ])),
+            Err(
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--out-jsonl",
+                "gap-ledger.json",
+            ])),
+            Err(
+                "pr-ledger record --out-jsonl must not be the same path as --out, --out-md, or an evidence input"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_pr_evidence_ledger_options(&args(&[
+                "--pr-number",
+                "123",
+                "--base",
+                "base",
+                "--head",
+                "head",
+                "--gap-ledger",
+                "gap-ledger.json",
+                "--history",
+                ".ripr/pr-evidence-ledger.jsonl",
+                "--out-jsonl",
+                ".ripr/pr-evidence-ledger.jsonl",
+            ]))
+            .map(|options| options.out_jsonl),
+            Ok(Some(PathBuf::from(".ripr/pr-evidence-ledger.jsonl")))
         );
     }
 
@@ -6687,7 +6562,133 @@ language = "rust"
         assert!(md_text.contains("# RIPR PR Evidence Ledger"));
         assert!(md_text.contains("Gate: acknowledgeable / acknowledged"));
         assert!(md_text.contains("Gap decision ledger:"));
+        assert!(
+            !dir.join("produced.jsonl").exists(),
+            "default pr-ledger record must not write JSONL without --out-jsonl"
+        );
 
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove ledger dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn pr_evidence_ledger_out_jsonl_is_opt_in_and_feeds_non_null_history() -> Result<(), String> {
+        let dir = unique_command_test_dir("pr-evidence-ledger-jsonl");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create ledger dir: {err}"))?;
+        let out = dir.join("pr-evidence-ledger.json");
+        let out_md = dir.join("pr-evidence-ledger.md");
+        let jsonl = dir.join("pr-evidence-ledger.jsonl");
+        let second_out = dir.join("second.json");
+        let second_md = dir.join("second.md");
+        let gap_ledger = dir.join("gap-decision-ledger.json");
+        let fixture = repo_root().join("fixtures/boundary_gap/expected/pr-evidence-ledger/mixed");
+        std::fs::write(
+            &gap_ledger,
+            r#"{"gap_records":[{"gap_id":"gap:pr:cli","canonical_gap_id":"gap:rust:cli","kind":"MissingBoundaryAssertion","language":"rust","language_status":"stable","scope":"pr_local","gap_state":"actionable","policy_state":"new","repairability":"repairable","anchor":{"file":"src/cli.rs","line":7},"repair_route":{"route_kind":"AddBoundaryAssertion","assertion_shape":"assert!(cli())"},"verification_commands":["cargo xtask fixtures boundary_gap"]}]}"#,
+        )
+        .map_err(|err| format!("write gap ledger: {err}"))?;
+
+        pr_ledger(&args(&[
+            "record",
+            "--pr-number",
+            "1",
+            "--base",
+            "base",
+            "--head",
+            "head",
+            "--gate",
+            &fixture.join("gate-decision.json").display().to_string(),
+            "--baseline-delta",
+            &fixture
+                .join("baseline-debt-delta.json")
+                .display()
+                .to_string(),
+            "--zero-status",
+            &fixture.join("ripr-zero-status.json").display().to_string(),
+            "--pr-guidance",
+            &fixture.join("comments.json").display().to_string(),
+            "--gap-ledger",
+            &gap_ledger.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+            "--out-jsonl",
+            &jsonl.display().to_string(),
+        ]))?;
+
+        let first_json =
+            std::fs::read_to_string(&out).map_err(|err| format!("read first json: {err}"))?;
+        assert!(
+            first_json.contains("\"history\": null"),
+            "first record without --history stays null: {first_json}"
+        );
+        let produced =
+            std::fs::read_to_string(&jsonl).map_err(|err| format!("read produced jsonl: {err}"))?;
+        let first_line = produced
+            .lines()
+            .next()
+            .ok_or_else(|| "produced jsonl must have one line".to_string())?;
+        assert!(
+            first_line.contains("\"kind\":\"pr_evidence_ledger\""),
+            "pr-ledger jsonl is the compact record object: {first_line}"
+        );
+
+        pr_ledger(&args(&[
+            "record",
+            "--pr-number",
+            "2",
+            "--base",
+            "base",
+            "--head",
+            "head",
+            "--gate",
+            &fixture.join("gate-decision.json").display().to_string(),
+            "--baseline-delta",
+            &fixture
+                .join("baseline-debt-delta.json")
+                .display()
+                .to_string(),
+            "--zero-status",
+            &fixture.join("ripr-zero-status.json").display().to_string(),
+            "--pr-guidance",
+            &fixture.join("comments.json").display().to_string(),
+            "--gap-ledger",
+            &gap_ledger.display().to_string(),
+            "--history",
+            &jsonl.display().to_string(),
+            "--out",
+            &second_out.display().to_string(),
+            "--out-md",
+            &second_md.display().to_string(),
+            "--out-jsonl",
+            &jsonl.display().to_string(),
+        ]))?;
+
+        let second_json = std::fs::read_to_string(&second_out)
+            .map_err(|err| format!("read second json: {err}"))?;
+        assert!(
+            !second_json.contains("\"history\": null"),
+            "history from --out-jsonl must be non-null: {second_json}"
+        );
+        assert!(
+            second_json.contains("\"records\": 1"),
+            "history must count the appended record: {second_json}"
+        );
+        assert!(
+            second_json.contains("\"trend\": \"improving\"")
+                || second_json.contains("\"trend\": \"regressing\"")
+                || second_json.contains("\"trend\": \"stable\""),
+            "trend must be populated from produced history: {second_json}"
+        );
+        let appended =
+            std::fs::read_to_string(&jsonl).map_err(|err| format!("read appended jsonl: {err}"))?;
+        let lines: Vec<&str> = appended.lines().filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines.len(), 2, "second --out-jsonl must append: {appended}");
+        assert_eq!(
+            lines[0], first_line,
+            "append must preserve the prior record"
+        );
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove ledger dir: {err}"))?;
         Ok(())
     }
@@ -8877,6 +8878,7 @@ language = "rust"
         assert!(pr_ledger.contains("--agent-receipt target/ripr/reports/agent-receipt.json"));
         assert!(pr_ledger.contains("--coverage target/ripr/reports/coverage-summary.json"));
         assert!(pr_ledger.contains("--history .ripr/pr-evidence-ledger.jsonl"));
+        assert!(!pr_ledger.contains("--out-jsonl"));
         assert!(pr_ledger.contains("ledger_args+=(--label \"$label\")"));
         assert!(pr_ledger.contains("ripr \"${ledger_args[@]}\""));
 
@@ -8975,6 +8977,7 @@ language = "rust"
         assert!(policy_history.contains("--pr-number \"${{ github.event.number }}\""));
         assert!(policy_history.contains("--out target/ripr/reports/policy-history.json"));
         assert!(policy_history.contains("--out-md target/ripr/reports/policy-history.md"));
+        assert!(!policy_history.contains("--out-jsonl"));
         assert!(policy_history.contains("ripr \"${history_args[@]}\""));
 
         let promotion_packets = workflow_step(&workflow, "Render RIPR policy promotion packets");
@@ -9790,272 +9793,6 @@ language = "rust"
     #[test]
     fn lsp_version_returns_ok_with_short_flag() {
         assert_eq!(lsp(&args(&["-V"])), Ok(()));
-    }
-
-    #[test]
-    fn review_comments_canonical_deadline_cancellation_records_timeout() -> Result<(), String> {
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
-
-        // The owned CLI clock expires after canonical admission, so the
-        // installed token must interrupt real inventory work before its
-        // ordinary posthoc phase clock is consulted.
-        let fixture_path = unique_command_test_dir("review-canonical-cancellation");
-        std::fs::create_dir(&fixture_path)
-            .map_err(|error| format!("claim canonical fixture root: {error}"))?;
-        let fixture = OwnedDeadlineFixture(fixture_path);
-        let root = &fixture.0;
-        std::fs::create_dir_all(root.join("src"))
-            .map_err(|error| format!("create canonical fixture: {error}"))?;
-        std::fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"review_canonical_cancellation\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
-        )
-        .map_err(|error| format!("write canonical fixture manifest: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
-            .map_err(|error| format!("write canonical fixture source: {error}"))?;
-
-        let out = root.join("target/ripr/review/comments.json");
-        let calls = Arc::new(AtomicUsize::new(0));
-        let clock_calls = Arc::clone(&calls);
-        let start = Instant::now();
-        let result = review_comments_with_diff_loader_at(
-            &args(&[
-                "--root",
-                &root.display().to_string(),
-                "--base",
-                "BASE",
-                "--head",
-                "HEAD",
-                "--timeout-ms",
-                "1000",
-                "--out",
-                &out.display().to_string(),
-            ]),
-            |_root, _base, _head| {
-                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
-            },
-            move || {
-                let call = clock_calls.fetch_add(1, Ordering::SeqCst);
-                // start, diff, language facts, canonical admission remain
-                // unexpired; the next interior observation expires.
-                if call >= 4 {
-                    start + Duration::from_secs(1)
-                } else {
-                    start
-                }
-            },
-        );
-        if calls.load(Ordering::SeqCst) != 5 {
-            return Err(
-                "canonical work did not stop at its first expired interior checkpoint".to_string(),
-            );
-        }
-
-        let receipt_path = out.with_file_name("run-receipt.json");
-        let receipt: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&receipt_path)
-                .map_err(|error| format!("read canonical cancellation receipt: {error}"))?,
-        )
-        .map_err(|error| format!("parse canonical cancellation receipt: {error}"))?;
-        if receipt
-            .get("active_phase")
-            .and_then(serde_json::Value::as_str)
-            != Some("canonical_analysis")
-        {
-            return Err(format!(
-                "cancellation did not reach canonical inventory: {receipt}"
-            ));
-        }
-        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("limited_timeout") {
-            return Err(format!(
-                "deadline cancellation must be a typed timeout: {receipt}"
-            ));
-        }
-        if result != Err("review-comments timed out during canonical_analysis".to_string()) {
-            return Err(format!("unexpected canonical timeout result: {result:?}"));
-        }
-        if out.exists() || out.with_extension("md").exists() {
-            return Err("cancelled inventory published review artifacts".to_string());
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn review_comments_source_error_wins_over_later_clock_expiry() -> Result<(), String> {
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
-        let path = unique_command_test_dir("review-error-before-expiry");
-        std::fs::create_dir(&path).map_err(|error| format!("claim error fixture: {error}"))?;
-        let fixture = OwnedDeadlineFixture(path);
-        let out = fixture.0.join("comments.json");
-        let calls = Arc::new(AtomicUsize::new(0));
-        let owned_calls = Arc::clone(&calls);
-        let started = Instant::now();
-        let result = review_comments_with_diff_loader_at(
-            &args(&[
-                "--root",
-                &fixture.0.display().to_string(),
-                "--base",
-                "BASE",
-                "--head",
-                "HEAD",
-                "--timeout-ms",
-                "1000",
-                "--out",
-                &out.display().to_string(),
-            ]),
-            |_, _, _| Err("source failure before the next deadline observation".to_string()),
-            move || {
-                if owned_calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                    started
-                } else {
-                    started + Duration::from_secs(1)
-                }
-            },
-        );
-        if result != Err("source failure before the next deadline observation".to_string())
-            || calls.load(Ordering::SeqCst) != 1
-        {
-            return Err(
-                "ordinary source failure was replaced by a later deadline observation".to_string(),
-            );
-        }
-        let receipt: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(out.with_file_name("run-receipt.json"))
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("failed")
-            || receipt
-                .get("active_phase")
-                .and_then(serde_json::Value::as_str)
-                != Some("diff_discovery")
-            || out.exists()
-            || out.with_extension("md").exists()
-        {
-            return Err(format!(
-                "ordinary failure changed its receipt/output contract: {receipt}"
-            ));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn review_comments_diff_route_records_timeout_at_injected_deadline() -> Result<(), String> {
-        let root = unique_command_test_dir("review-comments-clock-diff");
-        std::fs::create_dir_all(root.join("src"))
-            .map_err(|err| format!("create fixture source: {err}"))?;
-        std::fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname = \"review_comments_clock_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-        )
-        .map_err(|err| format!("write fixture manifest: {err}"))?;
-        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
-            .map_err(|err| format!("write fixture source: {err}"))?;
-
-        let out = root.join("target/ripr/review/comments.json");
-        let start = Instant::now();
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let result = review_comments_with_diff_loader_at(
-            &args(&[
-                "--root",
-                &root.display().to_string(),
-                "--base",
-                "BASE",
-                "--head",
-                "HEAD",
-                "--timeout-ms",
-                "1000",
-                "--out",
-                &out.display().to_string(),
-            ]),
-            |_root, _base, _head| Ok(String::new()),
-            move || {
-                let call = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if call == 0 {
-                    start
-                } else {
-                    start + Duration::from_secs(1)
-                }
-            },
-        );
-        if result != Err("review-comments timed out during diff_discovery".to_string()) {
-            return Err(format!(
-                "diff route must expose the injected timeout: {result:?}"
-            ));
-        }
-
-        let receipt_path = out.with_file_name("run-receipt.json");
-        let receipt: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&receipt_path)
-                .map_err(|err| format!("read timeout receipt: {err}"))?,
-        )
-        .map_err(|err| format!("parse timeout receipt: {err}"))?;
-        if receipt["status"] != "limited_timeout" || receipt["active_phase"] != "diff_discovery" {
-            return Err(format!("unexpected diff timeout receipt: {receipt}"));
-        }
-        std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
-        Ok(())
-    }
-
-    #[test]
-    fn review_comments_gap_ledger_records_timeout_at_injected_deadline() -> Result<(), String> {
-        let root = unique_command_test_dir("review-comments-clock-gap-ledger");
-        std::fs::create_dir_all(&root).map_err(|err| format!("create fixture: {err}"))?;
-        let gap_ledger = root.join("gap-ledger.json");
-        let out = root.join("target/ripr/review/comments.json");
-        std::fs::write(&gap_ledger, r#"{"records":[]}"#)
-            .map_err(|err| format!("write gap ledger: {err}"))?;
-
-        let start = Instant::now();
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        let result = review_comments_with_diff_loader_at(
-            &args(&[
-                "--root",
-                &root.display().to_string(),
-                "--base",
-                "BASE",
-                "--head",
-                "HEAD",
-                "--gap-ledger",
-                &gap_ledger.display().to_string(),
-                "--timeout-ms",
-                "1000",
-                "--out",
-                &out.display().to_string(),
-            ]),
-            |_root, _base, _head| Err("diff loader must not run".to_string()),
-            move || {
-                let call = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if call == 0 {
-                    start
-                } else {
-                    start + Duration::from_secs(1)
-                }
-            },
-        );
-        if result != Err("review-comments timed out during configuration".to_string()) {
-            return Err(format!(
-                "gap-ledger route must expose the injected timeout: {result:?}"
-            ));
-        }
-
-        let receipt_path = out.with_file_name("run-receipt.json");
-        let receipt: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&receipt_path)
-                .map_err(|err| format!("read timeout receipt: {err}"))?,
-        )
-        .map_err(|err| format!("parse timeout receipt: {err}"))?;
-        if receipt["status"] != "limited_timeout" || receipt["active_phase"] != "configuration" {
-            return Err(format!("unexpected gap-ledger timeout receipt: {receipt}"));
-        }
-        std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
-        Ok(())
     }
 
     pub(super) fn outcome_before_json() -> &'static str {
