@@ -1022,10 +1022,9 @@ mod tests {
             expected.push((deep, content));
         }
         // A binary blob larger than the 64 KiB read chunk: the stream parser
-        // must not confuse content bytes with framing bytes.
-        let binary: Vec<u8> = (0..(1024 * 1024 + 13))
-            .map(|i| ((i * 31 + 7) % 251) as u8)
-            .collect();
+        // must not confuse content bytes with framing bytes. Every byte
+        // value cycles through (NULs and interior newlines included).
+        let binary: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024 + 13).collect();
         std::fs::write(guard.0.join("binary.bin"), &binary).map_err(|e| e.to_string())?;
         expected.push(("binary.bin".to_string(), binary));
         // An empty file: zero content bytes followed only by the framing

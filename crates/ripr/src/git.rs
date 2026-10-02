@@ -2323,7 +2323,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                     .ok_or_else(|| format!("ls-tree line without an object id: {line}"))?;
                 requested.push((object.to_string(), path.to_string()));
             }
-            let mut session = CatFileBatch::spawn(&root, Duration::from_secs(60))
+            let mut session = CatFileBatch::spawn(&root, Duration::from_mins(1))
                 .map_err(|err| err.to_string())?;
             for (object, path) in &requested {
                 let size = session
