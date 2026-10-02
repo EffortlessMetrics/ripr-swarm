@@ -208,12 +208,25 @@ typed reason and routes a repair, rather than being silently called covered.
 For Rust `return_value` evidence from a bare `assert_eq!`, execution and macro
 binding must be statically established before either token matching or an
 owner-return pin can credit that oracle (RIPR-SPEC-0197). Refused deferred,
-conditional or ambiguous assertion contexts are not weak protection: if no
+conditional, uncollected or ambiguous assertion contexts are not weak protection: if no
 other oracle remains, Observe and Discriminate are `no` and the class is
 `reachable_unrevealed`. That means no statically established oracle, not proof
 of runtime unreachability. Related-test provenance remains visible without an
 oracle strength. The headline confidence is the existing advisory stage score,
 not a calibrated probability or measured protection percentage.
+Test-build availability uses the shared cfg predicate authority and existing
+module provenance; unknown feature/target gates and raw attribute spellings remain
+non-confirming. Raw heads are refused in this private query; cached source-role
+classification is unchanged. Filtering
+an assertion cannot make a surviving unrelated oracle the test's sole assertion
+for a singleton heuristic.
+
+For Rust error paths, error observation and changed-reader/variant matching use
+the known assertion macros' operands, not diagnostic formatting arguments (#4748). Neither an
+error word in a message nor an error-valued formatting expression establishes an
+error discriminator. Canonical oracle extraction applies the same boundary so a
+diagnostic cannot manufacture a trusted error kind before reveal analysis.
+The complete assertion remains visible in the report for inspection.
 
 ### Identity beats token overlap
 

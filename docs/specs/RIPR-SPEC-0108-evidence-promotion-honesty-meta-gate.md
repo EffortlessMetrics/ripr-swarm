@@ -470,7 +470,7 @@ gate-specific artifacts.
 |---|---|---|---|---|
 | rust_semver_matches_greater_external_limitation | rust | `https://github.com/dtolnay/semver` | `2c18cc482244f4bb9cc65003b07426c18a79a190` | semver public API to internal transitive reach must disclose `rust_integration_public_api_path_unresolved` with exact limitation detail and route `analysis/rust-public-api-transitive-reach`, no verify/receipt commands, not clean or actionable |
 
-### Control cases (must_promote)
+### Control cases (including must_promote)
 
 | id | language | source artifact |
 |---|---|---|
@@ -485,6 +485,8 @@ gate-specific artifacts.
 | rust_owner_pin_token_overlap | rust | token-confirmation bypass control: exactly one finding, `must_not_promote`, `expected_class=reachable_unrevealed` |
 | rust_owner_pin_token_direct / rust_owner_pin_token_called_closure | rust | token-bearing positive controls: exactly one finding, `must_promote`, `expected_class=exposed` |
 | rust_owner_pin_no_assertion | rust | removal control: exactly one finding, `expected_class=reachable_unrevealed` |
+| rust_owner_pin_unknown_singleton | rust | original-cardinality control: refusing an equality cannot manufacture an Unknown-helper match; exactly one return-value finding remains `reachable_unrevealed` |
+| rust_owner_pin_nested_test / rust_owner_pin_cfg_false_module / rust_owner_pin_cfg_false_file / rust_owner_pin_cfg_attr_module / rust_owner_pin_out_of_line_cfg | rust | non-collectable test controls: one collected runtime smoke/outer test, one return-value finding, `expected_class=reachable_unrevealed` and `must_not_promote` |
 | ts_strong_oracle_control | typescript | typescript_strong_oracle |
 | ts_ava_t_is_exact_value | typescript | ts_runner_detect_ava_devdep (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |
 | ts_tape_equal_exact_value | typescript | typescript_tape_equal_oracle (`expected_oracle=exact_value/strong`, `expected_class=exposed`, no repair packet or receipt command) |

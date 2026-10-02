@@ -66,6 +66,12 @@ fn owner_pin_matched_static_and_runtime_controls() -> Result<(), String> {
         ("token_overlap", false),
         ("token_direct", true),
         ("token_called_closure", true),
+        ("unknown_singleton", false),
+        ("nested_test", false),
+        ("cfg_false_module", false),
+        ("cfg_false_file", false),
+        ("cfg_attr_module", false),
+        ("out_of_line_cfg", false),
     ] {
         let fixture = fixtures.join(format!("owner_return_pin_{case}"));
         let report = check_workspace(CheckInput {
@@ -352,6 +358,57 @@ fn owner_pin_refused_rows_do_not_crowd_out_admitted_oracles() -> Result<(), Stri
     );
     assert_eq!(json["findings"][0]["oracle_strength"], "strong");
     Ok(())
+}
+
+#[test]
+fn owner_pin_review_admission_controls() -> Result<(), String> {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let mut mismatches = Vec::new();
+    for case in [
+        "unknown_singleton",
+        "nested_test",
+        "cfg_false_module",
+        "cfg_false_file",
+        "cfg_attr_module",
+        "out_of_line_cfg",
+    ] {
+        let fixture = fixtures.join(format!("owner_return_pin_{case}"));
+        let report = check_workspace(CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 1, "{case}: nonempty unique subject");
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let finding = &json["findings"][0];
+        assert_eq!(
+            json["analysis_outcome"]["analysis_complete"], true,
+            "{case}"
+        );
+        if report.findings[0].class != ExposureClass::ReachableUnrevealed
+            || finding["ripr"]["observe"]["state"] != "no"
+            || finding["ripr"]["discriminate"]["state"] != "no"
+            || finding["oracle_strength"] != "none"
+        {
+            mismatches.push(format!(
+                "{case}: class={:?}, observe={}, discriminate={}, strength={}",
+                report.findings[0].class,
+                finding["ripr"]["observe"]["state"],
+                finding["ripr"]["discriminate"]["state"],
+                finding["oracle_strength"]
+            ));
+        }
+    }
+    if mismatches.is_empty() {
+        Ok(())
+    } else {
+        Err(mismatches.join("\n"))
+    }
 }
 
 /// Shared execution provenance is independent of the changed behavior's family.

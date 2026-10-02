@@ -6,6 +6,7 @@
 
 use super::parse_clean_source_file;
 use super::ra::{LineIndex, slice_macro_call_text, slice_text};
+use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
     ast::{self, HasArgList, HasAttrs, HasName},
@@ -18,6 +19,7 @@ type FunctionKey = (usize, usize, String);
 #[derive(Clone, Debug, Default)]
 pub(crate) struct OwnerPinAssertions {
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
+    module_declarations: BTreeMap<(usize, String), bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -28,6 +30,13 @@ struct FunctionAssertions {
 }
 
 impl OwnerPinAssertions {
+    pub(crate) fn admits_module_declaration(&self, line: usize, declaration: &str) -> bool {
+        self.module_declarations
+            .get(&(line, declaration.to_string()))
+            .copied()
+            .unwrap_or(false)
+    }
+
     pub(crate) fn admits(
         &self,
         function: (usize, usize, &str),
@@ -154,6 +163,29 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         return result;
     };
     let lines = LineIndex::new(source);
+    for module in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+    {
+        if module.item_list().is_some() {
+            continue;
+        }
+        let (Some(token), Some(name)) = (module.mod_token(), module.name()) else {
+            continue;
+        };
+        let key = (
+            lines.line(token.text_range().start()),
+            format!("mod {};", name.text()),
+        );
+        let admitted = supported_item_context(module.syntax());
+        result
+            .module_declarations
+            .entry(key)
+            .and_modify(|previous| *previous = false)
+            .or_insert(admitted);
+    }
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
     for function in parse
         .tree()
@@ -174,6 +206,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         *identities.entry(key.clone()).or_default() += 1;
         if function.async_token().is_some()
             || has_escape(body.syntax(), trusted)
+            || !supported_item_context(function.syntax())
             || function
                 .attrs()
                 .any(|attr| attr.simple_name().as_deref() != Some("test"))
@@ -237,6 +270,28 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         .functions
         .retain(|key, _| identities.get(key) == Some(&1));
     result
+}
+
+/// A libtest item cannot be nested in an executable body. Module/source
+/// attributes include inner attributes on ItemList, not only outer attrs.
+fn supported_item_context(item: &SyntaxNode) -> bool {
+    let mut source_file = false;
+    for (depth, node) in item.ancestors().enumerate() {
+        if depth > 0
+            && !ast::ItemList::can_cast(node.kind())
+            && !ast::Module::can_cast(node.kind())
+            && !ast::SourceFile::can_cast(node.kind())
+        {
+            return false;
+        }
+        if node.children().filter_map(ast::Attr::cast).any(|attr| {
+            attribute_test_build_availability(&attr.syntax().text().to_string()) != Some(true)
+        }) {
+            return false;
+        }
+        source_file |= ast::SourceFile::can_cast(node.kind());
+    }
+    source_file
 }
 
 fn has_escape(body: &SyntaxNode, trusted: &[&str]) -> bool {

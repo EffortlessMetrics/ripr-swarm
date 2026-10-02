@@ -492,9 +492,9 @@
           "name": "variable_binding_scrutinee_keeps_existing_weaker_meaning",
           "file": "tests/protocol.rs",
           "line": 25,
-          "oracle_strength": "medium",
-          "oracle_kind": "mock_expectation",
-          "oracle": "let result = expect_response(\"42|workspace/refresh\", \"42\");",
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
         }

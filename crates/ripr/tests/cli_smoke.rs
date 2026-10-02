@@ -3717,6 +3717,102 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     Ok(())
 }
 
+/// A statically admitted inline test is not an executable repair surface.
+/// The default card must disclose the same refusal as the Before phase,
+/// while a separate test file remains ready and can publish an attempt.
+#[test]
+fn agent_card_readiness_agrees_with_repair_target_admission()
+-> Result<(), Box<dyn std::error::Error>> {
+    for inline in [true, false] {
+        let root = unbuilt_repair_fixture(if inline {
+            "agent-card-inline-admission"
+        } else {
+            "agent-card-separate-admission"
+        })?;
+        if inline {
+            let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?.replace(
+                "use boundary_gap_fixture::discounted_total;",
+                "use super::discounted_total;",
+            );
+            let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
+            source.push_str(&format!("\n#[cfg(test)]\nmod tests {{\n{tests}\n}}\n"));
+            std::fs::write(root.join("src/lib.rs"), source)?;
+            std::fs::remove_file(root.join("tests/pricing.rs"))?;
+            run_git(&root, &["add", "src/lib.rs", "tests/pricing.rs"])?;
+            commit_repair_fixture(&root, &["-qm", "inline tests"])?;
+        }
+        let root_arg = root.display().to_string();
+        let card = run_ripr(&[
+            "agent",
+            "card",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            BOUNDARY_GAP_SEAM_ID,
+            "--json",
+        ]);
+        assert_success(&card);
+        let card: serde_json::Value = serde_json::from_slice(&card.stdout)?;
+        assert_eq!(card["subject"]["seam_id"], BOUNDARY_GAP_SEAM_ID);
+        assert_eq!(card["selected_target"]["kind"], "existing");
+        assert_eq!(
+            card["selected_target"]["file"],
+            if inline {
+                "src/lib.rs"
+            } else {
+                "tests/pricing.rs"
+            }
+        );
+        assert_eq!(card["readiness"]["repair_ready"], !inline, "{card:#}");
+        let before = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
+        if inline {
+            assert_failure(&before);
+            let blocker = card["exact_blocker"]
+                .as_str()
+                .ok_or("missing cage blocker")?;
+            assert!(blocker.contains("no selected edit target"), "{blocker}");
+            assert!(String::from_utf8_lossy(&before.stderr).contains(blocker));
+            let human = run_ripr(&[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                BOUNDARY_GAP_SEAM_ID,
+            ]);
+            assert_success(&human);
+            let human = String::from_utf8_lossy(&human.stdout);
+            assert!(
+                human.contains("repair_ready=false") && human.contains(blocker),
+                "{human}"
+            );
+            assert!(
+                card["readiness"]["missing_evidence"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(blocker)))
+            );
+            assert_eq!(card["allowed_files"], serde_json::json!([]));
+            assert_eq!(card["forbidden_files"], serde_json::json!(["src/lib.rs"]));
+            assert!(card["next_action"].is_null());
+            assert!(before.stdout.is_empty());
+            assert!(!String::from_utf8_lossy(&before.stderr).contains("before phase complete"));
+        } else {
+            assert_success(&before);
+            assert_eq!(
+                card["allowed_files"],
+                serde_json::json!(["tests/pricing.rs"])
+            );
+            assert_eq!(card["readiness"]["missing_evidence"], serde_json::json!([]));
+            let (attempt_id, manifest) = sole_repair_attempt(&root)?;
+            let before: serde_json::Value = serde_json::from_slice(&before.stdout)?;
+            assert_eq!(before["repair_attempt"]["attempt_id"], attempt_id);
+            assert_eq!(manifest["state"], "awaiting_edit");
+        }
+        std::fs::remove_dir_all(root)?;
+    }
+    Ok(())
+}
+
 /// The `unchanged_after_attempt` route is reachable only from a promotable
 /// receipt: a live verify pair, its analysis outcome, and a receipt bound to
 /// both (#4268). The committed unchanged-after-attempt receipt is
@@ -18514,6 +18610,126 @@ fn plus_help_exits_cleanly() {
     );
 }
 
+/// An exposure-only counter is not a complete, current RIPR+ quality result.
+/// Exercise the installed command and written receipt, not a fabricated gate.
+#[test]
+fn plus_partial_zero_cannot_be_used_as_a_current_quality_gate() -> Result<(), String> {
+    let root = unique_temp_workspace("plus-incomplete-zero");
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("README.md"), "quality receipt fixture\n")
+        .map_err(|error| error.to_string())?;
+    run_git(&root, &["add", "README.md"])?;
+    run_git(&root, &["commit", "-m", "candidate"])?;
+    for known in [0, 2] {
+        let summary = serde_json::json!({
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "basis": "canonical_actionable_gap",
+            "metadata": {"head": "unrelated-source-head", "root": "other-repository"},
+            "metrics": {
+                "unsuppressed_exposure_gaps": known,
+                "suppressed_exposure_gaps": 0,
+                "raw_seams": 8,
+                "grip_class": {"weakly_gripped": 5}
+            },
+            "reason_breakdown": {"gap_state": {"static_limitation": 6}},
+            "top_files": [],
+            // Unrecognized claims cannot promote this legacy input contract.
+            "qualification": {"complete": true, "zero_unresolved": true}
+        });
+        std::fs::write(root.join("summary.json"), summary.to_string())
+            .map_err(|error| error.to_string())?;
+        let composed = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["plus", "--repo-exposure-summary", "summary.json"],
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(
+            composed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&composed.stderr)
+        );
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/reports/ripr-plus.json"))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(receipt["status"], "indeterminate", "{receipt}");
+        assert!(receipt["unresolved"].is_null(), "{receipt}");
+        assert_eq!(receipt["known_actionable_unresolved"], known, "{receipt}");
+        assert_eq!(receipt["zero_unresolved_established"], false, "{receipt}");
+        assert!(
+            receipt["head"].is_null(),
+            "receipt must not bind unrelated evidence to HEAD: {receipt}"
+        );
+        assert_eq!(receipt["candidate_binding"], "not_established", "{receipt}");
+        let checked = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["plus", "--repo-exposure-summary", "summary.json", "--check"],
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(checked.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&checked.stderr).contains("zero is not established"));
+    }
+    let qualified = ripr::app::qualify_legacy_ripr_plus_receipt(serde_json::json!({
+        "status": "pass", "unresolved": 0, "head": "old-head", "warnings": []
+    }))?;
+    assert_eq!(
+        ripr::app::qualify_legacy_ripr_plus_receipt(qualified.clone())?,
+        qualified
+    );
+    assert_eq!(
+        ripr::app::qualify_legacy_ripr_plus_receipt(serde_json::json!({
+            "status": "pass", "unresolved": 0, "warnings": "malformed"
+        }))
+        .err()
+        .as_deref(),
+        Some("RIPR+ receipt warnings must be an array")
+    );
+    let ledger = include_str!(
+        "../../../fixtures/first_successful_pr/empty-diff/inputs/reports/gap-decision-ledger.json"
+    );
+    std::fs::write(root.join("ledger.json"), ledger).map_err(|error| error.to_string())?;
+    for (flag, file) in [
+        ("--gap-ledger", "ledger.json"),
+        ("--repo-exposure-summary", "broken.json"),
+    ] {
+        std::fs::write(root.join("broken.json"), "{broken").map_err(|error| error.to_string())?;
+        // A stale successful artifact must be replaced even on invalid input.
+        std::fs::write(
+            root.join("target/ripr/reports/ripr-plus.json"),
+            r#"{"status":"pass","unresolved":0,"head":"stale"}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["plus", flag, file, "--check"],
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(output.status.code(), Some(2));
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("target/ripr/reports/ripr-plus.json"))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(receipt["status"], "indeterminate");
+        assert!(receipt["head"].is_null() && receipt["unresolved"].is_null());
+        assert_eq!(receipt["zero_unresolved_established"], false);
+        let markdown = std::fs::read_to_string(root.join("target/ripr/reports/ripr-plus.md"))
+            .map_err(|error| error.to_string())?;
+        assert!(markdown.contains("| Unresolved | N/A"));
+        assert!(!markdown.contains("| Unresolved | 0 |"));
+    }
+    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// Build a real producer packet for a verify route and return (root, packet).
 ///
 /// The packet comes from `ripr agent packet --gap-ledger`, the canonical
@@ -20093,5 +20309,146 @@ fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Erro
         !stderr.contains("stdout failed") && !stderr.contains("Broken pipe"),
         "a closed reader must not produce an error report: {stderr}"
     );
+    Ok(())
+}
+
+#[test]
+fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("review-windows");
+    std::fs::create_dir_all(root.join("src"))?;
+    init_git_fixture_repo(&root)?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname=\"review_windows\"\nversion=\"0.0.0\"\nedition=\"2024\"\n",
+    )?;
+    let source = (0..40)
+        .map(|i| format!("pub fn boundary_{i}(n:i32)->bool {{ n >= 10 }}\n"))
+        .collect::<String>();
+    std::fs::write(root.join("src/lib.rs"), &source)?;
+    run_git(&root, &["add", "."])?;
+    run_git(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(root.join("src/lib.rs"), source.replace(">=", ">"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "change boundaries",
+        ],
+    )?;
+    let mut expected = None;
+    for width in ["1", "7", "32", "33"] {
+        let out = root.join("target").join("window/comments.json");
+        let output = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &[
+                "review-comments",
+                "--root",
+                ".",
+                "--base",
+                "HEAD^",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+            &[
+                ("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE", width),
+                ("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1"),
+            ],
+        )?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = (
+            std::fs::read(&out)?,
+            std::fs::read(out.with_extension("md"))?,
+        );
+        if let Some(ref expected) = expected {
+            assert_eq!(&bytes, expected);
+        } else {
+            expected = Some(bytes);
+        }
+        let trace = String::from_utf8(output.stderr)?;
+        let mut windows = 0;
+        for line in trace
+            .lines()
+            .filter(|line| line.contains("phase=review_evidence_window"))
+        {
+            windows += 1;
+            let counts = line
+                .split("_window_")
+                .nth(1)
+                .ok_or("missing window trace")?;
+            let (actual, rest) = counts
+                .split_once("_retained_")
+                .ok_or("missing retained trace")?;
+            assert!(actual.parse::<usize>()? <= width.parse::<usize>()?);
+            let retained = rest
+                .split_whitespace()
+                .next()
+                .ok_or("missing retained count")?
+                .parse::<usize>()?;
+            assert!(retained <= 10);
+        }
+        assert!(windows > 1, "fixture must span windows: {trace}");
+        let receipt: serde_json::Value = serde_json::from_slice(&std::fs::read(
+            out.parent()
+                .ok_or("output parent")?
+                .join("run-receipt.json"),
+        )?)?;
+        assert_eq!(receipt["status"], "complete");
+    }
+    // Invalid configuration cannot reuse a preceding complete run as authority.
+    let out = root.join("target/window/comments.json");
+    for base in ["HEAD^", "HEAD"] {
+        let refused = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &[
+                "review-comments",
+                "--root",
+                ".",
+                "--base",
+                base,
+                "--head",
+                "HEAD",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+            &[("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE", "0")],
+        )?;
+        assert!(!refused.status.success());
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("target/window/run-receipt.json"))?)?;
+        assert_eq!(receipt["status"], "failed");
+        assert!(
+            receipt["completed_artifacts"]
+                .as_array()
+                .ok_or("completed array")?
+                .is_empty()
+        );
+    }
+    std::fs::remove_dir_all(root)?;
     Ok(())
 }

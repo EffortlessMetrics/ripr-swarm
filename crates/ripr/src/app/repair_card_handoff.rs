@@ -128,6 +128,18 @@ pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCa
     // card cannot promise a different edit surface than the attempt enforces.
     let actionable = task_for(entry) == TASK_WRITE_TARGETED_TEST;
     let recommended = recommended_test_for(entry);
+    // Admission is a ceiling on a statically ready route. A seam already
+    // blocked by missing/static evidence has no edit to admit; retain that
+    // more relevant diagnosis instead of replacing it with a cage error.
+    let edit_cage_refusal = if readiness.is_repair_ready() {
+        super::repair_attempt::edit_cage_policy_from_packet(
+            facts.packet_json,
+            entry.seam.id().as_str(),
+        )
+        .err()
+    } else {
+        None
+    };
     let production_file = display_path(entry.seam.file());
     let allowed_files: Vec<String> = if actionable && recommended.file != "not_applicable" {
         vec![recommended.file.clone()]
@@ -194,6 +206,7 @@ pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCa
     // The card never presents a runnable route the shared instruction
     // vocabulary and repair-route readiness gate would not expose.
     let route_exposed = eligibility.eligible()
+        && edit_cage_refusal.is_none()
         && repair_card_route_exposable(instruction.state, readiness.is_repair_ready());
     let next_command = if route_exposed {
         facts.next_command.as_ref()
@@ -224,6 +237,7 @@ pub(crate) fn assemble_repair_card(facts: &SeamCardFacts<'_>) -> Result<RepairCa
         assertion_goal_detail,
         candidate_value: None,
         packet_eligible: eligibility.eligible(),
+        edit_cage_refusal,
         next_command,
         allowed_files,
         forbidden_files,
@@ -377,9 +391,11 @@ fn witness_for_seam(
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
 ) -> Result<Option<(String, DiagnosticWitness)>, String> {
-    let Some(gap_id) = canonical_gap_id else {
+    // The expensive workspace check only feeds the canonical-gap match; with
+    // no gap id the match cannot bind, so skip the analysis entirely.
+    if canonical_gap_id.is_none() {
         return Ok(None);
-    };
+    }
     let output = check_workspace_with_config(
         CheckInput {
             root: root.to_path_buf(),
@@ -389,8 +405,25 @@ fn witness_for_seam(
         config,
     )
     .map_err(|error| format!("agent card could not run the witness analysis: {error}"))?;
-    Ok(output
-        .findings
+    Ok(witness_from_findings(
+        &output.findings,
+        entry,
+        canonical_gap_id,
+    ))
+}
+
+/// Project the witness for the finding that names this seam's canonical gap
+/// from an already-completed finding set. The owner-match rule is the single
+/// seam↔witness binding authority: consumers that already hold a completed
+/// analysis (the LSP snapshot, #4668) bind the witness here instead of
+/// re-running the check pipeline, and no consumer may re-derive the match.
+pub(crate) fn witness_from_findings(
+    findings: &[crate::domain::Finding],
+    entry: &ClassifiedSeam,
+    canonical_gap_id: Option<&str>,
+) -> Option<(String, DiagnosticWitness)> {
+    let gap_id = canonical_gap_id?;
+    findings
         .iter()
         .find(|finding| {
             finding
@@ -400,7 +433,7 @@ fn witness_for_seam(
         })
         .and_then(|finding| {
             DiagnosticWitness::from_finding(finding).map(|witness| (finding.id.clone(), witness))
-        }))
+        })
 }
 
 /// A canonical gap id is content-derived and excludes the source location, so
@@ -414,8 +447,9 @@ fn gap_names_seam(gap: &FindingCanonicalGap, gap_id: &str, owner: &str) -> bool 
 /// The portable workspace identity is producer-owned through the admitted
 /// test-target evidence (the `TestTargetEvidence` precedent). When nothing on
 /// this seam names it, the card refuses to mint one: identity is never
-/// fabricated from a checkout path.
-fn workspace_identity_for(
+/// fabricated from a checkout path. Exposed crate-internally so the LSP
+/// editor projection (#4668) consumes the exact same derivation.
+pub(crate) fn workspace_identity_for(
     entry: &ClassifiedSeam,
     readiness: &RepairRouteReadiness,
 ) -> Result<String, String> {
@@ -436,8 +470,9 @@ fn workspace_identity_for(
 
 /// The most recently created recorded attempt for this seam, if any. Attempt
 /// ids are content hashes (not time-ordered), so recency is the manifest's
-/// own `created_unix_ms`.
-fn latest_attempt_for_seam(
+/// own `created_unix_ms`. Exposed crate-internally so the LSP editor
+/// projection (#4668) binds attempt state through the same inventory.
+pub(crate) fn latest_attempt_for_seam(
     root: &Path,
     seam_id: &str,
 ) -> Result<Option<RepairAttemptManifest>, String> {
@@ -578,6 +613,31 @@ mod tests {
                 ));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn repair_card_assembly_preserves_static_limitations_without_cage_admission()
+    -> Result<(), String> {
+        let entry = weakly_gripped_entry();
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        assert!(!readiness.is_repair_ready());
+        assert!(!readiness.missing_evidence.is_empty());
+        let packet = packet_for(&entry);
+        assert_eq!(
+            super::super::repair_attempt::edit_cage_policy_from_packet(
+                &packet,
+                entry.seam.id().as_str()
+            )
+            .err()
+            .as_deref(),
+            Some("repair packet is missing allowed_edit_surface")
+        );
+        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+        assert!(!card.readiness.repair_ready);
+        assert_eq!(card.readiness.missing_evidence, readiness.missing_evidence);
+        assert!(card.exact_blocker.is_none());
+        assert!(card.next_action.is_none());
         Ok(())
     }
 

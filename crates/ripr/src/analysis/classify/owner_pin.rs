@@ -44,7 +44,7 @@ use crate::analysis::extract::{
     fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
     test_body_defines_callee_fn, test_body_let_shadow_line,
 };
-use crate::analysis::facts::FunctionContainer;
+use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
     OwnerPinAssertions, owner_pin_assertions, trusted_macro_binding_ambiguities,
 };
@@ -113,8 +113,32 @@ impl OwnerPinSyntax {
         else {
             return false;
         };
-        self.by_file
-            .borrow_mut()
+        if facts.role_provenance.earliest_unresolved_reason.is_some() {
+            return false;
+        }
+        let mut by_file = self.by_file.borrow_mut();
+        for edge in &facts.role_provenance.edges {
+            // Module composition already owns resolution. Include expansions
+            // lack an exact declaration coordinate here, so remain unknown.
+            if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+                return false;
+            }
+            let Some(parent) = index
+                .files
+                .get(&edge.parent)
+                .filter(|facts| !facts.used_lexical_fallback)
+            else {
+                return false;
+            };
+            if !by_file
+                .entry(edge.parent.clone())
+                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+                .admits_module_declaration(edge.line, &edge.declaration)
+            {
+                return false;
+            }
+        }
+        by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
             .admits(
