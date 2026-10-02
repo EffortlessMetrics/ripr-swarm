@@ -7,7 +7,7 @@
 //! measurement, so the ratified numbers cannot silently drift.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -37,11 +37,15 @@ fn read_json(path: &Path, label: &str) -> Result<Value, String> {
         .map_err(|error| format!("parse {label} {}: {error}", path.display()))
 }
 
+fn workspace_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(relative)
+}
+
 pub(crate) fn repair_card_usability_report() -> Result<(), String> {
-    let corpus = read_json(Path::new(CORPUS_PATH), "governed corpus")?;
+    let corpus = read_json(&workspace_path(CORPUS_PATH), "governed corpus")?;
     let report = ripr::app::repair_card_usability::repair_card_usability_report(&corpus)?;
-    let expectations = read_json(Path::new(EXPECTATIONS_PATH), "ratified expectations")?;
-    let receipt = read_json(Path::new(RECEIPT_PATH), "decision receipt")?;
+    let expectations = read_json(&workspace_path(EXPECTATIONS_PATH), "ratified expectations")?;
+    let receipt = read_json(&workspace_path(RECEIPT_PATH), "decision receipt")?;
     validate_expectations(&report, &expectations)?;
     validate_receipt(&report, &receipt)?;
     let json_body = serde_json::to_string_pretty(&report)
@@ -379,10 +383,10 @@ mod tests {
 
     #[test]
     fn committed_evidence_files_validate_against_the_live_measurement() -> Result<(), String> {
-        let corpus = read_json(Path::new(CORPUS_PATH), "governed corpus")?;
+        let corpus = read_json(&workspace_path(CORPUS_PATH), "governed corpus")?;
         let report = ripr::app::repair_card_usability::repair_card_usability_report(&corpus)?;
-        let expectations = read_json(Path::new(EXPECTATIONS_PATH), "ratified expectations")?;
-        let receipt = read_json(Path::new(RECEIPT_PATH), "decision receipt")?;
+        let expectations = read_json(&workspace_path(EXPECTATIONS_PATH), "ratified expectations")?;
+        let receipt = read_json(&workspace_path(RECEIPT_PATH), "decision receipt")?;
         validate_expectations(&report, &expectations)?;
         validate_receipt(&report, &receipt)?;
         // Keep the measured report in the retained CI artifact so the actual
