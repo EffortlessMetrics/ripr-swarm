@@ -114,6 +114,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CLI: `ripr plus` and the compatibility `cargo xtask ripr-plus` receipt
+  composition no longer turn exposure-only zero into complete RIPR+ quality
+  authority. Legacy inputs remain informational and `indeterminate`, preserving
+  known counts separately while total unresolved debt and qualified head are
+  unknown. `--check` now refuses incomplete evidence; invalid input replaces
+  an old receipt with an indeterminate error receipt and returns nonzero.
+  See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary.
+
 - Rust: a test that pins the changed owner's whole return value now
   confirms a changed `return_value` expression, including through a method
   call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
