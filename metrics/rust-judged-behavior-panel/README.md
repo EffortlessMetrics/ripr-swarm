@@ -225,6 +225,7 @@ Rates always show numerator and denominator. No denominator is
 `not_measurable`, not a fake zero percent. Survived mutants stay visible
 without an automatic false-exposed conclusion. #3076 route-yield and #4578
 rolling-observation denominators are bound by identity and never merged.
+
 ## Analyzer feedback ledger
 
 `feedback-ledger.json` is the #4796 sidecar over the same frozen #3806
@@ -252,9 +253,6 @@ independent judgments, and it does not absorb #4795 calibration.
 `cargo xtask rust-judged-panel feedback [--out] [--check]` derives JSON and
 Markdown from one DTO. There is still no accuracy `report` command and no
 overall analyzer score.
-
-The CLI now accepts `check`, `replay`, `packet`, and `feedback`. Bounded real
-ledger replay remains outside the routine PR path.
 
 ## Item contract
 

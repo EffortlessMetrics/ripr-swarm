@@ -134,6 +134,7 @@ pub(crate) struct JudgmentFact {
     pub(crate) case_id: String,
     pub(crate) expected_direction: String,
     pub(crate) terminal: String,
+    pub(crate) owner: String,
     pub(crate) observer: String,
     pub(crate) false_actionable: Option<bool>,
     pub(crate) false_exposed: Option<bool>,
@@ -161,6 +162,7 @@ pub(crate) fn judgment_facts(value: &Value) -> Result<Vec<JudgmentFact>, String>
             case_id,
             expected_direction,
             terminal,
+            owner: required_str(structural, "owner")?,
             observer: required_str(structural, "observer")?,
             false_actionable: bool_or_null(outcome, "false_actionable")?,
             false_exposed: bool_or_null(outcome, "false_exposed")?,
@@ -331,11 +333,15 @@ pub(crate) fn validate_row(row: &FeedbackRow, fact: &JudgmentFact, root: &Path) 
                 row.case_id
             )),
             Some(target) => {
-                let claimed = target.rsplit("::").next().unwrap_or(target);
-                if claimed != fact.observer {
+                // The full qualified identity must match: the judged owner
+                // path plus the adjudicated observer symbol. Stripping the
+                // path would let a nearby module claim the same observer.
+                let owner_path = fact.owner.split(':').next().unwrap_or("");
+                let qualified = format!("{owner_path}::{}", fact.observer);
+                if target != qualified {
                     violations.push(format!(
-                        "{}: wrong_target target_identity `{target}` is not the adjudicated observer `{}` of the frozen judgment; a ledger-authored target cannot create the defect",
-                        row.case_id, fact.observer
+                        "{}: wrong_target target_identity `{target}` is not the adjudicated observer identity `{qualified}` of the frozen judgment; a ledger-authored or nearby target cannot create the defect",
+                        row.case_id
                     ));
                 }
             }

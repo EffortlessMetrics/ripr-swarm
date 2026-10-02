@@ -26,6 +26,7 @@ fn fact(
         case_id: case_id.into(),
         expected_direction: "should_gap".into(),
         terminal: terminal.into(),
+        owner: "src/owner.rs:1-2 sample owner".into(),
         observer: "observer".into(),
         false_actionable,
         false_exposed,
@@ -64,7 +65,7 @@ fn row_json(case_id: &str, direction: &str, status: &str, reduction: &str) -> Va
             "negative_control": null
         },
         "target_identity": if direction == "wrong_target" {
-            Value::String("exact::observer".into())
+            Value::String("src/owner.rs::observer".into())
         } else {
             Value::Null
         },
@@ -764,6 +765,7 @@ fn rust_analysis_feedback_wrong_target_cannot_be_authored_without_judgment_evide
     let root = repo_root()?;
     let quiet = JudgmentFact {
         observer: "real_observer".into(),
+        owner: "src/owner.rs:1-2 sample owner".into(),
         ..fact(
             "wt2",
             "confirmed_should_stay_quiet",
@@ -795,7 +797,7 @@ fn rust_analysis_feedback_wrong_target_cannot_be_authored_without_judgment_evide
     let evidenced = {
         let mut row = row_json("wt2", "wrong_target", "open", "replay_only");
         row["terminal_judgment"] = json!("confirmed_should_stay_quiet");
-        row["target_identity"] = json!("crates/ripr/src/analysis::real_observer");
+        row["target_identity"] = json!("src/owner.rs::real_observer");
         row
     };
     let clean = schema::validate_row(&parse_row(evidenced)?, &quiet, root);
@@ -807,7 +809,23 @@ fn rust_analysis_feedback_wrong_target_cannot_be_authored_without_judgment_evide
             "exact adjudicated observer was rejected: {clean:?}"
         ));
     }
-    Ok(())
+    let nearby_module = {
+        let mut row = row_json("wt2", "wrong_target", "open", "replay_only");
+        row["terminal_judgment"] = json!("confirmed_should_stay_quiet");
+        row["target_identity"] = json!("other/module.rs::real_observer");
+        row
+    };
+    let rejected = schema::validate_row(&parse_row(nearby_module)?, &quiet, root);
+    if rejected
+        .iter()
+        .any(|item| item.contains("adjudicated observer identity"))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "nearby module claiming the observer symbol was accepted: {rejected:?}"
+        ))
+    }
 }
 
 #[test]
@@ -1066,5 +1084,65 @@ fn rust_analysis_feedback_staging_refuses_symlink_targets() -> Result<(), String
         Ok(())
     } else {
         Err(format!("symlink disposition unexpected: {error}"))
+    }
+}
+
+#[test]
+fn rust_analysis_feedback_defect_cannot_hide_as_owner_none() -> Result<(), String> {
+    let mut row = row_json("fe", "false_exposed", "open", "replay_only");
+    row["owner"]["designated"] = json!("none");
+    let violations = owners::validate_row(&parse_row(row)?);
+    if violations
+        .iter()
+        .any(|item| item.contains("requires an owner or an explicit"))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "defect hid from ownership counts as `none`: {violations:?}"
+        ))
+    }
+}
+
+#[test]
+fn rust_analysis_feedback_calibration_authority_stays_excluded() -> Result<(), String> {
+    let fact_row = fact(
+        "fe",
+        "confirmed_should_gap",
+        None,
+        Some(true),
+        Some(false),
+        None,
+    );
+    let mut dropped = ledger(vec![row_json("fe", "false_exposed", "open", "replay_only")]);
+    dropped["excluded_authorities"] = json!([]);
+    let violations = validate_bundle_for_test(
+        &parse_ledger(dropped)?,
+        std::slice::from_ref(&fact_row),
+        JUDGMENTS_SHA,
+    );
+    if !violations
+        .iter()
+        .any(|item| item.contains("excluded_authorities: must exclude"))
+    {
+        return Err(format!(
+            "dropped calibration exclusion was accepted: {violations:?}"
+        ));
+    }
+    let mut absorbed = ledger(vec![row_json("fe", "false_exposed", "open", "replay_only")]);
+    absorbed["inherited_authorities"] = json!([
+        "EffortlessMetrics/ripr-swarm#3164",
+        "EffortlessMetrics/ripr-swarm#4795"
+    ]);
+    let violations = validate_bundle_for_test(&parse_ledger(absorbed)?, &[fact_row], JUDGMENTS_SHA);
+    if violations
+        .iter()
+        .any(|item| item.contains("must not absorb"))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "absorbed calibration authority was accepted: {violations:?}"
+        ))
     }
 }

@@ -181,10 +181,18 @@ fn validate_bundle(
         .excluded_authorities
         .iter()
         .any(|item| item == CALIBRATION_AUTHORITY)
-        && ledger.calibration.authority != CALIBRATION_AUTHORITY
     {
         violations.push(format!(
-            "calibration: must name `{CALIBRATION_AUTHORITY}` as the separate owner"
+            "excluded_authorities: must exclude `{CALIBRATION_AUTHORITY}`; runtime calibration is owned there, not in this ledger"
+        ));
+    }
+    if ledger
+        .inherited_authorities
+        .iter()
+        .any(|item| item == CALIBRATION_AUTHORITY)
+    {
+        violations.push(format!(
+            "inherited_authorities: must not absorb `{CALIBRATION_AUTHORITY}`; the calibration boundary stays excluded"
         ));
     }
     if ledger.release_judgments_path != RELEASE_JUDGMENTS_PATH {

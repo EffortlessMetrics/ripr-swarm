@@ -33,6 +33,12 @@ pub(crate) fn validate_row(row: &FeedbackRow) -> Vec<String> {
             row.case_id
         ));
     }
+    if is_analyzer_defect(&row.failure_direction) && row.owner.designated == "none" {
+        violations.push(format!(
+            "{}: confirmed analyzer defect requires an owner or an explicit `unowned_no_github_mutation` designation; `none` hides it from the ownership counts",
+            row.case_id
+        ));
+    }
     if let Some(existing) = &row.owner.existing
         && is_analyzer_defect(&row.failure_direction)
         && row.owner.designated != existing.as_str()
