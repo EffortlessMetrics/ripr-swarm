@@ -865,8 +865,9 @@ mod tests {
         let packet = packet_for(&entry);
         let card = assemble_repair_card(&facts_for(&entry, &packet))?;
         if card.snapshot.currentness != RepairCardSnapshotCurrentness::Current {
-            return Err("a clean evidence scope must project current on the snapshot axis"
-                .to_string());
+            return Err(
+                "a clean evidence scope must project current on the snapshot axis".to_string(),
+            );
         }
         if card.done_when.currentness != CardCurrentnessGoal::Current {
             return Err(

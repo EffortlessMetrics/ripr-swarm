@@ -3655,7 +3655,10 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     // dirty working tree, so both currentness axes must project the accepted
     // dirty draft instead of an unchecked `current` claim.
     assert_eq!(card_json["snapshot"]["currentness"], "accepted_dirty_draft");
-    assert_eq!(card_json["done_when"]["currentness"], "accepted_dirty_draft");
+    assert_eq!(
+        card_json["done_when"]["currentness"],
+        "accepted_dirty_draft"
+    );
     // The complete packet is routed, never embedded: the wire card names the
     // packet route and carries no packet envelope content.
     assert!(
@@ -3834,8 +3837,7 @@ fn agent_card_identity_is_portable_across_equivalent_checkout_roots()
     let first_card = card_for(&root.display().to_string())?;
     let second_card = card_for(&second.display().to_string())?;
     assert_eq!(
-        first_card["snapshot"]["repository_head"],
-        second_card["snapshot"]["repository_head"],
+        first_card["snapshot"]["repository_head"], second_card["snapshot"]["repository_head"],
         "both checkouts must bind the same head for the identity comparison"
     );
     assert_eq!(

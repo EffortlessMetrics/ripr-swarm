@@ -11,8 +11,8 @@
 //! strengthens readiness, actionability, or currentness.
 
 use super::state::AnalysisSnapshot;
-use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::agent::artifact::git_output;
+use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
