@@ -628,12 +628,14 @@ impl CatFileBatch {
         let spawn_site = SpawnSite::of(&command);
         let mut child = OwnedProcess::spawn(command)
             .map_err(|err| spawn_site.failure_message(&describe, &err))?;
-        let stdin = child.stdin_pipe().take().ok_or_else(|| {
-            format!("failed to open the stdin pipe for {describe}")
-        })?;
-        let stdout_pipe = child.stdout_pipe().take().ok_or_else(|| {
-            format!("failed to open the stdout pipe for {describe}")
-        })?;
+        let stdin = child
+            .stdin_pipe()
+            .take()
+            .ok_or_else(|| format!("failed to open the stdin pipe for {describe}"))?;
+        let stdout_pipe = child
+            .stdout_pipe()
+            .take()
+            .ok_or_else(|| format!("failed to open the stdout pipe for {describe}"))?;
         let stderr = child
             .stderr_pipe()
             .take()
@@ -779,21 +781,20 @@ impl CatFileBatch {
             ChildWait::Exited(status) if status.success() => Ok(()),
             ChildWait::Exited(status) => {
                 let detail = stderr
-                    .map(|output| {
-                        String::from_utf8_lossy(&output.bytes).trim().to_string()
-                    })
+                    .map(|output| String::from_utf8_lossy(&output.bytes).trim().to_string())
                     .unwrap_or_default();
                 if detail.is_empty() {
                     Err(format!("git cat-file --batch exited with {status}"))
                 } else {
-                    Err(format!("git cat-file --batch exited with {status}: {detail}"))
+                    Err(format!(
+                        "git cat-file --batch exited with {status}: {detail}"
+                    ))
                 }
             }
             ChildWait::TimedOut(message) | ChildWait::Cancelled(message) => Err(message),
-            ChildWait::WaitFailed(err) => Err(format!(
-                "failed while waiting on {}: {err}",
-                self.describe
-            )),
+            ChildWait::WaitFailed(err) => {
+                Err(format!("failed while waiting on {}: {err}", self.describe))
+            }
             ChildWait::CleanupFailed(message) => Err(message),
         }
     }
@@ -2278,7 +2279,9 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         let outcome = stream.read_exact(&mut byte, Duration::ZERO);
         match outcome {
             Err(CatFileBatchReadError::TimedOut) => Ok(()),
-            other => Err(format!("spent budget must classify as timed out, got {other:?}")),
+            other => Err(format!(
+                "spent budget must classify as timed out, got {other:?}"
+            )),
         }
     }
 
@@ -2318,15 +2321,17 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                     .ok_or_else(|| format!("ls-tree line without an object id: {line}"))?;
                 requested.push((object.to_string(), path.to_string()));
             }
-            let mut session =
-                CatFileBatch::spawn(&root, Duration::from_secs(60)).map_err(|err| err.to_string())?;
+            let mut session = CatFileBatch::spawn(&root, Duration::from_secs(60))
+                .map_err(|err| err.to_string())?;
             for (object, path) in &requested {
                 let size = session
                     .request_blob(object)
                     .map_err(|err| err.to_string())?
                     .ok_or_else(|| format!("blob for {path} unexpectedly missing"))?;
                 let mut content = vec![0_u8; size as usize];
-                session.read_blob_bytes(&mut content).map_err(|err| err.to_string())?;
+                session
+                    .read_blob_bytes(&mut content)
+                    .map_err(|err| err.to_string())?;
                 session.end_blob().map_err(|err| err.to_string())?;
                 // Raw oracle bytes: `run_git` trims, which would hide a
                 // framing error that dropped a trailing newline.
@@ -2340,7 +2345,9 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                     return Err(format!("git show oracle failed for {path}"));
                 }
                 if content != oracle.stdout {
-                    return Err(format!("batch bytes for {path} differ from the git show oracle"));
+                    return Err(format!(
+                        "batch bytes for {path} differ from the git show oracle"
+                    ));
                 }
             }
             let missing = session
@@ -2372,7 +2379,9 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             }
         };
         if !is_git_invocation_timeout(&error) || !error.contains("0ms") {
-            return Err(format!("zero budget must classify as the named timeout: {error}"));
+            return Err(format!(
+                "zero budget must classify as the named timeout: {error}"
+            ));
         }
         Ok(())
     }
