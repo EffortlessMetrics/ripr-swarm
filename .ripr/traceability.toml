@@ -10582,9 +10582,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0198"
+id = "RIPR-SPEC-0200"
 name = "Blind journey prompt, intervention and transcript receipt contract"
-spec = "docs/specs/RIPR-SPEC-0198-blind-journey-contract.md"
+spec = "docs/specs/RIPR-SPEC-0200-blind-journey-contract.md"
 tests = [
   "xtask/src/blind_journey.rs::tests::clean_generic_prompt_validates_positive",
   "xtask/src/blind_journey.rs::tests::each_contamination_category_rejects_independently",

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0198: Blind journey prompt, intervention and transcript receipt contract
+# RIPR-SPEC-0200: Blind journey prompt, intervention and transcript receipt contract
 
 Status: proposed
 

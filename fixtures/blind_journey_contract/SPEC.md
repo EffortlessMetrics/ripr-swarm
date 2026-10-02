@@ -1,6 +1,6 @@
 # Blind Journey Contract Fixture Corpus
 
-Spec: RIPR-SPEC-0198
+Spec: RIPR-SPEC-0200
 
 ## Given
 

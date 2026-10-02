@@ -1,4 +1,4 @@
-//! `cargo xtask blind-journey-contract` (#4603, RIPR-SPEC-0198): runs the
+//! `cargo xtask blind-journey-contract` (#4603, RIPR-SPEC-0200): runs the
 //! committed blind-journey fixture corpus through the typed contract validator
 //! in `crate::blind_journey`, validates the committed versioned contract
 //! decision receipt against the live result, and writes the human/JSON report.
@@ -208,8 +208,8 @@ fn validate_contract_receipt(receipt: &Value, corpus_scenario_count: usize) -> R
     if receipt.get("status").and_then(Value::as_str) != Some("ratified_fixture_scope") {
         return Err("contract receipt status must be ratified_fixture_scope".to_string());
     }
-    if receipt.get("decision").and_then(Value::as_str) != Some("RIPR-SPEC-0198") {
-        return Err("contract receipt must name the RIPR-SPEC-0198 decision".to_string());
+    if receipt.get("decision").and_then(Value::as_str) != Some("RIPR-SPEC-0200") {
+        return Err("contract receipt must name the RIPR-SPEC-0200 decision".to_string());
     }
     let schema_versions = receipt
         .get("contract_schema_versions")

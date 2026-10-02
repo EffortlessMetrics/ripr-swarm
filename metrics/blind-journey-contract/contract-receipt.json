@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "kind": "blind_journey_contract_decision_receipt",
-  "decision": "RIPR-SPEC-0198",
+  "decision": "RIPR-SPEC-0200",
   "status": "ratified_fixture_scope",
   "governing_issues": ["#4603", "#4600", "#3797", "#4510", "#4508", "#4604"],
   "contract_schema_versions": {

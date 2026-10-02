@@ -1,4 +1,4 @@
-//! Blind-journey contract and validator (#4603, RIPR-SPEC-0198).
+//! Blind-journey contract and validator (#4603, RIPR-SPEC-0200).
 //!
 //! Typed, versioned DTOs for an auditable blind installed-agent journey:
 //! `BlindJourneyPromptV1`, `BlindJourneyAnswerKeyV1`, `BlindJourneyEventV1`,
@@ -1352,7 +1352,7 @@ pub(crate) struct BlindJourneyPacketWireV1 {
     pub receipt: BlindJourneyReceiptV1,
 }
 
-/// The committed blind-journey fixture corpus (RIPR-SPEC-0198).
+/// The committed blind-journey fixture corpus (RIPR-SPEC-0200).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BlindJourneyFixtureCorpusV1 {
