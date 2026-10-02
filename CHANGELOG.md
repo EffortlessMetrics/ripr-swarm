@@ -114,14 +114,15 @@ are scoped or reviewed.
 
 ### Fixed
 
-- CLI: `ripr plus` and the compatibility `cargo xtask ripr-plus` receipt
-  composition no longer turn exposure-only zero into complete RIPR+ quality
-  authority. Legacy inputs remain informational and `indeterminate`, preserving
-  known counts separately while total unresolved debt and qualified head are
-  unknown. `--check` now refuses incomplete evidence; invalid input replaces
-  an old receipt with an indeterminate error receipt and returns nonzero.
-  See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary.
-
+- A changed source file that is not in the working tree (sparse checkout
+  or a local delete) is now a named `changed_file_absent_from_worktree`
+  limitation and a partial analysis outcome. Before, `ripr check` treated
+  the missing owner as a clean `no_static_path`, and `ripr review-comments`
+  reported `scoped production files: 0/0` with no disclosure. Probes for
+  that file are withheld. The repair is to check the file out or disable
+  sparse checkout for it.
+- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
+  others) are no longer called non-source files. A Go-only diff reported
 - Rust: a test that pins the changed owner's whole return value now
   confirms a changed `return_value` expression, including through a method
   call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
@@ -1892,6 +1893,14 @@ are scoped or reviewed.
   instead of reading as a green empty result. Genuinely empty input stays
   `no_scope` complete, and unparseable garbage keeps its existing
   `unsupported_input` contract (#4375).
+
+- CLI: `ripr plus` and the compatibility `cargo xtask ripr-plus` receipt
+  composition no longer turn exposure-only zero into complete RIPR+ quality
+  authority. Legacy inputs remain informational and `indeterminate`, preserving
+  known counts separately while total unresolved debt and qualified head are
+  unknown. `--check` now refuses incomplete evidence; invalid input replaces
+  an old receipt with an indeterminate error receipt and returns nonzero.
+  See `docs/BADGE_POLICY.md` for the compatibility and measurement boundary.
 
 ### Added
 
