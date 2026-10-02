@@ -358,7 +358,7 @@ mod tests {
             "project_config_trust = not_established",
             "authority = none",
             "not that analysis ran or that no issues were found",
-            "no analysis findings, gap records, or exposure evidence are exposed over MCP",
+            "exposes no analysis findings, gap records, or exposure evidence over MCP",
             "ripr check --format json",
             "editor diagnostics",
         ] {
