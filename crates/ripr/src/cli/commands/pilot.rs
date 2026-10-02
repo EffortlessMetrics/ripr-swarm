@@ -403,6 +403,15 @@ where
         Err(mpsc::RecvTimeoutError::Timeout) => {
             cancellation_token
                 .cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
+            // #5019: the detached worker owns its progress run's terminal
+            // (`cancelled`), and the caller opens a retry run or exits soon
+            // after this return. Give the worker a bounded window to reach a
+            // cancellation checkpoint and finish, so the attempt's progress
+            // stream closes before the next one starts instead of
+            // heartbeating into it, and the terminal is not lost to process
+            // exit. A worker stuck past the window cannot be forced (it is
+            // a detached thread): a known, bounded limitation.
+            let _ignored = rx.recv_timeout(Duration::from_secs(5));
             Ok(PilotAnalysisResult::TimedOut)
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -596,8 +605,14 @@ mod tests {
         });
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
-        // The worker owns the run's terminal: wait until its ProgressRun
-        // dropped (projecting `cancelled`) before reading the buffer.
+        // The bounded handoff joins the cancelled worker before returning,
+        // so the run's terminal must already be projected; no waiting on
+        // the worker is needed to observe it.
+        let text = buffer.text();
+        assert!(
+            text.contains("ripr progress: cancelled [repo]"),
+            "deadline must close the run as cancelled: {text}"
+        );
         assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)), Ok(()));
         let text = buffer.text();
         assert!(
@@ -611,10 +626,6 @@ mod tests {
         assert!(
             text.contains("still active after 2s"),
             "a stage held past first_heartbeat must heartbeat: {text}"
-        );
-        assert!(
-            text.contains("ripr progress: cancelled [repo]"),
-            "deadline must close the run as cancelled: {text}"
         );
         assert!(
             !text.contains("completed"),
