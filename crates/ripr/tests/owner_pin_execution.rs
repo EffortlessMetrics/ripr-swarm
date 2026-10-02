@@ -826,3 +826,37 @@ fn equality_execution_uses_statement_prefix_and_closure_invocation() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
+    let report = check_workspace(CheckInput {
+        root: fixture.join("input"),
+        diff_file: Some(fixture.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    assert_eq!(report.findings.len(), 1, "retain the actual async owner");
+    assert_eq!(report.findings[0].class, ExposureClass::PropagationUnknown);
+    let json: serde_json::Value =
+        serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
+    assert_eq!(json["analysis_outcome"]["analysis_complete"], true);
+    let finding = &json["findings"][0];
+    assert_eq!(finding["probe"]["family"], "predicate");
+    assert_eq!(finding["ripr"]["observe"]["state"], "no");
+    assert_eq!(finding["ripr"]["discriminate"]["state"], "no");
+    assert_eq!(finding["oracle_strength"], "none");
+    let tests = finding["related_tests"]
+        .as_array()
+        .ok_or("missing indexed async test")?;
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0]["name"], "above_threshold_gets_reduced");
+    assert_eq!(tests[0]["oracle_strength"], "none");
+    // #5040 owns establishing the missing macro-binding/polling edge. The
+    // independently executed Tokio removal controls show the real test works;
+    // source discovery alone must not manufacture that execution provenance.
+    Ok(())
+}
