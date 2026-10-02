@@ -18586,11 +18586,13 @@ fn plus_partial_zero_cannot_be_used_as_a_current_quality_gate() -> Result<(), St
         ripr::app::qualify_legacy_ripr_plus_receipt(qualified.clone())?,
         qualified
     );
-    assert!(
+    assert_eq!(
         ripr::app::qualify_legacy_ripr_plus_receipt(serde_json::json!({
             "status": "pass", "unresolved": 0, "warnings": "malformed"
         }))
-        .is_err()
+        .err()
+        .as_deref(),
+        Some("RIPR+ receipt warnings must be an array")
     );
     let ledger = include_str!(
         "../../../fixtures/first_successful_pr/empty-diff/inputs/reports/gap-decision-ledger.json"
