@@ -874,3 +874,93 @@ fn provenance_report_bounds_unicode_without_losing_totals() -> Result<(), String
     assert!(!report.contains("additional provenance errors omitted"));
     Ok(())
 }
+
+#[test]
+fn provenance_report_caps_repeated_admitted_targets() -> Result<(), String> {
+    let header = format!("Running tests/alpha.rs (target/debug/deps/alpha-{HASH}.exe)\n");
+    let log = controls(None) + &header.repeat(1000);
+    let report = evidence_report(&log)?;
+    let targets = report
+        .split("### Targets reached\n")
+        .nth(1)
+        .and_then(|rest| rest.split("### Totals\n").next())
+        .ok_or_else(|| "missing target section".to_string())?;
+    assert_eq!(
+        targets
+            .matches(&format!("tests/alpha.rs (alpha-{HASH})"))
+            .count(),
+        32
+    );
+    assert_eq!(
+        targets
+            .matches("984 additional targets omitted (1004 total).")
+            .count(),
+        2
+    );
+    assert_eq!(
+        targets
+            .matches("984 additional raw headers omitted (1004 total).")
+            .count(),
+        2
+    );
+    assert_eq!(
+        report
+            .matches("979 additional provenance errors omitted (999 total).")
+            .count(),
+        2
+    );
+    assert_eq!(
+        report
+            .matches("observed 15 pass, 0 fail across 4 reported result line(s)")
+            .count(),
+        2
+    );
+    assert!(
+        report.len() < 25_000,
+        "admitted target echoes must also be bounded"
+    );
+    Ok(())
+}
+
+#[test]
+fn provenance_report_bounds_admitted_unicode_subjects_on_every_surface() -> Result<(), String> {
+    let source = format!("tests/{}OWNED_TAIL.rs", "🦀界é".repeat(400));
+    let log = controls(None)
+        + &target(
+            &source,
+            "unicode",
+            &[(NAME, "FAILED", "owned Unicode reason")],
+        );
+    let output = invoke(&log, &log)?;
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "an owned test failure remains advisory"
+    );
+    let report = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+    assert!(
+        !report.contains("OWNED_TAIL"),
+        "an admitted identity bypassed the excerpt bound"
+    );
+    assert!(!report.contains("incomplete_evidence"));
+    assert!(report.contains("**repeated_failure (1)**"));
+    assert_eq!(
+        report
+            .matches("observed 15 pass, 1 fail across 5 reported result line(s)")
+            .count(),
+        2
+    );
+    assert!(
+        report
+            .contains("Run 1: Error: owned Unicode reason\n  - Run 2: Error: owned Unicode reason")
+    );
+    let identity = format!("{source} (unicode-{HASH}) :: {NAME}");
+    let expected = identity.chars().take(240).collect::<String>() + "… [truncated]";
+    assert_eq!(
+        report.matches(&format!("- `{expected}`\n")).count(),
+        2,
+        "verdict and reason headings must both use bounded presentation"
+    );
+    assert!(report.len() < 20_000);
+    Ok(())
+}

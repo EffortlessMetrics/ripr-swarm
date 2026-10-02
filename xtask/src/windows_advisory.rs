@@ -1728,6 +1728,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn bounded_target_presentation_retains_full_admitted_identity() -> Result<(), String> {
+        let source = format!("tests/{}OWNED_TAIL.rs", "🦀界é".repeat(400));
+        let log = format!(
+            "Running {source} (target/debug/deps/unicode-1111111111111111.exe)\nrunning 1 test\ntest long_source ... FAILED\nfailures:\n---- long_source stdout ----\nError: retained reason\nfailures:\n    long_source\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+        );
+        let parsed = load_synthetic(&log)?;
+        assert_eq!(parsed.state, RunState::NonZeroWithObservedTestFailures);
+        assert!(parsed.provenance_errors.is_empty());
+        assert_eq!(parsed.targets.len(), 1);
+        assert_eq!(parsed.targets[0].source, source);
+        let expected = TestIdentity {
+            target: target(&source, "unicode-1111111111111111"),
+            name: "long_source".to_string(),
+        };
+        assert!(parsed.failed.contains(&expected));
+        assert_eq!(
+            parsed.reasons.get(&expected).map(String::as_str),
+            Some("Error: retained reason")
+        );
+        assert!(parsed.raw_headers[0].contains("OWNED_TAIL.rs"));
+        let rendered = render(&parsed, &parsed);
+        assert!(!rendered.contains("OWNED_TAIL"));
+        assert!(rendered.contains("**repeated_failure (1)**"));
+        assert_eq!(
+            rendered
+                .matches("observed 0 pass, 1 fail across 1 reported result line(s)")
+                .count(),
+            2
+        );
+        Ok(())
+    }
+
     /// Real failure-section shapes from a Windows lane run: a returned
     /// `Error:`, a panic with its message on the next line, and a block whose
     /// only content is printed output.
