@@ -1142,13 +1142,17 @@ mod tests {
             return Err("the String rendering must stay the human prose".to_string());
         }
         match AgentCardError::identity_unnameable("identity prose".to_string()) {
-            AgentCardError::Refusal { kind, .. }
-                if kind == AgentCardRefusalKind::IdentityUnnameable => {}
+            AgentCardError::Refusal {
+                kind: AgentCardRefusalKind::IdentityUnnameable,
+                ..
+            } => {}
             _ => return Err("identity failure must carry the identity kind".to_string()),
         }
         match AgentCardError::budget_overflow("budget prose".to_string()) {
-            AgentCardError::Refusal { kind, .. }
-                if kind == AgentCardRefusalKind::BudgetOverflow => {}
+            AgentCardError::Refusal {
+                kind: AgentCardRefusalKind::BudgetOverflow,
+                ..
+            } => {}
             _ => return Err("builder failure must carry the budget kind".to_string()),
         }
         match AgentCardError::operational("ops prose".to_string()) {
