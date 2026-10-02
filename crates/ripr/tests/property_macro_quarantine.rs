@@ -88,7 +88,10 @@ fn property_runtime_stream_overflow_is_a_proof_failure() -> Result<(), String> {
     let output = scratch.directory.join("overflow");
     std::fs::write(&output, vec![b'x'; STREAM_LIMIT as usize + 1])
         .map_err(|error| error.to_string())?;
-    assert!(read_bounded_stream(&output).is_err());
+    let Err(error) = read_bounded_stream(&output) else {
+        return Err("oversized runtime stream was accepted".to_string());
+    };
+    assert!(error.contains(&format!("exceeds {STREAM_LIMIT} bytes")));
     std::fs::write(&output, "small").map_err(|error| error.to_string())?;
     assert_eq!(read_bounded_stream(&output)?, b"small");
     scratch.cleanup()
@@ -214,7 +217,7 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             let binary = root.join(format!("runtime{}", std::env::consts::EXE_SUFFIX));
             let mut command = Command::new("rustc");
             command.arg("--edition=2024").arg("--test").arg(&runtime_source).arg("-o").arg(&binary);
-            let build = run_bounded(command, root, "rustc", Duration::from_secs(120))?;
+            let build = run_bounded(command, root, "rustc", Duration::from_mins(2))?;
             assert!(build.status.success(), "{name}: compilation must succeed: {}", String::from_utf8_lossy(&build.stderr));
             let run = run_bounded(Command::new(&binary), root, "runtime", Duration::from_secs(10))?;
             let stdout = String::from_utf8_lossy(&run.stdout);
