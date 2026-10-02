@@ -198,34 +198,47 @@ fn print_doctor_start_here_guidance(root: &Path, report: &output::doctor::Doctor
     // other, is not a route.
     let md = root.join("target/ripr/reports/start-here.md");
     if md.is_file() {
-        use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
-        // Bind at the same boundary as diagnosis, not at the eventual paste
-        // site. The default-base resolver belongs to first-pr; doctor neither
-        // guesses a ref nor reads comparison authority from an old packet.
-        let bound_root = root_path_display(&bound_root_path(root));
-        let refresh = format!(
-            "ripr first-pr --root {} --head HEAD",
-            shell_arg(&bound_root)
-        );
+        use crate::agent::loop_commands::shell_arg;
         let json = root.join("target/ripr/reports/start-here.json");
         let freshness = crate::output::first_pr::start_here_json_version_freshness(&json);
-        if let Some(detail) = crate::output::first_pr::start_here_version_stale_detail(&freshness) {
+        let stale_detail = crate::output::first_pr::start_here_version_stale_detail(&freshness);
+        if let Some(detail) = &stale_detail {
             println!("- Start-here packet: target/ripr/reports/start-here.md ({detail})");
-            println!("- Safe next action: `{refresh}` refreshes it");
         } else {
             println!(
                 "- Start-here packet: target/ripr/reports/start-here.md (present; open it first)"
             );
-            println!("- Safe next action: open that packet; `{refresh}` refreshes it");
         }
-        if let output::markdown::PowershellForm::Translated(powershell) =
-            output::markdown::powershell_form(&refresh)
-        {
-            println!("- Refresh command (PowerShell): {powershell}");
+        // Packet reads above follow filesystem path resolution. Resolve the
+        // existing selected directory the same way: lexical cleanup of a
+        // symlink followed by `..` can name a different repository. Keep the
+        // shared lexical helper unchanged for not-yet-created output paths.
+        match root.canonicalize() {
+            Ok(resolved_root) => {
+                let refresh = format!(
+                    "ripr first-pr --root {} --head HEAD",
+                    shell_arg(&output::path::human_path(&resolved_root))
+                );
+                if stale_detail.is_some() {
+                    println!("- Safe next action: `{refresh}` refreshes it");
+                } else {
+                    println!("- Safe next action: open that packet; `{refresh}` refreshes it");
+                }
+                if let output::markdown::PowershellForm::Translated(powershell) =
+                    output::markdown::powershell_form(&refresh)
+                {
+                    println!("- Refresh command (PowerShell): {powershell}");
+                }
+                // First-pr owns default-base resolution; an old packet is
+                // not authority for a custom comparison.
+                println!(
+                    "- Refresh scope: the repository's default base and HEAD; add --base REF and --head REF for a custom comparison."
+                );
+            }
+            Err(error) => println!(
+                "- Safe next action: refresh unavailable because the selected root could not be resolved: {error}; restore access to that directory and rerun doctor."
+            ),
         }
-        println!(
-            "- Refresh scope: the repository's default base and HEAD; add --base REF and --head REF for a custom comparison."
-        );
     } else {
         println!(
             "- Start-here packet: target/ripr/reports/start-here.md (not yet generated; `ripr first-pr` composes it once analysis evidence exists)"

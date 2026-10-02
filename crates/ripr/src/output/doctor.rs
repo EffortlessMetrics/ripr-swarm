@@ -68,8 +68,9 @@ impl DoctorFirstCommand {
     /// `command_line` for the diagnosed `root`. `ripr check` defaults to
     /// `.`, so a doctor run with `--root` from another directory must name
     /// the root, or the recommended command analyzes the caller's directory.
-    /// Any other root is bound once against this process's directory
-    /// (`bound_root`), so the line still names it after a `cd`.
+    /// Existing directories use filesystem resolution, matching diagnosis
+    /// even when a root traverses a symlink before `..`. Unresolved paths
+    /// keep the existing lexical binding for error-recovery guidance.
     pub(crate) fn command_line_for_root(self, root: &Path) -> String {
         use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
         let line = self.command_line();
@@ -77,7 +78,10 @@ impl DoctorFirstCommand {
             return line.to_string();
         }
         let flags = line.strip_prefix("ripr check").unwrap_or_default();
-        let bound = root_path_display(&bound_root_path(root));
+        let bound = match root.canonicalize() {
+            Ok(resolved) => crate::output::path::human_path(&resolved),
+            Err(_) => root_path_display(&bound_root_path(root)),
+        };
         format!("ripr check --root {}{flags}", shell_arg(&bound))
     }
 

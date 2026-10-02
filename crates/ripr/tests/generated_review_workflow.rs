@@ -650,6 +650,119 @@ fn doctor_packet_refresh_runs_from_a_foreign_working_directory() -> Result<(), B
     Ok(())
 }
 
+/// #4000/#4991: the emitted refresh must name the same physical directory
+/// whose packet doctor read, even when the input traverses a symlink and `..`.
+/// Inspect the route without executing a possibly misdirected refresh.
+#[cfg(unix)]
+#[test]
+fn doctor_packet_refresh_and_first_check_preserve_physical_root_identity()
+-> Result<(), Box<dyn Error>> {
+    let base = replay::unique_temp_dir("doctor-refresh-physical-root")?;
+    let parent = base.join("selected parent");
+    let physical = base.join("physical parent");
+    let repo = physical.join("repo");
+    let decoy = parent.join("repo");
+    replay::write_pr_fixture(&repo)?;
+    replay::write_pr_fixture(&decoy)?;
+    fs::create_dir_all(physical.join("child"))?;
+    std::os::unix::fs::symlink(physical.join("child"), parent.join("link"))?;
+    let relative = std::path::Path::new("link/../repo");
+    let absolute = parent.join(relative);
+    let selected = repo.canonicalize()?;
+    assert_eq!(absolute.canonicalize()?, selected);
+    assert_ne!(decoy.canonicalize()?, selected);
+    let reports = "target/ripr/reports";
+    for root in [&repo, &decoy] {
+        let produced = replay::ripr(root, &["first-pr", "--base", "origin/trunk"])?;
+        assert!(
+            produced.status.success(),
+            "{}",
+            String::from_utf8_lossy(&produced.stderr)
+        );
+    }
+    for stale in [false, true] {
+        // Opposite versions prove which packet the doctor actually read.
+        for (root, old) in [(&repo, stale), (&decoy, !stale)] {
+            let path = root.join(reports).join("start-here.json");
+            let mut packet: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+            packet["ripr_version"] = if old {
+                "0.0.0"
+            } else {
+                env!("CARGO_PKG_VERSION")
+            }
+            .into();
+            fs::write(path, serde_json::to_string_pretty(&packet)?)?;
+        }
+        for spelling in [relative, absolute.as_path()] {
+            let paths = [&repo, &decoy]
+                .into_iter()
+                .flat_map(|root| {
+                    ["start-here.json", "start-here.md"].map(|name| root.join(reports).join(name))
+                })
+                .collect::<Vec<_>>();
+            let before = paths.iter().map(fs::read).collect::<Result<Vec<_>, _>>()?;
+            let doctor = replay::ripr(&parent, &["doctor", "--root", &spelling.to_string_lossy()])?;
+            assert!(
+                doctor.status.success(),
+                "{}",
+                String::from_utf8_lossy(&doctor.stderr)
+            );
+            let stdout = String::from_utf8(doctor.stdout)?;
+            assert_eq!(stdout.contains("stale_evidence"), stale, "{stdout}");
+            let command = stdout
+                .lines()
+                .find(|line| line.starts_with("- Safe next action:"))
+                .and_then(|line| line.split('`').nth(1))
+                .ok_or("doctor emitted no packet refresh command")?;
+            assert_eq!(
+                command,
+                format!("ripr first-pr --root '{}' --head HEAD", selected.display())
+            );
+            let recommended = stdout
+                .lines()
+                .find_map(|line| line.strip_prefix("- Recommended first command: "))
+                .ok_or("doctor emitted no recommended check")?;
+            assert_eq!(
+                recommended,
+                format!("ripr check --root '{}'", selected.display())
+            );
+            let after = paths.iter().map(fs::read).collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                after, before,
+                "diagnosis must preserve both repositories' packets"
+            );
+        }
+    }
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
+/// Missing directories retain their diagnosis/recovery contract; physical
+/// binding of existing roots must not create a directory or packet.
+#[cfg(unix)]
+#[test]
+fn doctor_packet_refresh_missing_root_keeps_recovery_nonwriting() -> Result<(), Box<dyn Error>> {
+    let base = replay::unique_temp_dir("doctor-refresh-missing-root")?;
+    let missing = base.join("missing repository");
+    let doctor = replay::ripr(&base, &["doctor", "--root", &missing.to_string_lossy()])?;
+    assert_eq!(doctor.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&doctor.stderr).contains("doctor found issues"));
+    let stdout = String::from_utf8(doctor.stdout)?;
+    assert!(stdout.contains("not yet generated"), "{stdout}");
+    assert!(!stdout.contains("--head HEAD` refreshes it"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "- Recommended first command: ripr check --root '{}'",
+            missing.display()
+        )),
+        "{stdout}"
+    );
+    assert!(!missing.exists());
+    assert!(!base.join("target").exists());
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
 /// #3948/#4287: the artifact regeneration commands `first-pr` renders for
 /// repository A, pasted into Bash from an unrelated directory B, read and
 /// write A. `first-action`, `review-comments`, `agent packet`, `gate

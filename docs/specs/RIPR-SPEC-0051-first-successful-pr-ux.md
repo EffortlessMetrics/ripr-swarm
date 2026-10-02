@@ -109,8 +109,15 @@ must not present that packet as current first-screen evidence. A packet without
 the field is a pre-0.11 artifact, not a contract-invalid document.
 
 Doctor's packet-refresh command binds the diagnosed repository to an absolute
-root, including when diagnosis used a relative root or `.`. It quotes that
-root for Bash and prints a labeled PowerShell form when the spelling differs.
+root, including when diagnosis used a relative root or `.`. Existing roots
+resolve through the filesystem before rendering, so a symlink followed by `..`
+still names the directory whose packet doctor read. If that resolution fails,
+doctor names the failure and omits the refresh command rather than guessing a
+lexical destination. It quotes the resolved root for Bash and prints a labeled
+PowerShell form when the spelling differs.
+The rooted recommended first check also resolves existing directories through
+the filesystem. Its existing `.` shorthand and lexical missing-path recovery
+remain unchanged; a missing-root diagnosis still fails without creating paths.
 The generic refresh recomposes against the repository's default base and
 `HEAD`, through first-pr's existing resolver; it does not recover a historical
 custom comparison from packet metadata. Doctor names that scope and explains
