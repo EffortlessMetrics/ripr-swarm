@@ -89,7 +89,9 @@ Matching records are grouped into stable-deduplicated anchored `file`/`owner`
 scopes; each scope is recomputed and the resulting seams are deduplicated by
 domain seam identity. `--changed-test` accepts a
 repository-relative test file or an unambiguous `path::test_node` selector
-within that file. An unknown or ambiguous node is a named limitation.
+within that file. An unknown or ambiguous node is a named limitation
+(`changed_test_unresolved`, `changed_test_owner_unresolved`, or
+`changed_test_owner_ambiguous`).
 An absent, out-of-root, or stale selector is a named limitation, not a broad
 silent fallback. An anchorless or stale record in an otherwise usable canonical
 group is a named per-scope limitation, not a reason to discard the group's
@@ -231,6 +233,12 @@ JSON formatting is not part of this semantic digest. Composer state skipped
 by serialization is recomputed. The checksum is not writer authentication:
 a replacement body with a recomputed correct digest can be admitted. See
 [Configuration](../CONFIGURATION.md) for field scope and generation transitions.
+
+A cache base that exists but is not a directory (for example
+`RIPR_CACHE_DIR` pointing at a regular file) is disclosed once per build
+through the same typed corruption warning naming the condition and path;
+every lookup degrades to a silent miss, the run never fails, and an
+ordinary missing base stays silent (#4918).
 
 ### Identity and receipt continuity
 

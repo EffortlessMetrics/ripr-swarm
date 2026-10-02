@@ -92,8 +92,28 @@ under `build = false`, and nothing for a virtual workspace or a directory
 with no manifest. Diff seeding and the LSP out-of-scope partition share one
 changed-file rule, `seeds_diff_probes`, so the editor keeps every finding
 the CLI reports. Other loose non-`src` files (panel subjects under
-`metrics/`) are data Cargo never compiles and stay evidence; a
-`[lib]`/`[[bin]]` path declared outside `src` is not yet recognized. Evidence-role files remain fully indexed:
+`metrics/`) are data Cargo never compiles and stay evidence.
+
+`seeds_diff_probes` also consults module-tree evidence (#4435). A changed
+file seeds only when a Cargo target's module tree reaches it through
+`mod`, `#[path]` or literal `include!` edges, walked from every target
+root (a declared `[lib] path` replaces `src/lib.rs`). The modules of an
+external root (`[lib] path = "../shared/lib.rs"`) seed, and every member
+package that compiles that root keeps its tests in Draft scope. A changed
+file no target reaches seeds nothing; when the layout rule would have
+seeded it, the run records one `language_scope_unsupported` limitation
+naming it, but only when every
+Rust file in the workspace scans completely: a macro call other than a
+std macro that cannot emit items (at item level, inside a body, or nested
+in a std macro's arguments), a declaration inside a macro token tree, a
+dynamic or `cfg_attr` `#[path]`, a non-literal `include!`, or a parse
+error anywhere keeps the layout rule, since such a file could reach the
+changed one. A changed file no resolved edge reaches, but that an
+out-of-line `mod` with an unresolved `#[path]` names (a target spelled in
+its `cfg_attr`, a child of one, or its default resolution when every path
+is inside `cfg_attr`), still seeds; when it produces a finding, the run
+records one `language_scope_unsupported` limitation naming the file and
+that declaration, since ripr composes no module context for it. The production-like opt-in still wins. Evidence-role files remain fully indexed:
 functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
@@ -208,6 +228,20 @@ The #3532 harness registry joined the same identity as FindingAffecting
   canonically, and absolute paths fail closed with a named error.
 - `#3273`'s inline `#[cfg(test)]` controls and `#3286`'s helper-evidence
   regression tests remain green.
+- Module-tree seeding (#4435): an undeclared `src` file and an undeclared
+  file beside a non-`src` library root seed nothing while their declared
+  siblings seed, and only such files, never an unreached fixture or
+  `tests/data` source, record the limitation; a module only a replaced
+  default `src/lib.rs` declares seeds nothing; an external root's module seeds and relates the tests of
+  every declaring package; `#[path]`, `include!`, nested inline and
+  raw-identifier edges seed; an unknown tree (`cfg_if!`) keeps seeding;
+  the LSP partition drops the same anchors. Each walk regression pairs a
+  reached file with a true orphan so neither direction goes unpinned.
+- Unresolved `#[path]` routes (#4435): a file reached only through a
+  `cfg_attr` path target, its child, or the `cfg_attr`-only default
+  resolution records the limitation naming the declaration, while a
+  resolved sibling, a comment-only change, a file a plain `#[path]`
+  never loads, and a `cfg` predicate's own `path = ".."` do not.
 
 - The repo production contract carries over exactly: `xtask/`, files
   without a `src` component, and `tests.rs` stems stay non-production;
@@ -268,7 +302,7 @@ recursive member globs), the fail-closed probe boundary, and the
 manifest-sourced `harness` flag.
 `analysis/facts/harness_registry` pins the conflict limitations and the
 degraded per-function behavior for misdeclared targets, and
-`analysis/language/rust.rs` pins the diff-path seeding flip alongside
+`analysis/language/rust/mod.rs` pins the diff-path seeding flip alongside
 diff seeding
 (bench gap regression, declared-target confirmation with a probeable
 helper, opt-in restore). `config/tests.rs` pins parsing, identity
@@ -277,6 +311,11 @@ classification, and absolute-path rejection.
 (`crates/ripr/tests/data/source-role-corpus/cases/`) and pins
 executable-test membership, layout classification, naming-lookalike
 rejection, and cfg-variant equivalence against `facts::build_index`.
+`analysis/syntax/module_tree.rs` pins the per-file edge scan and every
+construct that makes it incomplete; `analysis/workspace/module_graph.rs`
+pins the package walk and each false-orphan path the #4556 reviews
+found; `analysis/language/rust/mod.rs` pins the diff-level module-tree
+seeding and `lsp/diagnostics.rs` the matching editor partition.
 `cargo xtask check-rust-source-role-authority` structurally rejects
 consumer-side role re-derivation and inventories the approved
 `rust_index::is_test_file` consumers. Its production regions come from
@@ -310,7 +349,10 @@ verbatim scan instead of a second lexical authority.
 - `analysis/harness_projection.rs` — the typed harness projection.
 - `analysis/workspace/cargo_targets.rs` — manifest enumeration,
   workspace-root-anchored.
-- `analysis/language/rust.rs` — diff seeding and repo production set.
+- `analysis/syntax/module_tree.rs` and
+  `analysis/workspace/module_graph.rs` — module-tree edges and the
+  target-root walk behind the orphan and external-root evidence (#4435).
+- `analysis/language/rust/mod.rs` — diff seeding and repo production set.
 - `analysis/seam_inventory.rs` — inventory and count production sets.
 - `config.rs` + `config/model.rs` — the opt-in, its identity role, and
   the consumed-config list.

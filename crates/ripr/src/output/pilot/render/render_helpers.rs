@@ -81,13 +81,13 @@ pub(super) fn push_top_seam_json(out: &mut String, entry: &ClassifiedSeam) {
 pub(super) fn push_markdown_recommendation(out: &mut String, entry: &ClassifiedSeam) {
     let outline = targeted_test_brief_outline_for_classified_seam(entry);
     out.push_str(&format!(
-        "- Inspected seam: `{}` {}:{} `{}` in `{}` (`{}`)\n",
+        "- Inspected seam: `{}` {}:{} `{}` in `{}` ({})\n",
         entry.seam.id().as_str(),
         display_path(entry.seam.file()),
         entry.seam.display_line(),
         entry.seam.kind().as_str(),
         entry.seam.owner(),
-        entry.class.as_str()
+        entry.class.human_label()
     ));
     out.push_str(&format!("- Why it matters: {}\n", why_line(entry)));
     if outline.is_not_applicable() {
@@ -126,8 +126,12 @@ pub(super) fn push_path_field(out: &mut String, name: &str, path: &Path, trailin
 pub(super) fn why_line(entry: &ClassifiedSeam) -> String {
     if let Some(missing) = entry.evidence.missing_discriminators.first() {
         return format!(
-            "missing discriminator: {} ({})",
-            missing.value, missing.reason
+            // #4381: name the value with the shared canonical label rather
+            // than a per-surface retype of it.
+            "{}: {} ({})",
+            crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL,
+            missing.value,
+            missing.reason
         );
     }
     let summary = entry.evidence.discriminate.summary.trim();

@@ -139,7 +139,13 @@ impl WorkspaceRootAuthority {
                     && crate::analysis::committed_source::read_source_bytes(&self.root, path)
                         .ok()
                         .flatten()
-                        .is_some_and(|bytes| source_digest(&bytes) == authority.source_digest)
+                        .is_some_and(|bytes| {
+                            // `source_digest` hashes the indexed text, so the
+                            // re-read bytes go through the same decode (BOM
+                            // dropped, non-UTF-8 lossy) before comparing.
+                            let indexed = super::build::rust_source_text(&bytes);
+                            source_digest(indexed.text.as_bytes()) == authority.source_digest
+                        })
                     && matches!(
                         resolve_package_identity(&self.root, path),
                         PackageIdentity::Known(ref identity)
@@ -274,6 +280,11 @@ pub struct RustIndex {
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     #[serde(default)]
     pub include_limitations: Vec<RustIncludeLimitation>,
+    /// Indexed files whose bytes are not UTF-8. They stay indexed from a
+    /// lossy decode on lexical fallback and the fallback disclosure names
+    /// them with `rust_source_not_utf8`.
+    #[serde(default)]
+    pub non_utf8_sources: BTreeSet<PathBuf>,
     /// Physical file-level include targets discovered before contextual
     /// ownership is reduced to one parent. This remains populated for
     /// ambiguous/conflicting include requirements so module resolution keeps
@@ -573,6 +584,42 @@ pub struct LetBindingFact {
     pub name: String,
 }
 
+/// The item container a function is declared in, read from the parser
+/// (#4478, #3727). It decides which call syntax can name the function: a
+/// bare `name(..)` names a module-level function, never a method, and a
+/// method call `recv.name(..)` names a function with a `self` receiver in an
+/// `impl` or `trait` block.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FunctionContainer {
+    /// Not established: the lexical fallback producer, or a cache entry
+    /// written before the fact existed. Consumers fail closed on it.
+    #[default]
+    Unknown,
+    /// A module-level `fn`.
+    Free,
+    /// A `fn` item nested in another function's body.
+    Local,
+    /// A `fn` in an inherent `impl <self_ty>` block.
+    Inherent { self_ty: String },
+    /// A `fn` in an `impl <trait_path> for <self_ty>` block.
+    TraitImpl { trait_path: String, self_ty: String },
+    /// A `fn` in a `trait <trait_name>` block: a default method when it has
+    /// a body, a required-method declaration when it does not.
+    Trait { trait_name: String },
+}
+
+/// Parser facts about a function item's declaration (#4478).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FunctionItemFact {
+    pub container: FunctionContainer,
+    /// Whether the parameter list starts with a `self` receiver.
+    pub has_self_param: bool,
+    /// Whether the item has a body block (a trait's required method does
+    /// not).
+    pub has_body: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionFact {
     pub id: SymbolId,
@@ -591,6 +638,13 @@ pub struct FunctionFact {
     /// without re-reading the file. The lexical fallback path
     /// populates this as empty.
     pub attrs: Vec<String>,
+    /// Attribute syntax lines on the `impl` block that encloses this
+    /// function, when it is an associated function (`#[pymethods]`,
+    /// `#[wasm_bindgen]`, `#[napi]`). Kept apart from `attrs` so test and
+    /// harness detection still read only the function's own attributes.
+    /// Parser-backed only — the lexical fallback leaves this empty.
+    #[serde(default)]
+    pub impl_attrs: Vec<String>,
     /// Names of `fn` items nested inside this function's body (#3727 Slice
     /// A), sorted and deduplicated. A nested `fn <callee>` item is hoisted
     /// and defeats whole-body shadow decisions (see
@@ -607,6 +661,44 @@ pub struct FunctionFact {
     /// empty.
     #[serde(default)]
     pub let_bindings: Vec<LetBindingFact>,
+    /// Where the item is declared (#4478). Parser-backed only; the lexical
+    /// fallback leaves it `Unknown`.
+    #[serde(default)]
+    pub item: FunctionItemFact,
+    /// Where the definition sits for a type-path call `T::name(` (#4558).
+    /// Parser-backed only; the lexical fallback leaves it `Unknown`.
+    #[serde(default)]
+    pub impl_context: FunctionImplContext,
+}
+
+/// Which item a function is defined in, as far as a type-path call
+/// `T::name(` can reach it (#4558).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FunctionImplContext {
+    /// Not established: lexical fallback, a trait body (a default method
+    /// is reachable as `T::name` for any implementor), or an impl whose
+    /// self type is not a plain named path (generic parameter, reference,
+    /// trait object, tuple).
+    #[default]
+    Unknown,
+    /// A module-level or function-local `fn`: never the target of `T::name`.
+    Free,
+    /// A method of an inherent or trait impl whose self type is the named
+    /// path ending in `self_type` (generic arguments dropped).
+    Impl { self_type: String },
+}
+
+impl FunctionImplContext {
+    /// Whether a call spelled `self_type::name(` could resolve to this
+    /// definition. Fails open (true) for `Unknown`: the caller treats every
+    /// such definition as a competing target.
+    pub fn may_be_target_of_type_path(&self, self_type: &str) -> bool {
+        match self {
+            Self::Unknown => true,
+            Self::Free => false,
+            Self::Impl { self_type: own } => own == self_type,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

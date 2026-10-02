@@ -1,8 +1,9 @@
 use crate::analysis::classify::{
-    ProbeContext, PropagationWitnessV1, activation_evidence, classify, confidence_score,
-    contains_as_whole_word, current_path_witness, infection_evidence, local_flow_sinks,
+    OwnerReturnPin, ProbeContext, PropagationWitnessV1, activation_evidence_with_value_facts,
+    classify, confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
     owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_evidence_with_expression,
+    reveal_evidence_with_expression, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::FunctionSummary;
 use crate::domain::*;
@@ -44,7 +45,7 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
             .map(PropagationWitnessDiagnostic::from_witness);
-        let activation = activation_evidence(
+        let activation = activation_evidence_with_value_facts(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -52,6 +53,7 @@ impl ClassifiedProbeEvidence {
             context.helper_chain.as_ref(),
             context.index,
             context.workspace_complete,
+            context.test_value_facts,
         );
         let infect = infection_evidence(context.probe, &test_summaries, &activation);
         let valid_witness = propagation_witness
@@ -77,6 +79,11 @@ impl ClassifiedProbeEvidence {
         // defeat is memoized per probe because it also depends on the
         // owner's package; the import scan does not, so it uses the
         // run-scoped per-file memo on the context.
+        // #4478: the owner-side half of the owner-return pin, established
+        // once per probe; `None` keeps every assertion on the token rule.
+        let owner_return_pin = context
+            .owner_fn
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
         let package_defeats_by_file = FileDefeatMemo::default();
         let owner_locals = context
             .owner_fn
@@ -123,10 +130,43 @@ impl ClassifiedProbeEvidence {
                     })
                 })
             },
+            &|test, assertion| {
+                owner_return_pin.as_ref().is_some_and(|pin| {
+                    pin.admits(test, assertion, context.index, &|file, name| {
+                        context.index.files.get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    })
+                })
+            },
         );
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        // #4828: a boundary-class probe may not read `exposed` by taking a
+        // boundary input from one test and a discriminating oracle from
+        // another. Infection and discrimination stay independently scored;
+        // only the combined `exposed` path requires same-test pairing on
+        // the owner call that sits on the boundary. Pairing reuses
+        // activation's `==` facts so named constants and helper hops that
+        // already infected stay paired when the same test holds the oracle.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
+            && infect.state == StageState::Yes
+            && discriminate.state == StageState::Yes
+            && !has_same_test_boundary_oracle_pairing(
+                context.probe,
+                context.owner_fn,
+                &test_summaries,
+                &activation,
+            ) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                same_test_pairing_missing_summary(),
+            )
+        } else {
+            discriminate
+        };
         // The missing-field fact is the authority on whether an assertion
         // observes the constructed field. A token that merely coincides with
         // the field value (`Box` in `downcast_ref::<Box<dyn E>>()`) must not
@@ -373,8 +413,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 
@@ -413,8 +456,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let context = ProbeContext::new(
             &probe,
@@ -562,8 +608,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
@@ -606,8 +655,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);

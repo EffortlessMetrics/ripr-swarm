@@ -98,7 +98,7 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 | Review a change | Inspect possible assertion gaps and the evidence behind them. | [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) |
 | Write a focused test | Prepare a supported repair, edit the test yourself or with an agent, and compare the static evidence afterward. | [Repair a gap](docs/QUICKSTART.md#agent-or-reviewer-first-hour) |
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
-| Review in GitHub | Add an advisory PR summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
+| Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
 
 `ripr check` inspects a change. `ripr pilot` explores the repository more broadly.
 `ripr agent repair` records a supported before/edit/after attempt; you or your
@@ -128,7 +128,8 @@ test files, whether Git ignores it or not. Build output under a gitignored
 a committed `.gitignore`; changing `.gitignore` mid-attempt is itself refused.
 Redirect ripr output under `target/ripr/` or outside the repository.
 Exit `0` means the command completed and `2` means it could not, which includes
-the file refusal above; `3` means a gate blocked or a typed refusal answered.
+the file refusal above; `3` means a gate blocked or a typed refusal answered, such
+as a repair after phase refused for a named cause.
 See [exit codes](docs/EXIT_CODES.md). The
 [LLM operator guide](docs/LLM_OPERATOR_GUIDE.md) covers the full repair loop.
 
@@ -159,7 +160,7 @@ a promise that every surface is available from the published package.
 | --- | --- |
 | Rust | Static analysis and bounded test-only repair are `usable alpha`. Repairs require a valid route; ordinary real-repository route yield and success remain unestablished. |
 | Python | Analysis is `preview`. Selected pytest/unittest repair routes are `usable alpha`; a finding without a complete route has no repair card. |
-| TypeScript / JavaScript | Opt-in `preview` analysis. |
+| TypeScript / JavaScript | Opt-in `preview` analysis. When a finding has a complete repair packet, `check` names the test file, the missing case, and the test command to run. |
 | Perl | `preview` / advisory development only. It needs a `lang-perl` build and the unpublished `perl-ripr-facts` exporter; no released build/exporter combination is usable yet. |
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when

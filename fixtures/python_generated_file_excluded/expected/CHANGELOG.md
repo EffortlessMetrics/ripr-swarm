@@ -107,3 +107,63 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_generated_file_excluded (4)
+
+Reason:
+RIPR-SPEC-0082 (#4372): the enabled preview advisory counts only changed files that survive the adapter's generated/excluded-path authority, so the generated src/schema_pb2.py is no longer presented as analyzed under preview support
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_generated_file_excluded (5)
+
+Reason:
+RIPR-SPEC-0082 (#4372 review): an enabled preview adapter's generated/excluded-path skip is disclosed as a typed language_scope_unsupported limitation, so the generated src/schema_pb2.py makes the outcome partial_with_limitations instead of a silently complete result
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_generated_file_excluded (6)
+
+Reason:
+RIPR-SPEC-0122: the analysis outcome and state lines lead with plain words; the id stays in parentheses
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_generated_file_excluded (7)
+
+Reason:
+RIPR-SPEC-0122: analysis-outcome Limitation lines lead with plain words; kind, stage and recovery tokens stay in parentheses (#4323)
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_generated_file_excluded (8)
+
+Reason:
+RIPR-SPEC-0122: #4322 summary header names all seven classes with canonical tokens and a shown/total denominator
+
+Command:
+`cargo xtask goldens bless python_generated_file_excluded --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

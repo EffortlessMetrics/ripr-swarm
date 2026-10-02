@@ -14,7 +14,7 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 The before phase prints the attempt manifest path and the exact `--attempt` command to run next. Preserve that command across agent sessions, process restarts, and concurrent work.
 
-The repair packet is written to `target/ripr/workflow/agent-packet.json`. When stdout is piped or redirected, the before phase also prints that packet JSON on stdout, unchanged, for agents and scripts — the same one-JSON-document contract the after phase gives stdout. In a terminal it prints a short summary instead: the seam, the changed behavior, the missing discriminator, the one test file to edit, an assertion shape, and the packet path; the packet file remains the machine artifact either way.
+The repair packet is written to `target/ripr/workflow/agent-packet.json`. By default stdout is a short summary, in a terminal and in a pipe alike: the seam, the changed behavior, the missing discriminator, the one test file to edit, an assertion shape, the packet path, and the exact `--attempt ... --phase after` command. With `--json` stdout is exactly one JSON document, like every other agent command: the packet envelope (`schema_version` `0.5`, see [Output Schema](OUTPUT_SCHEMA.md) § "Agent Seam Packets") with an additive `repair_attempt` block naming the attempt id, the attempt manifest path, the packet path, and the exact `--attempt ... --phase after` command to run after the edit. A driver that captures only stdout can therefore complete before → edit → after without reading stderr; the packet content itself stays unchanged from the file, and the stdout document is not part of the attempt's digest bindings — the packet file is. Both the document and the stderr narration print only after the attempt is durably published, so a refused preparation never emits a success document. The packet file is the machine artifact either way.
 
 `--seam-id <id> --phase after` remains a compatibility route. It succeeds only when exactly one awaiting attempt has that seam. Zero or multiple matches fail closed; RIPR does not guess which attempt is newest or intended.
 
@@ -107,6 +107,20 @@ target/ripr/repair-attempts/<repair-attempt-id>/
     └── agent-verify.json    # verify document that produced that receipt
 ```
 
+`--store PATH` selects a different repository-contained directory with the
+same layout. Relative paths resolve against `--root`, never process CWD
+independently of that root. An explicit store does not fall back to the
+default if it is missing. Before, after, verify, and `ripr agent status`
+consume the same resolver. An attempt ID from one store cannot resolve
+through another. Equivalent supported spellings of the default locator stay
+one identity; traversal, symlink/junction escape, a missing child under an
+escaping or in-tree alias parent, UNC, and drive-relative paths fail closed.
+Nested `store.schema_version` must be `0.1`. Recovery and status follow-up
+commands for an explicit store repeat `--store` so the attempt ID cannot
+resolve through the default directory. An explicit store outside
+`target/ripr` is an expected operational write; stores already under
+`target/ripr` stay covered by that subtree.
+
 The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest. After-phase `agent_receipt` / `agent_verify` files are recorded in `terminal_artifacts` and are excluded from the before commitment.
 
 Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result.
@@ -126,7 +140,10 @@ The manifest schema is `schemas/ripr/repair-attempt.schema.json` (`schema_versio
 - creation time;
 - retained before artifacts and content commitments;
 - the exact next command;
-- limitations and explicit non-claims.
+- limitations and explicit non-claims;
+- optional portable `store` identity on explicit stores (omitted on
+  default-store and legacy manifests so ordinary before → after bytes stay
+  compatible).
 
 The before commitment is derived from the prepared manifest. Terminal updates may add after-phase evidence (`after`, `last_after_refusal`, `terminal_artifacts`), but they cannot silently rewrite the retained before identity or artifacts. `terminal_artifacts` is omitted from the before commitment, same as `after` and `last_after_refusal`.
 
@@ -224,11 +241,11 @@ target/ripr/workflow/            # status input
 
 Those paths keep existing review and cockpit integrations working. Their evidence is admitted only after the exact attempt's retained before snapshot and packet have been resolved and validated.
 
-The after phase's stdout is exactly one JSON document, like every other agent command: the versioned `repair_after_result` envelope (`schema_version` `0.1`), which carries the agent verify 0.3 document — every existing field, including its own top-level `status` — unchanged under `verify`, with the status report embedded beside it under `agent_status`, so a caller can parse stdout once and every stdout document's shape is identifiable from its `schema_version`. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the bare verify 0.3 document alone — a pure verify document, still one document, honestly labeled. When it refuses with a named cause before any verify document exists (a diverged HEAD, drifted analysis inputs, or a no-movement verify refusal; exit code `3`), stdout is the typed `repair_after_refusal` document (`schema_version` `0.2`): `attempt_id`, the terse `error`, and the `narration` lines naming the cause and recovery that stderr also carries.
+By default the after phase's stdout is a short summary: the movement line (for example `Result for seam ...: weak -> exposed (weakly_gripped -> strongly_gripped, improved).`), whether a test run was recorded, the next step, and the receipt and verify paths. On a refusal stdout stays empty and stderr names the cause and recovery. With `--json`, stdout is exactly one JSON document, like every other agent command: the versioned `repair_after_result` envelope (`schema_version` `0.1`), which carries the agent verify 0.3 document — every existing field, including its own top-level `status` — unchanged under `verify`, with the status report embedded beside it under `agent_status`, so a caller can parse stdout once and every stdout document's shape is identifiable from its `schema_version`. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the bare verify 0.3 document alone — a pure verify document, still one document, honestly labeled. When it refuses with a named cause before any verify document exists (a diverged HEAD, drifted analysis inputs, or a no-movement verify refusal; exit code `3`), stdout is the typed `repair_after_refusal` document (`schema_version` `0.2`): `attempt_id`, the terse `error`, and the `narration` lines naming the cause and recovery that stderr also carries.
 
 ### Rerunning the receipt
 
-`ripr agent receipt` can be rerun after the after phase, with or without `--out target/ripr/reports/agent-receipt.json`, and `ripr agent status` can be run in between. Each rerun recomputes the edit-cage delta and requires it, and the verdict it yields, to equal what the after phase bound. The receipt the after phase wrote, and any other file a later `ripr` command writes under `target/ripr`, appears only after that binding. A change is left out of the recomputation only when all three of these hold:
+`ripr agent receipt` can be rerun after the after phase, with or without `--out target/ripr/reports/agent-receipt.json`, and `ripr agent status` can be run in between. When several attempts exist for one seam, pass the attempt's id with `--attempt <id>` (#4332): the receipt then binds against that attempt's retained packet instead of the repository-global compatibility packet a later attempt replaces. Without the flag the seam must have exactly one repair attempt across all states; the refusal names the working next action — no attempt means the `--phase before` start command, several attempts name the ids so `--attempt <id>` can pick one. Each rerun recomputes the edit-cage delta and requires it, and the verdict it yields, to equal what the after phase bound. The receipt the after phase wrote, and any other file a later `ripr` command writes under `target/ripr`, appears only after that binding. A change is left out of the recomputation only when all three of these hold:
 
 - its path matches an expected operational write;
 - the path is not the selected target, an authored edit surface, or a forbidden path;
@@ -241,15 +258,17 @@ Such a path cannot satisfy or violate the cage. Any other movement after the aft
 Repair attempts fail closed:
 
 - a packet whose selected edit target is not a test surface (a `tests` or
-  `test` path component, or a `*_test.rs`, `*_tests.rs`, `test_*.py`,
-  `*_test.py`, or `*_tests.py` file name) is refused before any attempt is
+  `test` path component, a `*_test.rs`, `*_tests.rs`, `test_*.py`,
+  `*_test.py`, or `*_tests.py` file name, or, in a build with the default
+  `lang-typescript` feature, a TypeScript/JavaScript test path such as
+  `*.test.ts`, `*.spec.*`, `*.cy.*`, or `__tests__`) is refused before any attempt is
   created, and before the phase writes any workflow artifact or prints a
   completion line; inline `#[cfg(test)]` modules in production files are not
   valid edit targets;
 - malformed or unknown attempt IDs are rejected;
 - missing, moved, modified, or digest-mismatched retained artifacts are rejected;
 - a cross-attempt packet is rejected;
-- ambiguous seam-selected after phases are rejected with an instruction to pass `--attempt`;
+- ambiguous seam-selected after phases are rejected with an instruction to pass `--attempt`; several matches name the ids, and zero matches name the `--phase before` start command instead of advising an id that cannot exist (#4332);
 - stale `HEAD`, incomparable evidence, and edit-cage violations do not produce a receipt-ready state;
 - tracked differences from the prepared head outside the trusted edit surface block receipt admission, committed or not, and so do untracked paths the attempt wrote outside it; an untracked file that already existed at the before phase and is byte-identical afterwards was not written by the attempt and does not block admission;
 - only a receipt whose `status` is `advisory` recommends including it in review. For an `incomplete` or `invalid` receipt, the receipt's own `summary.next_action.recommended_action` and `summary.next_recommendation` state the status and reason, say the receipt is not review evidence, and name the recovery; the after phase prints that same field as its `next:` line.

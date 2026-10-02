@@ -728,6 +728,61 @@ pub struct CheckSuppressionCandidate {
     pub finding_id: String,
     pub path: String,
     pub class: String,
+    /// The id ripr 0.10 gave this finding, when it differs (#4736). Only
+    /// names the replacement in a stale-selector warning; never matched.
+    pub legacy_finding_id: Option<String>,
+}
+
+impl CheckSuppressionCandidate {
+    /// Builds the matcher candidates for `findings`. The 0.10 id (#4736) is
+    /// only derived when an exposure-gap `finding_id` selector matches no
+    /// current finding, the only case its warning uses, and each source file
+    /// is then read once.
+    pub(crate) fn for_findings<'a>(
+        root: &Path,
+        findings: impl IntoIterator<Item = &'a crate::domain::Finding>,
+        entries: &[SuppressionEntry],
+    ) -> Vec<Self> {
+        let findings: Vec<&crate::domain::Finding> = findings.into_iter().collect();
+        let current: std::collections::HashSet<&str> =
+            findings.iter().map(|finding| finding.id.as_str()).collect();
+        let wants_legacy = entries.iter().any(|entry| {
+            entry.kind == SuppressionKind::ExposureGap
+                && entry
+                    .finding_id
+                    .as_deref()
+                    .is_some_and(|id| !current.contains(id))
+        });
+        let mut sources: std::collections::HashMap<&Path, Option<String>> =
+            std::collections::HashMap::new();
+        findings
+            .iter()
+            .map(|finding| {
+                let file = finding.probe.location.file.as_path();
+                let legacy_finding_id = if wants_legacy && finding.id == finding.probe.id.0 {
+                    sources
+                        .entry(file)
+                        .or_insert_with(|| std::fs::read_to_string(file).ok())
+                        .as_deref()
+                        .and_then(|source| {
+                            crate::analysis::legacy_whole_line_diff_probe_id(
+                                root,
+                                &finding.probe,
+                                source,
+                            )
+                        })
+                } else {
+                    None
+                };
+                Self {
+                    finding_id: finding.id.clone(),
+                    path: root_relative_finding_path(root, file),
+                    class: finding.class.as_str().to_string(),
+                    legacy_finding_id,
+                }
+            })
+            .collect()
+    }
 }
 
 /// One check finding suppressed by an explicit `--suppression-policy` file.
@@ -814,10 +869,25 @@ pub fn apply_check_suppressions(
             }
         }
         if !hit {
-            warnings.push(format!(
-                "{} suppression for `{selector}` did not match any current finding",
-                entry.kind.as_str()
-            ));
+            let replacement = entry.finding_id.as_ref().and_then(|id| {
+                candidates
+                    .iter()
+                    .find(|candidate| candidate.legacy_finding_id.as_ref() == Some(id))
+            });
+            match replacement {
+                // #4736: a 0.10 id stays unapplied (fail closed), but the
+                // warning names the id that now selects the same finding.
+                Some(candidate) => warnings.push(format!(
+                    "{} suppression for `{selector}` did not match any current finding; `{selector}` is the ripr 0.10 id of `{}` (0.11 ids hash the parsed expression, not the whole changed line), so set finding_id = \"{}\" to keep suppressing it",
+                    entry.kind.as_str(),
+                    candidate.finding_id,
+                    candidate.finding_id
+                )),
+                None => warnings.push(format!(
+                    "{} suppression for `{selector}` did not match any current finding",
+                    entry.kind.as_str()
+                )),
+            }
         }
     }
     (matched, warnings)
@@ -831,7 +901,7 @@ pub fn apply_check_suppressions(
 /// counts believing a policy was applied.
 pub fn load_check_suppression_policy(path: &Path) -> Result<Vec<SuppressionEntry>, String> {
     let display = path.display().to_string();
-    let text = std::fs::read_to_string(path)
+    let text = crate::bounded_input::read_to_string(path)
         .map_err(|err| format!("failed to read suppression policy `{display}`: {err}"))?;
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
@@ -1449,6 +1519,7 @@ reason = "second"
 
     fn candidate(finding_id: &str, path: &str, class: &str) -> CheckSuppressionCandidate {
         CheckSuppressionCandidate {
+            legacy_finding_id: None,
             finding_id: finding_id.to_string(),
             path: path.to_string(),
             class: class.to_string(),
@@ -1515,6 +1586,31 @@ reason = "second"
             Some("probe:src")
         );
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn apply_check_suppressions_names_the_current_id_for_a_0_10_selector() {
+        let mut current = candidate(
+            "probe:src_lib.rs:predicate:c80557eb",
+            "src/lib.rs",
+            "weakly_exposed",
+        );
+        current.legacy_finding_id = Some("probe:src_lib.rs:predicate:8390dd91".to_string());
+        let entry = exposure_entry("probe:src_lib.rs:predicate:8390dd91", None, 3);
+        let (matched, warnings) = apply_check_suppressions(&[current], &[entry], "2026-05-03");
+
+        // #4736: the 0.10 id still does not suppress (fail closed) ...
+        assert!(
+            matched.is_empty(),
+            "a 0.10 id must not suppress: {matched:?}"
+        );
+        // ... but the warning names the id to write instead.
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("ripr 0.10 id")
+                && warnings[0].contains("finding_id = \"probe:src_lib.rs:predicate:c80557eb\""),
+            "{warnings:?}"
+        );
     }
 
     #[test]
@@ -1602,6 +1698,22 @@ owner = "repo-owner"
                 .any(|v| v.contains("`static_class` `not_a_class` is not a known exposure class")),
             "violations: {violations:?}"
         );
+    }
+
+    /// #4480: an explicit `--suppression-policy` naming an endless device
+    /// must fail at the shared input cap instead of reading forever.
+    #[cfg(unix)]
+    #[test]
+    fn load_check_suppression_policy_refuses_endless_device() -> Result<(), String> {
+        let err = load_check_suppression_policy(std::path::Path::new("/dev/zero"))
+            .err()
+            .ok_or("an endless suppression policy input must be an error")?;
+        assert!(
+            err.contains("failed to read suppression policy `/dev/zero`")
+                && err.contains("byte input limit"),
+            "{err}"
+        );
+        Ok(())
     }
 
     #[test]

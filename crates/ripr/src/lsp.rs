@@ -19,6 +19,10 @@ mod payload_bounds;
 mod position;
 mod progress;
 mod refresh_scheduler;
+#[cfg(test)]
+mod saved_edit_sequence;
+#[cfg(test)]
+mod source_origin_tests;
 mod state;
 #[cfg(test)]
 mod tests;
