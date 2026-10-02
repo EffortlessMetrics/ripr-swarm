@@ -94,11 +94,13 @@ owner in an isolated test subprocess. Two dependency-free, version-valid
 workspaces have different same-name/version path-dependency implementations.
 Both ordinary and inherited-shared-intermediate A → B → A sequences execute
 three distinct binaries and compare actual subject/core behavior, with source
-and binary hashes, raw build/behavior streams, and receipts retained under
-`target/ripr/rust-judged-panel-host-tests/`. Run it with:
+and binary hashes, raw build/behavior streams, and receipts under
+`target/ripr/rust-judged-panel-host-tests/`. Failed attempts retain their evidence.
+Successful test fixtures are removed by default; deliberate qualification can
+retain the complete bytes with `RIPR_HOST_BUILD_KEEP_EVIDENCE=1`:
 
 ```sh
-cargo test -p xtask rust_judged_panel::host_run::build_tests::fresh_build_ignores_inherited_intermediates -- --exact --nocapture
+RIPR_HOST_BUILD_KEEP_EVIDENCE=1 cargo test -p xtask rust_judged_panel::host_run::build_tests::fresh_build_ignores_inherited_intermediates -- --exact --nocapture
 ```
 
 Each attempt is staged under an exclusive lock. Only a validated three-case

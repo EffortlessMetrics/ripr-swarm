@@ -12,6 +12,7 @@ use super::{BuildIdentity, build_fresh_binary, pretty_json, sha256_file, validat
 use crate::run::capture_bytes_in_dir_with_timeout;
 
 const CHILD_ROOT: &str = "RIPR_HOST_BUILD_TEST_ROOT";
+const KEEP_EVIDENCE: &str = "RIPR_HOST_BUILD_KEEP_EVIDENCE";
 const CHILD_TEST: &str = "rust_judged_panel::host_run::build_tests::fresh_build_child";
 const VERSION: &str = "0.0.1";
 
@@ -106,11 +107,16 @@ fn fresh_build_child() -> Result<(), String> {
             Duration::from_secs(10),
             "fresh-build fixture behavior",
         )?;
-        if output.timed_out || !output.status.is_some_and(|status| status.success()) {
-            return Err("fixture binary did not execute successfully".to_string());
-        }
         write(&attempt.join("behavior-stdout.bin"), &output.stdout)?;
         write(&attempt.join("behavior-stderr.bin"), &output.stderr)?;
+        if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+            return Err(format!(
+                "fixture binary did not execute successfully; evidence: {}; stdout: {}; stderr: {}",
+                attempt.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            ));
+        }
         let actual = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
         let observation = Observation {
             subject: subject.to_string(),
@@ -197,7 +203,7 @@ fn run_sequence(root: &Path, inherit_build_dir: bool) -> Result<(), String> {
         return Err("fixture dependency implementations must differ".to_string());
     }
     println!(
-        "three actual A -> B -> A builds passed; retained evidence: {}",
+        "three actual A -> B -> A builds passed; fixture: {}",
         root.display()
     );
     Ok(())
@@ -209,5 +215,14 @@ fn fresh_build_ignores_inherited_intermediates() -> Result<(), String> {
     // Ordinary isolated behavior is a separate control; setting the hostile
     // environment is confined to the libtest child, never this process.
     run_sequence(&root.join("ordinary"), false)?;
-    run_sequence(&root.join("inherited"), true)
+    run_sequence(&root.join("inherited"), true)?;
+    // Only this successful invocation's owned scratch is disposable. Failed
+    // attempts return above, and deliberate qualification can retain all bytes.
+    if std::env::var(KEEP_EVIDENCE).as_deref() == Ok("1") {
+        println!("retained successful build evidence: {}", root.display());
+    } else {
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        println!("removed successful build fixture: {}", root.display());
+    }
+    Ok(())
 }
