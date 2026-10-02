@@ -2426,7 +2426,7 @@ pub(crate) fn classify_change_with_alias_state(
     // Only active when workspace_root is supplied (i.e. in the live pipeline).
     let named_limitations_from_ownership: Vec<TypeScriptNamedLimitation> =
         if let Some(root) = workspace_root {
-            named_limitations_for_unresolved_ownership(owner, all_tests, root)
+            named_limitations_for_unresolved_ownership(owner, all_tests, root, &related_candidates)
         } else {
             Vec::new()
         };
@@ -2810,13 +2810,14 @@ pub(crate) fn classify_change_with_alias_state(
     }
     // The call input that hits the named predicate boundary, when the owner's
     // module pins it statically (parameter read-only, literal or single
-    // immutable integer module `const`). The repair-packet projection uses
-    // it in place of an observed input that does not reach the boundary.
+    // immutable integer module `const`), or both sides are read-only owner
+    // parameters (#4759). The repair-packet projection uses it in place of
+    // an observed input that does not reach the boundary.
     if !missing_discriminators.is_empty()
-        && let Some(input) =
-            ts_boundary_input_for_change(&probe_shape, line, line_text, owner, workspace_root)
+        && let Some(fact) =
+            ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root)
     {
-        evidence.push(input.evidence_line());
+        evidence.push(fact);
     }
     if let Some(oracle) = &mock_payload_oracle {
         evidence.push(format!("mock_payload_evidence: {oracle}"));

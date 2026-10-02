@@ -91,11 +91,30 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
         let missing = missing
             .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
             .unwrap_or(missing);
+        // #4320: the digest renders one entry while the exhaustive form's
+        // Weakness section may carry several; disclose the window the same way
+        // the evidence window below does, so the reader knows more
+        // missing-discriminator evidence exists in `--format human-full`.
+        let total_weakness_entries = weakness_lines(finding).len();
+        let label = if label == "Missing discriminator" && total_weakness_entries > 1 {
+            format!("Missing discriminator (1 of {total_weakness_entries})")
+        } else {
+            label.to_string()
+        };
         out.push_str(&format!("  {label}: {}\n", one_line(missing)));
     }
     if let Some(test) = finding.related_tests.first() {
+        // #4320: the digest shows only the first related test; carry the total
+        // so the reader knows how much reaching-test evidence exists (the
+        // evidence window in the full form discloses the same bound).
+        let related_tests_total = finding.related_tests.len();
+        let label = if related_tests_total > 1 {
+            format!("Related test (1 of {related_tests_total})")
+        } else {
+            "Related test".to_string()
+        };
         out.push_str(&format!(
-            "  Related test: {}:{} {}\n",
+            "  {label}: {}:{} {}\n",
             display_path(&test.file),
             test.line,
             test.name
@@ -113,25 +132,66 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
         ));
     }
     if finding.recommended_next_step.is_some() {
-        out.push_str(&format!(
-            "  Next step: {}\n",
-            one_line(&reconcile_next_step(finding))
-        ));
+        // #4323: wrap, never truncate. The guidance leads with context and
+        // ends with the imperative, so a hard cut deletes the remedy. Text
+        // that fits the line budget keeps its single line.
+        let next_step = reconcile_next_step(finding);
+        const NEXT_STEP_PREFIX: &str = "  Next step: ";
+        let collapsed = next_step.split_whitespace().collect::<Vec<_>>().join(" ");
+        if NEXT_STEP_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{NEXT_STEP_PREFIX}{collapsed}\n"));
+        } else {
+            out.push_str(&wrap_human_prose(&collapsed, NEXT_STEP_PREFIX, "    "));
+            out.push('\n');
+        }
     }
     let evidence = evidence_path_lines(finding);
     if !evidence.is_empty() {
-        out.push_str("  Evidence:\n");
+        // #4324: evidence ordering is pipeline-ordered (reach, infection,
+        // propagation, observation, discriminator), so the positional 2-line
+        // window below used to hide the decisive stages behind a bare count.
+        // Print the five stage states compactly — every stage is always
+        // named, because `evidence_path_lines` builds all five lines for
+        // every finding — and keep only the per-stage prose detail inside
+        // the window.
+        out.push_str(&format!(
+            "  Evidence: reach {} · infection {} · propagation {} · observation {} · discriminator {}\n",
+            finding.ripr.reach.state.as_str(),
+            finding.ripr.infect.state.as_str(),
+            finding.ripr.propagate.state.as_str(),
+            finding.ripr.reveal.observe.state.as_str(),
+            compact_discriminator_token(finding),
+        ));
         for line in evidence.iter().take(2) {
             out.push_str(&format!("    - {}\n", one_line(line)));
         }
         if evidence.len() > 2 {
             out.push_str(&format!(
-                "    - {} more evidence line(s) hidden\n",
+                "    - {} more detail line(s) in --format human-full\n",
                 evidence.len() - 2
             ));
         }
     }
     out
+}
+
+/// Compact discriminator token for the #4324 stage-states line. The
+/// `discriminate` stage grades the strongest related oracle, not whether that
+/// oracle distinguishes the changed behavior, so for a non-`exposed` finding
+/// a `yes` grade must not read as "a discriminator exists" — the digest may
+/// simultaneously name the missing discriminating input. Mirror the semantic
+/// `discriminator_evidence_line` keeps for the full evidence line: only an
+/// `exposed` finding (or a non-`yes` grade) prints the bare state.
+fn compact_discriminator_token(finding: &Finding) -> &'static str {
+    let stage = &finding.ripr.reveal.discriminate;
+    if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
+        return stage.state.as_str();
+    }
+    if finding.activation.missing_discriminators.is_empty() {
+        "not established"
+    } else {
+        "missing"
+    }
 }
 
 /// Collapse a possibly-multi-line value to one bounded display line.
@@ -225,6 +285,11 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
         display_path(&finding.probe.location.file),
         finding.probe.location.line
     ));
+    // #4321: name the finding this block carries, so a reader routed here by
+    // the digest's `--format human-full` pointer can run `ripr explain` /
+    // `ripr context` and cross-reference the JSON `id` without counting
+    // identical-looking headers.
+    out.push_str(&format!("  id: {}\n", finding.id));
 
     // #2752: these three printed at full source width, so a long changed
     // expression (a chained iterator, a jq pipeline, a heredoc) rendered 400+
@@ -311,7 +376,11 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
     if !stop_reasons.is_empty() {
         out.push_str("\nStop reasons:\n");
         for reason in &stop_reasons {
-            out.push_str(&format!("  - {}\n", reason.as_str()));
+            out.push_str(&format!(
+                "  - {} \u{2014} {}\n",
+                reason.as_str(),
+                reason.describe()
+            ));
         }
     }
 
@@ -958,7 +1027,9 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
     match class {
         ExposureClass::WeaklyExposed => {
             if reveal.discriminate.state == StageState::Weak {
-                Some("a related test reaches this change but does not observe the exact changed value".to_string())
+                // #4381: the shared missing-discriminator sentence lives in
+                // output::gap_vocabulary; quote the constant, never re-type it.
+                Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE.to_string())
             } else {
                 Some(partial_path_hint(ripr).to_string())
             }

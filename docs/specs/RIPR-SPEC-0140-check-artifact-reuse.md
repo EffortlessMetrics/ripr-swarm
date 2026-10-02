@@ -124,7 +124,9 @@ The artifact embeds an input identity computed at check time:
   input option fails compilation until it is explicitly classified;
 - `config_identity_version` and `config_identity_hash` — a closed,
   versioned allowlist contract over `ripr.toml`: the finding-affecting
-  fields (`oracles.*`, `typescript.resolve_tsconfig_paths`, `perl.*`),
+  fields (`oracles.*`, production-like targets and test harnesses,
+  Rust generated patterns and `handwritten_files`,
+  `typescript.resolve_tsconfig_paths`, `perl.*`),
   canonically serialized with defaults materialized, sorted, and hashed.
   The classifier (`RiprConfig::check_artifact_identity_fields`)
   destructures every config struct without a `..` rest pattern, so an
@@ -137,7 +139,9 @@ The artifact embeds an input identity computed at check time:
   are excluded; fields already recorded elsewhere in the identity
   (`analysis.mode`, `analysis.include_unchanged_tests`,
   `languages.enabled`) are marked as captured, not hashed twice;
-- `analyzer_version` (the writing binary's version) and the envelope
+- `analyzer_version` (the writing binary's build identity: its version plus
+  its commit, or a digest of its sources for a dirty or commit-less build,
+  so another build of the same version is refused) and the envelope
   `schema_version`.
 
 The CLI has no diagnostic-profile surface today (that concept is LSP-only,

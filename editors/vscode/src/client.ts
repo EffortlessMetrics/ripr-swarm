@@ -9,7 +9,7 @@ import {
   ServerOptions,
   Trace
 } from 'vscode-languageclient/node';
-import { getConfig, RiprConfig } from './config';
+import { explicitSetting, getConfig, RiprConfig } from './config';
 import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
@@ -77,8 +77,8 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
     baseRef: config.get<string>('baseRef'),
     checkMode: config.get<string>('check.mode'),
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
-    seamDiagnostics: config.get<boolean>('seamDiagnostics'),
-    diagnosticProfile: config.get<string>('diagnosticProfile'),
+    seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
+    diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
     gitTimeoutMs: config.get<number>('gitTimeoutMs'),
     refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
   };
@@ -904,7 +904,9 @@ export class RiprClientController {
       ? 'first repair packet'
       : target?.label === 'gap_repair_packet'
         ? 'gap repair packet'
-        : undefined;
+        : target?.label === 'repair_card'
+          ? 'repair card'
+          : undefined;
     if (directPacketLabel && target && typeof target.packet === 'string') {
       const packet = target.packet.trim();
       if (!packet) {
@@ -3363,7 +3365,7 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
   limited_partial_scope: {
     summary: 'ripr analysis completed on a bounded partition of the diff.',
     detail: 'The diff exceeded the analysis scope budget, so this run covered only part of it and the remainder was not evaluated.',
-    nextStep: `Raise RIPR_PARTIAL_DIFF_FILE_BUDGET or narrow the diff, then run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE}.`
+    nextStep: `Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE}.`
   },
   limited_incomplete_input: {
     summary: 'ripr analysis completed with incomplete input.',

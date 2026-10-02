@@ -10,6 +10,7 @@ Advanced and compatibility workflows:
   start      Write a source-edit-free workflow manifest for one seam.
   brief      Rank a working-set brief for the agent-active router.
   packet     Expand one visible seam into the existing agent seam packet JSON.
+  card       Hand off one visible seam as the compact default repair card.
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
              Execute one validated producer-owned direct verify route.
@@ -95,6 +96,26 @@ without rerunning analysis. It remains advisory and static; it does not run
 mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 "#;
+pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
+
+Usage: ripr agent card [--root PATH] --seam-id ID [--json]
+
+Options:
+  --root PATH      Workspace root. Defaults to current directory.
+  --seam-id ID     Select one visible seam by ID.
+  --json           Emit the versioned repair_card.v1 JSON document. Without
+                   this flag the same typed fields render as a compact human
+                   summary.
+
+The card command assembles the compact RepairCardV1 handoff for one seam: the
+changed behavior, the exact blocker, the instruction state, the edit cage, the
+done-when goals, and typed references to every omitted evidence family. The
+complete canonical packet stays behind the card's explicit packet route
+(`ripr agent packet --seam-id ID --json`), which remains the compatibility
+path. It remains advisory and static; it does not run mutation testing,
+generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
+"#;
+
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
 
 Usage: ripr agent verify [--root PATH] --before PATH --after PATH --json
@@ -152,12 +173,15 @@ prove adequacy, or grant gate or merge authority.
 "#;
 pub(super) const AGENT_RECEIPT_HELP: &str = r#"Write a provenance receipt with bounded next-action guidance for one change.
 
-Usage: ripr agent receipt [--root PATH] --verify-json PATH --seam-id ID --json [--test NAME] [--command CMD] [--out PATH]
+Usage: ripr agent receipt [--root PATH] --verify-json PATH --seam-id ID [--attempt ID] --json [--test NAME] [--command CMD] [--out PATH]
 
 Options:
   --root PATH         Workspace root. Defaults to current directory.
   --verify-json PATH  JSON emitted by `ripr agent verify`.
   --seam-id ID        Select one seam from the verify JSON.
+  --attempt ID        Bind the receipt to one repair attempt by id. Without
+                      it the seam must have exactly one repair attempt; the
+                      refusal names the ids found.
   --json              Required until a human receipt surface exists.
   --test NAME         Optional focused test added or changed by the agent.
   --command CMD       Optional verification command that was run. Repeatable.
@@ -166,16 +190,21 @@ Options:
 The receipt command narrows a saved agent verify artifact to one seam and adds
 handoff metadata for review. The verify JSON path and the before/after snapshot
 paths named inside it must resolve under `--root`; receipt provenance hashes
-those three artifacts without rerunning analysis. It remains advisory and
+those three artifacts without rerunning analysis. With `--attempt`, the receipt
+binds against that attempt's retained packet instead of the repository-global
+compatibility packet a later attempt replaces. It remains advisory and
 static; it does not run analysis, mutation testing, generate tests, edit files,
 change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact state and the next command to run.
 
-Usage: ripr agent status [--root PATH] [--json] [--out PATH]
+Usage: ripr agent status [--root PATH] [--store PATH] [--json] [--out PATH]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
+  --store PATH     Explicit repair-attempt store, resolved against --root.
+                   Defaults to `target/ripr/repair-attempts`. Missing explicit
+                   stores do not fall back to the default.
   --json           Emit the machine-readable status report. Human Markdown is the default.
   --out PATH       Must resolve to the default workflow directory
                    (target/ripr/workflow); any other path fails closed
@@ -204,13 +233,20 @@ tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the before/edit/after repair transaction and its verification phase for one named gap.
 
-Usage: ripr agent repair [--root PATH] --seam-id ID --phase before
-       ripr agent repair [--root PATH] (--attempt ID|--seam-id ID) --phase after
-       ripr agent repair [--root PATH] --attempt ID --phase verify
+Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before [--json]
+       ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after [--json]
+       ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify [--json]
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
 Options:
   --root PATH          Workspace root. Defaults to current directory.
+  --store PATH         Explicit repair-attempt store, resolved against --root.
+                       Defaults to `target/ripr/repair-attempts`. Missing
+                       explicit stores do not fall back to the default.
+  --json               Print the phase's JSON document on stdout (the repair
+                       packet, the after-phase result, or the verification
+                       receipt). Without it stdout is a short summary and the
+                       documents stay in their files under target/ripr/.
   --seam-id ID         Select one visible seam by ID; required for `before` and
                        the compatibility selector for `after`. `ripr pilot
                        --root .` lists seam IDs; `ripr check` finding IDs
@@ -250,9 +286,13 @@ compatibility route and fails closed when multiple awaiting attempts share a
 seam.
 
 The before phase writes the pre-edit repo-exposure snapshot and repair packet.
-The after phase writes the post-edit snapshot, persists static verification
-JSON, and emits a receipt. RIPR owns the evidence plumbing; the human or
-external agent owns the test edit.
+Without `--json`, stdout is a short summary ending with the exact next
+command. With `--json`, it prints one JSON document: the packet envelope with
+an additive `repair_attempt` block (attempt id, manifest path, packet path,
+and the exact `--phase after` command), so a driver that captures only stdout
+can complete the loop. The after phase writes the post-edit snapshot, persists
+static verification JSON, and emits a receipt. RIPR owns the evidence
+plumbing; the human or external agent owns the test edit.
 
 With the Python repair-trust flags, the before phase verifies the selection
 row by digest (manifest digest, row selection digest, current HEAD, exact
