@@ -2214,6 +2214,24 @@ fn baseline_retained_under(report: &NegativeCorpusReport) -> String {
     format!("{}/baseline", report.evidence_root)
 }
 
+fn admission_authority(report: &NegativeCorpusReport) -> &str {
+    match &report.qualification {
+        None => "legacy_smoke_unqualified",
+        Some(custody) => custody
+            .pointer("/source/controller/authority_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("not_recorded"),
+    }
+}
+
+fn accepted_manifest_digest(report: &NegativeCorpusReport) -> Option<&str> {
+    report
+        .qualification
+        .as_ref()
+        .and_then(|custody| custody.pointer("/source/controller/accepted_manifest_sha256"))
+        .and_then(Value::as_str)
+}
+
 fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String> {
     let passed = report
         .cases
@@ -2226,6 +2244,8 @@ fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String>
         "version": report.version,
         "status": report.status,
         "qualification": report.qualification,
+        "admission_authority": admission_authority(report),
+        "accepted_manifest_sha256": accepted_manifest_digest(report),
         "evidence_root": report.evidence_root,
         "qualification_mode": if report.qualification.is_some() { "admitted_source_archive_installed_custody" } else { "legacy_smoke_unqualified" },
         "candidate": {
@@ -2274,6 +2294,13 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
         "Mode: legacy smoke, unqualified; no selected candidate admission.\n\n"
     });
     body.push_str("# release-negative-corpus\n\n");
+    body.push_str(&format!(
+        "Admission authority: `{}`\n\n",
+        admission_authority(report)
+    ));
+    if let Some(digest) = accepted_manifest_digest(report) {
+        body.push_str(&format!("Independently accepted manifest SHA256: `{digest}`. This custody check does not re-prove prerequisite judgments.\n\n"));
+    }
     body.push_str(&format!("Status: {}\n\n", report.status));
     body.push_str(&format!(
         "Run status: `{}` — covered families: {}; deferred families: {}\n\n",
@@ -2367,6 +2394,7 @@ fn parse_release_negative_args(args: &[String]) -> Result<ReleaseNegativeArgs, S
     let mut controller_root = None;
     let mut source_root = None;
     let mut artifact = None;
+    let mut manifest_digest = None;
     let mut index = 0;
     while index < args.len() {
         match args.get(index).ok_or_else(release_negative_usage)?.as_str() {
@@ -2378,6 +2406,16 @@ fn parse_release_negative_args(args: &[String]) -> Result<ReleaseNegativeArgs, S
                     return Err(release_negative_usage());
                 }
                 version = Some(value.clone());
+                index += 2;
+            }
+            "--candidate-manifest-sha256" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.trim().is_empty() && !value.starts_with('-'))
+                    .ok_or_else(release_negative_usage)?;
+                if manifest_digest.replace(value.clone()).is_some() {
+                    return Err(release_negative_usage());
+                }
                 index += 2;
             }
             "--controller-root" | "--candidate-source-root" | "--candidate-artifact" => {
@@ -2426,6 +2464,13 @@ fn parse_release_negative_args(args: &[String]) -> Result<ReleaseNegativeArgs, S
             );
         }
     };
+    let qualification = match (qualification, manifest_digest) {
+        (Some(input), Some(digest)) => Some(input.with_approved_manifest_digest(digest)?),
+        (None, Some(_)) => {
+            return Err("direct manifest mode requires all qualification inputs".to_string());
+        }
+        (input, None) => input,
+    };
     Ok(ReleaseNegativeArgs {
         version,
         qualification,
@@ -2433,7 +2478,7 @@ fn parse_release_negative_args(args: &[String]) -> Result<ReleaseNegativeArgs, S
 }
 
 fn release_negative_usage() -> String {
-    "Usage: cargo xtask release-negative-corpus --version <version> [--controller-root <path> --candidate-source-root <path> --candidate-artifact <controller-relative-path>]".to_string()
+    "Usage: cargo xtask release-negative-corpus --version <version> [--controller-root <path> --candidate-source-root <path> --candidate-artifact <controller-relative-path> [--candidate-manifest-sha256 <accepted-raw-sha256>]]".to_string()
 }
 
 /// Run the fixture's own test suite from inside a running `cargo test`
@@ -2581,6 +2626,59 @@ mod tests {
             || qualified.artifact() != Path::new("docs/release-candidates/fixture-pin.json")
         {
             return Err("qualification parser changed explicit input identity".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn direct_manifest_mode_requires_explicit_complete_digest_pinned_inputs() -> Result<(), String>
+    {
+        let mut argv = args(&[
+            "--version",
+            "0.11.0",
+            "--controller-root",
+            "controller",
+            "--candidate-source-root",
+            "source",
+            "--candidate-artifact",
+            "manifest.json",
+            "--candidate-manifest-sha256",
+        ]);
+        argv.push("a".repeat(64));
+        let parsed = parse_release_negative_args(&argv)?;
+        if parsed
+            .qualification
+            .as_ref()
+            .and_then(|input| input.approved_manifest_digest())
+            != Some("a".repeat(64).as_str())
+        {
+            return Err("explicit direct-manifest mode was lost".to_string());
+        }
+        for invalid in [
+            args(&[
+                "--version",
+                "0.11.0",
+                "--candidate-manifest-sha256",
+                &"a".repeat(64),
+            ]),
+            {
+                let mut changed = argv.clone();
+                changed.push("--candidate-manifest-sha256".to_string());
+                changed.push("b".repeat(64));
+                changed
+            },
+            {
+                let mut changed = argv.clone();
+                let _ = changed.pop();
+                changed.push("not-a-digest".to_string());
+                changed
+            },
+        ] {
+            if parse_release_negative_args(&invalid).is_ok() {
+                return Err(
+                    "ambiguous direct manifest inputs fell back or were admitted".to_string(),
+                );
+            }
         }
         Ok(())
     }

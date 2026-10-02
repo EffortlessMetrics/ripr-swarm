@@ -8603,6 +8603,19 @@ id = "RIPR-SPEC-0144"
 name = "temporary 0.11 release-control lens"
 spec = "docs/specs/RIPR-SPEC-0144-release-control-lens.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_custody_does_not_require_historical_registry",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::producer_output_without_independently_accepted_digest_is_not_authority",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_refuses_templates_missing_bindings_and_predicted_source",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_revalidation_refuses_raw_packet_or_manifest_substitution",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_refuses_wrong_readback_and_unprotected_pin",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_binds_actual_committed_package_inputs",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_rejects_unknown_fields_and_future_self_issued_grants",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_hash_match_cannot_supply_missing_or_stale_owner_acceptance",
+  "xtask/src/reports/release/candidate_harness/live_head/source_tests.rs::direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_substitution",
+  "xtask/src/reports/release/candidate_harness/live_head/input.rs::tests::actual_read_limit_rejects_growth_without_consuming_the_tail",
+  "xtask/src/reports/release/candidate_harness/live_head/budget_tests.rs::direct_manifest_caps_proof_inputs_and_aggregate_bytes",
+  "xtask/src/reports/release/candidate_harness/live_head/budget_tests.rs::owned_reads_require_regular_contained_files_and_available_budget",
+  "xtask/src/reports/release_negative.rs::tests::direct_manifest_mode_requires_explicit_complete_digest_pinned_inputs",
   "xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible",
   "xtask/src/reports/release_control.rs::tests::missing_candidate_selection_is_exposed_as_scope_pending",
   "xtask/src/reports/release_control.rs::tests::missing_disposition_fails_closed",
@@ -8630,12 +8643,17 @@ tests = [
   "xtask/src/reports/candidate_control.rs::tests::negative_candidate_state_fixture_covers_each_false_ready_boundary",
 ]
 fixtures = [
+  "xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.commit",
   "fixtures/benches_harness_evidence",
   "fixtures/release_control/complete.json",
   "fixtures/release_control/reconcile-required.json",
   "fixtures/release_control/candidate-state-negative.json",
 ]
 code = [
+  "xtask/src/reports/release/candidate_harness/live_head.rs",
+  "xtask/src/reports/release/candidate_harness/live_head/input.rs",
+  "xtask/src/reports/release/candidate_harness/source.rs",
+  "xtask/src/reports/source_promotion.rs",
   "xtask/src/reports/release_control.rs",
   "xtask/src/reports/candidate_control.rs",
   "xtask/src/command.rs",

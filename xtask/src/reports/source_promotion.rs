@@ -48,11 +48,11 @@ struct RepositoryIdentity {
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct CommitRange {
-    all_reachable_count: usize,
-    first_parent_count: usize,
-    all_reachable_sha256: String,
-    first_parent_ordered_sha256: String,
+pub(crate) struct CommitRange {
+    pub(crate) all_reachable_count: usize,
+    pub(crate) first_parent_count: usize,
+    pub(crate) all_reachable_sha256: String,
+    pub(crate) first_parent_ordered_sha256: String,
     all_reachable_ordered_recipe: String,
     first_parent_ordered_recipe: String,
 }
@@ -550,28 +550,32 @@ fn canonical_remote(value: &str) -> Option<String> {
 }
 
 fn commit_range(repo: &Path, base: &str, head: &str) -> Result<CommitRange, String> {
-    let all = lines(git(
-        repo,
-        &[
-            "rev-list",
-            "--topo-order",
-            "--reverse",
-            &format!("{base}..{head}"),
-        ],
-    )?);
-    let first = lines(git(
-        repo,
-        &[
-            "rev-list",
-            "--first-parent",
-            "--reverse",
-            &format!("{base}..{head}"),
-        ],
-    )?);
-    let first_forward = lines(git(
-        repo,
-        &["rev-list", "--first-parent", &format!("{base}..{head}")],
-    )?);
+    commit_range_with(base, head, |args| git(repo, args))
+}
+
+/// Shared ordered SHA+LF recipe; the caller retains its existing process owner.
+pub(crate) fn commit_range_with(
+    base: &str,
+    head: &str,
+    mut git: impl FnMut(&[&str]) -> Result<String, String>,
+) -> Result<CommitRange, String> {
+    let all = lines(git(&[
+        "rev-list",
+        "--topo-order",
+        "--reverse",
+        &format!("{base}..{head}"),
+    ])?);
+    let first = lines(git(&[
+        "rev-list",
+        "--first-parent",
+        "--reverse",
+        &format!("{base}..{head}"),
+    ])?);
+    let first_forward = lines(git(&[
+        "rev-list",
+        "--first-parent",
+        &format!("{base}..{head}"),
+    ])?);
     Ok(CommitRange {
         all_reachable_count: all.len(),
         first_parent_count: first.len(),

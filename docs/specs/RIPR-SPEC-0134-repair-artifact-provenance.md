@@ -170,7 +170,11 @@ after movement succeeds but discloses `historical_noncurrent`.
   currentness.
 - Selected-source execution of that existing corpus uses an all-or-none
   `--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
-  The registry grants authority only to exact registered controller bytes;
+  Without `--candidate-manifest-sha256`, the historical registry mode grants
+  authority only to exact registered controller bytes. With that explicit
+  independently accepted digest, direct #1609 schema-1.1 admission binds the
+  single manifest and exact accepted prerequisite bytes under SPEC-0144;
+  neither mode falls back to the other or to unqualified smoke.
   actual source HEAD/tree/ref and raw committed input bytes are checked
   independently. Canonical source/controller roots must not be equal or nested;
   distinct worktrees of one repository are valid. Qualified Cargo package/install

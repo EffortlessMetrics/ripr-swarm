@@ -1,5 +1,6 @@
 //! Qualification-only source/package custody. Raw inputs are not admitted handles.
 mod archive;
+mod live_head;
 mod source;
 pub(crate) use archive::{AttributedArchive, CandidateExecution};
 pub(crate) use source::AdmittedSource;
@@ -10,6 +11,7 @@ pub(crate) struct QualificationInput {
     controller_root: PathBuf,
     source_root: PathBuf,
     artifact: PathBuf,
+    approved_manifest_digest: Option<String>,
 }
 
 impl QualificationInput {
@@ -39,7 +41,20 @@ impl QualificationInput {
             controller_root,
             source_root,
             artifact,
+            approved_manifest_digest: None,
         })
+    }
+
+    /// Explicit direct #1609 mode. This digest must come from the accepted
+    /// #1609 handoff, never be calculated from an unreviewed producer output.
+    pub(crate) fn with_approved_manifest_digest(mut self, digest: String) -> Result<Self, String> {
+        live_head::require_hex("accepted manifest digest", &digest, 64)?;
+        self.approved_manifest_digest = Some(digest);
+        Ok(self)
+    }
+
+    pub(crate) fn approved_manifest_digest(&self) -> Option<&str> {
+        self.approved_manifest_digest.as_deref()
     }
 
     pub(crate) fn controller_root(&self) -> &Path {

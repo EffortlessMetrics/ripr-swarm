@@ -186,15 +186,24 @@ cargo package -p ripr --list
 cargo publish -p ripr --dry-run
 ```
 
-The `release-negative-corpus` invocation above retains legacy smoke and does not admit a selected candidate.
-For admission-required execution, supply all three inputs to that existing
-command: `--controller-root <control-checkout>`,
-`--candidate-source-root <immutable-source-checkout>`, and
-`--candidate-artifact <controller-relative-registered-path>`. Partial inputs or
-an ineligible registry row refuse; this mode never falls back to smoke. The
-controller owns policy/registry bytes separately from the source HEAD/tree/ref.
-Canonical source/controller roots must not be equal or nested; separate
-worktrees may share the same repository.
+For the #1609-qualified path, the existing corpus also accepts the complete
+`--controller-root`, `--candidate-source-root`, `--candidate-artifact` group.
+Add `--candidate-manifest-sha256 <accepted-raw-sha256>` only for direct
+schema-1.1 live-head admission. Its digest comes from the trusted release
+operator's reviewed #1609 handoff, never from the candidate document or an
+auto-discovered adjacent file. Without that flag the group keeps historical
+registry mode; without the entire group the command is unqualified smoke.
+Refused or partial inputs do not fall back. See SPEC-0144 and the transaction
+runbook for accepted prerequisite packets and the no-predicted-SOURCE_PARENT
+boundary. An identity hash check alone does not establish owner acceptance.
+The direct adapter recomputes source-promotion-style ordered Git range digests,
+keeps record-set adjudication with #2768, and caps retained inputs at 64 proof
+references, 16 MiB per file and 64 MiB total. SPEC-0144 names its three supported
+origin spellings and the limits of unlocked file snapshots.
+
+The version-only invocation above remains legacy smoke. In both explicit
+qualification modes canonical source/controller roots must not be equal or
+nested; separate worktrees may share the same repository.
 The package producer uses that source root and retains archive/executable byte
 custody for the installed doctor and authentic corpus chain. Ordinary archive
 entries must match raw committed source blobs; transformed/sparse checkouts and

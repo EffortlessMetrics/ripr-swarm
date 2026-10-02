@@ -235,3 +235,57 @@ Primary evidence: [530ce failed Rust gates](https://github.com/EffortlessMetrics
 The layout rationale is Cargo 1.95's
 [`find_root_iter` ancestor traversal](https://github.com/rust-lang/cargo/blob/rust-1.95.0/src/cargo/core/workspace.rs#L2265-L2284),
 which stops at `target/package`; this source rationale is not runtime proof.
+
+
+## Direct live-head manifest reconciliation, 2026-10-02 (local review draft)
+
+Basis: existing PR4915 head `b7b4b6da6e593045dadb9139c92c4c07339cef83`.
+Native ownership is recorded on that PR; no parallel carrier, remote push,
+candidate pin or qualification run was created. This local draft is not yet
+rebased/merged with current main. Main's merged blind contract is SPEC-0200,
+with 35 synthetic scenarios; neither this patch nor a selected agent run claims
+all 35 actual journeys or a novice-human observation.
+
+The source/package/install/process spine is retained. A complete qualification
+argument group plus explicit `--candidate-manifest-sha256` selects direct
+schema-1.1 #1609 admission; without it historical registry mode is unchanged.
+No refusal falls back. The expected raw digest comes from the trusted release
+operator/controller's independently reviewed #1609 handoff. It is not read
+from the candidate document, calculated as implicit approval, or discovered
+from an adjacent sidecar. It does not re-prove human audit judgments.
+
+SPEC-0144, the existing template/projection and runbook propose one versioned
+manifest with actual candidate tree/package/lock, accepted #2766/#2768/#3807 bytes,
+exact pin readback/protection and required_not_run proof consumers. A minimal
+owner-status envelope records accepted status, exact candidate SHA/tree,
+reviewed packet digest and that owner's native decision reference. The root
+must review this new envelope; the release operator verifies its native source
+before accepting the manifest digest. Missing/unknown status remains
+not_established even on a matching hash. No new audit engine is required.
+SOURCE_PARENT stays null until the later source #1769 transaction.
+
+Proof at this drafting boundary: Rust 1.99 rustfmt parse/format and git diff
+checks only. The repository pin remains 1.95. No Cargo compile/test, package,
+installation, policy aggregate, actual pin or blind execution ran. The
+new pure-data and real temporary-Git controls are authored but NOT_RUN;
+there is no claimed executable RED/GREEN pair. Current-main additive contracts,
+applicable policies, native pinned CI and independent review remain required.
+The separate thin4604 canonical stamp/assess packet consumer is still pending
+and is not mixed into this authority patch before review.
+
+### 2026-10-02 review repair before execution
+
+The review's four findings are repaired locally: handle-based limit+1 reads
+with observed regular-file snapshots; 64 proof inputs / 16 MiB each / 64 MiB
+aggregate retained bytes; actual source Git range recomputation through the
+existing source-promotion helper; and exact supported origin spellings. Root
+approved the schema-1.1 serialization alignment: topo-order/reverse and
+first-parent/reverse full SHA+LF bytes. Historical JSON hashes are different.
+Record-set adjudication remains the reviewed #2768 packet's claim.
+
+Additional authored controls cover actual read limits, aggregate/cardinality
+refusals, regular-file requirements, a real merge topology with distinct range
+counts, incorrect counts/order/digests, and supported/unsupported origin forms.
+The retained boundary commit fixture hashes to the actual 45b56c object; its
+synthetic descendants do not claim release acceptance. Local execution and
+current-main reconciliation are still pending at this checkpoint.

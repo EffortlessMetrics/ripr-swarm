@@ -5,11 +5,97 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Legacy registry fixtures remain separate from explicit direct #1609 input.
+enum SourceAuthority {
+    Registry(Box<CandidateAuthoritySnapshot>),
+    Direct(Box<super::live_head::LiveHeadSnapshot>),
+}
+
+impl SourceAuthority {
+    fn root(&self) -> &Path {
+        match self {
+            Self::Registry(v) => v.root(),
+            Self::Direct(v) => v.root(),
+        }
+    }
+    fn candidate_sha(&self) -> Result<&str, String> {
+        match self {
+            Self::Registry(v) => v.candidate_sha(),
+            Self::Direct(v) => v.candidate_sha(),
+        }
+    }
+    fn candidate_tree(&self) -> Result<&str, String> {
+        match self {
+            Self::Registry(v) => v.candidate_tree(),
+            Self::Direct(v) => v.candidate_tree(),
+        }
+    }
+    fn candidate_ref(&self) -> Result<&str, String> {
+        match self {
+            Self::Registry(v) => v.candidate_ref(),
+            Self::Direct(v) => v.candidate_ref(),
+        }
+    }
+    fn revalidate(&self) -> Result<(), String> {
+        match self {
+            Self::Registry(v) => v.revalidate(),
+            Self::Direct(v) => v.revalidate(),
+        }
+    }
+    fn verify_repository(&self, root: &Path) -> Result<(), String> {
+        if matches!(self, Self::Direct(_)) {
+            let origin = git_bytes(root, &["remote", "get-url", "origin"])?;
+            let origin = std::str::from_utf8(&origin)
+                .map_err(|error| format!("source origin UTF-8: {error}"))?
+                .trim();
+            if !matches!(
+                origin,
+                "https://github.com/EffortlessMetrics/ripr-swarm.git"
+                    | "https://github.com/EffortlessMetrics/ripr-swarm"
+                    | "git@github.com:EffortlessMetrics/ripr-swarm.git"
+            ) {
+                return Err(
+                    "direct manifest source origin is unsupported; expected exact https://github.com/EffortlessMetrics/ripr-swarm[.git] or git@github.com:EffortlessMetrics/ripr-swarm.git".to_string(),
+                );
+            }
+        }
+        if let Self::Direct(manifest) = self {
+            manifest.verify_ranges(root)?;
+        }
+        Ok(())
+    }
+    fn verify_package_inputs(
+        &self,
+        name: &str,
+        blobs: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<(), String> {
+        match self {
+            Self::Registry(_) => Ok(()),
+            Self::Direct(v) => v.verify_package_inputs(name, blobs),
+        }
+    }
+    fn custody_json(&self) -> serde_json::Value {
+        match self {
+            Self::Registry(v) => {
+                let mut custody = v.custody_json();
+                if let Some(object) = custody.as_object_mut() {
+                    object.insert(
+                        "authority_kind".to_string(),
+                        serde_json::json!("historical_registry_mode"),
+                    );
+                }
+                custody
+            }
+            Self::Direct(v) => v.custody_json(),
+        }
+    }
+}
+
 /// Actual source custody, constructed only from the validated controller and
 /// the selected checkout's Git objects. Caller-supplied identity strings cannot
 /// construct this handle.
 pub(crate) struct AdmittedSource {
-    authority: CandidateAuthoritySnapshot,
+    authority: SourceAuthority,
     root: PathBuf,
     version: String,
     package_prefix: String,
@@ -23,7 +109,22 @@ impl AdmittedSource {
             .artifact()
             .to_str()
             .ok_or_else(|| "candidate artifact is not UTF-8".to_string())?;
-        let authority = capture_candidate_authority(input.controller_root(), version, artifact)?;
+        // Explicit modes, no retry or fallback across authority boundaries.
+        let authority = match input.approved_manifest_digest() {
+            Some(digest) => {
+                SourceAuthority::Direct(Box::new(super::live_head::LiveHeadSnapshot::admit(
+                    input.controller_root(),
+                    version,
+                    input.artifact(),
+                    digest,
+                )?))
+            }
+            None => SourceAuthority::Registry(Box::new(capture_candidate_authority(
+                input.controller_root(),
+                version,
+                artifact,
+            )?)),
+        };
         let root = input
             .source_root()
             .canonicalize()
@@ -88,6 +189,7 @@ impl AdmittedSource {
         if !blobs.contains_key("Cargo.lock") {
             return Err("candidate source lacks committed Cargo.lock".to_string());
         }
+        authority.verify_package_inputs(&package_name, &blobs)?;
         let admitted = Self {
             authority,
             root,
@@ -146,7 +248,7 @@ impl AdmittedSource {
     }
 }
 
-fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(super) fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let args = args
         .iter()
         .map(|value| (*value).to_string())
@@ -155,7 +257,7 @@ fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         Path::new("git"),
         &args,
         root,
-        &[],
+        &[("GIT_NO_REPLACE_OBJECTS", "1")],
         &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"],
         Duration::from_secs(30),
         "candidate source Git identity",
@@ -178,10 +280,8 @@ fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
-fn verify_source_identity(
-    root: &Path,
-    authority: &CandidateAuthoritySnapshot,
-) -> Result<(), String> {
+fn verify_source_identity(root: &Path, authority: &SourceAuthority) -> Result<(), String> {
+    authority.verify_repository(root)?;
     let sha = authority.candidate_sha()?;
     let tree = authority.candidate_tree()?;
     let git_ref = authority.candidate_ref()?;
