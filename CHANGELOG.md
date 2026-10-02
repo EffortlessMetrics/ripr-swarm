@@ -12,7 +12,7 @@ are scoped or reviewed.
 ### Added
 
 - LSP: the seam code actions and seam hover project the compact RepairCard
-  (RIPR-SPEC-0197, #4668). "Agent handoff: copy repair card" copies the same
+  (RIPR-SPEC-0198, #4668). "Agent handoff: copy repair card" copies the same
   versioned `repair_card.v1` document the CLI `ripr agent card` handoff
   assembles — built from the completed snapshot's own authorities through the
   shared `app::repair_card_handoff` projection, under the ratified default
@@ -63,7 +63,7 @@ are scoped or reviewed.
   budgeting never changes canonical identity, readiness, target selection or
   actionability, and oversized compact fields or root-specific route
   spellings fail closed instead of truncating silently.
-- Domains: `RepairCardV1` (`repair_card.v1`, RIPR-SPEC-0192) is the compact
+- Domains: `RepairCardV1` (`repair_card.v1`, RIPR-SPEC-0195) is the compact
   provider-neutral repair work object projected from the shared repair
   authorities: fix-instruction summary, repair-route readiness, typed target
   selection, typed command references and optional repair-attempt state. One
@@ -127,6 +127,29 @@ are scoped or reviewed.
 
 ### Fixed
 
+- A changed source file that is not in the working tree (sparse checkout
+  or a local delete) is now a named `changed_file_absent_from_worktree`
+  limitation and a partial analysis outcome. Before, `ripr check` treated
+  the missing owner as a clean `no_static_path`, and `ripr review-comments`
+  reported `scoped production files: 0/0` with no disclosure. Probes for
+  that file are withheld. The repair is to check the file out or disable
+  sparse checkout for it.
+- Changes in languages ripr does not analyze (Go, Java, C, C++, shell and
+  others) are no longer called non-source files. A Go-only diff reported
+- Rust: a test that pins the changed owner's whole return value now
+  confirms a changed `return_value` expression, including through a method
+  call. `assert_eq!(a.try_get_int(3), Ok(-1))` on the tokio-rs/bytes
+  7930d93 change to `Buf::try_get_int` now reads `exposed`; before, it read
+  `weakly_exposed` with "Discriminator unconfirmed". The call must name the
+  owner, and ripr fails closed when it cannot tell: a bare `name(..)` counts
+  only for a module-level function; a method call counts only when the
+  test binds the receiver to a type that dispatches to the owner, the trait
+  is imported, and no other method of that name exists in the workspace.
+  The changed expression must also be the owner's tail, and when the owner
+  can exit early through `?` or `return`, the pinned value must be the
+  changed `Ok(..)` or `Some(..)`, so an `Err(..)` pin on that owner does
+  not count (RIPR-SPEC-0197). `use ::crate_name::..` imports now read as
+  the named crate.
 - A changed Rust file whose only route into its crate is a `mod` with an
   unresolved `#[path]` target (`#[cfg_attr(unix, path = "unix.rs")] mod sys;`,
   including that declaration's default `sys.rs` and the target's own child

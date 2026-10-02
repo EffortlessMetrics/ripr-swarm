@@ -1,4 +1,4 @@
-# RIPR-SPEC-0197: RepairCard projection through standard LSP
+# RIPR-SPEC-0198: RepairCard projection through standard LSP
 
 Status: proposed
 

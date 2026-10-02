@@ -1,4 +1,4 @@
-//! RepairCard projection through standard LSP (#4668, RIPR-SPEC-0197).
+//! RepairCard projection through standard LSP (#4668, RIPR-SPEC-0198).
 //!
 //! The editor adapter never re-derives card facts: witness binding, portable
 //! workspace identity, attempt recency, packet rendering, and card assembly

@@ -989,7 +989,7 @@ fn copy_context_action(
     })
 }
 
-/// The compact RepairCard copy action (#4668, RIPR-SPEC-0197): the same
+/// The compact RepairCard copy action (#4668, RIPR-SPEC-0198): the same
 /// card the CLI `ripr agent card` handoff assembles, projected through the
 /// already-advertised `ripr.copyContext` client command so no new client
 /// capability is required. The wire card rides in the target's `packet`
