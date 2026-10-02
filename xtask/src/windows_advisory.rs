@@ -2225,15 +2225,43 @@ mod tests {
         }
     }
 
+    // Keep the existing process-local sequence pattern from fixture_git.
+    fn transition_root(nonce: u128) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT_ROOT.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "ripr-winadv-transition-{}-{nonce}-{sequence}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn transition_roots_are_distinct_with_a_fixed_clock_in_parallel() -> Result<(), String> {
+        let roots = std::thread::scope(|scope| {
+            let handles = (0..16)
+                .map(|_| scope.spawn(|| transition_root(7)))
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().map_err(|_| "root worker failed".to_string()))
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        let distinct = roots.iter().collect::<BTreeSet<_>>();
+        if distinct.len() != 16 || transition_root(7) == transition_root(7) {
+            return Err(
+                "a fixed clock must still produce distinct serial and concurrent roots".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     fn load_synthetic(log: &str) -> Result<RunOutcome, String> {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "ripr-winadv-transition-{}-{nonce}",
-            std::process::id()
-        ));
+        let directory = transition_root(nonce);
         std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         let log_path = directory.join("run.log");
         let status_path = directory.join("run.status");

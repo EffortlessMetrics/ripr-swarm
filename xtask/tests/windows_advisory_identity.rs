@@ -166,15 +166,24 @@ fn invoke(first: &str, second: &str) -> Result<Output, String> {
     invoke_with_missing(first, second, None)
 }
 
+// Match the process-local sequence pattern used by common/fixture_git.rs.
+// The clock and PID alone are not a parallel-uniqueness guarantee.
+fn corpus_root(nonce: u128) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+    let sequence = NEXT_ROOT.fetch_add(1, Ordering::SeqCst);
+    std::env::temp_dir().join(format!(
+        "ripr-winadv-identity-{}-{nonce}-{sequence}",
+        std::process::id()
+    ))
+}
+
 fn invoke_with_missing(first: &str, second: &str, missing: Option<&str>) -> Result<Output, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
-    let root = TempRoot(std::env::temp_dir().join(format!(
-        "ripr-winadv-identity-{}-{nonce}",
-        std::process::id()
-    )));
+    let root = TempRoot(corpus_root(nonce));
     fs::create_dir_all(&root.0).map_err(|e| e.to_string())?;
     for (label, log) in [("run1", first), ("run2", second)] {
         fs::write(root.0.join(format!("{label}.log")), log).map_err(|e| e.to_string())?;
@@ -599,4 +608,24 @@ fn doctest_end_marker_cannot_hide_missing_rows_and_summary() -> Result<(), Strin
         ],
         &[],
     )
+}
+
+#[test]
+fn corpus_roots_are_distinct_with_a_fixed_clock_in_parallel() -> Result<(), String> {
+    let roots = std::thread::scope(|scope| {
+        let handles = (0..16)
+            .map(|_| scope.spawn(|| corpus_root(7)))
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().map_err(|_| "root worker failed".to_string()))
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    let distinct = roots.iter().collect::<std::collections::BTreeSet<_>>();
+    if distinct.len() != 16 || corpus_root(7) == corpus_root(7) {
+        return Err(
+            "a fixed clock must still produce distinct serial and concurrent roots".to_string(),
+        );
+    }
+    Ok(())
 }
