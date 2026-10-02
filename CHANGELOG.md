@@ -80,8 +80,9 @@ are scoped or reviewed.
   unavailable cards from exposing a route, and `done_when` keeps five axes
   separate. At introduction no projection consumed the card (#4663); the CLI
   projection `ripr agent card` shipped later in this unreleased window
-  (#4667), the LSP seam code actions and hover project the same card (#4668),
-  and no MCP projection emits the card yet.
+  (#4667), the LSP seam handoff code action projects the same card and the
+  seam hover shows a bounded summary of it (#4668), and no MCP projection
+  emits the card yet.
 - CLI: the seven full-repo audit-path formats (`repo-seams-json`,
   `repo-seams-md`, `repo-exposure-json`, `repo-exposure-summary-json`,
   `repo-exposure-md`, `repo-sarif`, `agent-seam-packets-json`) are no longer
@@ -2562,6 +2563,15 @@ are scoped or reviewed.
   `npm run package` stops with `Extension entrypoint(s) missing`
   ([#4865](https://github.com/EffortlessMetrics/ripr-swarm/pull/4865)).
 
+### Docs
+
+- `docs/COMMAND_HIERARCHY.md` now names the discovery surfaces that shipped
+  after #2931: the typed command metadata table validates the human help and
+  hierarchy documentation, `ripr help workflow` lists the bounded task
+  workflows, and `help --json` emits the versioned machine-readable catalog.
+  The guide no longer defers these to #1613 as future work, and its help row
+  includes the workflow surface (#2930, #4976).
+
 - The README and `docs/QUICKSTART.md` no longer claim the released 0.10 CLI
   hard-defaults to `origin/main`; they describe the five-step default-base
   cascade (`origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`)
@@ -2578,15 +2588,6 @@ are scoped or reviewed.
   ([#5013](https://github.com/EffortlessMetrics/ripr-swarm/issues/5013),
   [#5018](https://github.com/EffortlessMetrics/ripr-swarm/issues/5018),
   [#5023](https://github.com/EffortlessMetrics/ripr-swarm/issues/5023)).
-
-### Docs
-
-- `docs/COMMAND_HIERARCHY.md` now names the discovery surfaces that shipped
-  after #2931: the typed command metadata table validates the human help and
-  hierarchy documentation, `ripr help workflow` lists the bounded task
-  workflows, and `help --json` emits the versioned machine-readable catalog.
-  The guide no longer defers these to #1613 as future work, and its help row
-  includes the workflow surface (#2930, #4976).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 
