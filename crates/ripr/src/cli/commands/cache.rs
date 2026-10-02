@@ -979,6 +979,9 @@ mod tests {
         // matching the sibling command families.
         run(&["--help".to_string(), "status".to_string()])?;
         run(&["-h".to_string(), "clear".to_string()])?;
+        // Family help also wins over an unrecognized trailing token.
+        run(&["--help".to_string(), "unknown".to_string()])?;
+        run(&["-h".to_string(), "unknown".to_string()])?;
         Ok(())
     }
 }
