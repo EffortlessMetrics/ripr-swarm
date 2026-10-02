@@ -10010,7 +10010,7 @@ code = [
   "crates/ripr/src/analysis/witness/relations.rs",
   "crates/ripr/src/analysis/witness/adapters.rs",
   "crates/ripr/src/analysis/witness/parity.rs",
-  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
 ]
 outputs = [

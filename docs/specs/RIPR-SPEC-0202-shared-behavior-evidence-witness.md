@@ -150,8 +150,14 @@ and named cross-language limits may explain a difference.
 - `crates/ripr/src/analysis/witness/stage.rs` — stage projection
 - `crates/ripr/src/analysis/witness/relations.rs` — candidate versus established split
 - `crates/ripr/src/analysis/witness/adapters.rs` — finding and classified-seam adapters plus production retain hooks
-- `crates/ripr/src/analysis/classifier/finding.rs` — diff-path retain after `build_finding`
+- `crates/ripr/src/analysis/language/rust/mod.rs` — diff-path retain (`push_retained_finding`) at the classify call sites
 - `crates/ripr/src/analysis/seam_inventory.rs` — repo-path retain after classify
+
+Retain hooks run on release builds too: the discarded `digest_matches` result
+is the adapter's production liveness check until #4792 consumes the
+projection, so the per-finding and per-seam witness build plus SHA-256 digest
+is an intentional, bounded cost, not dead work. Gating it behind
+`debug_assertions` would return the adapter to an unexercised debug-only path.
 - `crates/ripr/src/analysis/witness/parity.rs` — paired report DTO
 - `crates/ripr/src/analysis/witness/tests.rs` — corpus and controls
 
