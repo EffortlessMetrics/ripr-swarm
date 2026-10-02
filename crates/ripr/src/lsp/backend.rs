@@ -828,23 +828,14 @@ impl Backend {
     }
 
     fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
-        use std::path::Component;
-
         let Ok(documents) = self.documents.lock() else {
             return Default::default();
         };
         documents
             .documents
             .keys()
-            .filter(|uri| super::uri::file_uri_is_within_root(root, uri))
-            .filter_map(super::uri::path_from_file_uri)
-            .filter_map(|path| path.strip_prefix(root).ok().map(Path::to_path_buf))
-            .filter(|path| {
-                path.extension().is_some_and(|extension| extension == "rs")
-                    && path
-                        .components()
-                        .all(|component| matches!(component, Component::Normal(_)))
-            })
+            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
             .collect()
     }
 

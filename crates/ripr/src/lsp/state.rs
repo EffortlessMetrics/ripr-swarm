@@ -1,7 +1,7 @@
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
-use super::uri::{file_uris_match, path_from_file_uri};
+use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
@@ -775,15 +775,8 @@ impl AnalysisSnapshot {
     }
 
     pub(super) fn diagnostics_for_uri(&self, uri: &Uri) -> Option<&[Diagnostic]> {
-        self.diagnostics_by_uri
-            .get(uri)
-            .or_else(|| {
-                self.diagnostics_by_uri
-                    .iter()
-                    .find(|(stored_uri, _)| file_uris_match(stored_uri, uri))
-                    .map(|(_, diagnostics)| diagnostics)
-            })
-            .map(Vec::as_slice)
+        self.diagnostics_entry_for_uri(uri)
+            .map(|(_, diagnostics)| diagnostics)
     }
 
     /// The stored document key and complete diagnostics for one URI. The
@@ -799,6 +792,22 @@ impl AnalysisSnapshot {
                     .iter()
                     .find(|(stored_uri, _)| file_uris_match(stored_uri, uri))
                     .map(|(stored_uri, diagnostics)| (stored_uri, diagnostics.as_slice()))
+            })
+            .or_else(|| {
+                // Whole-root aliases may have different URI spellings. Match
+                // only admitted producer-relative keys, retaining exact URI
+                // precedence and refusing an ambiguous fallback. This does not
+                // change global URI/action identity or document quarantine.
+                let relative = file_uri_relative_to_root(&self.root, uri)?;
+                let mut matches = self.diagnostics_by_uri.iter().filter(|(stored_uri, _)| {
+                    file_uri_relative_to_root(&self.root, stored_uri).as_deref()
+                        == Some(relative.as_path())
+                });
+                let (stored_uri, diagnostics) = matches.next()?;
+                matches
+                    .next()
+                    .is_none()
+                    .then_some((stored_uri, diagnostics.as_slice()))
             })
     }
 
@@ -1433,7 +1442,7 @@ impl DocumentStore {
                 .extension()
                 .is_some_and(|extension| extension == "rs")
             {
-                consumed.digest(root, &state.path)
+                file_uri_relative_to_root(root, uri).and_then(|relative| consumed.digest(&relative))
             } else {
                 read_saved_digest(uri).or_else(|| state.saved_digest.clone())
             };

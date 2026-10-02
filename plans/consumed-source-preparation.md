@@ -47,6 +47,20 @@ outside the captured vectors do not establish complete include/dependency
 identity. #1602/#4807 retain that broader work. Preserve the #4830
 identity-law and #4844 RepairAttempt ownership.
 
+Admitted file URIs are projected to relative keys by the existing LSP URI
+containment owner. Open-file indexing and commitment lookup share that
+projection: physical containment is checked first, admitted lexical keys are
+preserved, and canonical-relative keys support a symlinked workspace root.
+The carrier accepts only normalized relative keys and performs no filesystem
+canonicalization. Outside-root and symlink-escaped documents cannot borrow a
+captured commitment.
+
+Snapshot diagnostic lookup keeps exact URI and existing wire-equivalence
+precedence. Its additional root-scoped fallback accepts only one stored entry
+with the same admitted relative key; ambiguity is refused. Distinct lexical
+aliases inside the workspace are not collapsed. Global URI/action identity and
+per-document quarantine are unchanged.
+
 ## Proof
 
 The real Backend A-to-B regression must retain A attribution and quarantine B,
@@ -59,6 +73,15 @@ The framed clean-open saved-workspace route must remain non-quarantined, then
 withdraw dirty content and recover after save. A clean open-file producer
 control checks cold and warm capture without adding findings, rejects
 untracked/foreign paths, and keeps captured A when disk and buffer become B.
+
+Unix root-alias controls cover the combined containment/commitment boundary,
+missing and conflicting input, outside and escaped paths, exact-URI precedence,
+ambiguous diagnostic lookup, and distinct in-workspace lexical keys. A real
+producer journey opens a canonical URI under a symlinked root, captures clean
+saved A without seeding findings, refreshes actual B, serves B through the
+canonical pull URI, then withholds it after a later unsaved edit. Restoring the
+old lexical attribution or removing only the root-scoped lookup must fail the
+corresponding currentness or delivery assertion.
 
 Run the focused library namespaces `lsp::tests::consumed_source_tests::` and
 `analysis::consumed_source::tests::` against the admitted freshly compiled

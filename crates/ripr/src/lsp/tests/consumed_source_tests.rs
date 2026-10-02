@@ -35,7 +35,7 @@ fn clean_open_rust_file_is_indexed_without_seeding_findings() -> Result<(), Stri
         || ordinary
             .snapshot
             .rust_consumed_sources
-            .digest(&ordinary.snapshot.root, &path)
+            .digest(Path::new("src/lib.rs"))
             .is_some()
     {
         return Err("SETUP: clean ordinary diff unexpectedly indexed or probed source".into());
@@ -57,7 +57,7 @@ fn clean_open_rust_file_is_indexed_without_seeding_findings() -> Result<(), Stri
         if result
             .snapshot
             .rust_consumed_sources
-            .digest(&result.snapshot.root, &path)
+            .digest(Path::new("src/lib.rs"))
             != Some(expected.clone())
             || !result.snapshot.findings.is_empty()
         {
@@ -81,7 +81,7 @@ fn clean_open_rust_file_is_indexed_without_seeding_findings() -> Result<(), Stri
     if refused
         .snapshot
         .rust_consumed_sources
-        .digest(&refused.snapshot.root, &path)
+        .digest(Path::new("src/lib.rs"))
         .is_some()
     {
         return Err("undiscovered open path admitted unrelated Rust source".into());
@@ -99,7 +99,7 @@ fn clean_open_rust_file_is_indexed_without_seeding_findings() -> Result<(), Stri
     if refused
         .snapshot
         .rust_consumed_sources
-        .digest(&refused.snapshot.root, &untracked_path)
+        .digest(Path::new("src/untracked.rs"))
         .is_some()
     {
         return Err("discovered but untracked open Rust source acquired authority".into());
@@ -239,7 +239,7 @@ fn actual_saved_producer_commits_raw_bytes_on_cold_and_warm_cache_paths() -> Res
         for (stage, snapshot) in [("cold", &cold.snapshot), ("warm", &warm.snapshot)] {
             if snapshot
                 .rust_consumed_sources
-                .digest(&snapshot.root, &path)
+                .digest(Path::new("src/lib.rs"))
                 .as_ref()
                 != Some(&expected)
             {
@@ -508,7 +508,7 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         .ok_or_else(|| "SETUP: B recovery lost the actual document state".to_string())?;
     if recovered
         .rust_consumed_sources
-        .digest(&recovered.root, &path)
+        .digest(Path::new("src/lib.rs"))
         .as_ref()
         != Some(&digest_b)
         || recovered_document.analyzed_saved_digest.as_ref() != Some(&digest_b)
@@ -720,7 +720,7 @@ async fn real_saved_refresh_admits_canonical_uri_under_symlinked_root() -> Resul
         uri.as_str(),
         produced
             .rust_consumed_sources
-            .digest(&produced.root, &fixture.alias.join("src/lib.rs")),
+            .digest(Path::new("src/lib.rs")),
         state.analyzed_saved_digest,
         state.is_quarantined()
     );
