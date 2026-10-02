@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Changed
 
+- Human output: a selected `no_static_path` finding without a typed limitation
+  asks readers to review the unresolved static path and existing tests, rather
+  than inspect a nonexistent named limitation. State, classification, JSON and
+  typed-limitation guidance are unchanged. (#5051)
 - Human output: the Summary denominator is now `N of M finding(s)
   unsuppressed` instead of `N of M finding(s) shown`; the digest renders one
   finding and names the rest under `Hidden:`, so "shown" read as "rendered"

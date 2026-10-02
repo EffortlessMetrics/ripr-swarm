@@ -380,9 +380,9 @@ fn property_mentions_respect_known_package_boundaries() -> Result<(), String> {
             ..CheckInput::default()
         })?;
         assert_eq!(report.findings.len(), 1, "{name}");
+        let json_text = render_check(&report, &OutputFormat::Json)?;
         let json: serde_json::Value =
-            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
-                .map_err(|error| error.to_string())?;
+            serde_json::from_str(&json_text).map_err(|error| error.to_string())?;
         let finding = &json["findings"][0];
         assert_eq!(
             finding["classification"],
@@ -398,6 +398,18 @@ fn property_mentions_respect_known_package_boundaries() -> Result<(), String> {
             limited.then_some("rust_macro_reach_unresolved"),
             "{name}: {finding}"
         );
+        let human = render_check(&report, &OutputFormat::Human)?;
+        let plain_action = "review the unresolved static path and existing tests";
+        let named_action = "inspect the named static limitation";
+        if ordinary {
+            assert!(!human.contains(plain_action), "{name}: {human}");
+            assert!(!human.contains(named_action), "{name}: {human}");
+        } else {
+            assert!(human.contains("State: limited by static analysis (static_limited)"));
+            assert_eq!(human.contains(plain_action), !limited, "{name}: {human}");
+            assert_eq!(human.contains(named_action), limited, "{name}: {human}");
+        }
+        assert_eq!(render_check(&report, &OutputFormat::Json)?, json_text);
         scratch.cleanup()?;
     }
     Ok(())
