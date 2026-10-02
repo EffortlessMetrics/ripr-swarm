@@ -10,7 +10,7 @@ use super::language::is_generated_rust_file_with_patterns;
 use super::seam_cache::corpus_fingerprint;
 use super::workspace;
 use crate::config::RiprConfig;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Discovered Rust files after the generated-source predicate `ripr check`
@@ -40,18 +40,28 @@ pub(crate) fn analyzable_corpus_payload_size(
     owner_files: &[PathBuf],
 ) -> Result<CorpusPayloadSize, String> {
     let (analyzable, _) = partition_generated_paths(workspace::discover_rust_files(root)?, config);
-    let mut files = analyzable.into_iter().collect::<BTreeSet<_>>();
+    corpus_payload_size_for_paths(root, analyzable, owner_files)
+}
+
+fn corpus_payload_size_for_paths(
+    root: &Path,
+    analyzable: Vec<PathBuf>,
+    owner_files: &[PathBuf],
+) -> Result<CorpusPayloadSize, String> {
+    let mut files = analyzable
+        .into_iter()
+        .map(|path| (path, true))
+        .collect::<BTreeMap<_, _>>();
     for path in owner_files {
-        files.insert(path.clone());
+        files.entry(path.clone()).or_insert(false);
     }
     let mut total_bytes = 0u64;
     let mut file_count = 0usize;
-    for path in &files {
+    for (path, discovered) in &files {
+        super::cancellation::checkpoint()?;
         let metadata = match std::fs::metadata(root.join(path)) {
             Ok(metadata) => metadata,
-            Err(err)
-                if err.kind() == std::io::ErrorKind::NotFound && owner_files.contains(path) =>
-            {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && !discovered => {
                 continue;
             }
             Err(err) => return Err(format!("stat {} failed: {err}", path.display())),
@@ -119,6 +129,57 @@ mod tests {
 
     fn portable(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/")
+    }
+
+    #[test]
+    fn payload_census_distinguishes_absent_owner_from_disappeared_corpus() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-census-absent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?
+                .as_nanos()
+        ));
+        assert!(
+            !root.exists(),
+            "missing-file control must start with an absent fixture"
+        );
+        let missing = PathBuf::from("missing.rs");
+        let absent_owner = super::corpus_payload_size_for_paths(
+            &root,
+            Vec::new(),
+            std::slice::from_ref(&missing),
+        )?;
+        assert_eq!(absent_owner.file_count, 0);
+        assert_eq!(absent_owner.total_bytes, 0);
+        // Even when the diff names it, a file already observed by discovery
+        // cannot vanish silently from the admitted workspace denominator.
+        let error = super::corpus_payload_size_for_paths(&root, vec![missing.clone()], &[missing])
+            .err()
+            .ok_or("a disappeared discovered file must fail closed")?;
+        assert!(error.starts_with("stat missing.rs failed:"));
+        Ok(())
+    }
+
+    #[test]
+    fn payload_census_observes_cancellation_before_metadata() -> Result<(), String> {
+        let token = crate::analysis::cancellation::AnalysisCancellationToken::new();
+        assert!(token.cancel(crate::analysis::cancellation::AnalysisAbortKind::Cancelled));
+        let error = crate::analysis::cancellation::with_token(&token, || {
+            super::corpus_payload_size_for_paths(
+                Path::new("unused-cancelled-root"),
+                vec![PathBuf::from("missing.rs")],
+                &[],
+            )
+        })
+        .err()
+        .ok_or("cancelled census must not complete")?;
+        assert!(
+            crate::analysis::cancellation::is_cancellation_error(&error),
+            "metadata failure must not replace cancellation: {error}"
+        );
+        Ok(())
     }
 
     #[test]

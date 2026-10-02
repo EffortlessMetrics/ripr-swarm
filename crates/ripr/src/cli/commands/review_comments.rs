@@ -615,12 +615,19 @@ fn review_comments_with_admission(
         .iter()
         .map(|line| line.file.clone())
         .collect::<Vec<_>>();
-    let corpus_payload =
-        analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files).map_err(
-            |error| {
-                record_review_comments_error(&mut receipt, &receipt_path, "language_facts", error)
-            },
-        )?;
+    let corpus_payload = analysis::cancellation::with_token(&cancellation, || {
+        analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
+    })
+    .map_err(|error| {
+        if analysis::cancellation::is_cancellation_error(&error)
+            && cancellation.abort_kind()
+                == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
+        {
+            record_review_comments_timeout(&mut receipt, &receipt_path, "language_facts")
+        } else {
+            record_review_comments_error(&mut receipt, &receipt_path, "language_facts", error)
+        }
+    })?;
     let payload_bytes = corpus_payload
         .total_bytes
         .saturating_add(diff_text.len() as u64);
@@ -1640,6 +1647,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let clock_calls = Arc::clone(&calls);
         let start = Instant::now();
+        let clock_receipt_path = out.with_file_name("run-receipt.json");
         let result = review_comments_with_diff_loader_at(
             &args(&[
                 "--root",
@@ -1657,17 +1665,20 @@ mod tests {
                 Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
             },
             move || {
-                let call = clock_calls.fetch_add(1, Ordering::SeqCst);
-                // start, diff, language facts, canonical admission remain
-                // unexpired; the next interior observation expires.
-                if call >= 4 {
+                let in_canonical = std::fs::read_to_string(&clock_receipt_path)
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                    .is_some_and(|receipt| receipt["active_phase"] == "canonical_analysis");
+                // Census now observes the same budget. Select canonical
+                // admission explicitly instead of counting earlier probes.
+                if in_canonical && clock_calls.fetch_add(1, Ordering::SeqCst) >= 1 {
                     start + Duration::from_secs(1)
                 } else {
                     start
                 }
             },
         );
-        if calls.load(Ordering::SeqCst) != 5 {
+        if calls.load(Ordering::SeqCst) != 2 {
             return Err(
                 "canonical work did not stop at its first expired interior checkpoint".to_string(),
             );
@@ -2006,6 +2017,64 @@ mod tests {
             }
             std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_admission_deadline_records_timeout_before_owner_indexing()
+    -> Result<(), String> {
+        let root = over_ceiling_fixture("review-admission-deadline")?;
+        let out = root.join("target/ripr/review/comments.json");
+        let clock_receipt_path = out.with_file_name("run-receipt.json");
+        let calls = std::cell::Cell::new(0usize);
+        let start = Instant::now();
+        let result = review_comments_with_admission(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--timeout-ms",
+                "1000",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Ok(ceiling_diff()),
+            move || {
+                let in_admission = std::fs::read_to_string(&clock_receipt_path)
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                    .is_some_and(|receipt| receipt["active_phase"] == "language_facts");
+                if in_admission {
+                    start + Duration::from_secs(1)
+                } else {
+                    start
+                }
+            },
+            || {
+                Ok(GuidancePayloadCeiling {
+                    max_index_files: usize::MAX,
+                    max_payload_bytes: u64::MAX,
+                })
+            },
+            |root, lines| {
+                calls.set(calls.get() + 1);
+                agent_brief_owner_attribution_for_lines(root, lines)
+            },
+        );
+        assert_eq!(
+            result,
+            Err("review-comments timed out during language_facts".to_string())
+        );
+        assert_eq!(calls.get(), 0);
+        let receipt = read_receipt(&out)?;
+        assert_eq!(receipt["status"], "limited_timeout");
+        assert_eq!(receipt["active_phase"], "language_facts");
+        assert_eq!(receipt["last_completed_phase"], "diff_discovery");
+        assert!(!out.exists() && !out.with_extension("md").exists());
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
         Ok(())
     }
 

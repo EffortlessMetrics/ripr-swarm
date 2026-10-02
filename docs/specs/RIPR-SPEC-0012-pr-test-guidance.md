@@ -72,8 +72,12 @@ loads source files, the diff route measures the union of the analyzable Rust
 workspace corpus and present changed owner-attribution inputs. Generated or
 excluded changed inputs are still counted when attribution reads them; each
 path is counted once. Missing changed paths remain available to the existing
-absent-file disclosure. Census uses file metadata, not source reads or a cache
-fingerprint. It never truncates the inputs or the guidance silently.
+absent-file disclosure. A file already observed by corpus discovery that then
+disappears fails closed, even if the diff also names it. Census uses file
+metadata, not source reads or a cache fingerprint, and checks the owned
+cancellation token before metadata operations. A deadline records
+`limited_timeout` in `language_facts`, before owner indexing. It never truncates
+the inputs or the guidance silently.
 
 `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` defaults to 1200, aligned with the
 current diff/repo family after #4972's measured self-repo growth beyond 800.
