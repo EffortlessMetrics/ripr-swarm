@@ -1138,7 +1138,8 @@ fn first_line(value: &str) -> String {
 /// leading summary line, so the named prefix is matched line-wise, not on
 /// the first line. `ripr` reports the raw guard error as
 /// `ripr: review_guidance_oversized: ...`, so exactly that reporter prefix
-/// is stripped before matching; no other producer error carries the token.
+/// is stripped before matching. Require the category's colon delimiter so
+/// a different error with a lookalike prefix remains a generic failure.
 fn is_review_guidance_oversized(producer_error: &str) -> bool {
     named_guard_line(producer_error).is_some()
 }
@@ -1152,8 +1153,9 @@ fn named_guard_line(producer_error: &str) -> Option<String> {
         let trimmed = line.trim();
         let without_reporter = trimmed.strip_prefix("ripr: ").unwrap_or(trimmed);
         without_reporter
-            .starts_with(REVIEW_GUIDANCE_OVERSIZED_PREFIX)
-            .then(|| without_reporter.to_string())
+            .strip_prefix(REVIEW_GUIDANCE_OVERSIZED_PREFIX)
+            .filter(|suffix| suffix.starts_with(':'))
+            .map(|_| without_reporter.to_string())
     })
 }
 
@@ -1774,6 +1776,23 @@ mod tests {
             "ripr review-comments failed\nstdout:\n\nstderr:\nripr: \
              review_guidance_oversized: 3 closure input files"
         ));
+        // A real producer warning may precede the guard on stderr.
+        assert!(is_review_guidance_oversized(
+            "ripr: warning: working tree has uncommitted changes\nripr: review_guidance_oversized: 3 closure input files"
+        ));
+        // The category is an exact colon-terminated tag, not a namespace
+        // prefix that can reclassify an unrelated producer failure.
+        for lookalike in [
+            "review_guidance_oversizedness: unrelated failure",
+            "ripr: review_guidance_oversized_metadata: unrelated failure",
+            "review_guidance_oversized",
+            "review_guidance_oversized without a tag delimiter",
+        ] {
+            assert!(
+                !is_review_guidance_oversized(lookalike),
+                "misclassified {lookalike}"
+            );
+        }
         // Generic failures, later-line prose, and non-line-start mentions
         // are not the named guard error.
         assert!(!is_review_guidance_oversized("synthetic producer failure"));
