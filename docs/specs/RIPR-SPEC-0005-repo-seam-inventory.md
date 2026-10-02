@@ -53,20 +53,21 @@ top-level `fixtures/` tree so repo-scoped public signals describe the published
 `ripr` package, not its harness. Passing a fixture workspace itself as `--root`
 still analyzes that fixture normally.
 
-Generated Rust that `ripr check` already skips is also outside the seam
-surface. Inventory applies the same `is_generated_rust_file_with_patterns`
-predicate (`bindings.rs`, `schema.rs`, `generated.rs`, `*.gen.rs`,
-`*_generated.rs`, `generated_*`, `gen/`, `generated/`, `out/`, plus
-`[languages.rust] generated_file_patterns`). Those files do not emit seams,
-do not supply test-grip evidence, and are excluded from the corpus fingerprint
-so an edit there does not bust the inventory cache. Repo-exposure discloses
-the skip as `generated_rust_source_skipped` without changing `run_status` to a
-truncated scan. Because those patterns change the seam population, they are
-consumed config for the repo-exposure artifact input identity: a before/after
-pair that differs only in `generated_file_patterns` is not comparable.
-Header-generated files that only `ripr check` will skip after
-a later generated-source predicate land remain inventoried until that
-predicate exists on this trunk.
+Generated Rust that `ripr check` skips is also outside the seam surface.
+Inventory reuses `GeneratedRustSources::for_repo`: conventional generated names
+and directories, additive `[languages.rust] generated_file_patterns`, generator
+headers and `cargo vendor` markers. Exact normalized `handwritten_files` paths
+exempt naming conventions only; explicit patterns, headers and vendor markers
+retain precedence. Default exclusions remain unchanged.
+
+Skipped files do not emit seams or supply test-grip evidence. The corpus
+fingerprint covers the analyzed set, so toggling inclusion and editing included
+source invalidate the cache, while edits confined to excluded bytes do not.
+Repo-exposure discloses `generated_rust_source_skipped` without changing
+`run_status` to a truncated scan. Both generated patterns and handwritten-file
+inclusions are consumed config for its artifact input identity, including when
+diff adapter selection excludes Rust: the inventory producer remains Rust-only.
+A before/after pair with different inclusion policy is not comparable.
 
 ### Stable Seam ID Rules
 
@@ -336,7 +337,14 @@ Explicit per-seam CLI `packet.next` instructions bind commands and artifact
 writes to the selected repository root. Standalone packets include the static outcome
 producer before verify and receipt. Prepared repair packets instead advertise
 the durable after-phase continuation and leave incompatible manual steps null;
-the existing edit cage and authorization checks remain authoritative. The
+the existing edit cage and authorization checks remain authoritative. Each
+seam packet states the edit cage its repair will enforce — `allowed_edit_surface`
+derived from the same recommended target the cage authority consumes,
+`forbidden_files` (the production file whose behavior changed), and
+`must_not_change` with the explicit terminality warning — so the disclosure
+cannot drift from enforcement (#4330). The `next` snapshot recipes are single
+plain commands without a POSIX-only directory prefix; the loop's `ripr`
+commands create their own artifact directories. The
 prepared command pins the published exact attempt selector; a finished attempt
 cannot resume a later attempt for the same seam. Explicit seam-based continuation
 still refuses ambiguous awaiting attempts. Portable bulk packets retain their local

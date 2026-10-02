@@ -540,13 +540,13 @@ suite('Extension Smoke', () => {
 
     await vscode.commands.executeCommand(contextCommand.command, ...(contextCommand.arguments ?? []));
     const contextPacket = await waitForClipboardText((text) =>
-      text.includes('"schema_version": "0.4"') && text.includes('"seam_id": "67fc764ba37d77bd"')
+      text.includes('"schema_version": "0.5"') && text.includes('"seam_id": "67fc764ba37d77bd"')
     );
     const parsedContextPacket = JSON.parse(contextPacket) as {
       schema_version?: string;
       packets?: Array<{ seam_id?: string }>;
     };
-    assert.strictEqual(parsedContextPacket.schema_version, '0.4');
+    assert.strictEqual(parsedContextPacket.schema_version, '0.5');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
 
     await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
@@ -1057,6 +1057,35 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(context.client.requests, []);
       assert.strictEqual(context.clipboardWrites[0], packet);
       assert.ok(context.infoMessages.at(-1)?.includes('gap repair packet'));
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
+  test('copyContext copies repair cards without LSP fallback for active workspace file', async () => {
+    const relativePath = 'src/repair-card.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({});
+    const packet = JSON.stringify({
+      schema_version: 'ripr-repair-card-v1',
+      repair_card_id: 'card-digest',
+      subject: { seam_id: 'seam:rust:pricing' }
+    });
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn repair_card_target() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await context.controller.start();
+      await context.controller.copyContext({
+        label: 'repair_card',
+        packet
+      });
+
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.strictEqual(context.clipboardWrites[0], packet);
+      assert.ok(context.infoMessages.at(-1)?.includes('repair card'));
     } finally {
       await context.dispose();
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');

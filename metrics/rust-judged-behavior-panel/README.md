@@ -70,6 +70,39 @@ It retains byte-exact stdout/stderr plus typed source, build, binary, host,
 argv, config, diff, process, timeout, and analyzer-input identities below the
 ignored `target/` tree.
 
+The owned build removes inherited `CARGO_TARGET_DIR` and
+`CARGO_BUILD_BUILD_DIR` before starting Cargo. The latter matters even with a
+private `--target-dir`: Cargo can otherwise reuse a same-name/version path
+dependency from shared intermediate storage and link old behavior into a new
+application. With no `build.build-dir` configuration, Cargo places its
+intermediate artifacts in the owned target as well. Normal caller overrides
+outside this transaction, the workspace toolchain pin, and the existing
+`CARGO_HOME` registry cache remain unchanged.
+
+This is **environment-override isolation, not complete Cargo configuration
+isolation**. A `build.build-dir` setting in a workspace, ancestor, or Cargo-home
+configuration can still redirect intermediates. The separate #5038 claim
+owns explicit per-command binding and the compatibility decision for historical
+host receipts. The current receipt format records the final target command and
+binary bytes; neither a current application stamp, successful build, correct
+version nor a new binary hash establishes which dependency implementation was
+linked. This limitation does not establish that any historical RIPR receipt was
+contaminated.
+
+The regression at `host_run/build_tests.rs` calls the real `build_fresh_binary`
+owner in an isolated test subprocess. Two dependency-free, version-valid
+workspaces have different same-name/version path-dependency implementations.
+Both ordinary and inherited-shared-intermediate A → B → A sequences execute
+three distinct binaries and compare actual subject/core behavior, with source
+and binary hashes, raw build/behavior streams, and receipts under
+`target/ripr/rust-judged-panel-host-tests/`. Failed attempts retain their evidence.
+Successful test fixtures are removed by default; deliberate qualification can
+retain the complete bytes with `RIPR_HOST_BUILD_KEEP_EVIDENCE=1`:
+
+```sh
+RIPR_HOST_BUILD_KEEP_EVIDENCE=1 cargo test -p xtask rust_judged_panel::host_run::build_tests::fresh_build_ignores_inherited_intermediates -- --exact --nocapture
+```
+
 Each attempt is staged under an exclusive lock. Only a validated three-case
 generation receives `run-index.json`, is moved into the immutable `runs/`
 namespace, and advances `current.json` last. A failed, partial, or concurrent
@@ -186,7 +219,7 @@ validates that rolling packet against the retained subjects:
 - Unauthorized real-repository production-quiet replay stays named as an unmet
   row rather than invented.
 
-The CLI accepts `check`, `replay`, `packet`, and `calibrate`. Bounded real
+The CLI accepts `check`, `replay`, `packet`, `calibrate`, and `feedback`. Bounded real
 ledger replay and live mutation campaigns remain outside the routine PR path.
 `calibrate --check` (and `rust-judged-panel check`) re-derives the retained
 scorecard from the #3806 judgments plus any exact receipts. Runtime results
@@ -225,6 +258,34 @@ Rates always show numerator and denominator. No denominator is
 `not_measurable`, not a fake zero percent. Survived mutants stay visible
 without an automatic false-exposed conclusion. #3076 route-yield and #4578
 rolling-observation denominators are bound by identity and never merged.
+
+## Analyzer feedback ledger
+
+`feedback-ledger.json` is the #4796 sidecar over the same frozen #3806
+judgments. It does not replace the seed, packets, rolling observation, or
+independent judgments, and it does not absorb #4795 calibration.
+
+`cargo xtask rust-judged-panel check` also validates that ledger:
+
+- Every terminal judged case has one failure-direction disposition derived
+  from immutable labels. Human notes cannot strengthen inconclusive or
+  accepted-limitation rows.
+- Confirmed analyzer defects stay `replay_only` with a named
+  materialization/authorization boundary unless a producer-path fixture can
+  retain the exact mechanism. Fixture ids must not be the case id, and
+  `expected_class` shortcuts are rejected.
+- A merged repair without original-case replay remains
+  `repaired_pending_replay`. Wrong-target rows cannot close on a nearby
+  observer identity.
+- Runtime calibration is recorded as `not_run` while the landed #4795
+  receipts stay unauthorized (`proposed_unauthorized`). Those results cannot
+  set the static class.
+- Owner search receipts are recorded. The ledger does not create, assign,
+  close, or label GitHub objects.
+
+`cargo xtask rust-judged-panel feedback [--out] [--check]` derives JSON and
+Markdown from one DTO. There is still no accuracy `report` command and no
+overall analyzer score.
 
 ## Item contract
 

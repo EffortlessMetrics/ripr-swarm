@@ -43,9 +43,12 @@ pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
     "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
 
 /// True when `error` is the named git invocation timeout error (#2303).
-/// Matchable in the style of `analysis::cancellation::is_cancellation_error`.
+/// Matchable in the style of `analysis::cancellation::is_cancellation_error`:
+/// require the exact raw tag and its colon delimiter, without wrapper text.
 pub(crate) fn is_git_invocation_timeout(error: &str) -> bool {
-    error.starts_with(GIT_INVOCATION_TIMEOUT_PREFIX)
+    error
+        .strip_prefix(GIT_INVOCATION_TIMEOUT_PREFIX)
+        .is_some_and(|suffix| suffix.starts_with(':'))
 }
 
 /// True when `error` is the named missing-git spawn failure (#4735).
@@ -264,6 +267,23 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
         .args(UNTRUSTED_REPOSITORY_CONFIG)
         .args(args);
     command
+}
+
+/// [`run_git_output_with_deadline`] with extra environment variables set on
+/// the child, for probes that must scope repository discovery (for example
+/// `GIT_CEILING_DIRECTORIES`).
+pub(crate) fn run_git_output_with_deadline_and_env(
+    root: &Path,
+    args: &[&str],
+    envs: &[(&str, &std::ffi::OsStr)],
+    timeout: Option<Duration>,
+) -> Result<Output, String> {
+    let describe = format!("git -C {} {:?}", root.display(), args);
+    let mut command = git_command(root, args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    collect_output_with_deadline(command, timeout, &describe)
 }
 
 /// Run Git through the shared deadline/process-tree authority while retaining
@@ -623,7 +643,12 @@ pub(crate) fn poll_child(
                         describe,
                         "timeout",
                         ChildWait::TimedOut(format!(
-                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline (process terminated)"
+                            "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the \
+                             {timeout_ms}ms deadline (process terminated). Repair route: \
+                             raise or disable the git deadline (0 disables it) — \
+                             --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI \
+                             runs, the gitTimeoutMs initialization option for editor \
+                             sessions — then re-run."
                         )),
                         || child.terminate_tree(),
                     );
@@ -724,6 +749,35 @@ mod tests {
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
     use serial_test::serial;
+
+    #[test]
+    fn git_timeout_tag_requires_exact_raw_error_prefix() {
+        for error in [
+            "git_invocation_timeout: git command exceeded its deadline",
+            "git_invocation_timeout:	git command exceeded its deadline",
+            "git_invocation_timeout:\ngit command exceeded its deadline",
+        ] {
+            assert!(is_git_invocation_timeout(error), "missed {error:?}");
+        }
+        for error in [
+            "git_invocation_timeout",
+            "git_invocation_timeoutness: unrelated failure",
+            "git_invocation_timeout_metadata: unrelated failure",
+            "git_invocation_timeout : invalid delimiter",
+            "git_invocation_timeout\n: invalid delimiter",
+            "git_invocation_timeout\r\n: invalid delimiter",
+            " git_invocation_timeout: not raw",
+            "\ngit_invocation_timeout: not raw",
+            "ripr: git_invocation_timeout: wrapped",
+            "outer: git_invocation_timeout: wrapped",
+            "diff_scope_oversized: a different guard",
+            "repo_scope_oversized: a different guard",
+            "review_guidance_oversized: a different guard",
+            "analysis cancelled: DeadlineExceeded",
+        ] {
+            assert!(!is_git_invocation_timeout(error), "misclassified {error:?}");
+        }
+    }
 
     /// Drive letter kept apart from its separator so the local-context gate
     /// does not read these synthetic roots as a committed machine path.
@@ -1288,6 +1342,27 @@ mod tests {
         if !err.contains("exceeded the 50ms deadline") {
             return Err(format!(
                 "timeout error should name the deadline, got: {err}"
+            ));
+        }
+        // #4946(b): the timeout message names both deadline knobs and the
+        // 0-disables escape, matching diff_scope_oversized's in-message
+        // repair-route pattern — the error alone must be repairable. The
+        // same shared wait also serves the editor sidecar, whose deadline is
+        // configured by `gitTimeoutMs`, so the route names that knob too
+        // (#4946 review).
+        if !err.contains("--git-timeout") || !err.contains("RIPR_GIT_TIMEOUT") {
+            return Err(format!(
+                "timeout error should name the deadline knobs, got: {err}"
+            ));
+        }
+        if !err.contains("0 disables it") {
+            return Err(format!(
+                "timeout error should name the 0-disables escape, got: {err}"
+            ));
+        }
+        if !err.contains("gitTimeoutMs") {
+            return Err(format!(
+                "timeout error should name the editor-session deadline knob, got: {err}"
             ));
         }
         // Kill+reap proof without a wall-clock bound: drive the same

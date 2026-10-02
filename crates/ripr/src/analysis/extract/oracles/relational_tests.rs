@@ -143,3 +143,96 @@ fn relational_messages_and_call_chains_do_not_steal_oracle_kind() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn scalar_admission_preserves_diagnostic_projection_and_stronger_oracles() -> Result<(), String> {
+    for text in [
+        "assert!(plan.published_payload_bytes >= 1);",
+        "assert!(plan.published_payload_bytes < 1);",
+        "assert!(0 <= plan.published_payload_bytes);",
+        "assert!(0 < plan.expect_published_count);",
+        "assert!(plan.published_payload_bytes > 0, \"{:?}\", unrelated.is_err());",
+        "ensure!(plan.published_payload_bytes > 0, \"{:?}\", unrelated.is_err());",
+    ] {
+        let classification = classify_assertion(text);
+        if classification.kind != OracleKind::RelationalCheck
+            || classification.strength != OracleStrength::Weak
+        {
+            return Err(format!(
+                "scalar condition changed: {text}: {classification:?}"
+            ));
+        }
+    }
+    for (text, kind, strength) in [
+        (
+            "assert_eq!(plan.published_payload_bytes, 7, \"{:?}\", unrelated.is_err());",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "assert_matches!(result, Err(ParseError::InvalidDigit));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        ),
+        (
+            "assert!(result.is_err());",
+            OracleKind::BroadError,
+            OracleStrength::Weak,
+        ),
+        (
+            "assert_snapshot!(published);",
+            OracleKind::Snapshot,
+            OracleStrength::Medium,
+        ),
+        (
+            "assert!(plan.published.is_some());",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "mock_service.expect_publish().times(1);",
+            OracleKind::MockExpectation,
+            OracleStrength::Medium,
+        ),
+        (
+            "assert!(event.published);",
+            OracleKind::MockExpectation,
+            OracleStrength::Medium,
+        ),
+    ] {
+        let classification = classify_assertion(text);
+        if classification.kind != kind || classification.strength != strength {
+            return Err(format!(
+                "retained oracle changed: {text}: {classification:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn scalar_parentheses_do_not_admit_blocks_or_arrays() -> Result<(), String> {
+    for text in [
+        "assert!({ plan.published_payload_bytes > 0 });",
+        "assert!([plan.published_payload_bytes > 0]);",
+        "assert!(({ plan.published_payload_bytes > 0 }));",
+        "assert!(([plan.published_payload_bytes > 0]));",
+    ] {
+        let classification = classify_assertion(text);
+        if classification.kind != OracleKind::MockExpectation
+            || classification.strength != OracleStrength::Medium
+        {
+            return Err(format!(
+                "non-parenthesis wrapper admitted: {text}: {classification:?}"
+            ));
+        }
+    }
+    let text = "assert!(((plan.published_payload_bytes > 0)));";
+    let classification = classify_assertion(text);
+    if classification.kind != OracleKind::RelationalCheck
+        || classification.strength != OracleStrength::Weak
+    {
+        return Err(format!("nested parentheses lost: {classification:?}"));
+    }
+    Ok(())
+}

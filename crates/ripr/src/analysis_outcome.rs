@@ -76,8 +76,10 @@ impl AnalysisLimitationKind {
             Self::DiffScopeOversized => "diff_scope_oversized",
             Self::LanguageAdapterUnavailable => "language_adapter_unavailable",
             Self::LanguageScopeUnsupported => "language_scope_unsupported",
+            Self::ChangedFileAbsentFromWorktree => "changed_file_absent_from_worktree",
             Self::ProducerTimeout => "producer_timeout",
             Self::ProducerFailure => "producer_failure",
+            Self::EolOnlyChurn => "eol_only_churn",
         }
     }
 
@@ -90,8 +92,10 @@ impl AnalysisLimitationKind {
             Self::DiffScopeOversized => "the diff is larger than the configured limit",
             Self::LanguageAdapterUnavailable => "no analyzer is available for a changed language",
             Self::LanguageScopeUnsupported => "some changed files were not analyzed",
+            Self::ChangedFileAbsentFromWorktree => "a changed file is absent from the working tree",
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
+            Self::EolOnlyChurn => "some files changed only in line endings",
         }
     }
 }
@@ -168,8 +172,15 @@ pub(crate) enum AnalysisLimitationKind {
     DiffScopeOversized,
     LanguageAdapterUnavailable,
     LanguageScopeUnsupported,
+    ChangedFileAbsentFromWorktree,
     ProducerTimeout,
     ProducerFailure,
+    /// #4952: a file's changed lines pair identical before/after text at the
+    /// same positions, so the churn is line-ending-only. This is a
+    /// disclosure about the churn shape, not an incomplete analysis — the
+    /// full changed scope was read and probed — so unlike the kinds above it
+    /// may ride on a complete outcome.
+    EolOnlyChurn,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -482,7 +493,15 @@ fn validate_outcome(
             | AnalysisOutcomeKind::CompleteNoFindings
             | AnalysisOutcomeKind::CompleteWithFindings
     );
-    if complete_or_subject_absent && !limitations.is_empty() {
+    // #4952: EolOnlyChurn is a churn-shape disclosure, not an
+    // incomplete-analysis limitation — the changed scope was fully analyzed
+    // — so a complete outcome may carry it, and only it. Every other kind
+    // still marks the outcome incomplete.
+    if complete_or_subject_absent
+        && limitations
+            .iter()
+            .any(|limitation| limitation.kind != AnalysisLimitationKind::EolOnlyChurn)
+    {
         return Err(format!(
             "analysis outcome {kind:?} cannot carry incomplete-analysis limitations"
         ));
@@ -730,8 +749,13 @@ mod tests {
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 "language_scope_unsupported",
             ),
+            (
+                AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
+                "changed_file_absent_from_worktree",
+            ),
             (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
             (AnalysisLimitationKind::ProducerFailure, "producer_failure"),
+            (AnalysisLimitationKind::EolOnlyChurn, "eol_only_churn"),
         ];
         for (kind, expected) in limitation_kinds {
             assert_eq!(kind.as_str(), expected);

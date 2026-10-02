@@ -108,6 +108,32 @@ binary as `stale_evidence` and name the `ripr first-pr` refresh command. They
 must not present that packet as current first-screen evidence. A packet without
 the field is a pre-0.11 artifact, not a contract-invalid document.
 
+Doctor's packet-refresh command binds the diagnosed repository to an absolute
+root, including when diagnosis used a relative root or `.`. Existing roots
+resolve through the filesystem before rendering, so a symlink followed by `..`
+still names the directory whose packet doctor read. If that resolution fails,
+doctor names the failure and omits the refresh command rather than guessing a
+lexical destination. It quotes the resolved root for Bash and prints a labeled
+PowerShell form when the spelling differs.
+When the physical spelling is not UTF-8, a lossless absolute spelling of the
+supplied alias is retained without collapsing `..`. If neither spelling can
+be represented losslessly, doctor explains the limitation and omits the rooted
+command; lossy replacement characters are never executable path authority.
+Without a packet, that same unavailable recommendation supplies the safe-action
+recovery; the screen must not point to a nonexistent command below.
+The rooted recommended first check also resolves existing directories through
+the filesystem. If the selected directory is unavailable, recovery retains a
+lossless absolute input spelling without collapsing `..`, so it cannot select
+an existing lexical decoy. Its existing `.` shorthand is unchanged; a missing-root
+diagnosis still fails without creating paths. The shared lexical helper for
+not-yet-created output targets is unchanged.
+The generic refresh recomposes against the repository's default base and
+`HEAD`, through first-pr's existing resolver; it does not recover a historical
+custom comparison from packet metadata. Doctor names that scope and explains
+that a custom comparison needs explicit `--base REF` and `--head REF`. If no
+default base resolves, first-pr reports its existing actionable error without
+rewriting the packet. Missing-packet diagnosis still recommends analysis first.
+
 ### Selection rules
 
 The packet should select at most one top item for the first screen:

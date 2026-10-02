@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/ts_repair_packet_boundary_constant_resolved/input
 
-Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) shown
 
 Changed file(s) by language: typescript: 1.
 
@@ -18,15 +18,15 @@ Start here:
   Static exposure: weak (weakly_exposed, warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount >= DISCOUNT_THRESHOLD) {
-  Missing discriminator: Related tests reach `discountedTotal` with a strong oracle, but no strong assertion observes a `discountedTotal(...)` call at the changed predicate boundary…
-  Related test: tests/pricing.test.ts:3 no discount below threshold
+  Missing discriminator (1 of 2): Related tests reach `discountedTotal` with a strong oracle, but no strong assertion observes a `discountedTotal(...)` call at the changed predicate boundary…
+  Related test (1 of 2): tests/pricing.test.ts:3 no discount below threshold
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete and delegatable
     (advisory).
-  Evidence:
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     - reach yes: 2 related test(s) found for owner `discountedTotal`
     - infection unknown: TypeScript preview adapter does not yet model infection.
-    - 5 more evidence line(s) hidden
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root fixtures/ts_repair_packet_boundary_constant_resolved/input --diff fixtures/ts_repair_packet_boundary_constant_resolved/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:17445ecf

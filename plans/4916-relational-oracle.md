@@ -70,3 +70,44 @@ actionability or complete LLM opportunity.
 Rollback: revert the private classifier/argument change and its nearby tests
 normally; retain the RED/GREEN and cache receipts for review. No migration is
 required.
+
+## Current-main salvage, 2026-10-02
+
+The existing draft at `18390bb71b860132e8269bcb84112fdeb6a5150a` is
+retained. Its actual conflict with main
+`78a97edf334a701e75603e1033a08448b49ece6d` is resolved by keeping both
+semantic authorities: scalar admission inspects the original complete outer
+assertion, while existing diagnostic-operand projection continues to serve
+all established oracle precedence. Testing scalar admission only after
+projection would incorrectly admit nested/wrapped assertion text.
+
+An isolated exact-source Rust 1.99.0 harness copies the current main or
+integrated candidate argument, classifier, pattern, scanner, mask, shadow,
+token and constructor modules byte-for-byte. Only the domain/fact type
+scaffolding omits serialization derives; no classification decision is
+substituted. It does not stand in for the Cargo library, cache integration,
+native pinned Rust 1.95.0 checks, or the complete consumer replay.
+
+- Current-main RED: four relational controls execute and fail with the actual
+  `MockExpectation/Medium` versus required `RelationalCheck/Weak` mismatch;
+  zero passes, four failures, zero ignored (exit 101).
+- Integrated GREEN: 110 source-module tests execute and pass, zero failures or
+  ignored, including all four relational controls, retained mock/boolean
+  observer behavior, exact/error/snapshot/smoke precedence, and main's
+  diagnostic-expression projection (exit 0).
+- Wrong-integration challenge: moving scalar admission after diagnostic
+  projection causes the existing wrapped-spelling control to reject
+  `wrapper(assert!(plan.published > 0));` (exit 101). Thus merely unioning
+  the conflicting imports is not sufficient conflict repair.
+
+The historical receipts above remain evidence only for their original heads.
+Current candidate compile, repository guards, cache integration, golden blast
+radius, pinned native CI and published-head review must be recorded separately
+on the PR before merge. The governed #1580 complete route remains a non-claim.
+
+Independent salvage review also caught the existing parenthesis helper using
+a delimiter reader that accepts blocks and arrays. The scalar wrapper helper
+now explicitly requires an opening parenthesis. Its new block/array exclusion
+control first failed on the inherited helper (`RelationalCheck/Weak` for a
+block expression), then passed with retained nested-parenthesis positives.
+The final focused source-module suite contains 111 passing tests.

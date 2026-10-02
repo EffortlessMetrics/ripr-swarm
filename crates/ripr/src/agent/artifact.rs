@@ -612,7 +612,7 @@ fn display_root(root: &Path) -> String {
     root.to_string_lossy().replace('\\', "/")
 }
 
-fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_spawn(root, args)?;
     if !output.status.success() {
         return Err(format!(
@@ -2631,6 +2631,64 @@ mod tests {
                 Err(error) if error.contains("analysis input identities differ") => Ok(()),
                 other => Err(format!(
                     "pattern-changed pair must be incomparable, got {other:?}"
+                )),
+            }
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+    #[test]
+    fn repo_exposure_input_identity_tracks_handwritten_files() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let config = crate::config::RiprConfig::default();
+            let baseline = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &config,
+            )?;
+            let moved = crate::config::tests_only_parse(
+                "[languages.rust]\nhandwritten_files = [\"src/schema.rs\"]\n",
+            )?;
+            if crate::config::check_artifact_config_identity_hash(&moved)
+                == crate::config::check_artifact_config_identity_hash(&config)
+            {
+                return Err(
+                    "handwritten_files fixture must move the diff-check config hash".to_string(),
+                );
+            }
+            if crate::config::repo_exposure_config_identity_hash(&moved)
+                == crate::config::repo_exposure_config_identity_hash(&config)
+            {
+                return Err(
+                    "handwritten_files is consumed by seam inventory and must move the repo-exposure config identity"
+                        .to_string(),
+                );
+            }
+            let moved_context = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &moved,
+            )?;
+            if moved_context.input_identity == baseline.input_identity {
+                return Err(
+                    "handwritten_files must move the repo-exposure input identity".to_string(),
+                );
+            }
+            let mut before = comparable_artifact();
+            before.input_identity = baseline.input_identity.clone();
+            let mut after = before.clone();
+            after.input_identity = moved_context.input_identity.clone();
+            match validate_comparable_pair(&before, &after) {
+                Err(error) if error.contains("analysis input identities differ") => Ok(()),
+                other => Err(format!(
+                    "inclusion-changed pair must be incomparable, got {other:?}"
                 )),
             }
         })();

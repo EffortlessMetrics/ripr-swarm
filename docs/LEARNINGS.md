@@ -3,6 +3,69 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-02: Assertion diagnostics are not error observers (#4748)
+
+`assert_eq!(rdr.len(), 10, "read error")` observes a successful length, not
+an error path. Exclude every formatting operand, including non-string arguments,
+before typing an assertion or confirming a changed reader/error variant. A
+quote-stripper alone still credits identifiers passed as diagnostic arguments;
+a reveal-only filter still trusts an error kind manufactured during extraction.
+
+Keep the argument boundary in `analysis/extract/oracles/arguments.rs`, shared
+by classification, bound-error recognition and ErrorPath matching. Preserve the
+original oracle text for rendering. The `error_path_diagnostic_*` fixtures pin
+absent, neutral, raw, escaped, formatted and typed-diagnostic controls in the
+RIPR-SPEC-0108 honesty corpus. Genuine typed and guarded Result oracles retain
+their producer-owned evidence; this is not general Rust name/dataflow resolution.
+
+## 2026-09-29: Absent worktree files are not `no_static_path` (#4586)
+
+Rust discovery walks the disk. A changed file that is in the diff but not
+on disk (sparse checkout, local delete) drops out of the index. Probes
+are still built from the diff text, find no owner, and used to classify
+as a complete `no_static_path`. That is a false-clean: a test may reach
+the owner; ripr could not see the file.
+
+Name `changed_file_absent_from_worktree`, withhold the probe (or emit
+`static_unknown`), and keep the outcome partial. Do not read git objects
+as a silent substitute for the missing worktree file in this lane.
+review-comments must list the dropped path the same way; `0/0` scoped
+production files without that disclosure is the same false-clean.
+
+Presence is not `root.join(diff_path)` alone. Git diffs keep the
+repository-relative path while `--root` is often a crate subdirectory;
+treat a suffix as the same file only when the stripped prefix is a
+trailing component sequence of `--root`. A sibling crate's `src/lib.rs`
+must not satisfy another crate's missing path.
+## 2026-09-29: Same-crate trait methods are not unique just because they share a crate (#4760)
+
+`body_contains_owner_call` and `tests_by_call_name` match `size_hint(` including
+`.size_hint()`. That is correct for a unique impl method (`ledger.apply(5)` is
+how a test calls `Ledger::apply`). It is not identity when two impls of one
+trait method live in the same crate.
+
+The uniqueness bypass only gates *cross-crate* package-prefix filtering. A
+name seen twice in one crate (`WhileSome::size_hint` vs `Combinations::size_hint`)
+still became `direct_owner_call`, and the Combinations test's strong
+`assert_eq!(it.size_hint().1, …)` then reported itertools `WhileSome::size_hint`
+as `exposed` 1.0. Mutation: with `(0, None)` applied, every suite still passed.
+
+Fail closed: an impl method whose name has more than one workspace definition
+is `direct_owner_call` only when the receiver resolves to this impl (let
+binding that names the type, UFCS `Type::method`, or `Type { }.method` prefix).
+Unresolved receivers (`let it = (0..3).combinations(2); it.size_hint()`) stay
+`weak_token_substring`. Unique impl methods are unchanged. Full `CallFact`
+receiver fields remain #3727.
+
+A second effect: one Combinations test can occupy several of the eight
+`related_tests` render slots (one row per matching assertion). Collapse only
+when the list exceeds that cap, putting unique tests first. Under the cap,
+keep per-assertion rows.
+
+Pin both sides: `rust_adversarial_same_method_other_type` must stay below
+`exposed`; `rust_same_method_owner_type_positive` must keep `exposed`. Do not
+absorb #4478 (confirmation pin), #4486 (proximity-only oracle), or #3727.
+
 ## 2026-09-29: Repo-seam FieldConstruction missing facts need parser-backed owner-result identity (#1981)
 
 `CallFact`, `LetBindingFact`, and `ValueEnv` cannot prove that a local is the

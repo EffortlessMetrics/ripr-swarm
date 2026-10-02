@@ -1,6 +1,8 @@
 use crate::domain::{OracleKind, OracleStrength};
 
-use super::arguments::{ensure_assertion_arguments, outer_assertion_condition};
+use super::arguments::{
+    assertion_oracle_text, ensure_assertion_arguments, outer_assertion_condition,
+};
 use super::patterns::{
     contains_exact_comparison, is_broad_error_assertion, is_clear_exact_custom_assertion_helper,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
@@ -15,6 +17,15 @@ pub(crate) struct OracleClassification {
 }
 
 pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
+    // Preserve the full outer-assertion boundary before semantic operand
+    // projection removes wrappers or trailing tokens from the input.
+    let scalar_integer_relation = outer_assertion_condition(line)
+        .as_deref()
+        .is_some_and(is_scalar_integer_relation);
+    // Diagnostic expressions must not manufacture a trusted error kind before
+    // reveal decides whether this oracle observes the changed error path.
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
@@ -58,10 +69,7 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             kind: OracleKind::SmokeOnly,
             strength: OracleStrength::Smoke,
         }
-    } else if outer_assertion_condition(line)
-        .as_deref()
-        .is_some_and(is_scalar_integer_relation)
-    {
+    } else if scalar_integer_relation {
         OracleClassification {
             kind: OracleKind::RelationalCheck,
             strength: OracleStrength::Weak,
