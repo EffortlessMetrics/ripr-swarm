@@ -476,7 +476,13 @@ fn repo_format_disclosure_is_absent_outside_the_audit_path_group() -> Result<(),
 fn run_pilot(root: &Path, out: &Path, extra: &[&str]) -> Result<Output, String> {
     let root_arg = root.display().to_string();
     let out_arg = out.display().to_string();
-    let mut args = vec!["pilot", "--root", root_arg.as_str(), "--out", out_arg.as_str()];
+    let mut args = vec![
+        "pilot",
+        "--root",
+        root_arg.as_str(),
+        "--out",
+        out_arg.as_str(),
+    ];
     args.extend_from_slice(extra);
     ripr()
         .args(&args)
@@ -517,7 +523,10 @@ fn pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged() -> Re
         !loud_err.contains('\u{1b}'),
         "non-TTY pilot stderr has ANSI: {loud_err}"
     );
-    assert!(!loud_err.contains('\r'), "non-TTY pilot stderr has CR: {loud_err}");
+    assert!(
+        !loud_err.contains('\r'),
+        "non-TTY pilot stderr has CR: {loud_err}"
+    );
     let loud_stdout = String::from_utf8_lossy(&loud.stdout);
     assert!(
         !loud_stdout.contains("ripr progress:"),

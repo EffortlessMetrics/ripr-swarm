@@ -10,8 +10,8 @@ use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_f
 use crate::output;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::time::Duration;
 
 const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
