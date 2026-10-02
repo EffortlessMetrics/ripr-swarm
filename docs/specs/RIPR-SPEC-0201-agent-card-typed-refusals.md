@@ -19,7 +19,8 @@ Support-tier impact:
 - None. The refusal envelope is an advisory, read-only projection of the
   existing handoff failure states; it accepts no edit or execution authority
   and writes nothing. Exit codes distinguish refusal (`3`) from
-  could-not-complete (`2`) exactly as the verify/repair precedent does.
+  could-not-complete (`2`) exactly as the verify/repair precedent does. See
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
