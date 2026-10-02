@@ -130,36 +130,60 @@ pub(crate) fn card_packet_json(entry: &ClassifiedSeam) -> String {
 }
 
 /// One bounded dirty-state probe over the files this card's evidence binds:
-/// the seam file (the forbidden edit surface) and, when the packet task is
-/// the targeted-test task, the recommended test file (the allowed edit
-/// surface). Any uncommitted change in that scope — tracked modification or
-/// untracked draft — projects `AcceptedDirtyDraft`, because the analysis the
-/// card projects reads working-tree bytes while `snapshot.repository_head`
-/// names the committed head. A clean scope projects `Current`. A probe
-/// failure fails closed: the gather errors, no card is minted, and no
-/// unchecked `current` claim escapes.
+/// the seam file (the forbidden edit surface), every related-test file (the
+/// related-test-candidates evidence family binds them all), and, when the
+/// packet task is the targeted-test task, the recommended test file (the
+/// allowed edit surface). Any uncommitted change in that scope — tracked
+/// modification, untracked draft, or ignored edit, all of which the analysis
+/// reads from working-tree bytes while `snapshot.repository_head` names the
+/// committed head — projects `AcceptedDirtyDraft`. A clean scope projects
+/// `Current`. A probe failure fails closed: the gather errors, no card is
+/// minted, and no unchecked `current` claim escapes.
 pub(crate) fn evidence_tree_currentness(
     root: &Path,
     entry: &ClassifiedSeam,
 ) -> Result<RepairCardSnapshotCurrentness, String> {
-    let mut paths = vec![display_path(entry.seam.file())];
-    if task_for(entry) == TASK_WRITE_TARGETED_TEST {
-        let recommended = recommended_test_for(entry);
-        if recommended.file != "not_applicable" && !paths.contains(&recommended.file) {
-            paths.push(recommended.file);
-        }
-    }
-    let mut args: Vec<&str> = vec!["status", "--porcelain", "--"];
+    let paths = evidence_probe_paths(entry);
+    let mut args: Vec<String> = vec![
+        "status".to_string(),
+        "--porcelain".to_string(),
+        "--ignored".to_string(),
+        "--".to_string(),
+    ];
     for path in &paths {
-        args.push(path.as_str());
+        args.push(path.to_string_lossy().into_owned());
     }
-    let output = git_output(root, &args)
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = git_output(root, &arg_refs)
         .map_err(|error| format!("agent card could not probe the working-tree state: {error}"))?;
     if output.trim().is_empty() {
         Ok(RepairCardSnapshotCurrentness::Current)
     } else {
         Ok(RepairCardSnapshotCurrentness::AcceptedDirtyDraft)
     }
+}
+
+/// The probe pathspecs in their filesystem spelling. `display_path` is a
+/// presentation renderer (it percent-encodes `%` and rewrites separators);
+/// feeding a display spelling to git would probe a path that does not exist
+/// and silently read a dirty scope as clean.
+fn evidence_probe_paths(entry: &ClassifiedSeam) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<std::path::PathBuf> = vec![entry.seam.file().to_path_buf()];
+    for related in &entry.evidence.related_tests {
+        if !paths.contains(&related.file) {
+            paths.push(related.file.clone());
+        }
+    }
+    if task_for(entry) == TASK_WRITE_TARGETED_TEST {
+        let recommended = recommended_test_for(entry);
+        if recommended.file != "not_applicable" {
+            let recommended_path = std::path::PathBuf::from(&recommended.file);
+            if !paths.contains(&recommended_path) {
+                paths.push(recommended_path);
+            }
+        }
+    }
+    paths
 }
 
 /// Assemble one [`RepairCardV1`] from producer-owned facts. Pure projection:
@@ -920,6 +944,50 @@ mod tests {
             return Err(
                 "equivalent evidence minted different complete evidence identities".to_string(),
             );
+        }
+        Ok(())
+    }
+
+    /// #5008 review: the probe pathspecs keep the filesystem spelling.
+    /// `display_path` percent-encodes `%` for presentation; feeding that
+    /// spelling to git would probe a path that does not exist and silently
+    /// read a dirty scope as clean.
+    #[test]
+    fn evidence_probe_paths_keep_the_filesystem_spelling() -> Result<(), String> {
+        let seam = RepoSeam::new(
+            "src/price%off.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let seam_id = seam.id().clone();
+        let entry = ClassifiedSeam {
+            seam,
+            evidence: TestGripEvidence {
+                seam_id,
+                related_tests: Vec::new(),
+                reach: stage(StageState::Yes),
+                activate: stage(StageState::Yes),
+                propagate: stage(StageState::Yes),
+                observe: stage(StageState::Yes),
+                discriminate: stage(StageState::No),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                new_test_target: None,
+            },
+            class: SeamGripClass::WeaklyGripped,
+        };
+        let paths = evidence_probe_paths(&entry);
+        if paths != vec![std::path::PathBuf::from("src/price%off.rs")] {
+            return Err(format!(
+                "the probe must use the filesystem spelling, got {paths:?}"
+            ));
         }
         Ok(())
     }
