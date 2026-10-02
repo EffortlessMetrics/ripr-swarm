@@ -952,10 +952,10 @@ pub(crate) fn assess_blind_journey_packet(
     let mut assistance_disqualifiers: std::collections::BTreeSet<BlindJourneyResultV1> =
         std::collections::BTreeSet::new();
     for event in events {
-        if let Some(intervention) = event.intervention {
-            if let Some(result) = intervention.disqualifying_result() {
-                assistance_disqualifiers.insert(result);
-            }
+        if let Some(intervention) = event.intervention
+            && let Some(result) = intervention.disqualifying_result()
+        {
+            assistance_disqualifiers.insert(result);
         }
     }
 
