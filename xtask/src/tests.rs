@@ -29019,11 +29019,12 @@ fn assert_packet_coverage_report() -> Result<(), String> {
         .lines()
         .find(|line| line.ends_with("`cargo test -p xtask --locked --offline portable_consumer`"))
         .ok_or("common packet coverage is absent from the policy report")?;
+    let common_tests = packet_coverage_selected_tests(common)?;
     for subject in [
         "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
         "portable_consumer::tests::packet_digest_matches_the_producer_formula",
     ] {
-        if !common.contains(subject) || !common.contains("declared=all; applicable;") {
+        if !common_tests.contains(&subject) || !common.contains("declared=all; applicable;") {
             return Err(format!(
                 "common packet subject not selected: {subject}: {common}"
             ));
@@ -29053,6 +29054,7 @@ fn assert_packet_coverage_report() -> Result<(), String> {
             ));
         }
     } else {
+        let native_tests = packet_coverage_selected_tests(native)?;
         if !native.contains("host=unix; declared=unix; applicable;")
             || packet_coverage_selected_count(native)? < 2
         {
@@ -29064,7 +29066,7 @@ fn assert_packet_coverage_report() -> Result<(), String> {
             "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
             "native_packet_pilot_consumes_the_summary_artifact",
         ] {
-            if !native.contains(subject) {
+            if !native_tests.contains(&subject) {
                 return Err(format!(
                     "Unix native packet subject missing: {subject}: {native}"
                 ));
@@ -29081,6 +29083,22 @@ fn packet_coverage_selected_count(row: &str) -> Result<usize, String> {
         .0
         .parse()
         .map_err(|error| format!("invalid selected count in {row}: {error}"))
+}
+
+fn packet_coverage_selected_tests(row: &str) -> Result<Vec<&str>, String> {
+    let tests = row
+        .rsplit_once("; `")
+        .and_then(|(fields, _)| fields.split_once("; tests=["))
+        .and_then(|(_, tests)| tests.strip_suffix(']'))
+        .ok_or_else(|| format!("selected tests field missing or malformed: {row}"))?;
+    let selected: Vec<_> = tests.split(", ").collect();
+    if selected.iter().any(|test| {
+        test.is_empty() || test.contains([',', '[', ']', ';']) || test.contains(char::is_whitespace)
+    }) || selected.len() != packet_coverage_selected_count(row)?
+    {
+        return Err(format!("selected identities and count disagree: {row}"));
+    }
+    Ok(selected)
 }
 
 fn packet_coverage_report_fixture() -> String {
