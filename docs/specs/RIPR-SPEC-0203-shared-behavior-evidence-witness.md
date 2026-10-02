@@ -1,4 +1,4 @@
-# RIPR-SPEC-0202: Shared behavior-evidence witness adapters and parity corpus
+# RIPR-SPEC-0203: Shared behavior-evidence witness adapters and parity corpus
 
 Status: proposed
 

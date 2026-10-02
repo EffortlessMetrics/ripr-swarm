@@ -60,14 +60,13 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — python_transitive_reach_positive (6)
+## Pending — python_transitive_reach_positive (4)
 
 Reason:
-RIPR-SPEC-0122: complete the #5049 shown-to-unsuppressed summary denominator rename; the sweep missed the two python_transitive_reach fixtures landed in #4845; formatting_only drift, classification bytes identical
+RIPR-SPEC-0202: inherited repair blessing. Main's digest-header denominator reconciliation (#5017, #5021, landed as 66b67c62d / #5049) renamed the summary denominator vocabulary from "finding(s) shown" to "finding(s) unsuppressed" without re-blessing this fixture, leaving main's own goldens check red. This PR re-blesses the affected human.txt line so the required hosted gate can pass again; no renderer or behavior change in this PR.
 
 Command:
 `cargo xtask goldens bless python_transitive_reach_positive --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

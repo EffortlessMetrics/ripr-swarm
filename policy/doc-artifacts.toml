@@ -1065,7 +1065,14 @@ standalone_reason = "Issue #4765 records the Python same-class transitive-reach 
 [[artifact]]
 id = "RIPR-SPEC-0202"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0202-shared-behavior-evidence-witness.md"
+path = "docs/specs/RIPR-SPEC-0202-agent-card-typed-refusals.md"
+status = "proposed"
+owner = "product-agent"
+standalone_reason = "Issue #5007 records the agent card typed refusal envelope: every deliberate named refusal of the ripr agent card default handoff — seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow — maps to exit code 3 and renders one versioned agent_card_refusal envelope (schema_version 0.1) on stderr under --json with the typed error.kind, the asked-for seam_id, the verbatim human prose as the non-authority message, and one typed remedy_route, reusing the existing 2/3 exit-code contract and the verify/verify-execute/repair typed-refusal precedent; operational failures stay exit 2, stdout stays empty on refusals, the no-witness card render stays a success path per RIPR-SPEC-0194 acceptance, and the closed kind set is pinned three ways by check-output-contracts. Renumbered from RIPR-SPEC-0201 after main landed the Python same-class transitive-reach limitation spec under that number first."
+[[artifact]]
+id = "RIPR-SPEC-0203"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0203-shared-behavior-evidence-witness.md"
 status = "proposed"
 owner = "product-analysis"
-standalone_reason = "Issue #4790 records the shared behavior-evidence witness adapters and paired parity corpus: one internal BehaviorEvidenceWitnessV1 projects existing Rust Finding and ClassifiedSeam facts without recomputing public classes, and a deterministic report distinguishes equal, explained_scope_difference, contradiction, and not_comparable. Renumbered from RIPR-SPEC-0181 after main landed the inline test-module region cage spec under that number first."
+standalone_reason = "Issue #4790 records the shared behavior-evidence witness adapters and paired parity corpus: one internal BehaviorEvidenceWitnessV1 projects existing Rust Finding and ClassifiedSeam facts without recomputing public classes, and a deterministic report distinguishes equal, explained_scope_difference, contradiction, and not_comparable. Renumbered twice: from RIPR-SPEC-0181 after main landed the inline test-module region cage spec first, and from RIPR-SPEC-0202 after main landed the agent card typed refusals spec under that number first."

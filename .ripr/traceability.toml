@@ -9978,9 +9978,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0202"
+id = "RIPR-SPEC-0203"
 name = "Shared behavior-evidence witness adapters and parity corpus"
-spec = "docs/specs/RIPR-SPEC-0202-shared-behavior-evidence-witness.md"
+spec = "docs/specs/RIPR-SPEC-0203-shared-behavior-evidence-witness.md"
 tests = [
   "crates/ripr/src/analysis/witness/tests.rs::adapters_copy_producer_classes_and_do_not_invent_targets_on_findings",
   "crates/ripr/src/analysis/witness/tests.rs::equality_predicate_before_and_after_the_exact_boundary_test",
@@ -10014,7 +10014,7 @@ code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0202-shared-behavior-evidence-witness.md",
+  "docs/specs/RIPR-SPEC-0203-shared-behavior-evidence-witness.md",
 ]
 metrics = [
   "unit_test_pass_rate",
@@ -11007,4 +11007,33 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0202"
+name = "agent card typed refusal envelope"
+spec = "docs/specs/RIPR-SPEC-0202-agent-card-typed-refusals.md"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::agent_card_hands_off_one_seam_as_the_default_repair_card",
+  "crates/ripr/src/cli/commands/agent_card.rs::tests::refusal_envelope_names_kind_seam_message_and_remedy",
+  "crates/ripr/src/cli/commands/agent_card.rs::tests::opposite_remedy_pairs_stay_distinguishable",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::agent_card_error_split_carries_kind_and_prose",
+]
+fixtures = [
+]
+code = [
+  "crates/ripr/src/domain/repair_card.rs",
+  "crates/ripr/src/app/repair_card_handoff.rs",
+  "crates/ripr/src/cli/commands/agent_card.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/app/repair_card_usability.rs",
+  "crates/ripr/src/lsp/repair_card.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/EXIT_CODES.md",
+  "policy/output_contracts.txt",
+]
+metrics = [
+  "agent_card_refusal_kind",
 ]
