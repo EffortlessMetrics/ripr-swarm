@@ -1639,6 +1639,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
         class_path: String::new(),
     };
     let sources = [
@@ -1715,6 +1716,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
+        same_class_callees: Vec::new(),
         class_path: String::new(),
     };
     let sources = [

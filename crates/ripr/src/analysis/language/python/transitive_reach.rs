@@ -4,7 +4,7 @@
 //! limitation if a test constructs or calls into the owner's class and a
 //! bounded `self.` / `cls.` path of depth 1..=5 may reach the changed method.
 //!
-//! Fail-closed (RIPR-SPEC-0180 / #4765):
+//! Fail-closed (RIPR-SPEC-0201 / #4765):
 //! - classification stays `no_static_path`;
 //! - the witness is never added to `related_tests`;
 //! - `getattr`, `super()`, nested functions/lambdas, and other-module classes
@@ -228,7 +228,7 @@ fn import_provenanced_class_locals(
     for import in &test.imports {
         if import.imported == class
             && !import.alias.is_empty()
-            && import_source_module_matches_owner(import, owner)
+            && import_source_module_matches_owner(import, owner, &test.file)
             && !locals.contains(&import.alias)
         {
             locals.push(import.alias.clone());

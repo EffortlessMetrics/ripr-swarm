@@ -330,7 +330,7 @@ pub enum StaticLimitKind {
     /// method, but the preview adapter does not relate that path. The
     /// classification stays `no_static_path`; this label names the
     /// unresolved method-to-method edge, not a coverage claim. See
-    /// RIPR-SPEC-0180 / #4765.
+    /// RIPR-SPEC-0201 / #4765.
     PythonTransitiveReachUnresolved,
 }
 

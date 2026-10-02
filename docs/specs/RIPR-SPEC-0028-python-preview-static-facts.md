@@ -315,7 +315,7 @@ values defined in RIPR-SPEC-0026:
   input or expected values whose concrete discriminator coverage is not
   statically known)
 - `unsupported_syntax`
-- `python_transitive_reach_unresolved` (RIPR-SPEC-0180: a test constructs or
+- `python_transitive_reach_unresolved` (RIPR-SPEC-0201: a test constructs or
   calls into the owner's class and a bounded same-class `self.` / `cls.` path
   may reach the changed method; classification stays `no_static_path`)
 

@@ -1,6 +1,6 @@
 # Fixture: python_transitive_reach_positive
 
-Spec: RIPR-SPEC-0180
+Spec: RIPR-SPEC-0201
 
 ## Given
 
