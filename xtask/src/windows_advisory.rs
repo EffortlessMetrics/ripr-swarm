@@ -898,6 +898,12 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
             continue;
         }
         if trimmed.starts_with("all doctests ran in ") {
+            if doc_context.is_none() || current.is_some() || announced.is_some() || nested.is_some()
+            {
+                outcome
+                    .provenance_errors
+                    .push("doctest completion without completed owning batches".to_string());
+            }
             current = None;
             doc_context = None;
             announced = None;
