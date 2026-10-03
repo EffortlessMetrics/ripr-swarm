@@ -175,6 +175,12 @@ supporting context.
 
 ### Selected-root command presentation
 
+Rooted Bash eligibility is independent of PowerShell translation eligibility.
+Literal argument equals signs (for example `--test-threads=1`) are admitted
+after the program token. This bounded form withholds pre-program assignments,
+multiline commands, unbalanced quotes, expansions, compound commands and
+redirection. PowerShell selected-root unavailability remains explicit (#5119).
+
 Current ledger selections add `selected.command_context` with authority
 `advisory_display_only`, a lossless existing-directory `cwd` (or null), and
 `verify` / `receipt` objects containing `bash`, `powershell`, and `recovery`
@@ -187,7 +193,7 @@ directory and exact native exit status. Physical `cd -P` also preserves a
 lossless UTF-8 alias containing symlink/`..` traversal when its canonical target
 has non-UTF-8 bytes. Unsupported compound, redirecting,
 expanding, or multiline forms are withheld with recovery guidance. The shared
-simple-command translator bounds accepted syntax without introducing a parser.
+simple-command scanner bounds accepted syntax without introducing a parser.
 
 Rooted PowerShell forms are withheld with explicit recovery: the existing
 translator cannot establish native exit-status authority for generic shell
@@ -197,9 +203,31 @@ historical raw lines, which do not carry a selected-root guarantee. Regenerate
 with `ripr first-pr --root <path>` to obtain current ledger presentation context;
 review-card fallback commands remain outside this repair.
 
-This is presentation only. Raw `selected.verify_command`,
+Before displaying a carried context, `first-pr --check` requires its absolute
+directory to resolve to the current selected physical root (#5117). A relocated
+packet, missing directory, invalid authority or unavailable context is refused
+with a root-bound packet refresh command. A symlink alias to the same physical
+root is accepted. Check mode does not rebind, rewrite or execute raw commands;
+the explicit absent-context legacy path remains readable without a selected-root
+guarantee. This directory comparison is not repository authentication.
+
+Refresh commands bind existing roots using that same physical resolution,
+including symlink-before-parent traversal, while retaining the lossless alias
+when the canonical target cannot be represented as UTF-8. An existing multiline
+directory remains valid context data when both verify and receipt shell forms
+are null; their recovery guidance remains visible. Displayed shell forms for
+such a directory are refused. The Unix public-consumer controls
+`first_pr_refresh_preserves_symlink_parent_selected_root` and
+`first_pr_check_accepts_existing_newline_root_with_withheld_forms` discriminate
+these producer/validator roundtrips; the refresh argument control does not
+claim shell-text replay.
+
+The context wrapper and check-mode validation are presentation only. They do
+not rewrite raw `selected.verify_command`,
 `selected.receipt_command`, `commands.verify`, `commands.receipt`, receipt
-source/path/state, and the receipt's nested `--verify-command` stay unchanged.
+source/path/state, or the receipt's nested `--verify-command`. Producer-generated
+root and artifact arguments intentionally follow the selected physical root;
+that generation change does not confer execution authority.
 No legacy display string becomes a `CommandSpec`, signature, digest, eligibility,
 execution permission, or authenticated receipt. Editor/LSP command allowlists
 continue to consume the raw route. Runtime execution and receipt authenticity
@@ -495,6 +523,15 @@ Likely implementation surfaces:
 - `README.md`;
 - `.ripr/traceability.toml`;
 - `metrics/capabilities.toml`.
+
+The #5119 Bash syntax boundary is exercised by
+`output::markdown::tests::rooted_bash_accepts_literal_argument_equals_without_powershell_translation`,
+`output::markdown::tests::rooted_bash_withholds_unbounded_or_malformed_commands`,
+`output::markdown::tests::rooted_bash_withholds_unquoted_tildes_in_equals_arguments`,
+and (Unix)
+`output::markdown::tests::rooted_bash_executes_from_selected_directory_preserving_arguments_and_status`.
+The runtime fixture uses a ten-second owned-process deadline and checks selected
+directory, literal argument bytes and nonzero status from a foreign directory.
 
 ## Metrics
 

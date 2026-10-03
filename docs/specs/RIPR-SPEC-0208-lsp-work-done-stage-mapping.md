@@ -1,4 +1,4 @@
-# RIPR-SPEC-0207: LSP work-done progress consumes shared analysis stages
+# RIPR-SPEC-0208: LSP work-done progress consumes shared analysis stages
 
 Status: proposed
 

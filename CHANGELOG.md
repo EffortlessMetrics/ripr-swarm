@@ -11,6 +11,16 @@ are scoped or reviewed.
 
 ### Changed
 
+- Python: a changed source path missing from the working tree now carries an
+  exact-path `changed_file_absent_from_worktree` limitation and checkout recovery.
+  It is excluded from analyzed-file counts and preview samples; available findings
+  remain visible and shared outcome/badge projections report incomplete analysis
+  instead of a complete green zero (#5110).
+
+- Human output: a selected `no_static_path` finding without a typed limitation
+  asks readers to review the unresolved static path and existing tests, rather
+  than inspect a nonexistent named limitation. State, classification, JSON and
+  typed-limitation guidance are unchanged. (#5051)
 - CLI: `ripr cache status --json --help` and `ripr cache clear --dry-run
   --help` now print the subcommand help and exit 0; help was previously
   recognized only as the sole argument, so any combined invocation failed
@@ -93,7 +103,7 @@ are scoped or reviewed.
   diagnostics handling by at most the drain budget, never block it. A
   cross-surface parity oracle pins CLI and LSP stage identity, ordering,
   denominator honesty, and terminal disposition against one normalized
-  producer trace (RIPR-SPEC-0207, #4811).
+  producer trace (RIPR-SPEC-0208, #4811).
 - CLI: `ripr pilot` now projects the shared analysis progress stream on
   stderr — `ripr progress: <stage> [repo]` stage lines and throttled
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
@@ -259,10 +269,15 @@ are scoped or reviewed.
   error no longer cites an internal campaign (#4534).
 - `ripr check` refuses two output selections that disagree, such as
   `--json --format human`. Before, the last one silently won (#4535).
-- Rust `proptest!` and `quickcheck!` token trees are reparsed as items, so
-  inner `#[test]` / `quickcheck!` functions keep their real lines, owner
-  calls, and `prop_assert*` oracles. An unmarked `proptest!` fn stays a
-  function fact, not a test (#4789).
+- Rust property macros remain opaque pending macro-provenance support
+  (#4789, corrective successor to #4835). Their names no longer invent
+  executable tests or strong `prop_assert*` evidence. Owner mentions carry
+  an explicit macro limitation, with guidance to inspect existing tests.
+  Property-only argument calls and parser-fallback token-tree tests remain
+  unresolved; unrelated packages cannot suppress a real gap through a shared
+  name. Independent ordinary calls and helper routes retain their evidence.
+  Ordinary assertions keep their established behavior; no-property files
+  no longer allocate or parse a file-sized overlay.
 - Review guidance: admit workspace and changed-owner inputs before either
   index build, with file/byte limits and a `review_guidance_oversized` failed
   receipt instead of silently truncated guidance (#4388, RIPR-SPEC-0012).
