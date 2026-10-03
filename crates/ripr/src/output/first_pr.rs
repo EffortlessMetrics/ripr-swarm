@@ -1,7 +1,5 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
-use crate::agent::loop_commands::{
-    anchored_redirect_target, check_repo_exposure_command, display_path, shell_arg,
-};
+use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
 use crate::app::agent_status::pilot_select_command;
 use crate::config::detect_python_project;
 use crate::domain::CommandSpec;
@@ -150,6 +148,8 @@ use rendering::{render_start_here_markdown, start_here_cli_summary};
 pub(crate) fn first_pr_start_here_markdown(packet: &Value) -> String {
     render_start_here_markdown(packet)
 }
+#[cfg(test)]
+use crate::agent::loop_commands::anchored_redirect_target;
 #[cfg(test)]
 use validation::validate_selected_state;
 use validation::{validate_selected_command_root, validate_start_here_packet};
@@ -1975,10 +1975,7 @@ fn top_gap_from_record(
             // other funnel redirect, so the pasted packet command reproduces
             // the validated write location from any working directory (and
             // the derived PowerShell WriteAllText form inherits the anchor).
-            shell_arg(&anchored_redirect_target(
-                &options.command_root(),
-                &options.agent_packet
-            ))
+            options.anchored_arg(&options.agent_packet)
         )),
     }
 }
@@ -3979,7 +3976,30 @@ mod tests {
         };
         assert_eq!(
             alias_options.anchored_arg("artifact.json"),
-            shell_arg(&crate::output::path::human_path(&physical.join("artifact.json")))
+            shell_arg(&crate::output::path::human_path(
+                &physical.join("artifact.json")
+            ))
+        );
+        let generated = check_output_gap_ledger_command(&alias_options, true, true);
+        assert!(
+            generated.contains(&format!("--root {}", shell_arg(&expected_root))),
+            "{generated}"
+        );
+        for artifact in [DEFAULT_CHECK_OUTPUT, DEFAULT_GAP_LEDGER] {
+            assert!(
+                generated.contains(&shell_arg(&crate::output::path::human_path(
+                    &physical.join(artifact)
+                ))),
+                "{generated}"
+            );
+        }
+        assert!(
+            !generated.contains(&crate::output::path::human_path(&decoy)),
+            "{generated}"
+        );
+        assert_eq!(
+            alias_options.anchored_arg(&expected_root),
+            shell_arg(&expected_root)
         );
         let refresh = first_pr_write_command(
             &FirstPrOptions {
@@ -5403,6 +5423,20 @@ mod tests {
         assert_eq!(
             root.canonicalize().map_err(|error| error.to_string())?,
             physical
+        );
+        let alias_options = FirstPrOptions {
+            root: root.to_str().ok_or("alias is not UTF-8")?.to_string(),
+            ..FirstPrOptions::default()
+        };
+        assert_eq!(
+            alias_options.command_root(),
+            crate::output::path::human_path(&root)
+        );
+        assert_eq!(
+            alias_options.anchored_arg("artifact.json"),
+            shell_arg(&crate::output::path::human_path(
+                &root.join("artifact.json")
+            ))
         );
         let mut ledger = ledger_with_python_repairable_gap();
         ledger["records"][0]["verification_commands"] =

@@ -1,4 +1,4 @@
-use crate::agent::loop_commands::{anchored_redirect_target, bound_root, shell_arg};
+use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::cli::unknown_argument;
 use std::path::PathBuf;
 
@@ -53,7 +53,13 @@ impl FirstPrOptions {
     /// keeps `--root` and every path naming the same repository when a command
     /// is pasted elsewhere (#3948, #4287); an absolute path passes through.
     pub(super) fn anchored_arg(&self, path: &str) -> String {
-        shell_arg(&anchored_redirect_target(&self.command_root(), path))
+        let path = std::path::Path::new(path);
+        let anchored = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            PathBuf::from(self.command_root()).join(path)
+        };
+        shell_arg(&crate::output::path::human_path(&anchored))
     }
 }
 
