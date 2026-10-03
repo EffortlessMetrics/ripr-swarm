@@ -53,7 +53,7 @@ impl FirstPrOptions {
     /// keeps `--root` and every path naming the same repository when a command
     /// is pasted elsewhere (#3948, #4287); an absolute path passes through.
     pub(super) fn anchored_arg(&self, path: &str) -> String {
-        shell_arg(&anchored_redirect_target(&self.root, path))
+        shell_arg(&anchored_redirect_target(&self.command_root(), path))
     }
 }
 

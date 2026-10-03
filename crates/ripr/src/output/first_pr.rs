@@ -3973,6 +3973,14 @@ mod tests {
             .ok_or("accepted stale decoy context")?;
         assert!(error.contains("different repository directory"), "{error}");
         let expected_root = crate::output::path::human_path(&physical);
+        let alias_options = FirstPrOptions {
+            root: crate::output::path::human_path(&alias),
+            ..FirstPrOptions::default()
+        };
+        assert_eq!(
+            alias_options.anchored_arg("artifact.json"),
+            shell_arg(&crate::output::path::human_path(&physical.join("artifact.json")))
+        );
         let refresh = first_pr_write_command(
             &FirstPrOptions {
                 root: expected_root.clone(),
