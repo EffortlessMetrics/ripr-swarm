@@ -7203,7 +7203,14 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
     }
 
+    struct ReceiptScratch(PathBuf);
+    impl Drop for ReceiptScratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
     let root = unbuilt_repair_fixture("agent-receipt-attempt-selection")?;
+    let _root_cleanup = ReceiptScratch(root.clone());
 
     // Attempt A: prepared, then failed by a committed production-only edit.
     // The gap stays open (no test was added), so a fresh attempt for the same
@@ -7373,6 +7380,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
     )?)?;
     let scenarios = corpus["scenarios"].as_array().ok_or("corpus scenarios")?;
     let launch = unique_temp_workspace("installed-receipt-command-launch");
+    let _launch_cleanup = ReceiptScratch(launch.clone());
     std::fs::create_dir_all(&launch)?;
     let out = root.join("target/ripr/reports/agent-receipt.json");
     let mut positive_rows = 0usize;
@@ -7390,12 +7398,19 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
             .as_str()
             .ok_or("receipt template")?;
         let tokens: Vec<&str> = template.split_whitespace().collect();
-        assert_eq!(&tokens[..3], &["ripr", "agent", "receipt"]);
+        let prefix = tokens
+            .get(..3)
+            .ok_or_else(|| format!("{language} receipt template has fewer than three tokens"))?;
+        assert_eq!(prefix, &["ripr", "agent", "receipt"], "{language}");
         let seam_position = tokens
             .iter()
             .position(|token| *token == "--seam-id")
             .ok_or("template seam flag")?;
-        assert_eq!(tokens[seam_position + 1], authored_seam);
+        assert_eq!(
+            tokens.get(seam_position + 1),
+            Some(&authored_seam),
+            "{language} receipt template seam value",
+        );
         let mut language_rows = 0usize;
         for row in scenarios.iter().filter(|row| {
             row["id"]
