@@ -6158,7 +6158,8 @@ fn evidence_quality_benchmark_corpus_value() -> Result<Value, String> {
 fn evidence_quality_benchmark_violations(corpus: &Value) -> Vec<String> {
     let mut violations = Vec::new();
     super::validate_evidence_quality_benchmark_corpus_value(
-        Path::new("fixtures/evidence-quality-benchmark/corpus.json"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/evidence-quality-benchmark/corpus.json"),
         corpus,
         &mut violations,
     );

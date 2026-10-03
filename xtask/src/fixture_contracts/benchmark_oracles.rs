@@ -10,8 +10,12 @@ use serde_json::Value;
 use super::retained_files::{local_path, read_json, verify_file};
 
 mod captures;
+mod controls;
+mod observed_static;
 #[cfg(test)]
 mod tests;
+
+pub(super) use controls::append_controls_disclosure;
 
 const PAIRS: &[(&str, &str, &str, bool)] = &[
     ("fixed_corrected", "fixed", "corrected", true),

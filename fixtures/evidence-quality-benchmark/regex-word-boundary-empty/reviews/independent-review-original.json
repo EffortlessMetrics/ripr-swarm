@@ -1,0 +1,20 @@
+{
+  "disposition": "accepted",
+  "reviewer": "independent Codex review",
+  "rationale": "The original negative Unicode and ASCII word-boundary assertions are invalid: they conflate not matching the empty haystack with inability to match an empty substring in context. Passing on broken production and failing on fixed production demonstrates discrimination in the wrong direction and does not make those expectations correct. Independently reviewed the retained issue 859 semantic basis, exact complete source/test identities, generated lock, all six one-test native Cargo and frozen-artifact replay captures, and the separate regex::Regex matcher witness. The 98-descriptor portable graph was byte-checked and mapped to frozen raw packet b910ec9fafcdca9e1783218df877f8900313362a7741c51716d1c950a9045a0b and native receipt 8dca1d09ece7506e6f32302e310c55f0efc0eb6dcacb105e5cbdff88d74fe6b8. Current retained executable bytes were separately rehashed in this review; historical capture, the dated post-capture frozen-executable measurements and future source-only NOT_REVERIFIED external custody remain separate. The weak variant is only a removal control. Whole-test failures stop at the first Unicode assertion, so later ASCII assertion execution is not claimed for failing runs. This accepts this exact alternate semantic declaration and capture subject, not RIPR compilation, corpus insertion, calibration/opportunity credit or release.",
+  "reviewed_subject": {
+    "case_id": "regex-word-boundary-empty",
+    "status": "invalid",
+    "variant": "original",
+    "answer_key": {
+      "path": "regex-word-boundary-empty/answer-key.json",
+      "bytes": 3147,
+      "sha256": "dc8dc5730f274bbbc7137ff0617e01a751487574577132db034c58d922796c3e"
+    },
+    "native_pairing": {
+      "path": "regex-word-boundary-empty/native-pairing.json",
+      "bytes": 20853,
+      "sha256": "312642ff1381d2ea400a40e1c9cde51d3d141ae900265803d6cacf8c7733369d"
+    }
+  }
+}

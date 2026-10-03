@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 
+mod controls;
+
 const TEST_ID: &str = "synthetic::expected_empty";
 const CORRECTED: &str = "fn synthetic() {\n    assert!(boundary());\n    assert!(ascii_boundary());\n    assert!(neighbor());\n}\n";
 const ORIGINAL: &str = "fn synthetic() {\n    assert!(!boundary());\n    assert!(!ascii_boundary());\n    assert!(neighbor());\n}\n";
@@ -422,6 +424,11 @@ fn benchmark_semantic_oracle_production_reader_discloses_rejected_and_unreviewed
     let mut fixture = SyntheticEvidence::new()?;
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut corpus = read_json(&repo.join("fixtures/evidence-quality-benchmark/corpus.json"))?;
+    // This temporary reader scenario isolates legacy cases. Real historical
+    // controls and their assets have separate production-route coverage.
+    if let Some(object) = corpus.as_object_mut() {
+        let _ = object.remove("semantic_oracle_controls");
+    }
     let rows = corpus["cases"]
         .as_array_mut()
         .ok_or_else(|| "missing cases".to_string())?;

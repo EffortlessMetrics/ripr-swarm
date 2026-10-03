@@ -30,6 +30,11 @@ promote any capability globally.
   missing local bytes cannot silently fall back to an external declaration.
 - Runtime-only signals stay calibration evidence and must not create a static
   `evidence_record`.
+- Optional `semantic_oracle_controls` holds two reviewed views of one historical
+  Regex case separately from the 82 static/calibration rows. It verifies native,
+  review and historical-static capture identities without prescribing a static
+  classification. The weak test is only a removal control; capped reported
+  related tests do not establish the complete internal selection.
 - Line-movement cases preserve canonical gap identity while allowing raw seam
   line numbers to move.
 - Static limitations remain analyzer limits until a supported fixture-backed

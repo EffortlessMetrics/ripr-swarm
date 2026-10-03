@@ -539,7 +539,12 @@ pub(crate) fn validate_evidence_quality_benchmark_corpus_value(
                 .to_string(),
         );
     }
-    semantic_oracles.disclosure()
+    benchmark_oracles::append_controls_disclosure(
+        path.parent().unwrap_or(Path::new(".")),
+        corpus,
+        semantic_oracles.disclosure(),
+        violations,
+    )
 }
 
 fn validate_evidence_quality_benchmark_case(

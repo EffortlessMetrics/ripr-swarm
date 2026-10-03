@@ -170,6 +170,58 @@ pairing and independent semantic review exist.
 
 ## Required Evidence
 
+### Historical semantic controls outside the static case denominator
+
+The same corpus may carry an optional top-level `semantic_oracle_controls`
+array. It contains exact reviewed alternate oracle views of historical cases,
+without requiring an `evidence_class`, `expected_repo_exposure` record or a
+normative static classification. The existing `cases` collection retains its
+static/calibration meaning and ID rules. Controls add no pilot, calibration,
+blind-opportunity or frozen-selection membership.
+
+A control is an object with nonblank `id` and `fixture_reference`, a complete
+explicit reviewed `semantic_oracle`, and an `observed_static` retained-file
+descriptor. Legacy missing-status fallback does not apply to controls. The
+closed reviewed variants remain corrected/valid and original/invalid; weak is
+only the linked six-pair removal control. Control identity is `(id, variant)`.
+Duplicate views reject, and same-ID views must reference identical answer-key,
+native-pairing and historical static-capture descriptors. The semantic checker
+and exact independent-review subject binding are reused without a new runner.
+
+The observed static capture is historical data, explicitly marked as having
+no normative static expectation. Its retained producer and execution receipts
+must agree on source head/tree, selected executable, byte count/digest, command,
+root, diff and per-command identity fences. Three distinct corrected/original/
+weak observations bind exact retained stdout/stderr and before/after input
+inventories to their actual commands. Each full inventory must equal its fixed-
+production native variant inventory and carry the exact fixed source, test and
+lock identities. Report root/shape and any retained classification summary
+must agree with the captured JSON. Missing or corrupt reports, wrong variants,
+stale inputs/producers and conflicting same-case subjects reject. This checks
+retained capture consistency, not current executable bytes or analyzer truth.
+
+The report keeps benchmark-case counts separate from historical control-view
+and historical-case counts. Malformed collections are unavailable; rejected
+views are not accepted or silently treated as unreviewed. Semantic review does
+not accept the newly attached static capture. Both native and static external
+executable custody remain NOT_REVERIFIED by the fixture command.
+
+The first locked historical case is rust-lang/regex PR 860's second commit,
+parent `72f09f1aeb0ff3f703b1afdbdd21f5ff63162fb4` to fixed
+`88a2a62d861d189faae539990f63cb9cf195bd8c`. Its 32/35/33-assertion original,
+corrected and weak tests retain all neighbors and the independent matcher
+witness. Exact native pairing and expected-behavior judgments are distinct
+from the recorded RIPR 68770f7c observation: all three outputs happened to be
+identical `exposed` call-deletion findings. That output is not a desired
+permanent analyzer behavior. The eight related tests are a capped reported
+list; absence means not reported, not internally unselected. The call-omission
+counterfactual also differs from the historical argument change, so these
+observations establish no deletion-specific false exposure.
+
+Real-corpus tests pin both views, exact upstream and source/test identities,
+and the production validation/report route. They do not pin a desired analyzer
+classification. The 82 existing static/calibration rows remain unchanged.
+
 The benchmark corpus must include fixture classes for:
 
 - duplicate canonical gap;
