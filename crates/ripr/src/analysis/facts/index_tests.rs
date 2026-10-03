@@ -436,21 +436,6 @@ fn file_function_membership_retains_only_handle_capacity() -> Result<(), String>
     let local = index.files.get(&path).ok_or("missing membership file")?;
     let destination_pointer = local.functions.as_ptr() as usize;
     let destination_capacity = local.functions.capacity();
-    eprintln!(
-        "FUNCTION_MEMBERSHIP_ALLOCATION {}",
-        serde_json::json!({
-            "functions": count,
-            "source_pointer": source_pointer,
-            "source_capacity": source_capacity,
-            "source_record_size": source_record_size,
-            "source_capacity_bytes": source_capacity * source_record_size,
-            "destination_pointer": destination_pointer,
-            "destination_capacity": destination_capacity,
-            "handle_size": handle_size,
-            "destination_capacity_bytes": destination_capacity * handle_size,
-            "source_allocation_reused": source_pointer == destination_pointer,
-        })
-    );
     assert_eq!(
         serde_json::to_value(&index).map_err(|error| error.to_string())?,
         expected_wire
