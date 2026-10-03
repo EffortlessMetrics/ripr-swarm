@@ -1912,11 +1912,11 @@ pub(crate) fn validate_blind_journey_installed_rust_fixture(
             return Ok(());
         }
     };
-    for violation in installed_rust_manifest_violations(&root, &manifest) {
+    for violation in installed_rust_manifest_violations(root, &manifest) {
         violations.push(violation);
     }
     let corpus_path = Path::new("fixtures/blind_journey_execute/corpus.json");
-    let corpus = match read_json_value(&corpus_path) {
+    let corpus = match read_json_value(corpus_path) {
         Ok(value) => value,
         Err(err) => {
             violations.push(err);
@@ -2049,7 +2049,7 @@ fn installed_rust_manifest_violations(root: &Path, manifest: &Value) -> Vec<Stri
         .and_then(|repair| repair.get("edit_target"))
         .and_then(Value::as_str);
     match edit_target {
-        Some(target) if cage.iter().any(|entry| *entry == target) => {}
+        Some(target) if cage.contains(&target) => {}
         Some(_) => {
             violations.push(
                 "blind journey installed rust selected repair edit target must lie inside the \
