@@ -992,7 +992,11 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
                 .push("test row inside an unowned nested harness".to_string());
             continue;
         }
-        if current.is_some() && announced.is_none() && trimmed.starts_with("test ") {
+        if current.is_some()
+            && announced.is_none()
+            && trimmed.starts_with("test ")
+            && trimmed.contains(" ... ")
+        {
             outcome
                 .provenance_errors
                 .push("test row before its owning harness announcement".to_string());
@@ -1041,7 +1045,9 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
                     .provenance_errors
                     .push(format!("test without an admitted target: {name}"));
             }
-        } else if trimmed.starts_with("test ") {
+        } else if trimmed.starts_with("test ") && trimmed.contains(" ... ") {
+            // Libtest's long-running progress notice also begins with `test`,
+            // but has no outcome separator and supplies no additional subject.
             outcome
                 .provenance_errors
                 .push(format!("unrecognized test outcome: {trimmed}"));
