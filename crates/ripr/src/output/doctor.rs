@@ -684,6 +684,7 @@ enum DoctorRootPath {
     Directory,
     Missing,
     NotADirectory,
+    Unreadable,
 }
 
 impl DoctorRootPath {
@@ -693,9 +694,17 @@ impl DoctorRootPath {
             Ok(_) => Self::NotADirectory,
             // `metadata` follows symlinks. A dangling symlink is `NotFound`
             // after follow, but the typed name still exists on disk.
-            Err(_) => match std::fs::symlink_metadata(root) {
+            Err(error) => match std::fs::symlink_metadata(root) {
                 Ok(_) => Self::NotADirectory,
-                Err(_) => Self::Missing,
+                Err(symlink_error) => {
+                    let missing = error.kind() == std::io::ErrorKind::NotFound
+                        && symlink_error.kind() == std::io::ErrorKind::NotFound;
+                    if missing {
+                        Self::Missing
+                    } else {
+                        Self::Unreadable
+                    }
+                }
             },
         }
     }
@@ -705,6 +714,7 @@ impl DoctorRootPath {
             Self::Directory => None,
             Self::Missing => Some("the root directory does not exist"),
             Self::NotADirectory => Some("the root is not a directory"),
+            Self::Unreadable => Some("the root directory cannot be read"),
         }
     }
 
@@ -725,6 +735,13 @@ impl DoctorRootPath {
                     human_path(root)
                 ),
             ),
+            Self::Unreadable => (
+                DoctorStatus::Fail,
+                format!(
+                    "cannot determine whether {} is a directory",
+                    human_path(root)
+                ),
+            ),
         }
     }
 
@@ -733,6 +750,10 @@ impl DoctorRootPath {
             Self::NotADirectory => {
                 "- The selected root exists but is not a directory; rerun with `--root <path>` \
                  naming the repository directory, not a file inside it"
+            }
+            Self::Unreadable => {
+                "- The selected root could not be read; check permissions and rerun with \
+                 `--root <path>` naming an accessible repository directory"
             }
             Self::Missing | Self::Directory => {
                 "- The selected root does not exist; rerun with `--root <path>` naming an \
@@ -961,34 +982,28 @@ fn evaluate_doctor_core_with_probe_for_profile(
     }
     for tool in DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
-        match &rust_scope {
-            RustToolchainScope::NotInScope(reason)
-                if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis =>
-            {
+        if let RustToolchainScope::NotInScope(reason) = &rust_scope {
+            if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis {
                 report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
+                continue;
             }
-            // The toolchain is probed in the selected root; an unusable root
-            // fails the spawn and would read as a missing tool (#4531, #5101).
-            _ if let Some(reason) = root_path
-                .unusable_skip_reason()
-                .filter(|_| RUST_TOOLCHAIN_TOOLS.contains(&tool)) =>
-            {
+        }
+        // The toolchain is probed in the selected root; an unusable root
+        // fails the spawn and would read as a missing tool (#4531, #5101).
+        if RUST_TOOLCHAIN_TOOLS.contains(&tool) {
+            if let Some(reason) = root_path.unusable_skip_reason() {
                 report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
+                continue;
             }
-            _ => {
-                let (status, evidence) = probe_tool(tool, root);
-                if RUST_TOOLCHAIN_TOOLS.contains(&tool)
-                    && profile == DoctorProfile::Analysis
-                    && status == DoctorStatus::Fail
-                {
-                    report.add_advisory_check(
-                        &name,
-                        analysis_advisory_toolchain_evidence(tool, &evidence),
-                    );
-                } else {
-                    report.add_check(&name, status, Some(evidence));
-                }
-            }
+        }
+        let (status, evidence) = probe_tool(tool, root);
+        if RUST_TOOLCHAIN_TOOLS.contains(&tool)
+            && profile == DoctorProfile::Analysis
+            && status == DoctorStatus::Fail
+        {
+            report.add_advisory_check(&name, analysis_advisory_toolchain_evidence(tool, &evidence));
+        } else {
+            report.add_check(&name, status, Some(evidence));
         }
     }
     // Typed language surface for generated CI (#2072): mirror exactly the
@@ -2233,6 +2248,36 @@ mod tests {
         } else {
             Err(failures.join("; "))
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_root_is_not_reported_as_missing() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let parent = unique_test_dir("unreadable-parent");
+        std::fs::create_dir_all(parent.join("blocked"))
+            .map_err(|err| format!("create unreadable fixture: {err}"))?;
+        let child = parent.join("blocked");
+        let restore = |mode: u32| -> Result<(), String> {
+            std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode))
+                .map_err(|err| format!("restore parent mode {mode:#o}: {err}"))
+        };
+        restore(0o000)?;
+        let classified = DoctorRootPath::classify(&child);
+        let (report, probed) = evaluate_without_rust_toolchain(&child, &[LanguageId::Rust]);
+        restore(0o755)?;
+        let _ = std::fs::remove_dir_all(&parent);
+        if classified != DoctorRootPath::Unreadable {
+            return Err(format!("unreadable child classified as {classified:?}"));
+        }
+        assert_unusable_root_skips_root_bound_probes(
+            &report,
+            &probed,
+            "cannot determine",
+            "does not exist",
+            "the root directory cannot be read",
+        )?;
+        json_root_directory_evidence_distinguishes(&report, "cannot determine", "does not exist")
     }
 
     /// Shared #4531/#5101 oracle: an unusable root still fails

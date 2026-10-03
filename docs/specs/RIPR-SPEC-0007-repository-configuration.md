@@ -225,6 +225,7 @@ Current tests:
 - `crates/ripr/src/output/doctor.rs::tests::a_file_root_is_not_reported_as_missing`
 - `crates/ripr/src/output/doctor.rs::tests::a_directory_named_like_a_file_still_passes_root_directory`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_root_path_classify_follows_symlinks_and_splits_file_from_missing`
+- `crates/ripr/src/output/doctor.rs::tests::an_unreadable_root_is_not_reported_as_missing`
 - `crates/ripr/src/cli/commands.rs::tests::doctor_core_report_fails_closed_for_file_root`
 - `crates/ripr/src/cli/commands.rs::tests::doctor_human_projection_fails_for_file_root`
 - `crates/ripr/tests/cli_smoke.rs::doctor_file_root_is_not_reported_as_missing`

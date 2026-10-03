@@ -733,6 +733,7 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::a_file_root_is_not_reported_as_missing",
   "crates/ripr/src/output/doctor.rs::tests::a_directory_named_like_a_file_still_passes_root_directory",
   "crates/ripr/src/output/doctor.rs::tests::doctor_root_path_classify_follows_symlinks_and_splits_file_from_missing",
+  "crates/ripr/src/output/doctor.rs::tests::an_unreadable_root_is_not_reported_as_missing",
   "crates/ripr/src/cli/commands/doctor.rs::tests::source_build_profile_keeps_enabled_language_runtime_failure_advisory",
   "crates/ripr/tests/cli_smoke.rs::doctor_discloses_missing_verification_tools_but_still_checks_manifest",
   "crates/ripr/tests/cli_smoke.rs::doctor_file_root_is_not_reported_as_missing",
