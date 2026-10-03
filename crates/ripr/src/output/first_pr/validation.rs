@@ -19,6 +19,24 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
             "selected command context has missing or invalid display authority".to_string(),
         );
     }
+    for step in ["verify", "receipt"] {
+        let forms = context
+            .get(step)
+            .filter(|forms| forms.is_object())
+            .ok_or_else(|| {
+                format!("selected command context {step} forms are missing or not an object")
+            })?;
+        for field in ["bash", "powershell", "recovery"] {
+            if !forms
+                .get(field)
+                .is_some_and(|value| value.is_null() || value.is_string())
+            {
+                return Err(format!(
+                    "selected command context {step}.{field} is missing or not a string/null"
+                ));
+            }
+        }
+    }
     let cwd = context.get("cwd").and_then(Value::as_str).ok_or_else(|| {
         "selected command context has no available repository directory".to_string()
     })?;

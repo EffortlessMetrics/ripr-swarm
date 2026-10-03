@@ -3956,6 +3956,38 @@ mod tests {
                 "{error}"
             );
         }
+        for step in ["verify", "receipt"] {
+            for invalid in [
+                None,
+                Some(Value::Null),
+                Some(json!("not an object")),
+                Some(json!({})),
+                Some(json!({"bash": 7, "powershell": null, "recovery": null})),
+            ] {
+                let mut altered = packet.clone();
+                let context = altered["selected"]["command_context"]
+                    .as_object_mut()
+                    .ok_or("context missing")?;
+                if let Some(invalid) = invalid {
+                    context.insert(step.to_string(), invalid);
+                } else {
+                    context.remove(step);
+                }
+                write_json(&path, altered)?;
+                let error = first_pr(&args)
+                    .err()
+                    .ok_or("check accepted malformed command forms")?;
+                assert!(error.contains(&format!("context {step}")), "{error}");
+            }
+        }
+        let mut unavailable = packet.clone();
+        for step in ["verify", "receipt"] {
+            unavailable["selected"]["command_context"][step] =
+                json!({"bash": null, "powershell": null, "recovery": "form unavailable"});
+        }
+        write_json(&path, unavailable.clone())?;
+        first_pr(&args)?;
+        assert_eq!(read_packet(&path)?, unavailable, "check rewrote null forms");
         let mut legacy = packet;
         legacy["selected"]
             .as_object_mut()
