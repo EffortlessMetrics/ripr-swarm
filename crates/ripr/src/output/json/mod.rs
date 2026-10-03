@@ -973,6 +973,51 @@ mod tests {
     }
 
     #[test]
+    fn finding_matched_total_preserves_legacy_serde_and_retained_count_floor() -> Result<(), String>
+    {
+        let mut finding = unknown_finding();
+        finding.related_tests = ["one", "two"]
+            .into_iter()
+            .map(|name| RelatedTest {
+                name: name.to_string(),
+                file: PathBuf::from("tests/retained.rs"),
+                line: 1,
+                oracle: None,
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+            })
+            .collect();
+        assert_eq!(finding.related_tests_total(), 2);
+        let legacy = serde_json::to_value(&finding).map_err(|error| error.to_string())?;
+        assert!(legacy.get("related_tests_matched_total").is_none());
+        let restored: Finding =
+            serde_json::from_value(legacy).map_err(|error| error.to_string())?;
+        assert_eq!(restored.related_tests_total(), 2);
+        assert_eq!(restored.related_tests_matched_total, None);
+        finding.related_tests_matched_total = Some(9);
+        let bytes = serde_json::to_vec(&finding).map_err(|error| error.to_string())?;
+        let restored: Finding =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        assert_eq!(restored.related_tests_total(), 9);
+        assert_eq!(restored.related_tests, finding.related_tests);
+        finding.related_tests_matched_total = Some(0);
+        assert_eq!(
+            finding.related_tests_total(),
+            2,
+            "metadata cannot undercount retained rows"
+        );
+        finding.related_tests.clear();
+        assert_eq!(
+            finding.related_tests_total(),
+            0,
+            "explicit zero remains valid for empty evidence"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn finding_json_and_human_preserve_prepack_total_for_bounded_metadata() -> Result<(), String> {
         for count in [6, 8, 9] {
             let mut finding = unknown_finding();
