@@ -133,6 +133,7 @@ mod tests {
             probe_shapes: facts.probe_shapes,
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations,
+            unresolved_property_macros: facts.unresolved_property_macros,
             role_provenance: facts.role_provenance,
             source: facts.source,
         })
