@@ -932,6 +932,64 @@ mod tests {
     }
 
     #[test]
+    fn limitation_paths_preserve_whitespace_identity_through_round_trip() -> Result<(), String> {
+        let paths = [
+            "leading.py",
+            " leading.py",
+            "trailing.py ",
+            " spaced/discount.py",
+            "\tfile.rs",
+            " ",
+        ];
+        let limitations = paths
+            .iter()
+            .map(|path| {
+                limitation(AnalysisLimitationKind::ChangedFileAbsentFromWorktree)?.with_path(path)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (path, limitation) in paths.iter().zip(&limitations) {
+            assert_eq!(limitation.path.as_deref(), Some(*path));
+        }
+        let value = outcome(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisOutcomeCounts::default(),
+            limitations,
+        )?;
+        assert_eq!(
+            value.limitations.len(),
+            paths.len(),
+            "different file names must not deduplicate"
+        );
+        let json = serde_json::to_string(&value).map_err(|error| error.to_string())?;
+        let restored: AnalysisOutcome =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert_eq!(restored, value);
+        assert_eq!(restored.semantic_digest()?, value.semantic_digest()?);
+        let spaced = outcome(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisOutcomeCounts::default(),
+            vec![
+                limitation(AnalysisLimitationKind::ChangedFileAbsentFromWorktree)?
+                    .with_path(" leading.py")?,
+            ],
+        )?;
+        let plain = outcome(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisOutcomeCounts::default(),
+            vec![
+                limitation(AnalysisLimitationKind::ChangedFileAbsentFromWorktree)?
+                    .with_path("leading.py")?,
+            ],
+        )?;
+        assert_ne!(spaced.semantic_digest()?, plain.semantic_digest()?);
+        assert_eq!(
+            normalize_portable_analysis_path("./ spaced\\file.rs ")?,
+            " spaced/file.rs "
+        );
+        Ok(())
+    }
+
+    #[test]
     fn limitation_text_and_affected_counts_are_bounded() -> Result<(), String> {
         let too_long = "x".repeat(MAX_ANALYSIS_LIMITATION_DETAIL_CHARS + 1);
         expect_error(

@@ -239,3 +239,157 @@ fn python_source_admission_preserves_exclusions_and_genuine_git_deletions() -> T
     fs::remove_dir_all(root)?;
     Ok(())
 }
+
+fn git_path_fixture(label: &str, paths: &[&str], source: &str) -> TestResult<PathBuf> {
+    let root = unique_temp_workspace(label);
+    fs::create_dir_all(&root)?;
+    fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"python\"]\n",
+    )?;
+    run_git(&root, &["init", "-b", "main"])?;
+    for path in paths {
+        let file = root.join(path);
+        if let Some(parent) = file.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&file, source.replace(">=", ">"))?;
+        run_git(&root, &["add", "--", path])?;
+        fs::write(file, source)?;
+    }
+    // Git owns quoting and the marker's tab delimiter. Handwritten headers
+    // would miss the path-identity boundary exercised by these fixtures.
+    run_git(
+        &root,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "--output=change.patch",
+        ],
+    )?;
+    let patch = fs::read_to_string(root.join("change.patch"))?;
+    assert!(patch.contains("@@"), "Git must produce behavioral hunks");
+    Ok(root)
+}
+
+fn assert_path_restoration(path: &str) -> TestResult {
+    let root = git_path_fixture("python-git-path-restoration", &[path], SOURCE)?;
+    let present = json(&root)?;
+    let human = check(&root, "human")?;
+    let badge: Value = serde_json::from_str(&check(&root, "badge-json")?)?;
+    assert_eq!(present["summary"]["findings"], 1, "{present}");
+    assert_eq!(present["analysis_outcome"]["analysis_complete"], true);
+    assert_eq!(
+        present["preview_languages"][0]["sample_paths"],
+        serde_json::json!([path])
+    );
+    if path.contains('\t') {
+        assert!(fs::read_to_string(root.join("change.patch"))?.contains("+++ \"b/"));
+    }
+
+    fs::rename(root.join(path), root.join("held-source.txt"))?;
+    let absent = json(&root)?;
+    assert_missing(&absent, path);
+    assert_eq!(python_count(&absent), Some(0));
+    assert_eq!(absent["summary"]["findings"], 0);
+    assert!(absent.get("preview_languages").is_none(), "{absent}");
+    let absent_human = check(&root, "human")?;
+    assert!(
+        absent_human.contains(&format!("file: {path};")),
+        "{absent_human}"
+    );
+    assert!(!absent_human.contains("Python file analyzed"));
+    let absent_badge: Value = serde_json::from_str(&check(&root, "badge-json")?)?;
+    assert_eq!(absent_badge["analysis_outcome"], *outcome(&absent));
+    assert_ne!(absent_badge["color"], "brightgreen");
+
+    fs::rename(root.join("held-source.txt"), root.join(path))?;
+    assert_eq!(json(&root)?, present);
+    assert_eq!(check(&root, "human")?, human);
+    assert_eq!(
+        serde_json::from_str::<Value>(&check(&root, "badge-json")?)?,
+        badge
+    );
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn git_generated_python_paths_preserve_whitespace_and_restore() -> TestResult {
+    for path in ["leading.py", " leading.py", " spaced/discount.py"] {
+        assert_path_restoration(path)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn git_quoted_python_path_preserves_tab_identity() -> TestResult {
+    assert_path_restoration(" quoted\t.py")
+}
+
+#[test]
+fn mixed_python_paths_keep_whitespace_distinct_from_available_sibling() -> TestResult {
+    let root = git_path_fixture(
+        "python-distinct-space-paths",
+        &["leading.py", " leading.py"],
+        SOURCE,
+    )?;
+    let present = json(&root)?;
+    assert_eq!(present["summary"]["findings"], 2);
+    let expected: Vec<Value> = present["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .filter(|finding| finding["probe"]["file"] == "leading.py")
+        .cloned()
+        .collect();
+    assert_eq!(expected.len(), 1);
+    fs::rename(root.join(" leading.py"), root.join("held-source.txt"))?;
+    let mixed = json(&root)?;
+    assert_missing(&mixed, " leading.py");
+    assert_eq!(mixed["findings"], serde_json::json!(expected));
+    assert_eq!(python_count(&mixed), Some(1));
+    assert_eq!(mixed["preview_languages"][0]["file_count"], 1);
+    assert_eq!(mixed["preview_languages"][0]["analyzed"], true);
+    assert_eq!(
+        mixed["preview_languages"][0]["sample_paths"],
+        serde_json::json!(["leading.py"])
+    );
+    let human = check(&root, "human")?;
+    assert!(human.contains("file:  leading.py;"), "{human}");
+    assert!(human.contains("1 Python file analyzed"));
+    let badge: Value = serde_json::from_str(&check(&root, "badge-json")?)?;
+    assert_eq!(badge["analysis_outcome"], *outcome(&mixed));
+    assert_ne!(badge["color"], "brightgreen");
+    fs::rename(root.join("held-source.txt"), root.join(" leading.py"))?;
+    assert_eq!(json(&root)?, present);
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn shared_absence_disclosure_preserves_rust_path_identity() -> TestResult {
+    let path = " src/lib.rs";
+    let source = "pub fn discount(total: i32) -> bool {\n    total >= 100\n}\n";
+    let root = git_path_fixture("rust-space-path-restoration", &[path], source)?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"space_path\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[lib]\npath = \" src/lib.rs\"\n",
+    )?;
+    let present = json(&root)?;
+    assert_eq!(present["summary"]["findings"], 1, "{present}");
+    assert_eq!(present["analysis_outcome"]["analysis_complete"], true);
+    fs::rename(root.join(path), root.join("held-source.txt"))?;
+    let absent = json(&root)?;
+    assert_missing(&absent, path);
+    assert_eq!(absent["summary"]["findings"], 0);
+    assert!(check(&root, "human")?.contains("file:  src/lib.rs;"));
+    let badge: Value = serde_json::from_str(&check(&root, "badge-json")?)?;
+    assert_eq!(badge["analysis_outcome"], *outcome(&absent));
+    fs::rename(root.join("held-source.txt"), root.join(path))?;
+    assert_eq!(json(&root)?, present);
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
