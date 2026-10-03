@@ -366,4 +366,45 @@ mod tests {
         }
         Ok(())
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn upstream_python_manifest_preserves_relocation_and_refuses_outside_links()
+    -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+
+        let sandbox = crate::tests::temp_dir("upstream-python-contained-evidence");
+        let result = (|| {
+            for mode in ["file", "parent"] {
+                let root = sandbox.join(mode);
+                crate::tests::copy_dir_recursive(&case_root(), &root)?;
+                let manifest = read_json(&root.join("manifest.json"))?;
+                validate_manifest(&root, &manifest)?;
+                let relocated = sandbox.join(format!("{mode}-relocated"));
+                fs::rename(&root, &relocated).map_err(|error| error.to_string())?;
+                validate_manifest(&relocated, &manifest)?;
+                let outside = sandbox.join(format!("{mode}-outside"));
+                fs::create_dir(&outside).map_err(|error| error.to_string())?;
+                let upstream = relocated.join("upstream");
+                if mode == "file" {
+                    fs::rename(upstream.join("fix.patch"), outside.join("fix.patch"))
+                        .map_err(|error| error.to_string())?;
+                    symlink(outside.join("fix.patch"), upstream.join("fix.patch"))
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    fs::rename(&upstream, outside.join("upstream"))
+                        .map_err(|error| error.to_string())?;
+                    symlink(outside.join("upstream"), &upstream)
+                        .map_err(|error| error.to_string())?;
+                }
+                let error = validate_manifest(&relocated, &manifest)
+                    .err()
+                    .ok_or_else(|| format!("accepted Python evidence outside {mode} link"))?;
+                assert!(error.contains("escapes fixture root"), "{mode}: {error}");
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&sandbox).map_err(|error| error.to_string());
+        result.and(cleanup)
+    }
 }

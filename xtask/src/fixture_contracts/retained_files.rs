@@ -6,6 +6,9 @@ use std::path::{Component, Path};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+mod tests;
+
 pub(super) fn local_path(path: &str) -> bool {
     !path.is_empty()
         && !path.contains('\\')

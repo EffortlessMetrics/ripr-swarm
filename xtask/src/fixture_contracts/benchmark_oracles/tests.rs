@@ -691,6 +691,69 @@ fn benchmark_semantic_oracle_local_custody_never_falls_back() -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn benchmark_semantic_oracle_local_custody_enforces_resolved_containment() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+
+    for mode in [
+        "inside_file",
+        "inside_parent",
+        "outside_file",
+        "outside_parent",
+    ] {
+        let mut fixture = SyntheticEvidence::new()?;
+        let outside = SyntheticEvidence::new()?;
+        let bytes = b"Synthetic executable byte model; never executed";
+        let mut capture = fixture.capture(0)?;
+        capture["artifact"]["custody"] =
+            json!({"status": "local", "file": fixture.file("linked/artifact.bin", bytes)?});
+        fixture.persist_capture(0, &capture)?;
+        fixture.accept_review()?;
+        let (status, custody) = validate_declaration(&fixture.root, &fixture.case)?;
+        assert_eq!(status, "valid");
+        assert_eq!((custody.local, custody.external), (1, 5));
+
+        let is_inside = mode.starts_with("inside");
+        let target_root = if is_inside {
+            fixture.root.join("retained")
+        } else {
+            outside.root.join("retained")
+        };
+        fs::create_dir(&target_root).map_err(|error| error.to_string())?;
+        fs::write(target_root.join("artifact.bin"), bytes).map_err(|error| error.to_string())?;
+        let linked = fixture.root.join("linked");
+        if mode.ends_with("file") {
+            fs::remove_file(linked.join("artifact.bin")).map_err(|error| error.to_string())?;
+            symlink(
+                target_root.join("artifact.bin"),
+                linked.join("artifact.bin"),
+            )
+            .map_err(|error| error.to_string())?;
+        } else {
+            fs::remove_dir_all(&linked).map_err(|error| error.to_string())?;
+            symlink(&target_root, &linked).map_err(|error| error.to_string())?;
+        }
+
+        let mut summary = Summary::default();
+        let mut violations = Vec::new();
+        summary.observe(&fixture.root, &fixture.case, &mut violations);
+        assert_eq!(violations.is_empty(), is_inside, "{mode}: {violations:?}");
+        assert_eq!(summary.valid, usize::from(is_inside));
+        assert_eq!(summary.rejected, usize::from(!is_inside));
+        assert_eq!(summary.local_artifacts, usize::from(is_inside));
+        if !is_inside {
+            assert_eq!(summary.external_artifacts, 0);
+            assert!(
+                violations
+                    .iter()
+                    .any(|error| error.contains("escapes fixture root"))
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn benchmark_semantic_oracle_production_command_discloses_custody_and_rejection()
 -> Result<(), String> {
