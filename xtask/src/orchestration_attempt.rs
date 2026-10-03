@@ -149,11 +149,11 @@ pub(crate) struct OrchestrationWorkRefV1 {
     pub head: String,
 }
 
-/// Codex client and role configuration retained for audit.
+/// Agent client and role configuration retained for audit.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OrchestrationClientRefV1 {
-    pub codex_client: String,
+    pub agent_client: String,
     pub role_configuration: String,
 }
 
@@ -573,8 +573,8 @@ pub(crate) fn assess_orchestration_attempt(
     if row.accepted_contract.trim().is_empty() {
         missing.push("accepted_contract");
     }
-    if row.client.codex_client.trim().is_empty() {
-        missing.push("client.codex_client");
+    if row.client.agent_client.trim().is_empty() {
+        missing.push("client.agent_client");
     }
     if row.client.role_configuration.trim().is_empty() {
         missing.push("client.role_configuration");
@@ -875,7 +875,7 @@ mod tests {
             task_family: "narrow_bug".to_string(),
             accepted_contract: "accepted-contract-sample".to_string(),
             client: OrchestrationClientRefV1 {
-                codex_client: "codex-cli-1.0".to_string(),
+                agent_client: "agent-cli-1.0".to_string(),
                 role_configuration: "single_builder".to_string(),
             },
             strategy: AttemptStrategyV1::SingleAgent,

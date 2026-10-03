@@ -502,7 +502,7 @@ mod tests {
             task_family: "narrow_bug".to_string(),
             accepted_contract: "accepted-contract-sample".to_string(),
             client: OrchestrationClientRefV1 {
-                codex_client: "codex-cli-1.0".to_string(),
+                agent_client: "agent-cli-1.0".to_string(),
                 role_configuration: "single_builder".to_string(),
             },
             strategy: AttemptStrategyV1::SingleAgent,
