@@ -11,7 +11,10 @@ pub(super) struct Custody {
 pub(super) fn validate(
     root: &Path,
     key: &Value,
+    pairing: &Value,
     row: &Value,
+    production: &str,
+    test: &str,
     passes: bool,
 ) -> Result<Custody, String> {
     let variant = text(row, "variant")?;
@@ -28,6 +31,16 @@ pub(super) fn validate(
             "{variant}: missing, swapped or stale native capture"
         ));
     }
+    native_inputs::validate(
+        root,
+        key,
+        pairing,
+        production,
+        test,
+        &capture["full_workspace_inputs_before"],
+        &capture["full_workspace_inputs_after"],
+    )
+    .map_err(|error| format!("native input {variant}: {error}"))?;
     let runner = &row["runner"];
     let artifact = &capture["artifact"];
     let selected = &capture["compiler_artifact"];

@@ -86,7 +86,7 @@ pub(in crate::fixture_contracts) fn append_controls_disclosure(
         corpus["cases"].as_array().map_or(0, Vec::len), controls.len(), complete_cases
     ));
     disclosure.items.push(format!("Historical semantic case completeness: complete_cases={complete_cases}, incomplete_cases={incomplete_cases}. Valid/invalid counts retain individually reviewed row judgments; incomplete or mismatched cases cannot count as complete historical cases."));
-    disclosure.items.push(format!("Historical-control custody: {local} local artifact byte checks; {external} external artifact references NOT_REVERIFIED. Historical static executable bytes are also NOT_REVERIFIED; only their retained producer/capture identities are checked. Semantic review accepts only its exact answer-key/native-pairing subject; it does not accept the attached static analysis. Controls do not enter static/calibration cases, pilot selection or frozen denominators. The weak variant is a removal control only."));
+    disclosure.items.push(format!("Historical control native test custody: {local} local artifact byte checks; {external} external artifact references NOT_REVERIFIED. The native custody totals cover only the six primary test observations per reviewed view. Matcher executables and linked libraries are external and NOT_REVERIFIED. Historical static executable bytes are also NOT_REVERIFIED; only their retained producer/capture identities are checked. Semantic review accepts only its exact answer-key/native-pairing subject; it does not accept the attached static analysis. Controls do not enter static/calibration cases, pilot selection or frozen denominators. The weak variant is a removal control only."));
     disclosure.items.extend(details.into_iter().take(20));
     disclosure
 }

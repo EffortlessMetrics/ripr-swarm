@@ -11,6 +11,8 @@ use super::retained_files::{local_path, read_json, verify_file};
 
 mod captures;
 mod controls;
+mod matcher_basis;
+mod native_inputs;
 mod observed_static;
 mod retained_support;
 #[cfg(test)]
@@ -76,7 +78,7 @@ impl Summary {
             self.valid, self.invalid, self.unreviewed, self.legacy, self.rejected
         )];
         items.push(format!(
-            "Native executable custody: {} local artifact byte checks; {} externally retained artifact references NOT_REVERIFIED by this fixture check.",
+            "Primary native test observation custody: {} local artifact byte checks; {} externally retained artifact references NOT_REVERIFIED by this fixture check.",
             self.local_artifacts, self.external_artifacts
         ));
         items.extend(self.declared.iter().take(20).cloned());
@@ -88,7 +90,7 @@ impl Summary {
         }
         crate::PolicyDisclosure {
             heading: "Benchmark semantic-oracle scope".to_string(),
-            intro: "Missing legacy status means unreviewed. Valid/invalid are reviewed expected-behavior declarations bound to retained semantic basis and historical native capture. This check validates their identities; it does not rerun tests, infer semantic truth or authenticate the producer. External executable bytes are NOT_REVERIFIED. Invalid-oracle controls may pass this fixture contract. These labels do not change static discrimination, Lane 1 scorecards, judged-panel calibration or frozen denominators.".to_string(),
+            intro: "Missing legacy status means unreviewed. Valid/invalid are reviewed expected-behavior declarations bound to retained semantic basis and historical native capture. This check validates their identities; it does not rerun tests, infer semantic truth or authenticate the producer. External executable bytes are NOT_REVERIFIED. Custody counts cover the six primary native test observations per reviewed view. Matcher executable and linked-library references are separately external and NOT_REVERIFIED. Invalid-oracle controls may pass this fixture contract. These labels do not change static discrimination, Lane 1 scorecards, judged-panel calibration or frozen denominators.".to_string(),
             items,
         }
     }
@@ -157,6 +159,7 @@ fn validate_declaration(
     }
     validate_answer_key(root, &key)?;
     let custody = validate_pairing(root, &key, &pairing)?;
+    matcher_basis::validate(root, &key, &pairing)?;
     let review = retained_json(root, &oracle["independent_review"])?;
     if text(&review, "disposition")? != "accepted" {
         return Err(
@@ -186,6 +189,7 @@ fn validate_answer_key(root: &Path, key: &Value) -> Result<(), String> {
         "package_version",
         "library_target",
         "test_source_path",
+        "production_source_path",
         "package_manifest_path",
         "library_source_path",
     ] {
@@ -193,6 +197,7 @@ fn validate_answer_key(root: &Path, key: &Value) -> Result<(), String> {
     }
     for field in [
         "test_source_path",
+        "production_source_path",
         "package_manifest_path",
         "library_source_path",
     ] {
@@ -207,6 +212,12 @@ fn validate_answer_key(root: &Path, key: &Value) -> Result<(), String> {
         .filter(|basis| !basis.is_empty())
         .ok_or_else(|| "semantic oracle needs independent semantic basis".to_string())?;
     for item in basis {
+        if !matches!(
+            text(item, "kind")?,
+            "source_document" | "separate_matcher_semantic_witness"
+        ) {
+            return Err("semantic oracle basis kind is unsupported".to_string());
+        }
         if !text(item, "url")?.starts_with("https://") {
             return Err("semantic oracle basis must identify its source URL".to_string());
         }
@@ -333,7 +344,7 @@ fn validate_pairing(
             }
         }
         validate_observation(root, key, row, *passes)?;
-        let captured = captures::validate(root, key, row, *passes)?;
+        let captured = captures::validate(root, key, pairing, row, source, test, *passes)?;
         custody.local += captured.local;
         custody.external += captured.external;
     }

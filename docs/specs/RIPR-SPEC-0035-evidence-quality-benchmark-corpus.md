@@ -61,6 +61,16 @@ exact `bytes`, and `sha256`,
 using the existing retained-fixture file checks. Paths in these files resolve
 from the corpus directory. No command is executed during fixture validation.
 
+Reviewed keys declare a contained `production_source_path` separately from the
+library target's source path. Every basis entry has a closed `kind`:
+`source_document` preserves an opaque cited document, while
+`separate_matcher_semantic_witness` identifies the structured retained matcher
+record. Missing, null or unknown kinds reject rather than falling back to text.
+The typed matcher entry declares its own package/version, library target,
+manifest/source paths and `native_test_variant`. That variant identifies the
+captured workspace input envelope; it does not claim that the standalone
+matcher program executes the primary HIR test.
+
 The answer key binds:
 
 - exact case, package/version, library target, manifest/library source paths,
@@ -128,6 +138,30 @@ time and exact frozen artifact descriptor. It describes a later measurement
 of the retained executable, not a contemporaneous measurement of the mutable
 compiler-selected path. The record must match the capture's frozen artifact.
 
+Every native capture must retain both full-workspace input inventories. The
+native capture owner verifies their bytes and requires equal before/after
+arrays with unique contained logical paths, file/symlink kinds, byte counts and
+SHA-256 digests. The selected production, complete test and lock entries must
+match the reviewed key and pairing; selected manifest/library paths must exist.
+When an original parent inventory is declared, the entire footprint must equal
+that baseline after only the declared production/test substitutions and lock
+insertion. The baseline's `type` is mapped explicitly to capture `kind`; no
+other input is discarded. The Regex case keeps all 249 rows, including parent
+CHANGELOG and unchanged manifests. A three-row source/test/lock subset is not
+an equivalent original workspace. Generic absence of a parent envelope does
+not make the capture's before/after fences optional.
+
+The typed matcher retains fixed and broken observations, each with original
+and observed program roles. All program, output and input descriptors are
+verified. Its input inventories must equal the declared primary native variant;
+its separate compiler package/target/manifest/source, linked-library identity,
+artifact argv, zero exit and recorded value/output format must agree. Its
+nonconsumption citation must identify a declared source document. The checker
+validates this recorded consistency, without deriving semantic truth from Rust
+program text or executing a matcher. Linked libraries and matcher executables
+remain external identity declarations; their current availability and bytes
+are not established by this check.
+
 Artifact custody is explicit. `local` custody requires a contained retained
 file whose actual bytes match the captured executable; missing/corrupt local
 bytes reject without an external fallback. The canonical file path must stay
@@ -185,6 +219,9 @@ reports local byte-check and external NOT_REVERIFIED artifact counts, and states
 that the fixture check does not rerun tests or authenticate the producer.
 These custody totals count accepted observation references/checks, not unique
 executable files; two declarations may refer to the same retained binaries.
+The totals cover the six primary native test observations per accepted view.
+Matcher executable and linked-library references have separate external
+NOT_REVERIFIED disclosure and are not silently included in those totals.
 
 This fixture axis does not change static discrimination, `evidence_record`,
 Lane 1 audit/scorecard semantics, #3806 judgments, #4795 runtime calibration,
@@ -233,6 +270,13 @@ must agree with the captured JSON. Missing or corrupt reports, wrong variants,
 stale inputs/producers and conflicting same-case subjects reject. This checks
 retained capture consistency, not current executable bytes or analyzer truth.
 
+Declared static `subject_alignment`, `corrected_summary`,
+`original_summary_before_correction` and `old_attempt.receipt` attachments must
+match their retained bytes and parse as JSON objects. Their historical internal
+paths are not live corpus dependencies. The obsolete summary and budget stop
+remain history, not current analysis authority. The static production path must
+agree with the reviewed key's production path.
+
 The report keeps benchmark-case counts separate from historical control-view
 and historical-case counts. Malformed collections are unavailable; rejected
 views are not accepted or silently treated as unreviewed. Semantic review does
@@ -254,6 +298,13 @@ observations establish no deletion-specific false exposure.
 Real-corpus tests pin both views, exact upstream and source/test identities,
 and the production validation/report route. They do not pin a desired analyzer
 classification. The 82 existing static/calibration rows remain unchanged.
+
+Real-case preservation tests also pin README, three license copies, three
+auxiliary patches and the curated historical native review note. These eight
+files remain required package contents even though ordinary semantic validation
+does not use their bytes as proof authority. The complete bounded local graph
+has 120 unique referenced files; metadata inventories distinguish those checked
+dependencies from documentary preservation and external artifact declarations.
 
 The benchmark corpus must include fixture classes for:
 

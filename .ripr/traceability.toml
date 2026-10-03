@@ -3314,6 +3314,8 @@ code = [
   "xtask/src/fixture_contracts/benchmark_oracles/controls.rs",
   "xtask/src/fixture_contracts/benchmark_oracles/observed_static.rs",
   "xtask/src/fixture_contracts/benchmark_oracles/retained_support.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/native_inputs.rs",
+  "xtask/src/fixture_contracts/benchmark_oracles/matcher_basis.rs",
   "xtask/src/fixture_contracts/general_validators.rs",
   "xtask/src/fixture_contracts/mod.rs",
   "xtask/src/fixture_contracts/retained_files.rs",

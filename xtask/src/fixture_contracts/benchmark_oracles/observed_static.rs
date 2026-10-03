@@ -28,8 +28,28 @@ pub(super) fn validate(
     }
     let _ = text(&capture, "transforms")?;
     let production_path = text(&capture, "production_source_path")?;
-    if !local_path(production_path) {
+    if !local_path(production_path)
+        || capture["production_source_path"] != key["production_source_path"]
+    {
         return Err("historical production path must be contained".to_string());
+    }
+    for field in [
+        "subject_alignment",
+        "corrected_summary",
+        "original_summary_before_correction",
+    ] {
+        if let Some(descriptor) = capture.get(field)
+            && !retained_json(root, descriptor)?.is_object()
+        {
+            return Err(format!(
+                "historical static {field} must retain a JSON object"
+            ));
+        }
+    }
+    if let Some(attempt) = capture.get("old_attempt")
+        && (!attempt.is_object() || !retained_json(root, &attempt["receipt"])?.is_object())
+    {
+        return Err("historical static old_attempt must retain its JSON receipt".to_string());
     }
     let producer = retained_json(root, &capture["producer_receipt"])?;
     let execution = retained_json(root, &capture["execution_receipt"])?;
