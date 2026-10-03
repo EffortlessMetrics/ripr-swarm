@@ -18,6 +18,12 @@ promote any capability globally.
 - Every case names one evidence class and one maturity scope.
 - Every case has at least one expected claim and at least one
   `must_not_claim` guard.
+- Missing `semantic_oracle` means `unreviewed`, including legacy rows. An
+  explicit `valid` or `invalid` expected-behavior label needs independent
+  semantic review and all six retained native pairings described in
+  RIPR-SPEC-0035. Passing tests or a strong static oracle cannot supply that
+  label. The fixture-contract report discloses this separate axis; it does not
+  change the Lane 1 scorecard or judged-panel calibration.
 - Runtime-only signals stay calibration evidence and must not create a static
   `evidence_record`.
 - Line-movement cases preserve canonical gap identity while allowing raw seam

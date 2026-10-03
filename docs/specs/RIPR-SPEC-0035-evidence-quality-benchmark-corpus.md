@@ -42,6 +42,87 @@ fixture implementation lands. A valid corpus includes:
 Each case must declare its evidence class and whether it is static-only,
 fixture-backed, calibrated, ambiguous, or unsupported in current scope.
 
+### Expected-behavior validity is a separate fixture axis
+
+An optional case-level `semantic_oracle` describes the correctness of a test's
+expected behavior. Its closed statuses are `valid`, `invalid`, and
+`unreviewed`. Omission on a legacy row means **unreviewed**, never valid.
+Malformed explicit metadata rejects. An invalid-oracle negative control can
+be valid corpus data; fixture acceptance must preserve its invalid label.
+
+This bounded contract supports a corrected test, the original wrong-sign test,
+and a weak variant that removes exactly the two named boundary assertions.
+`semantic_oracle.variant` is `corrected` for a valid declaration or `original`
+for an invalid declaration. The declaration references `answer_key` and
+`native_pairing` files by contained relative `path`, exact `bytes`, and `sha256`,
+using the existing retained-fixture file checks. Paths in these files resolve
+from the corpus directory. No command is executed during fixture validation.
+
+The answer key binds:
+
+- exact case, package, full test ID, and original test source path;
+- independent expected-behavior claim, nonblank accepted reviewer/rationale,
+  and retained semantic source artifacts with their source URLs;
+- fixed/broken production and corrected/original/weak complete test files;
+- the two corrected assertions and their original opposite-polarity forms;
+- the actual source line of each intended assertion failure.
+
+The validator checks that the weak file differs from the corrected file only
+by removing those two assertions, preserving all neighboring assertions. It
+rejects identical fixed/broken source, wrong assertion polarity, unresolved
+artifacts, wrong case identities, stale hashes, or a failure line that points
+to a neighboring assertion. Retained citations and independent review carry
+the semantic judgment; the checker does not infer arbitrary domain semantics
+or authenticate who authored that judgment.
+
+Valid/invalid acceptance also requires all six exact observed pairings:
+
+| Production | Test | Required native observation |
+| --- | --- | --- |
+| Fixed | Corrected | Pass |
+| Broken | Corrected | Intended corrected-assertion failure |
+| Fixed | Weak | Pass |
+| Broken | Weak | Pass |
+| Fixed | Original | Intended original wrong-sign assertion failure |
+| Broken | Original | Pass |
+
+Each observation carries before/after source, test and generated-lock input
+digests, exact runner/compiled-artifact hashes, tool versions, resolved final
+and intermediate build paths, working directory, command, test identity and
+counts. Its retained stdout/stderr must match their hashes. The isolated
+Cargo/libtest route selects one exact library test through an absolute Linux
+Cargo executable with `test --locked --offline --manifest-path Cargo.toml -p
+<package> --lib <test-id> -- --exact`. Intended, discovered, selected and
+executed counts are each one. Passed/failed/ignored counts, native exit,
+complete libtest terminal line and named test row must agree. Failing controls
+must identify the exact named assertion and its source line. Missing, repeated,
+zero-subject, ignored, setup-failed, timed-out, compile-failed, process-failed,
+stale or wrong-subject observations cannot establish validity.
+
+The native-pairing file binds the same case and answer-key digest and retains
+the exact Cargo.lock artifact. This is a replay lock generated for the stated
+toolchain when upstream has no lock; it must not be presented as an original
+upstream lock. Exact input and artifact fences plus contrasting behavior are
+required when capturing evidence; a Git build stamp alone is insufficient.
+Original workspace replay precedes any source/manifest reduction, whose
+equivalence needs separate observed evidence.
+
+`check-fixture-contracts` consumes this axis through the existing benchmark
+validator and emits a `PolicyDisclosure` in `fixture-contracts.md` with
+valid/invalid/unreviewed, legacy-absent and rejected declaration counts. A
+failed declaration is reported as rejected, not silently counted as its claimed
+valid status. Missing/unreadable corpus data yields NOT_ESTABLISHED rather
+than a successful zero-count disclosure. The disclosure is rendered on both
+passing and failing fixture checks.
+
+This fixture axis does not change static discrimination, `evidence_record`,
+Lane 1 audit/scorecard semantics, #3806 judgments, #4795 runtime calibration,
+or frozen selection/opportunity denominators. Connecting these separate
+consumers remains work for their existing owners. No real upstream case is
+accepted solely by this contract extension; source-only proposals and synthetic
+unit-test receipt models remain outside the accepted corpus until real native
+pairing and independent semantic review exist.
+
 ## Required Evidence
 
 The benchmark corpus must include fixture classes for:
@@ -161,6 +242,13 @@ assertion-target affinity. Specific call target tokens remain eligible for
 affinity.
 
 ## Test Mapping
+
+- `xtask/src/fixture_contracts/benchmark_oracles/tests.rs` contains synthetic
+  contract tests for absent/unreviewed status, corrected/original polarity,
+  independent basis, exact weak-test removal, complete pairing, input fences,
+  actual subjects, intended failures, retained-file identity, and the production
+  fixture reader plus common policy-report disclosure renderer. These modeled
+  records are not real upstream runtime receipts.
 
 - `xtask::tests::evidence_quality_benchmark_corpus_is_valid` validates the
   checked-in corpus.
