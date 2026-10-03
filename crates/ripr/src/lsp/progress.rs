@@ -238,7 +238,7 @@ impl AnalysisProgressTracker {
     }
 
     /// Install an arbitrary test transport (for example a sink whose sends
-    /// never resolve) so bounded-drain guarantees can be proven without a
+    /// never resolve) so bounded-drain guarantees can be exercised without a
     /// live client.
     #[cfg(test)]
     pub(super) fn install_test_sink(&self, sink: Arc<dyn ProgressSink>) {
