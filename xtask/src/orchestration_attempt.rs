@@ -605,9 +605,11 @@ pub(crate) fn assess_orchestration_attempt(
     {
         missing.push("synthesis.identity");
     }
-    if row.independent_verification.as_ref().is_some_and(|verification| {
-        verification.verification_id.trim().is_empty()
-    }) {
+    if row
+        .independent_verification
+        .as_ref()
+        .is_some_and(|verification| verification.verification_id.trim().is_empty())
+    {
         missing.push("independent_verification.verification_id");
     }
     if row
@@ -787,8 +789,7 @@ pub(crate) fn assess_orchestration_attempt(
                 // Completion gating. Reasons record every blocking condition;
                 // the downgrade helper only moves a still-Completed row.
                 if row.synthesis.is_none() {
-                    reasons
-                        .push("completed disposition requires synthesis evidence".to_string());
+                    reasons.push("completed disposition requires synthesis evidence".to_string());
                     downgrade(&mut next, AttemptDispositionV1::Blocked);
                 } else if row
                     .overflow
@@ -806,8 +807,9 @@ pub(crate) fn assess_orchestration_attempt(
                     downgrade(&mut next, AttemptDispositionV1::VerificationFailed);
                 }
                 if !row.cleanup.cleaned || !row.cleanup.residue.is_empty() {
-                    reasons
-                        .push("cleanup residue remains; completed downgraded to partial".to_string());
+                    reasons.push(
+                        "cleanup residue remains; completed downgraded to partial".to_string(),
+                    );
                     downgrade(&mut next, AttemptDispositionV1::Partial);
                 }
                 next
