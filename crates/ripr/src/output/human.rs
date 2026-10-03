@@ -2833,6 +2833,13 @@ mod tests {
 
     /// A `--worktree` full-form output whose findings are `suppressed`.
     fn worktree_full_with_suppressed(suppressed: &[&str]) -> String {
+        worktree_full_with_suppressed_and_drill_in(suppressed, &worktree_drill_in())
+    }
+
+    fn worktree_full_with_suppressed_and_drill_in(
+        suppressed: &[&str],
+        drill_in: &crate::app::FindingDrillIn,
+    ) -> String {
         use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
         let mut first = sample_finding();
         first.id = "first".to_string();
@@ -2874,7 +2881,7 @@ mod tests {
         super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
-            Some(&worktree_drill_in()),
+            Some(drill_in),
         )
     }
 
@@ -2893,6 +2900,34 @@ mod tests {
         assert!(
             !rendered.contains("  id: ") && !rendered.contains("ripr explain"),
             "no finding block or per-finding command prints under full suppression; got:\n{rendered}"
+        );
+    }
+
+    /// A `--write-artifact` worktree run replays the artifact with `--from`,
+    /// which `ripr check` does not accept, so the all-suppressed listing
+    /// re-runs the original worktree scope instead.
+    #[test]
+    fn worktree_full_all_suppressed_listing_never_passes_from_to_check() {
+        let input = crate::app::CheckInput {
+            root: PathBuf::from("repo"),
+            base: Some("HEAD".to_string()),
+            ..crate::app::CheckInput::default()
+        };
+        let drill_in =
+            crate::app::FindingDrillIn::Commands(crate::app::finding_navigation_with_worktree(
+                &input,
+                Some(std::path::Path::new("wt.json")),
+                false,
+                true,
+            ));
+        let rendered = worktree_full_with_suppressed_and_drill_in(&["first", "second"], &drill_in);
+        assert!(
+            rendered.contains("  ripr check --root repo --base HEAD --worktree --json\n"),
+            "the listing must re-run the worktree scope; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("ripr check --root repo --from"),
+            "`ripr check` has no --from; got:\n{rendered}"
         );
     }
 

@@ -66,6 +66,23 @@ pub(crate) fn finding_navigation_with_worktree(
     mode_explicit: bool,
     worktree: bool,
 ) -> FindingNavigation {
+    let args = navigation_args(input, artifact_path, mode_explicit, worktree);
+    // `ripr check` has no `--from`: the listing always re-runs the original
+    // scope, even when the drill-in commands replay a written artifact.
+    let list_args = navigation_args(input, None, mode_explicit, worktree);
+    FindingNavigation {
+        explain_prefix: format!("ripr explain {args}"),
+        context_prefix: format!("ripr context {args}"),
+        list_prefix: format!("ripr check {list_args}"),
+    }
+}
+
+fn navigation_args(
+    input: &CheckInput,
+    artifact_path: Option<&Path>,
+    mode_explicit: bool,
+    worktree: bool,
+) -> String {
     let mut args = vec![format!(
         "--root {}",
         shell_arg(&input.root.display().to_string())
@@ -109,12 +126,7 @@ pub(crate) fn finding_navigation_with_worktree(
         ));
     }
 
-    let args = args.join(" ");
-    FindingNavigation {
-        explain_prefix: format!("ripr explain {args}"),
-        context_prefix: format!("ripr context {args}"),
-        list_prefix: format!("ripr check {args}"),
-    }
+    args.join(" ")
 }
 
 #[cfg(test)]
@@ -185,6 +197,11 @@ mod tests {
         assert_eq!(
             from_artifact.explain_command("probe:id"),
             "ripr explain --root . --from wt.json probe:id"
+        );
+        // `ripr check` has no `--from`: the listing re-runs the worktree scope.
+        assert_eq!(
+            from_artifact.list_command(),
+            "ripr check --root . --base HEAD --worktree --json"
         );
     }
 
