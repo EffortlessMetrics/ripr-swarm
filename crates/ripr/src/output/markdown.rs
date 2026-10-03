@@ -674,7 +674,11 @@ mod tests {
             "(cd -P -- '/selected repo' && cargo test example -- --test-threads=1)"
         );
         assert!(forms["powershell"].is_null());
-        assert!(forms["recovery"].as_str().unwrap().contains("exit-status"));
+        assert!(
+            forms["recovery"]
+                .as_str()
+                .is_some_and(|text| text.contains("exit-status"))
+        );
     }
 
     #[test]
@@ -730,13 +734,28 @@ mod tests {
         let root = selected.path().canonicalize()?;
         let forms = rooted_command_forms(root.to_str(), command);
         let bash = forms["bash"].as_str().ok_or("missing Bash form")?;
-        let output = std::process::Command::new("bash")
+        let stdout_path = foreign.path().join("stdout");
+        let mut command = std::process::Command::new("bash");
+        command
             .args(["-c", bash])
             .current_dir(foreign.path())
-            .output()?;
-        assert_eq!(output.status.code(), Some(23));
+            .stdout(std::fs::File::create(&stdout_path)?)
+            .stderr(std::fs::File::create(foreign.path().join("stderr"))?);
+        let mut child = crate::process_owner::OwnedProcess::spawn(command)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.terminate_tree().map_err(std::io::Error::other)?;
+                return Err("rooted Bash fixture exceeded its deadline".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_eq!(status.code(), Some(23));
         assert_eq!(
-            String::from_utf8(output.stdout)?,
+            std::fs::read_to_string(stdout_path)?,
             format!("{}\n--test-threads=1\nliteral=two words\n", root.display())
         );
         assert!(forms["powershell"].is_null());
