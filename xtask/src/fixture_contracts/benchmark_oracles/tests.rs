@@ -199,7 +199,11 @@ fn benchmark_semantic_oracle_legacy_absent_is_unreviewed() -> Result<(), String>
         json!({"status": "unexpected"}),
         json!({"status": "valid"}),
     ] {
-        assert!(validate_case(Path::new("."), &json!({"semantic_oracle": value})).is_err());
+        let actual = validate_case(Path::new("."), &json!({"semantic_oracle": value}));
+        assert!(
+            actual.is_err(),
+            "accepted malformed semantic metadata: {actual:?}"
+        );
     }
     Ok(())
 }
@@ -209,7 +213,11 @@ fn benchmark_semantic_oracle_polarity_is_separate_from_discrimination() -> Resul
     let mut fixture = SyntheticEvidence::new()?;
     assert_eq!(fixture.validate()?, "valid");
     fixture.case["semantic_oracle"]["variant"] = json!("original");
-    assert!(fixture.validate().is_err());
+    let actual = fixture.validate();
+    assert!(
+        actual.is_err(),
+        "accepted original test as valid: {actual:?}"
+    );
     fixture.case["semantic_oracle"]["status"] = json!("invalid");
     assert!(
         fixture.validate().is_err(),
@@ -325,7 +333,11 @@ fn benchmark_semantic_oracle_rejects_wrong_failure_and_incomplete_output() -> Re
         fixture.pairing["observations"][1]["stdout"] =
             fixture.file("bad.stdout", output.as_bytes())?;
         fixture.persist()?;
-        assert!(fixture.validate().is_err());
+        let actual = fixture.validate();
+        assert!(
+            actual.is_err(),
+            "accepted incomplete native output: {actual:?}"
+        );
     }
     for (from, to) in [
         (
@@ -350,7 +362,8 @@ fn benchmark_semantic_oracle_rejects_artifact_drift_and_escaping_paths() -> Resu
     let fixture = SyntheticEvidence::new()?;
     fs::write(fixture.root.join("basis.txt"), "changed basis")
         .map_err(|error| error.to_string())?;
-    assert!(fixture.validate().is_err());
+    let actual = fixture.validate();
+    assert!(actual.is_err(), "accepted changed basis bytes: {actual:?}");
     for kind in ["parent", "absolute", "parent_component", "backslash"] {
         let mut fixture = SyntheticEvidence::new()?;
         assert_eq!(fixture.validate()?, "valid");

@@ -200,8 +200,8 @@ must agree on source head/tree, selected executable, byte count/digest, command,
 root, diff and per-command identity fences. The selected artifact's own head/tree
 must also match, and its compiler target must be the `ripr` binary. Three distinct
 corrected/original/weak observations bind exact retained stdout/stderr and before/after input
-inventories to their actual commands. Each full inventory must equal its fixed-
-production native variant inventory and carry the exact fixed source, test and
+inventories to their actual commands. Each full inventory must equal its
+fixed-production native variant inventory and carry the exact fixed source, test and
 lock identities. Report root/shape and any retained classification summary
 must agree with the captured JSON. Missing or corrupt reports, wrong variants,
 stale inputs/producers and conflicting same-case subjects reject. This checks

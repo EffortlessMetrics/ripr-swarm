@@ -113,6 +113,6 @@ exact 68770f7c producer. All three JSON outputs are byte-identical and report on
 exposed/strong call-deletion finding. Read static-observation.json before using
 that result: its eight related tests are a capped REPORTED list, not the established
 complete internal selection. Absence means not reported. The setter-omission
-counterfactual differs from the historical argument change, so no deletion-
-specific false-exposure claim follows. Semantic validity, historical native
+counterfactual differs from the historical argument change, so no
+deletion-specific false-exposure claim follows. Semantic validity, historical native
 discrimination and this static observation remain separate axes.
