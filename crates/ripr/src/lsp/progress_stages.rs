@@ -20,9 +20,11 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use tokio::sync::Notify;
 
+use super::progress::AnalysisProgressTracker;
 use crate::app::{AnalysisProgressEvent, AnalysisProgressSink, AnalysisProgressStage};
 
 /// Client-appropriate bounded wording for one shared producer stage.
@@ -110,10 +112,46 @@ impl AnalysisProgressSink for StageReportBridge {
     }
 }
 
+/// Budget for forwarding advisory stage reports once the producer finished.
+/// A stalled client may delay, never block, result handling and the next
+/// refresh: stage reports are progress-only, and the outcome-derived end
+/// (emitted after this request resolves) still reports the terminal
+/// disposition on the same bounded transport the legacy begin/end traffic
+/// already uses.
+pub(super) const STAGE_DRAIN_BUDGET: Duration = Duration::from_secs(5);
+
+/// Forward every queued stage report to the tracker's accepted generation,
+/// waiting for in-flight forwards at most [`STAGE_DRAIN_BUDGET`]. Returns the
+/// number of reports forwarded. On budget exhaustion the wait is abandoned:
+/// reports are advisory, and the outcome-derived end still reports the
+/// terminal disposition.
+pub(super) async fn drain_stage_reports(
+    bridge: &StageReportBridge,
+    tracker: &AnalysisProgressTracker,
+    generation: u64,
+) -> usize {
+    let outcome = tokio::time::timeout(STAGE_DRAIN_BUDGET, async {
+        let mut forwarded = 0usize;
+        loop {
+            while let Some(event) = bridge.pop() {
+                tracker.report_stage(generation, event.stage).await;
+                forwarded += 1;
+            }
+            if bridge.is_finished() {
+                break forwarded;
+            }
+            bridge.wait().await;
+        }
+    })
+    .await;
+    outcome.unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::progress::{
-        AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker,
+        AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker, BoxFuture,
+        ProgressNotificationValue, ProgressSink,
     };
     use super::super::refresh_scheduler::{RefreshReason, RefreshScope};
     use super::*;
@@ -126,7 +164,6 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
-    use std::time::Duration;
     use tower_lsp_server::jsonrpc::Result as LspResult;
     use tower_lsp_server::ls_types::{InitializeParams, InitializeResult};
     use tower_lsp_server::{LanguageServer, LspService};
@@ -322,19 +359,53 @@ mod tests {
         }
         drop(cli_sink);
         let cli_text = buffer.text();
-        let cli_stage_tokens: Vec<&'static str> = producer_stages
-            .iter()
-            .copied()
-            .filter(|stage| !stage_is_terminal(*stage))
-            .map(cli_stage_token)
-            .collect();
-        for token in &cli_stage_tokens {
-            let needle = format!("ripr progress: {token} [");
-            if !cli_text.contains(&needle) {
+        // Parse the emitted stage lines IN ORDER: an unordered substring
+        // check cannot detect a reordered or duplicated stage line, and any
+        // token outside the shared producer vocabulary is a projection
+        // drift, not a parse miss.
+        let known_stage_tokens: Vec<(&'static str, AnalysisProgressStage)> = [
+            AnalysisProgressStage::LoadingInput,
+            AnalysisProgressStage::Analyzing,
+            AnalysisProgressStage::BuildingOutput,
+            AnalysisProgressStage::Completed,
+            AnalysisProgressStage::Cancelled,
+            AnalysisProgressStage::Failed,
+        ]
+        .into_iter()
+        .map(|stage| (cli_stage_token(stage), stage))
+        .collect();
+        let mut cli_parsed_tokens: Vec<(&'static str, AnalysisProgressStage)> = Vec::new();
+        for line in cli_text.lines() {
+            let Some(rest) = line.strip_prefix("ripr progress: ") else {
+                continue;
+            };
+            let Some(raw_token) = rest.split('[').next() else {
+                continue;
+            };
+            let raw_token = raw_token.trim_end();
+            let Some((token, stage)) = known_stage_tokens
+                .iter()
+                .find(|(text, _)| *text == raw_token)
+                .copied()
+            else {
                 return Err(format!(
-                    "CLI projection lost stage token {token}: {cli_text}"
+                    "CLI projection emitted an unknown stage token '{raw_token}': {cli_text}"
                 ));
-            }
+            };
+            cli_parsed_tokens.push((token, stage));
+        }
+        let cli_stage_tokens: Vec<&'static str> = cli_parsed_tokens
+            .iter()
+            .filter(|(_, stage)| !stage_is_terminal(*stage))
+            .map(|(token, _)| *token)
+            .collect();
+        let Some((_, cli_terminal_stage)) = cli_parsed_tokens.last().copied() else {
+            return Err(format!("CLI projection emitted no records: {cli_text}"));
+        };
+        if cli_terminal_stage != terminal_stage {
+            return Err(format!(
+                "CLI terminal drifted from the producer trace: {cli_terminal_stage:?} vs {terminal_stage:?}"
+            ));
         }
 
         // LSP projection: the real tracker over a recording transport.
@@ -415,6 +486,19 @@ mod tests {
             return Err(format!(
                 "LSP stage projection diverged from the producer trace: {:?} vs {expected_lsp:?}",
                 report.lsp_stage_messages
+            ));
+        }
+        let producer_non_terminal: Vec<&'static str> = report
+            .producer_stages
+            .iter()
+            .copied()
+            .filter(|stage| !stage_is_terminal(*stage))
+            .map(cli_stage_token)
+            .collect();
+        if report.cli_stage_tokens != producer_non_terminal {
+            return Err(format!(
+                "CLI stage order diverged from the producer trace: {:?} vs {producer_non_terminal:?}",
+                report.cli_stage_tokens
             ));
         }
         if report.cli_stage_tokens.len() != report.lsp_stage_messages.len() {
@@ -632,6 +716,55 @@ mod tests {
         }
         if bridge.pop().is_some() {
             return Err("bridge must stay drained".to_string());
+        }
+        Ok(())
+    }
+
+    /// A client that accepted the token and begin, then stopped reading:
+    /// every stage report send parks forever.
+    struct StalledReportsSink;
+
+    impl ProgressSink for StalledReportsSink {
+        fn create(&self, _token: String) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn notify(&self, _token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+            Box::pin(async move {
+                if matches!(value, ProgressNotificationValue::Report { .. }) {
+                    std::future::pending::<()>().await;
+                }
+            })
+        }
+    }
+
+    #[test]
+    fn stalled_progress_sink_cannot_block_the_bounded_stage_drain() -> Result<(), String> {
+        // The drain budget is the guarantee that advisory progress can never
+        // delay result handling or the next refresh once the client stops
+        // reading mid-session (#4811 review hardening).
+        let bridge = StageReportBridge::new();
+        let tracker = Arc::new(AnalysisProgressTracker::new(test_client()));
+        tracker.install_test_sink(Arc::new(StalledReportsSink));
+        let rt = runtime()?;
+        rt.block_on(async {
+            tracker
+                .begin(&parity_request(1), AnalysisProgressPhase::Analyzing)
+                .await;
+        });
+        for event in success_trace(AnalysisProgressScope::Worktree) {
+            bridge.emit(event);
+        }
+        bridge.finish();
+        let started = std::time::Instant::now();
+        let forwarded = rt.block_on(drain_stage_reports(&bridge, &tracker, 1));
+        if forwarded != 0 {
+            return Err(format!(
+                "stalled sink must forward no stage reports, got {forwarded}"
+            ));
+        }
+        if started.elapsed() > STAGE_DRAIN_BUDGET + Duration::from_secs(2) {
+            return Err("bounded stage drain blocked by a stalled progress sink".to_string());
         }
         Ok(())
     }

@@ -21,7 +21,7 @@ use super::payload_bounds::{
     check_list_actionable_items_params, check_previous_result_ids,
 };
 use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
-use super::progress_stages::StageReportBridge;
+use super::progress_stages::{STAGE_DRAIN_BUDGET, StageReportBridge, drain_stage_reports};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScheduler,
     RefreshScope,
@@ -476,22 +476,13 @@ impl Backend {
         // attempt's work-done token while the blocking analysis runs. The
         // sink side only queues events; a drain task on the async runtime
         // forwards them as bounded `$/progress` reports. Best-effort: the
-        // bridge can never change the analysis result.
+        // bridge can never change the analysis result, and the drain budget
+        // bounds how long a stalled client may delay result handling.
         let stage_bridge = Arc::new(StageReportBridge::new());
         let stage_drain = {
             let bridge = Arc::clone(&stage_bridge);
             let tracker = Arc::clone(&self.progress);
-            tokio::spawn(async move {
-                loop {
-                    while let Some(event) = bridge.pop() {
-                        tracker.report_stage(generation, event.stage).await;
-                    }
-                    if bridge.is_finished() {
-                        break;
-                    }
-                    bridge.wait().await;
-                }
-            })
+            tokio::spawn(async move { drain_stage_reports(&bridge, &tracker, generation).await })
         };
         let bridge_for_blocking = Arc::clone(&stage_bridge);
         let diagnostics_result = tokio::task::spawn_blocking(move || {
@@ -513,16 +504,23 @@ impl Backend {
         })
         .await;
         drop(deadline_timer);
-        // The producer has returned: finish the bridge, let the drain task
-        // forward everything queued, then defensively drain once more (the
-        // tracker suppresses consecutive duplicates, so a double forward is
-        // a no-op). Stage reports always precede the outcome-derived end
+        // The producer has returned: finish the bridge and let the drain
+        // task forward everything queued. The drain is bounded: a stalled
+        // client may delay, never block, diagnostics handling or the next
+        // refresh. Stage reports always precede the outcome-derived end
         // emitted by the refresh loop after this request resolves.
         stage_bridge.finish();
         let _ = stage_drain.await;
-        while let Some(event) = stage_bridge.pop() {
-            self.progress.report_stage(generation, event.stage).await;
-        }
+        // Defensive final forward under the same budget (the tracker
+        // suppresses consecutive duplicates, so a double forward is a
+        // no-op). Only runs when the drain task could not cover the queue.
+        let progress = &self.progress;
+        let _ = tokio::time::timeout(STAGE_DRAIN_BUDGET, async {
+            while let Some(event) = stage_bridge.pop() {
+                progress.report_stage(generation, event.stage).await;
+            }
+        })
+        .await;
         let diagnostics = match diagnostics_result {
             Ok(Ok(mut diagnostics)) => {
                 diagnostics.snapshot.input_identity = Some(request.input_identity.clone());

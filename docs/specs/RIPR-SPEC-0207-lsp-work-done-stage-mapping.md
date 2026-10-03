@@ -48,6 +48,10 @@ testable parity contract.
    accepted generation's work-done token as bounded `$/progress` reports.
    The bridge is best-effort: queueing, draining, or transport failure
    cannot change the analysis result, the snapshot, or the lifecycle end.
+   The drain is bounded by `STAGE_DRAIN_BUDGET`: a stalled client may delay
+   result handling and the next refresh by at most that budget, never block
+   them; missed stage reports are progress-only, and the outcome-derived
+   end still reports the terminal disposition.
 2. `loading_input`, `analyzing`, and `building_output` each map to exactly
    one client-appropriate bounded report
    (`loading input` / `analyzing workspace` / `building output`) on the
@@ -155,6 +159,7 @@ denominator honesty, and terminal state may not diverge.
 - `crates/ripr/src/lsp/progress_stages.rs::tests::known_and_unknown_denominators_never_become_percentages`
 - `crates/ripr/src/lsp/progress_stages.rs::tests::removing_the_shared_mapping_breaks_parity_even_with_legacy_progress`
 - `crates/ripr/src/lsp/progress_stages.rs::tests::bridge_forwards_events_without_blocking_the_producer`
+- `crates/ripr/src/lsp/progress_stages.rs::tests::stalled_progress_sink_cannot_block_the_bounded_stage_drain`
 - `crates/ripr/src/lsp/tests.rs::work_done_progress_stage_reports_through_real_refresh_journey`
 
 ## Implementation Mapping
@@ -164,7 +169,7 @@ denominator honesty, and terminal state may not diverge.
 - `crates/ripr/src/lsp/progress.rs` — `report_stage` on the token registry
   (capability, phase, duplicate, and terminal guards)
 - `crates/ripr/src/lsp/backend.rs` — bridge + per-attempt drain task in
-  `run_refresh_request`
+  `run_refresh_request` (both bounded by `STAGE_DRAIN_BUDGET`)
 - `crates/ripr/src/lsp/diagnostics.rs` — sink-bearing diagnostics entry
 - `crates/ripr/src/app/check.rs` — sink-bearing worktree entry point
 

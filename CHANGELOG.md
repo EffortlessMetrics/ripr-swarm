@@ -88,7 +88,9 @@ are scoped or reviewed.
   `ripr-analysis-{generation}` token. Reports never carry percentages or
   terminal stages; cancellation, deadline, supersession, failure, and
   disclosed limited/deferred states keep their outcome-derived terminal
-  messages, and clients without `window/workDoneProgress` see no traffic. A
+  messages, and clients without `window/workDoneProgress` see no traffic.
+  The post-analysis stage drain is bounded, so a stalled client can delay
+  diagnostics handling by at most the drain budget, never block it. A
   cross-surface parity oracle pins CLI and LSP stage identity, ordering,
   denominator honesty, and terminal disposition against one normalized
   producer trace (RIPR-SPEC-0207, #4811).

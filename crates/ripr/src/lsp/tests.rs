@@ -17902,6 +17902,9 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
             ));
         }
         for message in &progress {
+            if message["params"]["token"].as_str() != Some(token.as_str()) {
+                return Err(format!("progress drifted to another token: {progress:?}"));
+            }
             if !message["params"]["value"]["percentage"].is_null() {
                 return Err(format!(
                     "no fabricated percentages may be emitted: {progress:?}"

@@ -112,17 +112,17 @@ impl AnalysisProgressEnd {
 }
 
 /// One `$/progress` notification payload.
-enum ProgressNotificationValue {
+pub(super) enum ProgressNotificationValue {
     Begin { title: String, message: String },
     Report { message: String },
     End { message: String },
 }
 
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub(super) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Transport for progress traffic. Abstracted so unit tests can record the
 /// wire sequence without a live client.
-trait ProgressSink: Send + Sync {
+pub(super) trait ProgressSink: Send + Sync {
     fn create(&self, token: String) -> BoxFuture<'_, Result<(), String>>;
     fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()>;
 }
@@ -234,6 +234,15 @@ impl AnalysisProgressTracker {
     pub(super) fn install_recorder(&self, sink: Arc<RecordingSink>) {
         let recorder: Arc<dyn ProgressSink> = sink;
         self.set_sink(recorder);
+        self.set_supported(true);
+    }
+
+    /// Install an arbitrary test transport (for example a sink whose sends
+    /// never resolve) so bounded-drain guarantees can be proven without a
+    /// live client.
+    #[cfg(test)]
+    pub(super) fn install_test_sink(&self, sink: Arc<dyn ProgressSink>) {
+        self.set_sink(sink);
         self.set_supported(true);
     }
 
