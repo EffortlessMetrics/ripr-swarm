@@ -3666,7 +3666,7 @@ mod tests {
         old_facts.functions = invented.functions;
         old_facts.unresolved_property_macros.clear();
         let current_key = RepoFileFactCacheKey::new(file, source.as_bytes());
-        for predecessor in ["1.15", "1.16", "1.17"] {
+        for predecessor in ["1.15", "1.16"] {
             let old_key = RepoFileFactCacheKey {
                 schema_version: predecessor.to_string(),
                 ..current_key.clone()
@@ -3684,6 +3684,196 @@ mod tests {
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
         Ok(())
+    }
+
+    #[test]
+    fn discarded_property_oracle_predecessor_misses_and_current_facts_reuse() -> Result<(), String>
+    {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let scratch = integrity_scratch("discarded-property-oracle")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/property.rs");
+        let source = "fn owner(x: i32) -> i32 { x }\n#[test]\nfn boundary() {\n let _ = owner(1);\n proptest! { ensure!(owner(1) == 1, \"discarded\"); }\n}\n";
+        let current = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        assert_eq!(current.tests.len(), 1);
+        assert!(current.tests[0].assertions.is_empty());
+        let ordinary = source.replace(
+            "proptest! { ensure!(owner(1) == 1, \"discarded\"); }",
+            "ensure!(owner(1) == 1, \"ordinary\");",
+        );
+        let ordinary = RaRustSyntaxAdapter.summarize_file(file, &ordinary)?;
+        assert_eq!(ordinary.tests.len(), 1);
+        assert!(!ordinary.tests[0].assertions.is_empty());
+        // Synthesized favorable predecessor: retain identical original source,
+        // functions/tests/calls, but import a real ordinary-oracle fact into
+        // the discarded span. This is not a claimed execution of the old parser.
+        let mut favorable = current.clone();
+        favorable.tests[0].assertions = ordinary.tests[0].assertions.clone();
+        let current_key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        let previous_key = RepoFileFactCacheKey {
+            schema_version: "1.17".to_string(),
+            ..current_key.clone()
+        };
+        cache.store_file_facts(&previous_key, &favorable)?;
+        assert!(
+            matches!(cache.load_file_facts(&previous_key), CacheLoad::Hit(ref facts) if !facts.tests[0].assertions.is_empty())
+        );
+        assert!(matches!(
+            cache.load_file_facts(&current_key),
+            CacheLoad::Miss
+        ));
+        cache.store_file_facts(&current_key, &current)?;
+        assert!(
+            matches!(cache.load_file_facts(&current_key), CacheLoad::Hit(ref facts) if facts == &current && facts.tests[0].assertions.is_empty())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn favorable_classified_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
+        for compact in [false, true] {
+            for sharded in [false, true] {
+                let scratch = integrity_scratch("property-classified-generation")?;
+                let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+                let mut current_key = empty_state().cache_key();
+                if compact {
+                    current_key.schema_version =
+                        COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
+                }
+                let previous_key = RepoSeamCacheKey {
+                    schema_version: if compact { "0.33" } else { "1.27" }.to_string(),
+                    ..current_key.clone()
+                };
+                // Representative synthesized favorable classification, not
+                // a claimed capture from the old whole-analyzer execution.
+                let favorable = synthesized_discarded_oracle_classified();
+                let count = if sharded { 2 } else { 1 };
+                let store_limit = if sharded { 1 } else { 10 };
+                let favorable = vec![favorable; count];
+                cache.store_classified_seams_with_limit(
+                    &previous_key,
+                    &favorable,
+                    None,
+                    store_limit,
+                )?;
+                assert_classified_cache_values(&cache, &previous_key, &favorable)?;
+                assert!(matches!(
+                    cache.load_classified_seams_with_fallback(&current_key),
+                    CacheLoad::Miss
+                ));
+                if sharded {
+                    assert!(cache.sharded_manifest_path(&previous_key).exists());
+                    assert!(!cache.entry_path(&previous_key).exists());
+                } else {
+                    let stale = std::fs::read(cache.entry_path(&previous_key))
+                        .map_err(|error| error.to_string())?;
+                    std::fs::write(cache.entry_path(&current_key), stale)
+                        .map_err(|error| error.to_string())?;
+                    assert!(matches!(
+                        cache.load_classified_seams_with_fallback(&current_key),
+                        CacheLoad::Miss
+                    ));
+                }
+                let mut corrected = sample_classified();
+                corrected.class = SeamGripClass::ReachableUnrevealed;
+                corrected.evidence.observe.state = StageState::No;
+                corrected.evidence.discriminate.state = StageState::No;
+                let corrected = vec![corrected; count];
+                cache.store_classified_seams_with_limit(
+                    &current_key,
+                    &corrected,
+                    None,
+                    store_limit,
+                )?;
+                assert_classified_cache_values(&cache, &current_key, &corrected)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn favorable_033_shard_generation_is_refused_with_current_outer_key() -> Result<(), String> {
+        for compact in [false, true] {
+            let scratch = integrity_scratch("property-shard-generation")?;
+            let cache = RepoSeamFactCache::at_dir(scratch.0.clone());
+            let mut key = empty_state().cache_key();
+            if compact {
+                key.schema_version = COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
+            }
+            let favorable = synthesized_discarded_oracle_classified();
+            let favorable = vec![favorable; 2];
+            cache.store_classified_seams_with_limit(&key, &favorable, None, 1)?;
+            assert_classified_cache_values(&cache, &key, &favorable)?;
+            // Hold outer identity fixed to challenge the independent shard
+            // generation, rather than only missing a differently keyed path.
+            let path = cache.sharded_manifest_path(&key);
+            let mut manifest = codec::decode_sharded_manifest(
+                &std::fs::read(&path).map_err(|error| error.to_string())?,
+            )?;
+            manifest.sharded_cache_schema_version = "0.33".to_string();
+            for shard in &manifest.shards {
+                let path = cache.sharded_entry_dir(&key).join(&shard.file);
+                let mut envelope =
+                    codec::decode_shard(&std::fs::read(&path).map_err(|error| error.to_string())?)?;
+                assert_eq!(envelope.classified_seams.len(), 1);
+                assert_eq!(
+                    envelope.classified_seams[0].class,
+                    SeamGripClass::StronglyGripped
+                );
+                envelope.sharded_cache_schema_version = "0.33".to_string();
+                std::fs::write(&path, codec::encode_shard(&envelope)?)
+                    .map_err(|error| error.to_string())?;
+                let seeded =
+                    codec::decode_shard(&std::fs::read(path).map_err(|error| error.to_string())?)?;
+                seeded.validate_integrity()?;
+            }
+            std::fs::write(&path, codec::encode_sharded_manifest(&manifest)?)
+                .map_err(|error| error.to_string())?;
+            let seeded = codec::decode_sharded_manifest(
+                &std::fs::read(path).map_err(|error| error.to_string())?,
+            )?;
+            seeded.validate_integrity()?;
+            assert!(matches!(
+                cache.load_classified_seams_with_fallback(&key),
+                CacheLoad::Miss
+            ));
+            let corrected = vec![sample_classified(); 2];
+            cache.store_classified_seams_with_limit(&key, &corrected, None, 1)?;
+            assert_classified_cache_values(&cache, &key, &corrected)?;
+        }
+        Ok(())
+    }
+
+    fn assert_classified_cache_values(
+        cache: &RepoSeamFactCache,
+        key: &RepoSeamCacheKey,
+        expected: &[ClassifiedSeam],
+    ) -> Result<(), String> {
+        let CacheLoad::Hit((actual, _, _)) = cache.load_classified_seams_with_fallback(key) else {
+            return Err("expected an actual nonempty classified warm hit".to_string());
+        };
+        assert!(!actual.is_empty());
+        assert_eq!(
+            serde_json::to_value(actual).map_err(|error| error.to_string())?,
+            serde_json::to_value(expected).map_err(|error| error.to_string())?
+        );
+        Ok(())
+    }
+
+    fn synthesized_discarded_oracle_classified() -> ClassifiedSeam {
+        let mut favorable = sample_classified();
+        favorable.class = SeamGripClass::StronglyGripped;
+        for stage in [
+            &mut favorable.evidence.activate,
+            &mut favorable.evidence.propagate,
+            &mut favorable.evidence.observe,
+            &mut favorable.evidence.discriminate,
+        ] {
+            stage.state = StageState::Yes;
+            stage.confidence = Confidence::High;
+            stage.summary = "Synthesized favorable discarded-oracle predecessor".to_string();
+        }
+        favorable
     }
 
     #[test]
