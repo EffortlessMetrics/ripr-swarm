@@ -1,0 +1,151 @@
+//! Pin the protected PR qualification event at the workflow boundary.
+//!
+//! Draft activity must not create the required `Ripr Rust Small Result` check.
+//! The native Draft -> Ready transition is the only pull-request admission
+//! event; main and explicit manual authorities remain separate.
+
+use std::fs;
+use std::path::Path;
+
+const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
+const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
+    "on:",
+    "  pull_request:",
+    "    types: [ready_for_review]",
+    "  push:",
+    "    branches: [main, master]",
+    "  workflow_dispatch:",
+];
+const EXPECTED_CONCURRENCY_GROUP: &str =
+    "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
+const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
+
+/// Read the candidate workflow from the repository root above the xtask package.
+fn workflow_source() -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask package has a repository parent");
+    fs::read_to_string(root.join(WORKFLOW)).expect("read routed Rust workflow")
+}
+
+/// Return the exact event declaration lines, excluding comments and blank lines.
+fn event_declarations(source: &str) -> Vec<&str> {
+    let events = source
+        .split_once("\npermissions:\n")
+        .map(|(events, _)| events)
+        .expect("workflow keeps permissions after event declarations");
+
+    events
+        .lines()
+        .skip_while(|line| *line != "on:")
+        .filter_map(|line| {
+            let line = line.trim_end();
+            if line.is_empty() || line.trim_start().starts_with('#') {
+                None
+            } else {
+                Some(line)
+            }
+        })
+        .collect()
+}
+
+/// Read a direct static job name from the `jobs` mapping.
+///
+/// Direct job keys have exactly two leading spaces and direct job fields have
+/// four. More deeply indented block-scalar text therefore cannot impersonate a
+/// sibling job or its `name` field.
+fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
+    let target = format!("  {job}:");
+    let mut in_jobs = false;
+    let mut in_target = false;
+
+    for raw_line in source.lines() {
+        let line = raw_line.trim_end();
+        if line == "jobs:" {
+            in_jobs = true;
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            break;
+        }
+
+        let direct_job = line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.ends_with(':')
+            && !line.trim_start().starts_with('#');
+        if direct_job {
+            if in_target {
+                return None;
+            }
+            in_target = line == target;
+            continue;
+        }
+
+        if in_target
+            && let Some(name) = line.strip_prefix("    name: ")
+        {
+            return Some(name.trim());
+        }
+    }
+
+    None
+}
+
+/// Read the direct static name emitted by the required result job.
+fn terminal_context(source: &str) -> Option<&str> {
+    direct_job_name(source, "result")
+}
+
+#[test]
+fn required_pr_context_is_withheld_until_ready() {
+    let source = workflow_source();
+
+    assert_eq!(
+        event_declarations(&source),
+        EXPECTED_EVENT_DECLARATIONS,
+        "protected workflow must expose only Ready PR, main push, and manual authorities",
+    );
+    assert!(source.contains(EXPECTED_CONCURRENCY_GROUP));
+    assert_eq!(terminal_context(&source), Some(REQUIRED_CONTEXT));
+    assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
+    assert!(!source.contains("github.event.pull_request.draft"));
+}
+
+#[test]
+fn contract_rejects_draft_or_mutation_triggers() {
+    let source = workflow_source();
+    let changed = source.replace(
+        "types: [ready_for_review]",
+        "types: [ready_for_review, synchronize]",
+    );
+    assert_ne!(changed, source, "trigger mutation must engage");
+    assert_ne!(
+        event_declarations(&changed),
+        EXPECTED_EVENT_DECLARATIONS,
+        "synchronize must violate the protected event law",
+    );
+}
+
+#[test]
+fn contract_rejects_a_noncanonical_terminal_context() {
+    let source = workflow_source();
+    let changed = source.replace(
+        "  result:\n    name: Ripr Rust Small Result",
+        "  result:\n    name: Ripr Rust Small Draft Result",
+    );
+    assert_ne!(changed, source, "result-name mutation must engage");
+    assert_ne!(
+        terminal_context(&changed),
+        Some(REQUIRED_CONTEXT),
+        "a renamed result must violate the required-context contract",
+    );
+}
+
+#[test]
+fn block_scalar_decoy_cannot_hide_a_renamed_result_job() {
+    let source = "jobs:\n  route:\n    run: |\n      result:\n        name: Ripr Rust Small Result\n  result:\n    name: Ripr Rust Small Draft Result\n";
+    assert_eq!(terminal_context(source), Some("Ripr Rust Small Draft Result"));
+}
