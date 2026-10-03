@@ -3,6 +3,15 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-03: `Path::is_dir()` is not a missing-path probe (#5101)
+
+`Path::is_dir()` is false for a missing path and for an existing file. Doctor
+used that boolean as "the root directory does not exist", so `ripr doctor --root
+Cargo.toml` (and `doctor --json`) contradicted `ls`. Classify with
+`metadata`/`symlink_metadata` once and reuse the result for evidence, skip
+reasons, and MissingRoot guidance. Keep a missing-path control that must still
+say "does not exist"; a symlink to a directory must still pass.
+
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
 
 The #4835 overlay indexed token-tree functions as tests and accepted
