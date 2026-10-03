@@ -160,6 +160,12 @@ fn local_empty_macro_preserves_independent_equality_execution() -> Result<(), St
             } else {
                 source.clone()
             };
+            if wrong {
+                assert_ne!(
+                    subject, source,
+                    "{name}: mutation must change the runtime subject"
+                );
+            }
             std::fs::write(&runtime_source, subject).map_err(|error| error.to_string())?;
             compiles(
                 run(
@@ -697,6 +703,106 @@ fn owner_pin_review_admission_controls() -> Result<(), String> {
     } else {
         Err(mismatches.join("\n"))
     }
+}
+
+/// Lexical enum facts remain useful even when the assertion is not admitted.
+/// Their presentation must not imply the refused oracle observed a value.
+#[test]
+fn lexical_source_values_do_not_claim_observed_oracles() -> Result<(), String> {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for case in [
+        "direct",
+        "called",
+        "uncalled",
+        "reached_uncalled",
+        "shadowed",
+        "false_branch",
+    ] {
+        let fixture = fixtures.join(format!("error_path_oracle_execution_{case}"));
+        let report = check_workspace(CheckInput {
+            root: fixture.join("input"),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let selected = json["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .filter(|finding| finding["probe"]["family"] == "error_path")
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 1, "{case}: selected ErrorPath only");
+        let finding = selected[0];
+        let admitted = matches!(case, "direct" | "called");
+        assert_eq!(
+            finding["classification"],
+            if admitted {
+                "exposed"
+            } else {
+                "reachable_unrevealed"
+            },
+            "{case}"
+        );
+        assert_eq!(
+            finding["oracle_strength"],
+            if admitted { "strong" } else { "none" },
+            "{case}"
+        );
+        for stage in ["observe", "discriminate"] {
+            assert_eq!(
+                finding["ripr"][stage]["state"],
+                if admitted { "yes" } else { "no" },
+                "{case}/{stage}"
+            );
+        }
+        let facts = finding["observed_values"]
+            .as_array()
+            .ok_or("missing source values")?;
+        let variants = facts
+            .iter()
+            .filter(|fact| {
+                fact["context"] == "enum_variant" && fact["value"] == "io::ErrorKind::Other"
+            })
+            .collect::<Vec<_>>();
+        assert!(!variants.is_empty(), "{case}: retain lexical enum facts");
+        assert_eq!(
+            finding["observed_values"],
+            finding["activation"]["observed_values"]
+        );
+        let evidence = finding["evidence_path"]
+            .as_array()
+            .ok_or("missing evidence path")?;
+        let human = render_check(&report, &OutputFormat::HumanFull)?;
+        for variant in variants {
+            let line = variant["line"].as_u64().ok_or("missing fact line")?;
+            assert!(
+                finding["assertion_texts"][line.to_string()]
+                    .as_str()
+                    .is_some_and(|text| text.contains("io::ErrorKind::Other")),
+                "{case}: source provenance remains"
+            );
+            let label = format!("source enum variant value io::ErrorKind::Other at line {line}");
+            assert!(
+                evidence
+                    .iter()
+                    .any(|entry| entry.as_str() == Some(label.as_str())),
+                "{case}: neutral structured evidence"
+            );
+            assert!(human.contains(&label), "{case}: neutral human evidence");
+        }
+        assert!(!evidence.iter().any(|entry| {
+            entry
+                .as_str()
+                .is_some_and(|text| text.starts_with("observed enum variant value "))
+        }));
+        assert!(!human.contains("observed enum variant value "));
+    }
+    Ok(())
 }
 
 /// Shared execution provenance is independent of the changed behavior's family.
