@@ -259,14 +259,18 @@ impl ValueContext {
     }
 }
 
-/// A single observed value extracted from a test assertion.
+/// A value found or statically derived from test source.
 ///
-/// The `text` field holds the full assertion source text; it is used by the
-/// human renderer.  The JSON renderer (schema 0.2+) **deduplicates** it into a
-/// finding-level `assertion_texts` map keyed by line number, so `text` does
-/// **not** appear in per-value objects in the JSON output.  Downstream JSON
-/// consumers should recover the assertion source via
-/// `finding.assertion_texts[line.to_string()]`.
+/// This fact does not establish assertion execution, oracle admission or
+/// observation of the changed behavior. It can retain values from refused
+/// assertions and bounded static value-transfer expressions. `context` records
+/// the source/value origin, not an execution state.
+///
+/// The `text` field holds retained source or value-transfer provenance. The
+/// JSON renderer deduplicates shared text into the finding-level
+/// `assertion_texts` map keyed by line number. Per-value objects retain optional
+/// `provenance` when their text differs from that shared entry; otherwise
+/// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
     pub line: usize,
@@ -308,6 +312,8 @@ pub struct FindingCanonicalGap {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivationEvidence {
+    /// Historical field name for source values; see ValueFact's non-execution
+    /// contract. Oracle observation remains a separate admitted stage.
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
 }
@@ -342,6 +348,13 @@ pub struct Finding {
     pub flow_sinks: Vec<FlowSinkFact>,
     pub activation: ActivationEvidence,
     pub stop_reasons: Vec<StopReason>,
+    /// Number of matched related-test/oracle rows after the existing dedup,
+    /// before bounded unique-first packing. Metadata only: the retained
+    /// related_tests vector remains the semantic/selection input.
+    /// Older producers and artifacts omit this field and retain their known
+    /// vector count; absence cannot establish how many rows were discarded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related_tests_matched_total: Option<usize>,
     pub related_tests: Vec<RelatedTest>,
     pub recommended_next_step: Option<String>,
     /// Source language the adapter that produced this finding identifies as.
@@ -473,6 +486,13 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
 ];
 
 impl Finding {
+    /// Public count projection without changing retained evidence or selection.
+    pub fn related_tests_total(&self) -> usize {
+        self.related_tests_matched_total
+            .unwrap_or(self.related_tests.len())
+            .max(self.related_tests.len())
+    }
+
     pub fn unknown_has_stop_reason(&self) -> bool {
         !self.class.requires_stop_reason() || !self.stop_reasons.is_empty()
     }

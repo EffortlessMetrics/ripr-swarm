@@ -66,10 +66,16 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         }
         lines.push(line);
     }
-    let related_tests_total = finding.related_tests.len();
-    if related_tests_total > MAX_RELATED_TESTS_SHOWN {
+    let related_tests_total = finding.related_tests_total();
+    let related_tests_shown = finding.related_tests.len().min(MAX_RELATED_TESTS_SHOWN);
+    if related_tests_total > related_tests_shown {
+        let json_pointer = if finding.related_tests.len() > related_tests_shown {
+            "; more in --format json"
+        } else {
+            ""
+        };
         lines.push(format!(
-            "related tests (showing {MAX_RELATED_TESTS_SHOWN} of {related_tests_total}; more in --format json)"
+            "related tests (showing {related_tests_shown} of {related_tests_total}{json_pointer})"
         ));
     }
 
@@ -80,10 +86,8 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         .iter()
         .take(MAX_OBSERVED_VALUES_SHOWN)
     {
-        let context = display_label(value.context.as_str());
-        lines.push(format!(
-            "observed {} value {} at line {}",
-            context, value.value, value.line
+        lines.push(crate::output::observed_values::source_value_evidence_line(
+            value,
         ));
     }
     if observed_values_total > MAX_OBSERVED_VALUES_SHOWN {
@@ -98,7 +102,7 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
             "full list in --format json".to_string()
         };
         lines.push(format!(
-            "observed values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
+            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
         ));
     }
 

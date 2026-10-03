@@ -78,6 +78,8 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{LspService, Server};
 
+mod consumed_source_tests;
+
 /// Render a fixture path the way the LSP surface renders paths.
 ///
 /// The server normalizes every emitted path to forward slashes on all
@@ -938,6 +940,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         flow_sinks: Vec::new(),
         activation: ActivationEvidence::default(),
         stop_reasons: Vec::new(),
+        related_tests_matched_total: None,
         related_tests: vec![RelatedTest {
             name: "test_discounts".to_string(),
             file: std::path::PathBuf::from("tests/lib.rs"),
@@ -988,6 +991,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
 
     let snapshot = AnalysisSnapshot {
         root: std::path::PathBuf::from(root),
+        rust_consumed_sources: Default::default(),
         input_identity: None,
         base: None,
         mode: crate::app::Mode::Draft,
@@ -1000,6 +1004,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -12591,6 +12596,7 @@ fn sample_analysis_snapshot(
     );
     AnalysisSnapshot {
         root,
+        rust_consumed_sources: Default::default(),
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -12603,6 +12609,7 @@ fn sample_analysis_snapshot(
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -13355,6 +13362,7 @@ pub(super) fn sample_finding() -> Finding {
         flow_sinks: Vec::new(),
         activation: crate::domain::ActivationEvidence::default(),
         stop_reasons: Vec::new(),
+        related_tests_matched_total: None,
         related_tests: Vec::new(),
         recommended_next_step: Some("Add an exact boundary assertion.".to_string()),
         language: None,
@@ -17846,10 +17854,38 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
             .iter()
             .filter_map(|message| message["params"]["value"]["kind"].as_str())
             .collect();
-        if kinds != vec!["begin", "end"] {
+        // #4811: producer stage reports now sit between begin and end. The
+        // terminal contract is begin -> ordered stage reports -> exactly
+        // one end; a failed run must never emit completed.
+        if kinds.first().copied() != Some("begin") || kinds.last().copied() != Some("end") {
             return Err(format!(
-                "failed refresh must begin then end exactly once: {progress:?}"
+                "failed refresh must begin, report stages, then end exactly once: {progress:?}"
             ));
+        }
+        if kinds.iter().filter(|kind| **kind == "end").count() != 1 {
+            return Err(format!(
+                "failed refresh must end exactly once: {progress:?}"
+            ));
+        }
+        if kinds
+            .iter()
+            .any(|kind| !matches!(*kind, "begin" | "report" | "end"))
+        {
+            return Err(format!(
+                "only begin/report/end records are allowed: {progress:?}"
+            ));
+        }
+        let reports: Vec<&str> = progress
+            .iter()
+            .filter(|message| message["params"]["value"]["kind"] == "report")
+            .filter_map(|message| message["params"]["value"]["message"].as_str())
+            .collect();
+        for report in &reports {
+            if report.contains("complete") {
+                return Err(format!(
+                    "a failed run must never report a completed stage: {progress:?}"
+                ));
+            }
         }
         let begin = &progress[0]["params"];
         if begin["token"].as_str() != Some(token.as_str())
@@ -17867,14 +17903,20 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
                 "begin must announce the analyzing phase: {begin_message}"
             ));
         }
-        if !begin["value"]["percentage"].is_null()
-            || !progress[1]["params"]["value"]["percentage"].is_null()
-        {
-            return Err(format!(
-                "no fabricated percentages may be emitted: {progress:?}"
-            ));
+        for message in &progress {
+            if message["params"]["token"].as_str() != Some(token.as_str()) {
+                return Err(format!("progress drifted to another token: {progress:?}"));
+            }
+            if !message["params"]["value"]["percentage"].is_null() {
+                return Err(format!(
+                    "no fabricated percentages may be emitted: {progress:?}"
+                ));
+            }
         }
-        let end = &progress[1]["params"];
+        let Some(end_message) = progress.last() else {
+            return Err("progress journey must not be empty".to_string());
+        };
+        let end = &end_message["params"];
         let end_message = end["value"]["message"]
             .as_str()
             .ok_or_else(|| "end carried no terminal message".to_string())?;
@@ -17907,6 +17949,218 @@ fn work_done_progress_capability_absent_refresh_emits_no_traffic() -> Result<(),
             ));
         }
         drop(root);
+        Ok(())
+    })
+}
+
+/// Drive one real refresh over the wire against a healthy fixture
+/// workspace, answering `window/workDoneProgress/create`, and collect every
+/// `$/progress` notification. The exact measured-journey identity (fixture,
+/// transport, server build) is the built test binary driven through the
+/// in-process duplex server, mirroring the framed LSP journeys.
+async fn run_wire_refresh_collecting_stage_progress(
+    root: &Path,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut client_read, mut client_write) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.to_path_buf();
+    let (service, socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+
+    let root_uri = file_uri_for_path(root)?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "rootUri": root_uri.as_str(),
+                "initializationOptions": {
+                    "baseRef": "HEAD",
+                    "checkMode": "instant",
+                    "diagnosticProfile": "full"
+                },
+                "capabilities": {
+                    "window": {"workDoneProgress": true}
+                }
+            }
+        }),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 1).await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+    )
+    .await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "workspace/executeCommand",
+            "params": {"command": REFRESH_COMMAND, "arguments": []}
+        }),
+    )
+    .await?;
+
+    let mut creates = Vec::new();
+    let mut progress = Vec::new();
+    tokio::time::timeout(Duration::from_mins(1), async {
+        loop {
+            let message = read_lsp_message(&mut client_read).await?;
+            if message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
+                && message.get("method").is_none()
+            {
+                return Ok::<(), String>(());
+            }
+            match message.get("method").and_then(serde_json::Value::as_str) {
+                Some("window/workDoneProgress/create") => {
+                    let id = message
+                        .get("id")
+                        .cloned()
+                        .ok_or_else(|| "create request carried no id".to_string())?;
+                    creates.push(message.clone());
+                    write_lsp_message(
+                        &mut client_write,
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+                    )
+                    .await?;
+                }
+                Some("$/progress") => progress.push(message.clone()),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .map_err(|_elapsed| {
+        format!("refresh timed out; creates={creates:?} progress={progress:?}")
+    })??;
+
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null}),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 3).await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+    )
+    .await?;
+    tokio::time::timeout(Duration::from_secs(10), server_task)
+        .await
+        .map_err(|_elapsed| "server did not stop after exit".to_string())?
+        .map_err(|err| format!("server task failed: {err}"))?;
+    Ok((creates, progress))
+}
+
+#[test]
+fn work_done_progress_stage_reports_through_real_refresh_journey() -> Result<(), String> {
+    // #4811 measured journey: one real long-running-shaped refresh over the
+    // wire demonstrates bounded visible stage activity (begin -> ordered
+    // stage reports -> exactly one end) with honest denominators (no
+    // percentages) and no path or source leakage.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("progress-stage-journey")?;
+        let (creates, progress) = run_wire_refresh_collecting_stage_progress(temp.path()).await?;
+
+        if creates.len() != 1 {
+            return Err(format!(
+                "accepted refresh must create exactly one progress token: {creates:?}"
+            ));
+        }
+        let token = creates[0]["params"]["token"]
+            .as_str()
+            .ok_or_else(|| "create request carried no token".to_string())?
+            .to_string();
+        if !token.starts_with("ripr-analysis-") {
+            return Err(format!("unexpected progress token: {token}"));
+        }
+        if progress.is_empty() {
+            return Err("capable client received no $/progress traffic".to_string());
+        }
+        for message in &progress {
+            if message["params"]["token"].as_str() != Some(token.as_str()) {
+                return Err(format!("progress drifted to another token: {progress:?}"));
+            }
+            if !message["params"]["value"]["percentage"].is_null() {
+                return Err(format!(
+                    "no fabricated percentages may be emitted: {progress:?}"
+                ));
+            }
+        }
+
+        let kinds: Vec<&str> = progress
+            .iter()
+            .filter_map(|message| message["params"]["value"]["kind"].as_str())
+            .collect();
+        if kinds.first().copied().unwrap_or("") != "begin" {
+            return Err(format!("journey must open with begin: {progress:?}"));
+        }
+        if kinds.last().copied().unwrap_or("") != "end" {
+            return Err(format!("journey must close with end: {progress:?}"));
+        }
+        let ends = kinds.iter().filter(|kind| **kind == "end").count();
+        if ends != 1 {
+            return Err(format!("exactly one terminal end is required: {progress:?}"));
+        }
+        // Bounded visible activity: begin + at most three stage reports +
+        // the publishing boundary + end. No heartbeat flood exists: the
+        // producer vocabulary is closed and consecutive duplicates collapse.
+        if progress.len() > 6 {
+            return Err(format!(
+                "progress records exceeded the declared ceiling: {progress:?}"
+            ));
+        }
+
+        let messages: Vec<&str> = progress
+            .iter()
+            .filter(|message| message["params"]["value"]["kind"] == "report")
+            .filter_map(|message| message["params"]["value"]["message"].as_str())
+            .collect();
+        for stage_message in ["loading input", "building output"] {
+            if !messages.iter().any(|message| message.contains(stage_message)) {
+                return Err(format!(
+                    "stage report {stage_message:?} missing from the journey: {progress:?}"
+                ));
+            }
+        }
+        for message in messages {
+            if message.contains(temp.path().to_string_lossy().as_ref())
+                || message.contains('/')
+                || message.contains('\\')
+                || message.contains('%')
+            {
+                return Err(format!(
+                    "stage report leaked a path or percentage: {message}"
+                ));
+            }
+        }
+
+        let Some(last) = progress.last() else {
+            return Err("progress journey must not be empty".to_string());
+        };
+        let end_message = last["params"]["value"]["message"]
+            .as_str()
+            .ok_or_else(|| "end carried no terminal message".to_string())?;
+        let success_family = [
+            "analysis complete",
+            "analysis completed with limited evidence",
+        ];
+        if !success_family.iter().any(|phrase| end_message.contains(phrase)) {
+            return Err(format!(
+                "healthy fixture journey must end successfully or disclosed-limited, never failed/cancelled: {end_message}"
+            ));
+        }
         Ok(())
     })
 }
@@ -17958,7 +18212,10 @@ fn quarantine_finding(id: &str, file: &str) -> Finding {
     finding
 }
 
-fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDiagnostics {
+fn quarantine_workspace_diagnostics(
+    fixture: &QuarantineFixture,
+    source_a: &str,
+) -> WorkspaceDiagnostics {
     // `headline_eligible` is the producer-owned eligibility signal the
     // delivery budget reads (#1973); without it the stored selection omits
     // the diagnostics and pull/push serve an empty set.
@@ -17985,8 +18242,15 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         1,
         &LspAnalysisConfig::default(),
     );
+    // This synthetic snapshot explicitly names the bytes it purports to have
+    // consumed. Preparation must never mint that claim from a later disk read.
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(Path::new("src/a.rs"), Some(source_a.as_bytes()));
+    rust_consumed_sources.record(Path::new("src/b.rs"), Some(QUARANTINE_TEXT_B.as_bytes()));
     let snapshot = AnalysisSnapshot {
         root: fixture.root.clone(),
+        rust_consumed_sources,
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -17999,6 +18263,7 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -18023,9 +18288,10 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
 fn commit_quarantine_snapshot(
     backend: &Backend,
     fixture: &QuarantineFixture,
+    source_a: &str,
 ) -> Result<(), String> {
     backend
-        .refresh_plan(quarantine_workspace_diagnostics(fixture))
+        .refresh_plan(quarantine_workspace_diagnostics(fixture, source_a))
         .ok_or_else(|| "expected committed snapshot".to_string())?;
     Ok(())
 }
@@ -18135,7 +18401,7 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Clean documents are served on pull.
     let served = pull_document_json(backend, &fixture.uri_a, None).await?;
@@ -18270,7 +18536,7 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -18379,7 +18645,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -18412,7 +18678,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
 
     // The refresh commits: the analyzed saved content catches up with the
     // buffer and the quarantine lifts.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18474,7 +18740,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // A rejected incremental change (position past the line end) disowns the
     // retained buffer and enters the fail-closed quarantine.
@@ -18536,7 +18802,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     {
         return Err("saved identity must stay the persisted bytes".to_string());
     }
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18564,7 +18830,7 @@ async fn save_with_unchanged_content_dedups_and_keeps_lifted_quarantine() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     // Record the initial save so the dedup path has a recorded digest.
     backend
         .did_save(quarantine_save_params(&fixture.uri_a, QUARANTINE_TEXT_A))
@@ -18683,7 +18949,7 @@ async fn repeated_open_change_save_cycles_keep_identities_consistent() -> Result
         }
 
         // The refresh analyzes the new saved content and the quarantine lifts.
-        commit_quarantine_snapshot(backend, &fixture)?;
+        commit_quarantine_snapshot(backend, &fixture, &dirty_text)?;
         let state = backend
             .document_state_for_test(&fixture.uri_a)
             .ok_or_else(|| "expected document state".to_string())?;
@@ -18731,7 +18997,7 @@ async fn unsaved_buffer_text_never_enters_snapshot_or_status_payloads() -> Resul
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     const UNSAVED: &str = "fn a() -> bool { UNSAVED_BUFFER_MARKER }";
     backend
@@ -18822,7 +19088,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Save new content; the document is quarantined until the new saved
     // content is analyzed. The fixture mirrors the persisted bytes.
@@ -18839,7 +19105,10 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     // superseded: it never becomes latest_analysis. Document identities
     // must not advance with it.
     let transaction = backend
-        .prepare_refresh_transaction(quarantine_workspace_diagnostics(&fixture))
+        .prepare_refresh_transaction(quarantine_workspace_diagnostics(
+            &fixture,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
         .ok_or_else(|| "expected prepared transaction".to_string())?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
@@ -18871,7 +19140,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     drop(transaction);
 
     // When a transaction does commit, identities advance with it.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18895,7 +19164,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18910,7 +19179,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     // old-content buffer must not be marked clean against them.
     std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
         .map_err(|err| format!("external rewrite failed: {err}"))?;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18965,6 +19234,7 @@ where
     let mut notifications = Vec::new();
     let mut log_seen = false;
     let mut status_seen = false;
+    let mut observed_run_statuses = std::collections::BTreeSet::new();
     tokio::time::timeout(Duration::from_mins(1), async {
         while !(log_seen && status_seen) {
             let message = read_lsp_message(reader).await?;
@@ -18990,7 +19260,11 @@ where
                     notifications.push(message);
                 }
                 Some("ripr/analysisStatus") => {
-                    if message["params"]["run_status"].as_str() == Some(expected_run_status) {
+                    let run_status = message["params"]["run_status"]
+                        .as_str()
+                        .unwrap_or("<missing>");
+                    observed_run_statuses.insert(run_status.to_string());
+                    if run_status == expected_run_status {
                         status_seen = true;
                     }
                     notifications.push(message);
@@ -19004,7 +19278,7 @@ where
     .await
     .map_err(|_elapsed| {
         format!(
-            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen})"
+            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen}, observed_run_statuses={observed_run_statuses:?})"
         )
     })??;
     Ok(notifications)

@@ -2,7 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-27
-- Related: #1599, #3087, #3088, #3094
+- Related: #1599, #3087, #3088, #3094, #3089 (slice B: status, refresh,
+  bounded gap lists, and evidence resources)
 
 ## Context
 
@@ -147,3 +148,65 @@ controls cover receive cancellation, partial-write cancellation, giant readable
 IDs and the real official SDK clients. The earlier giant-ID and cancellation
 behavioral failures remain historical evidence; successor verification must
 bind native exits and nonzero selections to its own candidate.
+
+## Slice B (#3089): refresh, bounded gap lists, and evidence resources
+
+The status-only slice above was extended by #3089 without moving any
+authority into the transport. The server remains a bounded adapter over
+shared RIPR authority:
+
+- `ripr_refresh` runs one bounded static analysis per call through the
+  shared `app::check_workspace` authority — the same in-process analysis
+  `ripr check` and the language server run. Analysis is read-only static
+  evidence production, not execution authority; the adapter still declares
+  source-edit, verification-execution, mutation-execution, and
+  model-provider authority as none.
+- The session keeps one in-memory completed snapshot (content-addressed
+  `snapshot:sha256:` identity over the typed `AnalysisOutcome` and the
+  canonical item identities). A cancelled or superseded attempt is never
+  committed; a failed attempt never replaces the last-known-good snapshot.
+- `ripr_list_gaps` serves the snapshot's stored shared diagnostic-budget
+  selection (`lsp::diagnostic_budget`); the adapter never re-ranks and
+  discloses every omitted identity and reason.
+- `ripr_get_gap` and `ripr://gap/{canonical_item_id}` serve one canonical
+  item's complete bounded evidence. Readiness is always a hard negative
+  (`repair_packet_ready: false`); bounded repair surfaces, CommandSpec
+  routes, and repair-attempt resources belong to #3090, and the
+  repair-attempt link stays an explicit null.
+- Project-local configuration stays detected-not-loaded; refresh runs with
+  built-in defaults. No LSP protocol object is parsed and no VS Code
+  artifact is read as authority: MCP and LSP remain peers over the same
+  producers.
+
+## Slice C (#3090): repair transaction projection
+
+The session-evidence slice was extended by #3090 (RIPR-SPEC-0214) with
+repair tools and resources — still without moving any authority into the
+transport. The server remains a bounded adapter over shared RIPR authority:
+
+- `ripr_prepare_repair` evaluates the committed producer repair-readiness
+  facts (candidate actionability, an established discriminator, and a
+  strong directly-related test fix site on a shared edit-cage test-surface
+  path) and creates one deterministic, root-bound, in-memory session
+  transaction only when every gate is established. An ineligible item
+  returns an honest negative document and no attempt is created. The
+  adapter does not call `begin_repair_attempt_with_identity`: durable
+  attempt creation stays CLI-owned, and MCP reads the durable store
+  read-only through the shared repair-attempt authority.
+- `ripr_get_repair_attempt` / `ripr://repair-attempt/{attempt_id}` and
+  `ripr_get_receipt_status` / `ripr://receipt/{receipt_id}` project session
+  transactions and durable manifests/receipts exactly: typed `CommandSpec`
+  routes travel only when they validate as typed specs, the human display
+  string is explicitly marked as never execution authority, and the
+  host-local root path is intentionally not projected (this ADR's hashing
+  posture).
+- Receipt status is a projection of producer-retained, digest-bound bytes,
+  re-validated on every read; the adapter performs no verification, issues
+  no receipt, and never upgrades a transaction it did not verify.
+- The wire vocabulary gains `attempt_not_found` and `attempt_invalid`; the
+  reserved `superseded` code is reachable for session transactions bound to
+  a non-current snapshot.
+- Authority declarations are unchanged: source-edit, verification
+  execution, mutation execution, and model provider remain none; the
+  adapter edits nothing, launches nothing, and executes nothing a returned
+  route names.

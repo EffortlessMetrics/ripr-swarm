@@ -22,8 +22,12 @@
 use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
+use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod bounded_read;
+use crate::analysis::workspace::{
+    changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
+};
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
@@ -46,7 +50,7 @@ use bounded_read::{
 };
 use rustpython_parser::ast::Expr;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
@@ -587,24 +591,23 @@ impl PythonAdapter {
             );
         }
 
-        // Read-bound disclosures: one named limitation per file refused by a
-        // size bound. The recovery names the env knobs so operators can raise
-        // the bounds; the detail carries the distinguishable reason.
-        for (file, err) in &workspace_read.limits {
-            limitations.push(
-                AnalysisLimitation::new(
-                    AnalysisLimitationKind::LanguageScopeUnsupported,
-                    AnalysisStage::LanguageAdapter,
-                    AnalysisRecovery::new(
-                        AnalysisRecoveryKind::IncreaseConfiguredLimit,
-                        "Raise RIPR_PYTHON_MAX_FILE_READ_BYTES and/or RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.",
-                    )?,
-                )
-                .with_path(normalized_path(file))?
-                .with_affected_items(1)?
-                .with_detail(err.reason())?,
-            );
-        }
+        // Read-bound disclosures: named limitations for the files the read
+        // caps refuse, bounded per run (#5022). The disclosure is a
+        // stable-sorted sample of refused paths; refusals beyond the sample
+        // fold into one summary entry carrying the true refused count, and
+        // its detail states why the full per-file list is not materialized.
+        // Fail-closed behavior is unchanged: every refused file is still
+        // refused; only the disclosure is sampled. The recovery names the
+        // env knobs so operators can raise the bounds.
+        limitations.extend(bounded_read_limit_limitations(
+            "python",
+            workspace_read
+                .limits
+                .iter()
+                .map(|(file, err)| (normalized_path(file), err.reason()))
+                .collect(),
+            "Raise RIPR_PYTHON_MAX_FILE_READ_BYTES and/or RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.",
+        )?);
 
         // Read-failure disclosure (the TypeScript adapter's #4099 model):
         // an unreadable CHANGED file is never classified and its tests
@@ -639,18 +642,35 @@ impl PythonAdapter {
         }
         let skipped_files = workspace_read.io_failures.len();
 
+        // Excluded subtrees and generated files are skipped before admission
+        // and counting (#3672); the pipeline owns their skipped-scope disclosure.
+        let python_changed_files = changed_files
+            .iter()
+            .filter(|changed| {
+                matches!(route(&changed.path), Some(LanguageId::Python))
+                    && !is_detectable_generated_python_path(&changed.path)
+                    && !is_detectable_excluded_python_path(&changed.path)
+            })
+            .collect::<Vec<_>>();
+        // The workspace walk cannot discover a missing NEW-side path. Reuse
+        // source admission before counting or classifying it (#5110); genuine
+        // deletions are already omitted by the diff parser.
+        let absent_changed_files = changed_source_files_absent_from_worktree(
+            &options.root,
+            python_changed_files
+                .iter()
+                .map(|changed| changed.path.as_path()),
+        );
+        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
+        let absent_changed_paths = absent_changed_files
+            .iter()
+            .map(|path| normalized_path(path))
+            .collect::<BTreeSet<_>>();
+
         let mut findings: Vec<Finding> = Vec::new();
         let mut changed_count: usize = 0;
-        for changed in changed_files {
-            // Excluded subtrees (vendor, environment, cache, build output)
-            // are skipped BEFORE counting (#3672): the diff workspace walk
-            // prunes them, so no workspace facts can back a changed file
-            // under one and no findings can ever be emitted for it. Counting
-            // it would put an uninspected file in the report denominator.
-            if !matches!(route(&changed.path), Some(LanguageId::Python))
-                || is_detectable_generated_python_path(&changed.path)
-                || is_detectable_excluded_python_path(&changed.path)
-            {
+        for changed in python_changed_files {
+            if absent_changed_paths.contains(&normalized_path(&changed.path)) {
                 continue;
             }
             changed_count += 1;
@@ -795,6 +815,7 @@ impl PythonAdapter {
             skipped_files,
             limitations,
             rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 
@@ -828,6 +849,7 @@ impl PythonAdapter {
             skipped_files,
             partial_reason,
             rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 }
