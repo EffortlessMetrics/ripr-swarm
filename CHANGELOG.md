@@ -233,6 +233,8 @@ are scoped or reviewed.
   before a later return and ignores returns owned by nested helpers/futures.
   Independent ordinary equality also survives a uniquely bound local empty
   catch-all macro; imported, shadowed and nonempty expansions remain unsupported.
+  Updated inherited human denominator/base-side labels and precise boundary
+  guidance without changing classification, oracle strength or stage states.
   Async/test-macro execution remains unsupported: the
   real Tokio fixture keeps discovery but loses strong static oracle credit, an
   explicit conservative usefulness tradeoff tracked by #5040.
