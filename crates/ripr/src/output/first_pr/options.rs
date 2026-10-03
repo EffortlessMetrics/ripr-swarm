@@ -33,11 +33,16 @@ pub(super) struct FirstPrOptions {
 
 impl FirstPrOptions {
     /// The selected root bound once for product-generated commands (#3999):
-    /// a relative `--root` resolves against this process's working directory,
+    /// an existing root follows filesystem traversal, including symlink/`..`.
+    /// A relative `--root` resolves against this process's working directory,
     /// the same directory `repo_root` resolved it against, so a pasted command
     /// analyzes and writes the selected repository from any directory.
     pub(super) fn command_root(&self) -> String {
-        bound_root(&self.root)
+        let root = std::path::Path::new(&self.root);
+        root.canonicalize()
+            .ok()
+            .and_then(|resolved| crate::output::path::command_root_display(root, &resolved).ok())
+            .unwrap_or_else(|| bound_root(&self.root))
     }
 
     /// A first-pr artifact path rendered as a generated command argument,

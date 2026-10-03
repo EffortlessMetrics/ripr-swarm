@@ -211,6 +211,17 @@ root is accepted. Check mode does not rebind, rewrite or execute raw commands;
 the explicit absent-context legacy path remains readable without a selected-root
 guarantee. This directory comparison is not repository authentication.
 
+Refresh commands bind existing roots using that same physical resolution,
+including symlink-before-parent traversal, while retaining the lossless alias
+when the canonical target cannot be represented as UTF-8. An existing multiline
+directory remains valid context data when both verify and receipt shell forms
+are null; their recovery guidance remains visible. Displayed shell forms for
+such a directory are refused. The Unix public-consumer controls
+`first_pr_refresh_preserves_symlink_parent_selected_root` and
+`first_pr_check_accepts_existing_newline_root_with_withheld_forms` discriminate
+these producer/validator roundtrips; the refresh argument control does not
+claim shell-text replay.
+
 This is presentation only. Raw `selected.verify_command`,
 `selected.receipt_command`, `commands.verify`, `commands.receipt`, receipt
 source/path/state, and the receipt's nested `--verify-command` stay unchanged.
