@@ -350,6 +350,7 @@ fn publish_sharded_generation(
             "injected sharded cache publication failure after parking the single entry".to_string(),
         );
     }
+    crate::analysis::cancellation::checkpoint()?;
     let manifest = ShardedCacheManifest::new(
         key.clone(),
         seams.len(),
