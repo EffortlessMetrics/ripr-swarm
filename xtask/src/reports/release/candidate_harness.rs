@@ -2,6 +2,7 @@
 mod archive;
 mod input;
 mod live_head;
+pub(crate) use live_head::handoff::{AdmittedHandoff, HandoffInput, HandoffReceipt};
 mod source;
 pub(crate) use archive::{AttributedArchive, CandidateExecution};
 pub(crate) use source::AdmittedSource;

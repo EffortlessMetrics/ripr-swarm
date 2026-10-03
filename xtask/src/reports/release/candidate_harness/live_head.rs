@@ -1,6 +1,7 @@
 //! Direct #1609 manifest custody. This is not the deferred lifecycle registry.
 //! A producer-created file is not admission: the caller must supply the exact
 //! manifest digest accepted by #1609, independently of the file being read.
+pub(crate) mod handoff;
 mod input;
 use super::safe_artifact_path;
 use input::{MAX_RETAINED_BYTES, read_owned};
@@ -525,4 +526,4 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

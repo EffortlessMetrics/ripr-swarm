@@ -375,17 +375,18 @@ git -C "$QUAL_ROOT" rev-parse HEAD
 (cd "$QUAL_ROOT" && cargo xtask check-pr)
 (cd "$QUAL_ROOT" && cargo xtask check-generated-clean)
 (cd "$QUAL_ROOT" && cargo xtask check-doc-index)
-QUALIFICATION_RECEIPT="$PACKET_ROOT/hosted-qualification-receipt.json"
-QUALIFICATION_RUN_URL="${QUALIFICATION_RUN_URL:?set the routed hosted qualification URL}"
-QUALIFICATION_RUN_ID="${QUALIFICATION_RUN_ID:?set the hosted qualification run ID}"
-QUALIFICATION_HEAD_SHA="${QUALIFICATION_HEAD_SHA:?set the hosted qualification headSha}"
-gh api "repos/EffortlessMetrics/ripr/actions/runs/${QUALIFICATION_RUN_ID}" > "$PACKET_ROOT/hosted-qualification-live.json"
-jq -n --arg swarm "$SWARM_PARENT" --arg head "$QUALIFICATION_HEAD_SHA" --arg url "$QUALIFICATION_RUN_URL" --arg id "$QUALIFICATION_RUN_ID" --slurpfile run "$PACKET_ROOT/hosted-qualification-live.json" '{schema_version: 1, swarm_parent: $swarm, headSha: $head, run_id: $id, routed_ci_url: $url, status: $run[0].status, conclusion: $run[0].conclusion}' > "$QUALIFICATION_RECEIPT"
-jq -e --arg swarm "$SWARM_PARENT" --arg head "$SWARM_PARENT" --arg id "$QUALIFICATION_RUN_ID" '.swarm_parent == $swarm and .headSha == $head and .run_id == $id and .status == "completed" and .conclusion == "success" and (.routed_ci_url | startswith("https://"))' "$QUALIFICATION_RECEIPT" >/dev/null
+# These are preparation checks only. Do not manufacture an acceptance receipt
+# from an arbitrary successful hosted run or its head SHA.
+# #2769 must independently review the complete exact-candidate bundle first.
+SELECTION_DECISION="${SELECTION_DECISION:?native #1609 acceptance-comment URL}"
+QUALIFICATION_DECISION="${QUALIFICATION_DECISION:?native #2769 complete-bundle acceptance-comment URL}"
+QUALIFICATION_BUNDLE="${QUALIFICATION_BUNDLE:?controller-relative accepted complete qualification bundle}"
 ```
 
 A missing, timed-out, or differently headed hosted result is unavailable, not
-a pass. After #2769 accepts the complete exact-candidate bundle, source #1769
+a pass. A generic successful CI run is never the #2769 acceptance record.
+The native decision and bundle field contract is in
+[SOURCE_PROMOTION_PREFLIGHT.md](SOURCE_PROMOTION_PREFLIGHT.md#native-selection-and-complete-qualification-admission). After #2769 accepts the complete exact-candidate bundle, source #1769
 rereads and dispositions the source queue, then binds the source parent:
 
 ```bash
@@ -411,13 +412,15 @@ set -euo pipefail
 # [LOCAL-MUTATING] repo=swarm operator checkout; preflight writes local receipts, no J
 JOIN_TREE="${JOIN_TREE:?set to the separately reviewed full resolved-tree SHA from the resolution manifest}"
 assert_live_pin_guard
-test -s "$QUALIFICATION_RECEIPT"
-jq -e --arg swarm "$SWARM_PARENT" '.swarm_parent == $swarm and .headSha == $swarm and (.routed_ci_url | startswith("https://"))' "$QUALIFICATION_RECEIPT" >/dev/null
 (cd "$SWARM_ROOT" && cargo xtask source-promotion preflight \
   --source-parent "$SOURCE_PARENT" --swarm-parent "$SWARM_PARENT" \
   --swarm-ref "$SWARM_REF" --source-repo "$SOURCE_ROOT" --swarm-repo "$SWARM_ROOT" \
   --source-main "$SOURCE_PARENT" --swarm-main "$SWARM_PARENT" \
   --version "$VERSION" --resolved-tree "$JOIN_TREE" \
+  --controller-root "$PACKET_ROOT" --candidate-manifest live-head-selection.json \
+  --selection-decision "$SELECTION_DECISION" \
+  --qualification-bundle "$QUALIFICATION_BUNDLE" \
+  --qualification-decision "$QUALIFICATION_DECISION" \
   --out "$PACKET_ROOT/source-promotion")
 PREFLIGHT_JSON="$PACKET_ROOT/source-promotion/source-promotion-preflight.json"
 test "$(jq -r '.dry_merge.reviewed_resolved_tree // empty' "$PREFLIGHT_JSON")" = "$JOIN_TREE"

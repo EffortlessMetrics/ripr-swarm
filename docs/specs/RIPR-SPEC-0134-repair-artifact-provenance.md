@@ -348,3 +348,15 @@ archive/executable/evidence costs. The 1.31-second engineering inventory and
 checkout observation is not a per-command or complete corpus benchmark. Actual
 qualification must retain its elapsed observations; no low-overhead claim is
 made. Reducing this boundary needs separately proved invalidation semantics.
+
+
+### Source-handoff acceptance is distinct from execution custody
+
+The #4510 direct-manifest digest adapter prepares and observes exact candidate
+inputs; its caller-supplied digest does not independently establish release
+selection or complete qualification. SPEC-0148's source-promotion consumer now
+requires native #1609/#2766/#2769 decision observations and the complete
+#2769 bundle, with exact raw digest, roster, row, proof-input and candidate
+bindings. Historical registry admission and local corpus results cannot issue
+that handoff. Native owner trust and unlocked snapshot limitations remain
+explicit; this does not add cryptographic signatures or a new provenance system.

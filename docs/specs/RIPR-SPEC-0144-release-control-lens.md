@@ -183,6 +183,26 @@ no automatic fallback between modes or into ambient legacy smoke. The broader
 #3924 lifecycle-consumer defer is preserved; existing registry policy checks
 remain enforced separately.
 
+### Consumed downstream native decisions
+
+Digest-pinned direct custody remains preparation/execution evidence. The source
+handoff now requires SPEC-0148's native #1609 and #2769 decisions, retrieved
+through the existing authenticated read-only controller route. #1609's strict
+acceptance payload binds this whole raw manifest, the #2766 packet and native
+comment-body digest, selected applicable owner roster, proof-input identities,
+complete required qualification rows and any explicit excluded subjects.
+#2769 binds that same native selection body and the complete raw result bundle.
+The broad matrix and selected successor obligations remain owner judgments;
+no fixed template roster or generic CI result substitutes for their acceptance.
+
+The actual source-promotion command compares these bindings, verifies trusted
+GitHub association/location, reads every required result packet, rejects missing
+or non-positive selected rows, and rereads custody before output. Native payload
+unknown fields refuse. A locally authored acceptance file cannot stand in for
+a retrieved decision. Existing historical registry/direct corpus modes do not
+issue this handoff. The full field, count, budget and trusted-operator limitations
+are in [SOURCE_PROMOTION_PREFLIGHT.md](../SOURCE_PROMOTION_PREFLIGHT.md#native-selection-and-complete-qualification-admission).
+
 ### Source and qualification stage separation
 
 `source_parent` is null here: source #1769 binds it only after swarm

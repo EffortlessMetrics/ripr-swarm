@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-struct Fixture {
-    root: PathBuf,
-    document: Value,
+pub(crate) struct Fixture {
+    pub(crate) root: PathBuf,
+    pub(crate) document: Value,
 }
 
 impl Drop for Fixture {
@@ -16,7 +16,7 @@ impl Drop for Fixture {
 }
 
 impl Fixture {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-live-head-contract-{}-{}",
             std::process::id(),
@@ -86,7 +86,7 @@ impl Fixture {
         Ok(fixture)
     }
 
-    fn write(&self) -> Result<String, String> {
+    pub(crate) fn write(&self) -> Result<String, String> {
         let bytes = serde_json::to_vec_pretty(&self.document).map_err(|error| error.to_string())?;
         std::fs::write(self.root.join("manifest.json"), &bytes)
             .map_err(|error| error.to_string())?;

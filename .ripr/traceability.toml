@@ -7273,6 +7273,16 @@ id = "RIPR-SPEC-0148"
 name = "exact source-promotion preflight"
 spec = "docs/specs/RIPR-SPEC-0148-source-promotion-preflight.md"
 tests = [
+  "xtask/src/reports/source_promotion.rs::tests::public_preflight_requires_complete_native_handoff_inputs",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_accepts_independently_selected_applicable_subset",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_rereads_decisions_before_receipt_and_binds_source_identity",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_absent_decisions_and_generic_successful_ci",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_identity_roster_proof_and_decision_drift",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_omitted_failed_skipped_and_zero_qualification_rows",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_tampered_manifest_bundle_and_packets",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_stale_incomplete_or_unknown_qualification_acceptance",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_wrong_issue_comment_host_and_untrusted_issuer",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_preserves_explicitly_unselected_configured_subjects",
   "xtask/src/reports/source_promotion.rs::tests::requires_an_immutable_swarm_ref",
   "xtask/src/reports/source_promotion.rs::tests::rejects_a_branch_or_wrongly_named_swarm_ref",
   "xtask/src/reports/source_promotion.rs::tests::version_observation_reads_exact_parent_not_checkout_files",
@@ -7290,6 +7300,8 @@ fixtures = [
   "fixtures/source_promotion/SPEC.md",
 ]
 code = [
+  "xtask/src/reports/release/candidate_harness/live_head/handoff.rs",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/native.rs",
   "xtask/src/reports/source_promotion.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",

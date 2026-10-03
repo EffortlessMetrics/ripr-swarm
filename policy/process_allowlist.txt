@@ -1,5 +1,7 @@
 # Allowlisted process-spawn surfaces.
 #
+# SPEC-0148 native acceptance adapter inventory: xtask/src/reports/release/candidate_harness/live_head/handoff/native.rs uses the existing run::capture_bytes_in_dir_with_budget / OwnedProcess spawn owner for one fixed-host read-only gh request per native decision, with 30-second and strict byte/drain budgets; no new direct spawn site.
+#
 # Format:
 # path|pattern|max_count|owner|reason
 #
