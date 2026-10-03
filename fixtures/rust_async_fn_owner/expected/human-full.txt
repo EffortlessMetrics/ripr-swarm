@@ -29,9 +29,9 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - related test src/lib.rs:10 above_threshold_gets_reduced uses none unknown oracle
-  - observed function argument value capacity = 100 at line 11
-  - observed function argument value threshold = 50 at line 11
-  - observed assertion argument value 90 at line 12
+  - source function argument value capacity = 100 at line 11
+  - source function argument value threshold = 50 at line 11
+  - source assertion argument value 90 at line 12
 
 Weakness
   - No clear propagation path from changed behavior to an observable sink

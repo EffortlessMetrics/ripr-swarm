@@ -33,15 +33,15 @@ Evidence
   - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle
   - related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle
   - related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle
-  - observed function argument value "42" at line 5
-  - observed function argument value "42|workspace/refresh" at line 5
-  - observed assertion argument value "42" at line 6
-  - observed function argument value "42" at line 26
-  - observed function argument value "42|workspace/refresh" at line 26
-  - observed assertion argument value "42" at line 28
-  - observed function argument value "42" at line 36
-  - observed assertion argument value "42" at line 37
-  - observed values (showing 8 of 14; full list in --format json)
+  - source function argument value "42" at line 5
+  - source function argument value "42|workspace/refresh" at line 5
+  - source assertion argument value "42" at line 6
+  - source function argument value "42" at line 26
+  - source function argument value "42|workspace/refresh" at line 26
+  - source assertion argument value "42" at line 28
+  - source function argument value "42" at line 36
+  - source assertion argument value "42" at line 37
+  - source values (showing 8 of 14; full list in --format json)
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect
@@ -83,15 +83,15 @@ Evidence
   - related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle
   - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle
   - related tests (showing 5 of 7; more in --format json)
-  - observed function argument value "42" at line 5
-  - observed function argument value "42|workspace/refresh" at line 5
-  - observed assertion argument value "42" at line 6
-  - observed function argument value "42" at line 26
-  - observed function argument value "42|workspace/refresh" at line 26
-  - observed assertion argument value "42" at line 28
-  - observed function argument value "42" at line 36
-  - observed assertion argument value "42" at line 37
-  - observed values (showing 8 of 14; full list in --format json)
+  - source function argument value "42" at line 5
+  - source function argument value "42|workspace/refresh" at line 5
+  - source assertion argument value "42" at line 6
+  - source function argument value "42" at line 26
+  - source function argument value "42|workspace/refresh" at line 26
+  - source assertion argument value "42" at line 28
+  - source function argument value "42" at line 36
+  - source assertion argument value "42" at line 37
+  - source values (showing 8 of 14; full list in --format json)
 
 Weakness
   - No strong discriminator was detected

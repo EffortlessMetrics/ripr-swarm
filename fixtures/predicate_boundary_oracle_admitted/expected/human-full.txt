@@ -31,13 +31,13 @@ Evidence
   - local flow reaches returned value: amount - 10 (line 3)
   - related test src/lib.rs:13 boundary uses strong exact value oracle: assert_eq!(discounted_total(100, 100), 90);
   - related test src/lib.rs:15 far uses strong exact value oracle: assert_eq!(discounted_total(101, 100), 91);
-  - observed assertion argument value 90 at line 13
-  - observed function argument value amount = 100 at line 13
-  - observed function argument value amount == discount_threshold at line 13
-  - observed function argument value discount_threshold = 100 at line 13
-  - observed assertion argument value 91 at line 15
-  - observed function argument value amount = 101 at line 15
-  - observed function argument value discount_threshold = 100 at line 15
+  - source assertion argument value 90 at line 13
+  - source function argument value amount = 100 at line 13
+  - source function argument value amount == discount_threshold at line 13
+  - source function argument value discount_threshold = 100 at line 13
+  - source assertion argument value 91 at line 15
+  - source function argument value amount = 101 at line 15
+  - source function argument value discount_threshold = 100 at line 15
 Drill in:
   ripr explain --root fixtures/predicate_boundary_oracle_admitted/input --diff fixtures/predicate_boundary_oracle_admitted/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root fixtures/predicate_boundary_oracle_admitted/input --diff fixtures/predicate_boundary_oracle_admitted/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
