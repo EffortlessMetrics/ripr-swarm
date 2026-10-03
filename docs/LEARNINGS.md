@@ -3,6 +3,26 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-03: record-count sharding is not a byte bound (#4999)
+
+`RIPR_REPO_SEAM_CACHE_LIMIT` / `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS` cap
+how many `ClassifiedSeam` records share one file. They do not cap encoded
+bytes. On `origin/main` `3fb4f1675` the sharded path still did `chunk.to_vec()`
+and `codec::encode(&_shard)` into a full `Vec<u8>`; the single-entry path did
+the same two representation classes with `seams.to_vec()`. That is the
+`cache_store` amplification previously OOM-killed around #4291 (~5.2 GB cache,
+~11.7 GB anonymous RSS). Record-count sharding can still emit one huge shard
+when records are large.
+
+The write-side repair is borrowed serde plus a bounded IO buffer into the
+existing atomic temp-file protocol, with an encoded-byte ceiling on both the
+single-entry and sharded paths. Size planning may use a same-length
+placeholder digest so planning does not retain a second encoded body.
+Generation-atomic shard names keep a failed replacement from mixing
+manifests. Load/decode auxiliary memory is a separate claim (#5124). A
+passing record-count test is not RSS proof; host-scoped 10k/self-dogfood
+store-phase RSS stays `not_established` until #3794 observes it.
+
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
 
 The #4835 overlay indexed token-tree functions as tests and accepted
