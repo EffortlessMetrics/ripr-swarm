@@ -8,8 +8,11 @@ Created: 2026-10-03
 
 Linked issues: #4999 (write-side store amplification; sibling load bound is #5124)
 
-Support-tier impact: none. This is an internal cache-publication bound. It does
-not change analysis classes, public JSON findings, or support claims.
+Support-tier impact:
+
+- None. This is an internal cache-publication bound. It does not change
+  analysis classes, public JSON findings, or support claims.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact: none. No new process, network, or file-policy surface. The new
 env var is a store-path ceiling, not a process-RSS or load bound.
