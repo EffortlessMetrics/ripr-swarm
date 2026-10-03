@@ -2512,7 +2512,6 @@ mod installed_rust_fixture_tests {
     }
 }
 
-
 pub(crate) const INSTALLED_PYTHON_FIXTURE_SCHEMA_VERSION: &str =
     "blind_journey_installed_python_fixture.v1";
 
@@ -3071,8 +3070,11 @@ mod installed_python_fixture_tests {
         let snapshot = temp.join("repository").join("head");
         std::fs::create_dir_all(snapshot.join("pricing"))
             .map_err(|error| format!("create temp snapshot: {error}"))?;
-        std::fs::write(snapshot.join("pricing/core.py"), b"def drifted():\n    pass\n")
-            .map_err(|error| format!("write temp snapshot: {error}"))?;
+        std::fs::write(
+            snapshot.join("pricing/core.py"),
+            b"def drifted():\n    pass\n",
+        )
+        .map_err(|error| format!("write temp snapshot: {error}"))?;
         let manifest: Value = serde_json::json!({
             "schema_version": INSTALLED_PYTHON_FIXTURE_SCHEMA_VERSION,
             "repository": {"snapshots": {"head": {
@@ -3176,7 +3178,8 @@ mod installed_python_fixture_tests {
     }
 
     #[test]
-    fn installed_python_scenario_candidate_must_bind_the_manifest_snapshots() -> Result<(), String> {
+    fn installed_python_scenario_candidate_must_bind_the_manifest_snapshots() -> Result<(), String>
+    {
         let manifest: Value = serde_json::json!({
             "journey_scenario_ids": ["installed_python_positive_journey_emits_receipt"],
             "repository": {"snapshots": {
