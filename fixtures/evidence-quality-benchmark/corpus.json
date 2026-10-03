@@ -4964,8 +4964,8 @@
       },
       "observed_static": {
         "path": "regex-word-boundary-empty/static-observation.json",
-        "bytes": 7428,
-        "sha256": "05f3601479504bcae93c7043df961e49045bacfedd40440cf8d44330dc58cc4a"
+        "bytes": 7434,
+        "sha256": "d05f7fbde426e33be8433dbc8ef0006e802c72fa3097228143eeea08124babf9"
       }
     },
     {
@@ -4992,8 +4992,8 @@
       },
       "observed_static": {
         "path": "regex-word-boundary-empty/static-observation.json",
-        "bytes": 7428,
-        "sha256": "05f3601479504bcae93c7043df961e49045bacfedd40440cf8d44330dc58cc4a"
+        "bytes": 7434,
+        "sha256": "d05f7fbde426e33be8433dbc8ef0006e802c72fa3097228143eeea08124babf9"
       }
     }
   ]

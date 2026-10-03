@@ -112,7 +112,7 @@
   ],
   "all_three_json_byte_identical": true,
   "json_sha256": "659c706a088fecde651ba82698d9d708ea3157f3a4133a8b40f8994362bba3d3",
-  "projection_correction": "These are eight REPORTED related tests, not a proven complete internal selection. The analysis owner packs its related assertion rows to eight before the JSON renderer computes related_tests_total. Absent means not reported; analysis_is_match_empty may not be described as internally unselected from this output alone.",
+  "projection_correction": "These are eight REPORTED related tests, not an established complete internal selection. The analysis owner packs its related assertion rows to eight before the JSON renderer computes related_tests_total. Absent means not reported; analysis_is_match_empty may not be described as internally unselected from this output alone.",
   "counterfactual_boundary": "RIPR reports call_deletion/effect for info.set_match_empty(true). Removing that call leaves HirInfo bit 8 false for all boundary kinds; the historical is_negated implementation keeps negated boundaries true. No call-omission runtime binary is retained. Historical fixed/broken outcomes do not establish the call-deletion outcome.",
   "semantic_boundary": "Independent review accepts corrected valid and original invalid for the historical empty-substring claim. Weak is only a removal control. These labels are independent of the three exposed static classifications.",
   "false_exposure": "NOT_ESTABLISHED",

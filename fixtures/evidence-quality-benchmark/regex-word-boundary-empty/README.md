@@ -111,7 +111,7 @@ identities and outputs are in `basis/independent-matcher-capture.json`.
 RIPR observations for corrected, original and weak tests completed against the
 exact 68770f7c producer. All three JSON outputs are byte-identical and report one
 exposed/strong call-deletion finding. Read static-observation.json before using
-that result: its eight related tests are a capped REPORTED list, not the proven
+that result: its eight related tests are a capped REPORTED list, not the established
 complete internal selection. Absence means not reported. The setter-omission
 counterfactual differs from the historical argument change, so no deletion-
 specific false-exposure claim follows. Semantic validity, historical native
