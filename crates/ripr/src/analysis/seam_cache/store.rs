@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 std::thread_local! {
     static STORE_IO_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PLAN_ENCODE_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FAIL_AFTER_SHARDS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static FAIL_NEXT_FILL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -29,6 +30,11 @@ std::thread_local! {
 #[cfg(test)]
 pub(super) fn store_io_high_water() -> usize {
     STORE_IO_HIGH_WATER.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(super) fn plan_encode_high_water() -> usize {
+    PLAN_ENCODE_HIGH_WATER.with(std::cell::Cell::get)
 }
 
 #[cfg(test)]
@@ -69,6 +75,7 @@ pub(super) fn publish_classified_generation(
     {
         reset_classified_seam_clone_count();
         STORE_IO_HIGH_WATER.with(|water| water.set(0));
+        PLAN_ENCODE_HIGH_WATER.with(|water| water.set(0));
     }
     if record_limit == 0 {
         return Err("classified seam cache store limit must be positive".to_string());
@@ -119,7 +126,7 @@ fn plan_publication(
 ) -> Result<PublicationPlan, String> {
     if seams.len() <= record_limit {
         let single = borrowed_cache_envelope(key, seams, limit_info, lexical_fallback_files);
-        if checksummed_pretty_len(&single)? <= byte_ceiling {
+        if checksummed_pretty_fits(&single, byte_ceiling)? {
             return Ok(PublicationPlan::Single);
         }
         if seams.is_empty() {
@@ -198,24 +205,45 @@ fn largest_fitting_end(
         return Ok(None);
     }
     let mut best = start.saturating_add(1);
-    let mut low = start.saturating_add(2);
-    let mut high = max_end;
-    while low <= high {
-        let mid = low.saturating_add(high.saturating_sub(low) / 2);
+    let mut step = 1usize;
+    while best < max_end {
+        let probe = best.saturating_add(step).min(max_end);
         if prefix_fits(
             key,
             seams,
             start,
-            mid,
+            probe,
             shard_index,
             conservative_shard_count,
             byte_ceiling,
         )? {
-            best = mid;
-            low = mid.saturating_add(1);
-        } else {
-            high = mid.saturating_sub(1);
+            best = probe;
+            if best == max_end {
+                return Ok(Some(best));
+            }
+            step = step.saturating_mul(2).max(1);
+            continue;
         }
+        let mut low = best.saturating_add(1);
+        let mut high = probe.saturating_sub(1);
+        while low <= high {
+            let mid = low.saturating_add(high.saturating_sub(low) / 2);
+            if prefix_fits(
+                key,
+                seams,
+                start,
+                mid,
+                shard_index,
+                conservative_shard_count,
+                byte_ceiling,
+            )? {
+                best = mid;
+                low = mid.saturating_add(1);
+            } else {
+                high = mid.saturating_sub(1);
+            }
+        }
+        return Ok(Some(best));
     }
     Ok(Some(best))
 }
@@ -233,7 +261,7 @@ fn prefix_fits(
         return Ok(false);
     };
     let envelope = borrowed_shard_envelope(key, shard_index, conservative_shard_count, slice);
-    Ok(checksummed_pretty_len(&envelope)? <= byte_ceiling)
+    checksummed_pretty_fits(&envelope, byte_ceiling)
 }
 
 fn publish_single_entry(
@@ -396,6 +424,19 @@ fn checksummed_pretty_len<T: Serialize>(body: &T) -> Result<usize, String> {
     Ok(counter.count)
 }
 
+fn checksummed_pretty_fits<T: Serialize>(body: &T, ceiling: usize) -> Result<bool, String> {
+    let mut counter = CeilingCounter {
+        count: 0,
+        ceiling,
+        exceeded: false,
+    };
+    match encode_checksummed_pretty_to_writer(body, placeholder_payload_digest(), &mut counter) {
+        Ok(()) => Ok(true),
+        Err(_) if counter.exceeded => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
 #[derive(Default)]
 struct DiscardingCounter {
     count: usize,
@@ -404,6 +445,29 @@ struct DiscardingCounter {
 impl Write for DiscardingCounter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.count = self.count.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct CeilingCounter {
+    count: usize,
+    ceiling: usize,
+    exceeded: bool,
+}
+
+impl Write for CeilingCounter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.count = self.count.saturating_add(buf.len());
+        #[cfg(test)]
+        PLAN_ENCODE_HIGH_WATER.with(|water| water.set(water.get().max(self.count)));
+        if self.count > self.ceiling {
+            self.exceeded = true;
+            return Err(io::Error::other("encoded size exceeds ceiling"));
+        }
         Ok(buf.len())
     }
 
@@ -609,7 +673,8 @@ mod tests {
         CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES, CacheEnvelope, CacheLoad,
         SHARDED_ENVELOPE_DIGEST_DOMAIN, WorkspaceState,
         classified_seam_cache_encoded_shard_ceiling_from_env, ignore_remove_dir_all,
-        integrity_vec_high_water, reset_integrity_vec_high_water, semantic_body_digest,
+        integrity_vec_high_water, reset_integrity_vec_high_water, resolve_sharded_cache_file,
+        semantic_body_digest,
     };
     use super::*;
     use crate::analysis::seam_classification::{
@@ -1116,6 +1181,81 @@ mod tests {
             return Err(format!(
                 "same-process concurrent publication ids collided: {ids:?}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn size_probe_stops_once_the_encoded_ceiling_is_exceeded() -> Result<(), String> {
+        let key = empty_key();
+        let seams: Vec<_> = (0..80)
+            .map(|i| classified_with_pad(&format!("n{i}")))
+            .collect();
+        let all = borrowed_cache_envelope(&key, &seams, None, &[]);
+        let all_len = checksummed_pretty_len(&all)?;
+        let ceiling = (all_len / 8).max(64);
+        assert!(
+            all_len > ceiling.saturating_mul(2),
+            "fixture must be well above the probe ceiling: all={all_len} ceiling={ceiling}"
+        );
+        PLAN_ENCODE_HIGH_WATER.with(|water| water.set(0));
+        assert!(
+            !checksummed_pretty_fits(&all, ceiling)?,
+            "full payload {all_len} must not fit under {ceiling}"
+        );
+        let probe = plan_encode_high_water();
+        assert!(
+            probe > ceiling,
+            "the stopping write may overshoot by one serde chunk, got {probe} ceiling {ceiling}"
+        );
+        assert!(
+            probe < all_len,
+            "size probe must stop before serializing the full payload: probe={probe} all={all_len}"
+        );
+
+        let dir = isolated_dir("bounded-probe");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let status = cache.store_classified_seams_with_record_and_byte_limits(
+            &key, &seams, None, 100_000, ceiling,
+        )?;
+        assert!(
+            status.label.contains("shards_"),
+            "a 100k record cap must still split on the byte ceiling: {}",
+            status.label
+        );
+        round_trip(&cache, &key, &seams)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn sharded_cache_paths_reject_drive_prefix_and_parent_components() -> Result<(), String> {
+        let dir = Path::new("/tmp/ripr-classified-cache");
+        let ok = resolve_sharded_cache_file(dir, "g1-2-3/shard-00000.json")?;
+        assert!(
+            ok.ends_with("g1-2-3/shard-00000.json") || ok.ends_with("g1-2-3\\shard-00000.json"),
+            "expected a cache-relative generation path, got {}",
+            ok.display()
+        );
+        for unsafe_name in [
+            "",
+            "..",
+            "../x",
+            "g1/../x",
+            "C:evil.json",
+            "g1/C:x",
+            "g1\\x",
+        ] {
+            let err = resolve_sharded_cache_file(dir, unsafe_name)
+                .err()
+                .ok_or_else(|| {
+                    format!("unsafe sharded cache file {unsafe_name:?} should be rejected")
+                })?;
+            assert!(
+                err.contains("unsafe") || err.contains("empty"),
+                "unexpected diagnostic for {unsafe_name:?}: {err}"
+            );
         }
         Ok(())
     }

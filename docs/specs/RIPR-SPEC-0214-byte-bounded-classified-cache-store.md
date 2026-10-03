@@ -78,6 +78,11 @@ proving a universal RSS threshold.
   ordinary store path; IO high-water stays within the bounded buffer
   while the published file exceeds that buffer.
 - One oversized record skips without publishing a generation.
+- Size probes stop once encoded bytes exceed the ceiling; a large record
+  cap still splits on the byte bound without serializing a full
+  record-limit window.
+- Shard relative paths reject parent, separator, and drive-prefixed
+  components.
 - Injected fill failure, mid-generation failure, and cancellation leave
   the previous valid generation.
 - Existing integrity, missing-shard, and warm-hit controls keep passing.
@@ -105,6 +110,9 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::injected_fill_failure_does_not_admit_a_partial_generation`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::cancellation_before_manifest_preserves_the_prior_generation`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::size_probe_stops_once_the_encoded_ceiling_is_exceeded`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::sharded_cache_paths_reject_drive_prefix_and_parent_components`
 - Existing `crates/ripr/src/analysis/seam_cache.rs` integrity, missing-shard,
   and sharded warm-hit tests
 

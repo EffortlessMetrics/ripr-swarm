@@ -2285,7 +2285,14 @@ fn resolve_sharded_cache_file(dir: &Path, file: &str) -> Result<PathBuf, String>
         if component.is_empty() || component == "." || component == ".." {
             return Err(format!("unsafe sharded cache file {file}"));
         }
-        if component.contains('\\') {
+        if component.contains('\\') || component.contains(':') {
+            return Err(format!("unsafe sharded cache file {file}"));
+        }
+        let mut parts = Path::new(component).components();
+        if !matches!(
+            (parts.next(), parts.next()),
+            (Some(std::path::Component::Normal(_)), None)
+        ) {
             return Err(format!("unsafe sharded cache file {file}"));
         }
         path.push(component);
