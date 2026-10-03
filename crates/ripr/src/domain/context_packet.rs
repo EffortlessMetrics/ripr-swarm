@@ -156,6 +156,39 @@ mod tests {
     }
 
     #[test]
+    fn finding_matched_total_preserves_legacy_serde_and_retained_count_floor() -> Result<(), String>
+    {
+        let mut finding = sample_finding();
+        finding.related_tests = vec![related("one"), related("two")];
+        assert_eq!(finding.related_tests_total(), 2);
+        let legacy = serde_json::to_value(&finding).map_err(|error| error.to_string())?;
+        assert!(legacy.get("related_tests_matched_total").is_none());
+        let restored: Finding =
+            serde_json::from_value(legacy).map_err(|error| error.to_string())?;
+        assert_eq!(restored.related_tests_total(), 2);
+        assert_eq!(restored.related_tests_matched_total, None);
+        finding.related_tests_matched_total = Some(9);
+        let bytes = serde_json::to_vec(&finding).map_err(|error| error.to_string())?;
+        let restored: Finding =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        assert_eq!(restored.related_tests_total(), 9);
+        assert_eq!(restored.related_tests, finding.related_tests);
+        finding.related_tests_matched_total = Some(0);
+        assert_eq!(
+            finding.related_tests_total(),
+            2,
+            "metadata cannot undercount retained rows"
+        );
+        finding.related_tests.clear();
+        assert_eq!(
+            finding.related_tests_total(),
+            0,
+            "explicit zero remains valid for empty evidence"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn context_packet_from_finding_carries_canonical_gap_id() {
         let mut finding = sample_finding();
         finding.canonical_gap = Some(FindingCanonicalGap {
@@ -211,6 +244,7 @@ mod tests {
             flow_sinks: vec![],
             activation: ActivationEvidence::default(),
             stop_reasons: vec![],
+            related_tests_matched_total: None,
             related_tests: vec![],
             recommended_next_step: None,
             language: None,
