@@ -5559,7 +5559,7 @@
       "kind": "project_verification_execution",
       "subject": "pytest tests/test_pricing.py",
       "input_bytes": "argv:pytest tests/test_pricing.py",
-      "output_bytes": "exit:1",
+      "output_bytes": "exit:2",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -5588,7 +5588,7 @@
     ],
     "observations": {
      "candidate_currentness": "current",
-     "verification_exit": 1,
+     "verification_exit": 2,
      "static_movement": "improved",
      "receipt_status": "unknown",
      "external_runtime_mutation_evidence": null

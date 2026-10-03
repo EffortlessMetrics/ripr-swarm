@@ -23,11 +23,12 @@ selects the pytest environment. Two bound snapshots are retained:
   (`units >= 20`); the test is unchanged.
 
 The package is never installed editable and carries no path-repair conftest,
-so the environment-binding control discriminates in the clean shape:
-`python -m pytest tests/test_pricing.py` adds the project root to `sys.path`
-and `import pricing` resolves, while the bare `pytest tests/test_pricing.py`
-console script selects another interpreter/import path and fails with an
-import error. Every snapshot file is bound by SHA-256 in `manifest.json`; the
+so the environment-binding control discriminates in the clean shape: run from
+`<selected-root>`, `python -m pytest tests/test_pricing.py` adds the project
+root (the current working directory) to `sys.path` and `import pricing`
+resolves, while the bare `pytest tests/test_pricing.py` console script does
+not add the project root and fails with an import error. Every snapshot file
+is bound by SHA-256 in `manifest.json`; the
 manifest also records the exact, reproducible git commit/tree identities
 (pinned author, fixed timestamps, `core.autocrlf=false`) and the substitution
 contract for the printed command templates. The expected repair is
@@ -54,7 +55,9 @@ commands — `ripr doctor`, `ripr pilot`, one canonical item selection, the
 printed `ripr agent repair --phase before`, one bounded test edit, the exact
 printed module-form `python -m pytest tests/test_pricing.py` between the
 phases, the printed `--phase after`, and the printed receipt route —
-recorded from a foreign launch directory against the selected root, with the
+recorded with the `ripr` invocations running from a foreign launch directory
+against the selected root (bound through `--root`), while the printed
+module-form verification command runs from `<selected-root>`, with the
 decoy-write watchdog observing no matching writes outside the selected root.
 
 ## Then

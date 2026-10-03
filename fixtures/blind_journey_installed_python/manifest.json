@@ -51,7 +51,7 @@
   "environment_binding": {
    "current_verify_command": "python -m pytest tests/test_pricing.py",
    "historical_bare_command": "pytest tests/test_pricing.py",
-   "binding": "flat layout without an installed editable package: the module form adds the project root to sys.path so `import pricing` resolves, while the bare console script selects another interpreter/import path and fails in the clean shape",
+   "binding": "flat layout without an installed editable package: run from <selected-root>, the module form adds the current working directory (the project root) to sys.path so `import pricing` resolves, while the bare console script does not add the project root and fails in the clean shape; the foreign launch directory applies to the ripr --root invocations only",
    "historical_strength": "the bare form is retained as an explicitly supported historical artifact accepted at documented strength for replay only; it is never the printed recommendation"
   },
   "selected_repair": {
@@ -68,7 +68,7 @@
    "repair_after": "ripr agent repair --root <selected-root> --attempt <repair-attempt-id> --phase after",
    "agent_receipt": "ripr agent receipt --root <selected-root> --attempt <repair-attempt-id> --out target/ripr/reports/agent-receipt.json"
   },
-  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root."
+  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally. The ripr invocations run from a foreign launch directory and bind the root through --root; the printed project verification command `python -m pytest tests/test_pricing.py` runs from <selected-root>."
  },
  "journey_scenario_ids": [
   "installed_python_positive_journey_emits_receipt",

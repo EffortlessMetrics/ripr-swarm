@@ -2979,6 +2979,14 @@ fn installed_python_missing_scenarios(manifest: &Value, corpus: &Value) -> Vec<S
         );
         return missing;
     };
+    if ids.is_empty() {
+        missing.push(
+            "blind journey installed python journey_scenario_ids must name at least one \
+             scenario"
+                .to_string(),
+        );
+        return missing;
+    }
     let corpus_ids: BTreeSet<String> = corpus
         .get("scenarios")
         .and_then(Value::as_array)
@@ -3055,6 +3063,24 @@ mod installed_python_fixture_tests {
         {
             return Err(format!(
                 "an unknown installed python scenario must be reported, got: {missing:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_installed_python_scenario_inventory_is_rejected() -> Result<(), String> {
+        let manifest: Value = serde_json::json!({
+            "journey_scenario_ids": []
+        });
+        let corpus: Value = serde_json::json!({"scenarios": []});
+        let missing = installed_python_missing_scenarios(&manifest, &corpus);
+        if !missing
+            .iter()
+            .any(|violation| violation.contains("must name at least one scenario"))
+        {
+            return Err(format!(
+                "an empty installed python scenario inventory must be rejected, got: {missing:?}"
             ));
         }
         Ok(())
