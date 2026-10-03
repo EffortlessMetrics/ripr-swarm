@@ -2813,7 +2813,7 @@ assert_eq!(input.amount, 100);"#
     /// names get different facts, and a test or index the memo is not bound
     /// to is computed fresh without being cached.
     #[test]
-    fn test_value_facts_memo_matches_fresh_facts_for_every_test_and_owner() {
+    fn test_value_facts_memo_matches_fresh_facts_for_every_test_and_owner() -> Result<(), String> {
         let call = |line: usize, text: &str| CallFact {
             line,
             name: "score".to_string(),
@@ -2900,7 +2900,7 @@ assert_eq!(input.amount, 100);"#
         // changes rather than reinterpret its old flat ordinal keys.
         let mut reordered = index;
         let before = reordered.storage_identity();
-        assert!(reordered.reverse_flat_membership().is_ok());
+        reordered.reverse_flat_membership()?;
         let after = reordered.storage_identity();
         assert_eq!((before.0, before.1), (after.0, after.1));
         assert_ne!(before.2, after.2);
@@ -2913,6 +2913,7 @@ assert_eq!(input.amount, 100);"#
             }
         }
         assert_eq!(memo.by_slot.borrow().len(), cached);
+        Ok(())
     }
 
     // #4228: a reversed literal (`100 < amount`) and a local boundary

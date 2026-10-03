@@ -711,18 +711,6 @@ impl RustIndex {
         self.files.get_mut(path).map(|file| &mut file.data)
     }
     #[cfg(test)]
-    pub fn function_mut(&mut self, position: usize) -> Option<&mut FunctionFact> {
-        self.bump_membership_revision();
-        let id = *self.function_order.get(position)?;
-        self.function_facts.get_mut(id.offset)
-    }
-    #[cfg(test)]
-    pub fn test_mut(&mut self, position: usize) -> Option<&mut TestFact> {
-        self.bump_membership_revision();
-        let id = *self.test_order.get(position)?;
-        self.test_facts.get_mut(id.offset)
-    }
-    #[cfg(test)]
     pub fn extend_functions(&mut self, facts: impl IntoIterator<Item = FunctionFact>) {
         for fact in facts {
             self.push_function(fact);
