@@ -225,7 +225,7 @@ pub(crate) fn validate_repo_exposure_artifact(
                 "recovered.repo-exposure.json",
             );
             return format!(
-                "agent verify {label} artifact has no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable: `{recovery}`. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
+                "agent verify {label} artifact is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable: `{recovery}`. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
                 env!("CARGO_PKG_VERSION")
             );
         }
