@@ -489,9 +489,9 @@ fn npm_launcher_rejects_all_install_time_lifecycle_hooks() -> Result<(), String>
         let mutated = NPM_MANIFEST_TEXT.replace(anchor, &replacement);
         let violations = evaluated(CONTRACT_TEXT, WORKSPACE_TEXT, CRATE_TEXT, &mutated)?;
         assert!(
-            violations.iter().any(|violation| {
-                violation.contains(&format!("scripts.{script} is forbidden"))
-            }),
+            violations
+                .iter()
+                .any(|violation| { violation.contains(&format!("scripts.{script} is forbidden")) }),
             "{script}: {violations:#?}"
         );
     }

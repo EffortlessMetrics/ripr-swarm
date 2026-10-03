@@ -358,9 +358,7 @@ pub(super) fn validate_test_runner(
         ),
     ] {
         if !runner_text.contains(needle) {
-            violations.push(format!(
-                "{runner_path}: {explanation}; missing `{needle}`"
-            ));
+            violations.push(format!("{runner_path}: {explanation}; missing `{needle}`"));
         }
     }
     for required_test in REQUIRED_EXECUTED_TESTS {
