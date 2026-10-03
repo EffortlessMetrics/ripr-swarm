@@ -13,8 +13,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod advisory_write_safety;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+#[path = "cli_smoke/check_artifact_stdin.rs"]
+mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(feature = "lang-python")]
+#[path = "cli_smoke/python_source_admission.rs"]
+mod python_source_admission;
 
 // All plain fixture-setup git invocations below route through the shared
 // hardened helper (deadline + one idempotent retry + commit reconcile,
