@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use super::retained_files::{local_path, read_json, verify_file};
 
+mod captures;
 #[cfg(test)]
 mod tests;
 
@@ -28,14 +29,20 @@ pub(super) struct Summary {
     unreviewed: usize,
     legacy: usize,
     rejected: usize,
+    local_artifacts: usize,
+    external_artifacts: usize,
     declared: Vec<String>,
 }
 
 impl Summary {
     pub(super) fn observe(&mut self, root: &Path, case: &Value, violations: &mut Vec<String>) {
         let id = case["id"].as_str().unwrap_or("unknown");
-        let status = match validate_case(root, case) {
-            Ok(status) => status,
+        let status = match validate_declaration(root, case) {
+            Ok((status, custody)) => {
+                self.local_artifacts += custody.local;
+                self.external_artifacts += custody.external;
+                status
+            }
             Err(error) => {
                 violations.push(format!("Lane 1 semantic oracle case {id}: {error}"));
                 "rejected"
@@ -50,7 +57,11 @@ impl Summary {
         if case.get("semantic_oracle").is_none() {
             self.legacy += 1;
         } else {
-            self.declared.push(format!("{id}: {status}"));
+            self.declared.push(if matches!(status, "valid" | "invalid") {
+                format!("{id}: Reviewed expected-behavior declaration: {status}. Retained capture and review identities checked.")
+            } else {
+                format!("{id}: {status}")
+            });
         }
     }
 
@@ -59,6 +70,10 @@ impl Summary {
             "Expected-behavior validity: valid={}, invalid={}, unreviewed={} (legacy absent={}), rejected={}",
             self.valid, self.invalid, self.unreviewed, self.legacy, self.rejected
         )];
+        items.push(format!(
+            "Native executable custody: {} local artifact byte checks; {} externally retained artifacts NOT_REVERIFIED by this fixture check.",
+            self.local_artifacts, self.external_artifacts
+        ));
         items.extend(self.declared.iter().take(20).cloned());
         if self.declared.len() > 20 {
             items.push(format!(
@@ -68,7 +83,7 @@ impl Summary {
         }
         crate::PolicyDisclosure {
             heading: "Benchmark semantic-oracle scope".to_string(),
-            intro: "Missing legacy status means unreviewed. Valid/invalid declarations require retained independent semantic review and six exact native pairings. Invalid-oracle controls may pass this fixture contract. These labels do not change static discrimination, Lane 1 scorecards, judged-panel calibration or frozen denominators.".to_string(),
+            intro: "Missing legacy status means unreviewed. Valid/invalid are reviewed expected-behavior declarations bound to retained semantic basis and historical native capture. This check validates their identities; it does not rerun tests, infer semantic truth or authenticate the producer. External executable bytes are NOT_REVERIFIED. Invalid-oracle controls may pass this fixture contract. These labels do not change static discrimination, Lane 1 scorecards, judged-panel calibration or frozen denominators.".to_string(),
             items,
         }
     }
@@ -100,13 +115,21 @@ fn retained_json(root: &Path, entry: &Value) -> Result<Value, String> {
 }
 
 /// Absence is explicitly unreviewed. A declared label is never its own proof.
+#[cfg(test)]
 pub(super) fn validate_case(root: &Path, case: &Value) -> Result<&'static str, String> {
+    validate_declaration(root, case).map(|(status, _)| status)
+}
+
+fn validate_declaration(
+    root: &Path,
+    case: &Value,
+) -> Result<(&'static str, captures::Custody), String> {
     let Some(oracle) = case.get("semantic_oracle") else {
-        return Ok("unreviewed");
+        return Ok(("unreviewed", captures::Custody::default()));
     };
     let status = text(oracle, "status")?;
     match status {
-        "unreviewed" => return Ok("unreviewed"),
+        "unreviewed" => return Ok(("unreviewed", captures::Custody::default())),
         "valid" | "invalid" => {}
         _ => return Err(format!("unsupported semantic oracle status {status}")),
     }
@@ -128,29 +151,59 @@ pub(super) fn validate_case(root: &Path, case: &Value) -> Result<&'static str, S
         return Err("semantic oracle has a stale or wrong case/answer-key identity".to_string());
     }
     validate_answer_key(root, &key)?;
-    validate_pairing(root, &key, &pairing)?;
-    Ok(if status == "valid" {
-        "valid"
-    } else {
-        "invalid"
-    })
-}
-
-fn validate_answer_key(root: &Path, key: &Value) -> Result<(), String> {
-    for field in ["claim", "test_id", "package", "test_source_path"] {
-        let _ = text(key, field)?;
-    }
-    if !local_path(text(key, "test_source_path")?) {
-        return Err("semantic oracle test source must be a contained relative path".to_string());
-    }
-    let review = &key["independent_review"];
-    if text(review, "disposition")? != "accepted" {
+    let custody = validate_pairing(root, &key, &pairing)?;
+    let review = retained_json(root, &oracle["independent_review"])?;
+    if text(&review, "disposition")? != "accepted" {
         return Err(
             "semantic oracle expected behavior has not been independently accepted".to_string(),
         );
     }
-    let _ = text(review, "reviewer")?;
-    let _ = text(review, "rationale")?;
+    let _ = text(&review, "reviewer")?;
+    let _ = text(&review, "rationale")?;
+    let reviewed_subject = serde_json::json!({
+        "case_id": case_id, "status": status, "variant": expected_variant,
+        "answer_key": oracle["answer_key"], "native_pairing": oracle["native_pairing"]
+    });
+    if review["reviewed_subject"] != reviewed_subject {
+        return Err(
+            "semantic oracle review has a stale claim/basis/source/test/capture/verdict binding"
+                .to_string(),
+        );
+    }
+    Ok((
+        if status == "valid" {
+            "valid"
+        } else {
+            "invalid"
+        },
+        custody,
+    ))
+}
+
+fn validate_answer_key(root: &Path, key: &Value) -> Result<(), String> {
+    for field in [
+        "claim",
+        "test_id",
+        "package",
+        "package_version",
+        "library_target",
+        "test_source_path",
+        "package_manifest_path",
+        "library_source_path",
+    ] {
+        let _ = text(key, field)?;
+    }
+    for field in [
+        "test_source_path",
+        "package_manifest_path",
+        "library_source_path",
+    ] {
+        if !local_path(text(key, field)?) {
+            return Err(format!(
+                "semantic oracle {field} must be a contained relative path"
+            ));
+        }
+    }
     let basis = key["basis"]
         .as_array()
         .filter(|basis| !basis.is_empty())
@@ -250,13 +303,18 @@ fn validate_answer_key(root: &Path, key: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_pairing(root: &Path, key: &Value, pairing: &Value) -> Result<(), String> {
+fn validate_pairing(
+    root: &Path,
+    key: &Value,
+    pairing: &Value,
+) -> Result<captures::Custody, String> {
     verify_file(root, &pairing["lock"])?;
     let rows = pairing["observations"]
         .as_array()
         .filter(|rows| rows.len() == PAIRS.len())
         .ok_or_else(|| "semantic oracle needs all six actual native observations".to_string())?;
     let mut seen = BTreeSet::new();
+    let mut custody = captures::Custody::default();
     for row in rows {
         let variant = text(row, "variant")?;
         let (_, source, test, passes) = PAIRS
@@ -276,8 +334,11 @@ fn validate_pairing(root: &Path, key: &Value, pairing: &Value) -> Result<(), Str
             }
         }
         validate_observation(root, key, row, *passes)?;
+        let captured = captures::validate(root, key, row, *passes)?;
+        custody.local += captured.local;
+        custody.external += captured.external;
     }
-    Ok(())
+    Ok(custody)
 }
 
 fn validate_observation(root: &Path, key: &Value, row: &Value, passes: bool) -> Result<(), String> {
@@ -352,8 +413,21 @@ fn validate_observation(root: &Path, key: &Value, row: &Value, passes: bool) -> 
             "{variant}: wrong package, selector or managed command"
         ));
     }
-    let stdout = retained_text(root, &row["stdout"])?;
-    let _ = retained_text(root, &row["stderr"])?;
+    validate_native_output(root, key, variant, &row["stdout"], &row["stderr"], passes)
+}
+
+fn validate_native_output(
+    root: &Path,
+    key: &Value,
+    variant: &str,
+    stdout: &Value,
+    stderr: &Value,
+    passes: bool,
+) -> Result<(), String> {
+    let test_id = text(key, "test_id")?;
+    let failures = u64::from(!passes);
+    let stdout = retained_text(root, stdout)?;
+    let _ = retained_text(root, stderr)?;
     let verdict = if passes { "ok" } else { "FAILED" };
     let result = format!(
         "test result: {verdict}. {} passed; {failures} failed; 0 ignored; 0 measured; ",

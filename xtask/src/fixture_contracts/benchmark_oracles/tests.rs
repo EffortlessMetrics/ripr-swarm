@@ -52,6 +52,58 @@ impl SyntheticEvidence {
         Ok(())
     }
 
+    fn accept_review(&mut self) -> Result<(), String> {
+        let review = json!({
+            "disposition": "accepted", "reviewer": "synthetic reviewer",
+            "rationale": "Synthetic expected-value and historical capture review; not real execution",
+            "reviewed_subject": {
+                "case_id": self.case["id"],
+                "status": self.case["semantic_oracle"]["status"],
+                "variant": self.case["semantic_oracle"]["variant"],
+                "answer_key": self.case["semantic_oracle"]["answer_key"],
+                "native_pairing": self.case["semantic_oracle"]["native_pairing"]
+            }
+        });
+        self.case["semantic_oracle"]["independent_review"] = self.file(
+            "review.json",
+            &serde_json::to_vec(&review).map_err(|error| error.to_string())?,
+        )?;
+        Ok(())
+    }
+
+    fn capture(&self, index: usize) -> Result<Value, String> {
+        retained_json(&self.root, &self.pairing["observations"][index]["capture"])
+    }
+
+    fn persist_capture(&mut self, index: usize, capture: &Value) -> Result<(), String> {
+        let name = format!("capture-{index}.json");
+        self.pairing["observations"][index]["capture"] = self.file(
+            &name,
+            &serde_json::to_vec(capture).map_err(|error| error.to_string())?,
+        )?;
+        self.persist_pairing()
+    }
+
+    fn refresh_capture(&mut self, index: usize) -> Result<(), String> {
+        let mut row = self.pairing["observations"][index].clone();
+        if let Some(value) = row.as_object_mut() {
+            let _ = value.remove("capture");
+        }
+        let artifact = self.file(
+            "artifact-model.bin",
+            b"Synthetic executable byte model; never executed",
+        )?;
+        let executable = "/synthetic/retained/library-test";
+        let capture = json!({
+            "kind": "retained_native_capture", "case_id": self.key["case_id"], "observation": row,
+            "compiler_artifact": {"reason": "compiler-artifact", "package_id": "path+file:///synthetic/workspace#synthetic@0.0.0", "manifest_path": "/synthetic/workspace/Cargo.toml", "target": {"kind": ["lib"], "name": "synthetic", "src_path": "/synthetic/workspace/src/lib.rs"}, "profile": {"test": true}, "executable": "/synthetic/build/library-test"},
+            "artifact": {"compiled_path": "/synthetic/build/library-test", "bytes": artifact["bytes"], "sha256": artifact["sha256"], "sha256_after": artifact["sha256"], "retained": {"path": executable, "bytes": artifact["bytes"], "sha256": artifact["sha256"]}, "custody": {"status": "external", "locator": "synthetic external task evidence; absent here"}},
+            "discovery": {"phase": "completed", "timed_out": false, "process_failed": false, "exit_code": 0, "argv": [executable, TEST_ID, "--exact", "--list"], "stdout": self.file(&format!("listing-{index}.stdout"), format!("{TEST_ID}: test\n\n1 test, 0 benchmarks\n").as_bytes())?, "stderr": self.file(&format!("listing-{index}.stderr"), b"")?},
+            "artifact_execution": {"phase": "completed", "timed_out": false, "process_failed": false, "exit_code": row["exit_code"], "argv": [executable, TEST_ID, "--exact"], "executable_sha256": artifact["sha256"], "executable_sha256_after": artifact["sha256"], "stdout": row["stdout"], "stderr": row["stderr"]}
+        });
+        self.persist_capture(index, &capture)
+    }
+
     fn new() -> Result<Self, String> {
         let mut fixture = Self {
             root: crate::tests::temp_dir("synthetic-semantic-oracle-contract"),
@@ -61,8 +113,7 @@ impl SyntheticEvidence {
         };
         fixture.key = json!({
             "case_id": "synthetic-oracle-contract", "claim": "Synthetic independent contract model",
-            "test_id": TEST_ID, "package": "synthetic", "test_source_path": "src/lib.rs",
-            "independent_review": {"disposition": "accepted", "reviewer": "synthetic reviewer", "rationale": "Synthetic expected-value review, not real execution"},
+            "test_id": TEST_ID, "package": "synthetic", "package_version": "0.0.0", "library_target": "synthetic", "test_source_path": "src/lib.rs", "package_manifest_path": "Cargo.toml", "library_source_path": "src/lib.rs",
             "basis": [{"url": "https://example.invalid/synthetic-contract", "artifact": fixture.file("basis.txt", b"Synthetic independent expected behavior")?}],
             "sources": {"fixed": fixture.file("fixed.rs", b"fn boundary() -> bool { true }")?, "broken": fixture.file("broken.rs", b"fn boundary() -> bool { false }")?},
             "tests": {"corrected": fixture.file("corrected.rs", CORRECTED.as_bytes())?, "original": fixture.file("original.rs", ORIGINAL.as_bytes())?, "weak": fixture.file("weak.rs", WEAK.as_bytes())?},
@@ -73,6 +124,10 @@ impl SyntheticEvidence {
             "failure_lines": {"broken_corrected": 2, "fixed_original": 2}
         });
         let lock = fixture.file("Cargo.lock", b"# Synthetic lock model\nversion = 4\n")?;
+        let artifact = fixture.file(
+            "artifact-model.bin",
+            b"Synthetic executable byte model; never executed",
+        )?;
         let mut observations = Vec::new();
         for (variant, source, test, passes) in PAIRS {
             let verdict = if *passes { "ok" } else { "FAILED" };
@@ -102,13 +157,17 @@ impl SyntheticEvidence {
                 "lock_sha256": lock["sha256"], "lock_sha256_after": lock["sha256"],
                 "counts": {"intended": 1, "discovered": 1, "selected": 1, "executed": 1, "passed": u64::from(*passes), "failed": u64::from(!*passes), "ignored": 0},
                 "test_ids": [TEST_ID], "exit_code": if *passes { 0 } else { 101 },
-                "runner": {"version": "synthetic cargo", "compiler_version": "synthetic rustc", "cwd": "synthetic/workspace", "target_dir": "synthetic/target", "build_dir": "synthetic/build", "artifact_sha256": "a".repeat(64), "executable": "/synthetic/bin/cargo", "executable_sha256": "b".repeat(64), "argv": ["/synthetic/bin/cargo", "test", "--locked", "--offline", "--manifest-path", "Cargo.toml", "-p", "synthetic", "--lib", TEST_ID, "--", "--exact"]},
+                "runner": {"version": "synthetic cargo", "compiler_version": "synthetic rustc", "cwd": "/synthetic/workspace", "target_dir": "/synthetic/target", "build_dir": "/synthetic/build", "artifact_sha256": artifact["sha256"], "executable": "/synthetic/bin/cargo", "executable_sha256": "b".repeat(64), "argv": ["/synthetic/bin/cargo", "test", "--locked", "--offline", "--manifest-path", "Cargo.toml", "-p", "synthetic", "--lib", TEST_ID, "--", "--exact"]},
                 "stdout": fixture.file(&format!("{variant}.stdout"), stdout.as_bytes())?,
                 "stderr": fixture.file(&format!("{variant}.stderr"), b"")?
             }));
         }
         fixture.pairing = json!({"case_id": "synthetic-oracle-contract", "lock": lock, "observations": observations});
+        for index in 0..PAIRS.len() {
+            fixture.refresh_capture(index)?;
+        }
         fixture.persist()?;
+        fixture.accept_review()?;
         Ok(fixture)
     }
 
@@ -148,6 +207,11 @@ fn benchmark_semantic_oracle_polarity_is_separate_from_discrimination() -> Resul
     fixture.case["semantic_oracle"]["variant"] = json!("original");
     assert!(fixture.validate().is_err());
     fixture.case["semantic_oracle"]["status"] = json!("invalid");
+    assert!(
+        fixture.validate().is_err(),
+        "old verdict review must not carry forward"
+    );
+    fixture.accept_review()?;
     assert_eq!(fixture.validate()?, "invalid");
     Ok(())
 }
@@ -168,7 +232,17 @@ fn benchmark_semantic_oracle_requires_independent_basis_and_exact_removal() -> R
             "self_basis" => {
                 fixture.key["basis"][0]["artifact"] = fixture.key["tests"]["corrected"].clone()
             }
-            "review" => fixture.key["independent_review"]["rationale"] = json!(" "),
+            "review" => {
+                let mut review = retained_json(
+                    &fixture.root,
+                    &fixture.case["semantic_oracle"]["independent_review"],
+                )?;
+                review["rationale"] = json!(" ");
+                fixture.case["semantic_oracle"]["independent_review"] = fixture.file(
+                    "review.json",
+                    &serde_json::to_vec(&review).map_err(|error| error.to_string())?,
+                )?;
+            }
             "polarity" => {
                 fixture.key["boundary_assertions"][0]["original"] = json!("assert!(boundary());")
             }
@@ -269,18 +343,45 @@ fn benchmark_semantic_oracle_rejects_wrong_failure_and_incomplete_output() -> Re
 
 #[test]
 fn benchmark_semantic_oracle_rejects_artifact_drift_and_escaping_paths() -> Result<(), String> {
-    let mut fixture = SyntheticEvidence::new()?;
+    let fixture = SyntheticEvidence::new()?;
     fs::write(fixture.root.join("basis.txt"), "changed basis")
         .map_err(|error| error.to_string())?;
     assert!(fixture.validate().is_err());
-    for path in [
-        "../outside",
-        "/outside",
-        "nested/../outside",
-        "nested\\outside",
-    ] {
+    for kind in ["parent", "absolute", "parent_component", "backslash"] {
+        let mut fixture = SyntheticEvidence::new()?;
+        assert_eq!(fixture.validate()?, "valid");
+        let original = fixture.case["semantic_oracle"]["answer_key"].clone();
+        let bytes = fs::read(fixture.root.join("key.json")).map_err(|error| error.to_string())?;
+        let path = match kind {
+            "parent" => {
+                fs::create_dir(fixture.root.join("nested")).map_err(|error| error.to_string())?;
+                "nested/../../".to_string()
+                    + fixture
+                        .root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| "invalid fixture name".to_string())?
+                    + "/key.json"
+            }
+            "absolute" => fixture.root.join("key.json").to_string_lossy().to_string(),
+            "parent_component" => {
+                fs::create_dir(fixture.root.join("nested")).map_err(|error| error.to_string())?;
+                "nested/../key.json".to_string()
+            }
+            _ => {
+                let name = "nested\\outside";
+                fs::create_dir(fixture.root.join("nested")).map_err(|error| error.to_string())?;
+                fs::write(fixture.root.join(name), &bytes).map_err(|error| error.to_string())?;
+                name.to_string()
+            }
+        };
         fixture.case["semantic_oracle"]["answer_key"]["path"] = json!(path);
-        assert!(fixture.validate().is_err(), "accepted {path}");
+        fixture.accept_review()?;
+        assert_eq!(
+            fixture.case["semantic_oracle"]["answer_key"]["sha256"],
+            original["sha256"]
+        );
+        assert!(fixture.validate().is_err(), "accepted {kind}");
     }
     Ok(())
 }
@@ -369,4 +470,242 @@ fn benchmark_semantic_oracle_production_reader_discloses_rejected_and_unreviewed
         assert!(body.contains("do not change static discrimination"));
     }
     Ok(())
+}
+
+#[test]
+fn benchmark_semantic_oracle_rejects_stale_reviewed_subject() -> Result<(), String> {
+    for field in ["basis", "claim", "source", "test", "capture", "verdict"] {
+        let mut fixture = SyntheticEvidence::new()?;
+        assert_eq!(fixture.validate()?, "valid");
+        let review = fixture.case["semantic_oracle"]["independent_review"].clone();
+        match field {
+            "basis" => {
+                fixture.key["basis"][0]["artifact"] =
+                    fixture.file("basis.txt", b"Changed synthetic independent basis")?
+            }
+            "claim" => fixture.key["claim"] = json!("Changed synthetic expected-behavior claim"),
+            "source" => {
+                fixture.key["sources"]["fixed"] = fixture.file(
+                    "fixed.rs",
+                    b"fn boundary() -> bool { true }\n// reviewed source changed\n",
+                )?;
+                for index in [0, 2, 4] {
+                    for name in ["source_sha256", "source_sha256_after"] {
+                        fixture.pairing["observations"][index][name] =
+                            fixture.key["sources"]["fixed"]["sha256"].clone();
+                    }
+                    fixture.refresh_capture(index)?;
+                }
+            }
+            "test" => {
+                for (name, original) in [
+                    ("corrected", CORRECTED),
+                    ("original", ORIGINAL),
+                    ("weak", WEAK),
+                ] {
+                    fixture.key["tests"][name] = fixture.file(
+                        &format!("{name}.rs"),
+                        format!("{original}// retained neighbor comment changed\n").as_bytes(),
+                    )?;
+                }
+                for (index, (_, _, test, _)) in PAIRS.iter().enumerate() {
+                    for name in ["test_sha256", "test_sha256_after"] {
+                        fixture.pairing["observations"][index][name] =
+                            fixture.key["tests"][*test]["sha256"].clone();
+                    }
+                    fixture.refresh_capture(index)?;
+                }
+            }
+            "capture" => {
+                fixture.pairing["observations"][0]["runner"]["version"] =
+                    json!("changed synthetic cargo capture");
+                fixture.refresh_capture(0)?;
+            }
+            _ => {
+                fixture.case["semantic_oracle"]["status"] = json!("invalid");
+                fixture.case["semantic_oracle"]["variant"] = json!("original");
+            }
+        }
+        fixture.persist()?;
+        assert_eq!(
+            fixture.case["semantic_oracle"]["independent_review"],
+            review
+        );
+        let error = fixture
+            .validate()
+            .err()
+            .ok_or_else(|| format!("accepted stale {field} review"))?;
+        assert!(error.contains("review has a stale"), "{field}: {error}");
+        fixture.accept_review()?;
+        assert!(
+            fixture.validate().is_ok(),
+            "the changed {field} model must otherwise be well-formed"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn benchmark_semantic_oracle_rejects_unbound_or_swapped_native_capture() -> Result<(), String> {
+    for field in [
+        "missing",
+        "swapped",
+        "duplicate",
+        "bare_hash",
+        "case",
+        "package",
+        "target",
+        "executable",
+        "artifact_hash",
+        "source",
+        "test",
+        "lock",
+        "test_id",
+        "discovery",
+        "replay",
+        "timeout",
+    ] {
+        let mut fixture = SyntheticEvidence::new()?;
+        assert_eq!(fixture.validate()?, "valid");
+        let mut capture = fixture.capture(0)?;
+        match field {
+            "case" => capture["case_id"] = json!("another-case"),
+            "package" => {
+                capture["compiler_artifact"]["package_id"] =
+                    json!("path+file:///synthetic/workspace#neighbor@0.0.0")
+            }
+            "target" => capture["compiler_artifact"]["target"]["name"] = json!("neighbor"),
+            "executable" => {
+                capture["compiler_artifact"]["executable"] = json!("/synthetic/build/neighbor")
+            }
+            "artifact_hash" => capture["artifact"]["sha256"] = json!("f".repeat(64)),
+            "source" => capture["observation"]["source_sha256"] = json!("stale"),
+            "test" => capture["observation"]["test_sha256"] = json!("stale"),
+            "lock" => capture["observation"]["lock_sha256_after"] = json!("stale"),
+            "test_id" => capture["observation"]["test_ids"] = json!(["neighbor"]),
+            "discovery" => {
+                capture["discovery"]["stdout"] =
+                    fixture.file("bad-list.stdout", b"0 tests, 0 benchmarks\n")?
+            }
+            "replay" => capture["artifact_execution"]["argv"][1] = json!("neighbor"),
+            "timeout" => capture["artifact_execution"]["timed_out"] = json!(true),
+            _ => {}
+        }
+        fixture.persist_capture(0, &capture)?;
+        match field {
+            "missing" => fs::remove_file(fixture.root.join("capture-0.json"))
+                .map_err(|error| error.to_string())?,
+            "swapped" => {
+                let first = fixture.pairing["observations"][0]["capture"].clone();
+                fixture.pairing["observations"][0]["capture"] =
+                    fixture.pairing["observations"][1]["capture"].clone();
+                fixture.pairing["observations"][1]["capture"] = first;
+            }
+            "duplicate" => {
+                fixture.pairing["observations"][1]["capture"] =
+                    fixture.pairing["observations"][0]["capture"].clone()
+            }
+            "bare_hash" => fixture.pairing["observations"][0]["capture"] = Value::Null,
+            _ => {}
+        }
+        fixture.persist_pairing()?;
+        fixture.accept_review()?;
+        assert!(
+            fixture.validate().is_err(),
+            "accepted malformed {field} capture even with a refreshed synthetic review"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn benchmark_semantic_oracle_local_custody_never_falls_back() -> Result<(), String> {
+    for mode in [
+        "valid",
+        "missing",
+        "corrupt",
+        "wrong_artifact",
+        "external_fallback",
+    ] {
+        let mut fixture = SyntheticEvidence::new()?;
+        assert_eq!(fixture.validate()?, "valid");
+        let mut capture = fixture.capture(0)?;
+        let file = fixture.file(
+            "local-artifact.bin",
+            b"Synthetic executable byte model; never executed",
+        )?;
+        capture["artifact"]["custody"] = json!({"status": "local", "file": file});
+        match mode {
+            "missing" => fs::remove_file(fixture.root.join("local-artifact.bin"))
+                .map_err(|error| error.to_string())?,
+            "corrupt" => fs::write(fixture.root.join("local-artifact.bin"), b"corrupt")
+                .map_err(|error| error.to_string())?,
+            "wrong_artifact" => {
+                capture["artifact"]["custody"]["file"] =
+                    fixture.file("wrong-artifact.bin", b"Different synthetic executable")?
+            }
+            "external_fallback" => {
+                capture["artifact"]["custody"]["status"] = json!("external");
+                capture["artifact"]["custody"]["locator"] = json!("claimed fallback");
+            }
+            _ => {}
+        }
+        fixture.persist_capture(0, &capture)?;
+        fixture.accept_review()?;
+        assert_eq!(fixture.validate().is_ok(), mode == "valid", "{mode}");
+    }
+    Ok(())
+}
+
+#[test]
+fn benchmark_semantic_oracle_production_command_discloses_custody_and_rejection()
+-> Result<(), String> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    crate::tests::with_temp_cwd("semantic-oracle-production-custody", |root| {
+        crate::tests::copy_dir_recursive(&repo.join("fixtures"), &root.join("fixtures"))?;
+        let corpus_root = root.join("fixtures/evidence-quality-benchmark");
+        let original = read_json(&corpus_root.join("corpus.json"))?;
+        for mode in ["external", "local", "rejected"] {
+            let mut fixture = SyntheticEvidence::new()?;
+            if mode == "local" {
+                for index in 0..PAIRS.len() {
+                    let mut capture = fixture.capture(index)?;
+                    capture["artifact"]["custody"] = json!({"status": "local", "file": fixture.file("artifact-model.bin", b"Synthetic executable byte model; never executed")?});
+                    fixture.persist_capture(index, &capture)?;
+                }
+                fixture.accept_review()?;
+            } else if mode == "rejected" {
+                fixture.pairing["observations"][0]["counts"]["executed"] = json!(0);
+                fixture.persist()?;
+            }
+            crate::tests::copy_dir_recursive(&fixture.root, &corpus_root)?;
+            let mut corpus = original.clone();
+            corpus["cases"][0]["id"] = fixture.case["id"].clone();
+            corpus["cases"][0]["semantic_oracle"] = fixture.case["semantic_oracle"].clone();
+            fs::write(
+                corpus_root.join("corpus.json"),
+                serde_json::to_vec(&corpus).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let result = crate::fixture_contracts::check_fixture_contracts();
+            assert_eq!(result.is_ok(), mode != "rejected", "{mode}: {result:?}");
+            let report = fs::read_to_string(root.join("target/ripr/reports/fixture-contracts.md"))
+                .map_err(|error| error.to_string())?;
+            assert!(
+                report.contains("Retained capture and review identities checked")
+                    || mode == "rejected"
+            );
+            assert!(report.contains(match mode {
+                "external" => "6 externally retained artifacts NOT_REVERIFIED",
+                "local" => "6 local artifact byte checks; 0 externally retained artifacts",
+                _ => "valid=0, invalid=0",
+            }));
+            assert!(report.contains(if mode == "rejected" {
+                "rejected=1"
+            } else {
+                "rejected=0"
+            }));
+        }
+        Ok(())
+    })
 }

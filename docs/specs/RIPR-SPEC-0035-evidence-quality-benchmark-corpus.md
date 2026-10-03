@@ -47,22 +47,26 @@ fixture-backed, calibrated, ambiguous, or unsupported in current scope.
 An optional case-level `semantic_oracle` describes the correctness of a test's
 expected behavior. Its closed statuses are `valid`, `invalid`, and
 `unreviewed`. Omission on a legacy row means **unreviewed**, never valid.
-Malformed explicit metadata rejects. An invalid-oracle negative control can
+Malformed reviewed declarations or unsupported statuses reject. An explicit
+`unreviewed` declaration makes no acceptance claim; its other metadata is not
+validated by this axis. An invalid-oracle negative control can
 be valid corpus data; fixture acceptance must preserve its invalid label.
 
 This bounded contract supports a corrected test, the original wrong-sign test,
 and a weak variant that removes exactly the two named boundary assertions.
 `semantic_oracle.variant` is `corrected` for a valid declaration or `original`
-for an invalid declaration. The declaration references `answer_key` and
-`native_pairing` files by contained relative `path`, exact `bytes`, and `sha256`,
+for an invalid declaration. The declaration references `answer_key`,
+`native_pairing`, and `independent_review` files by contained relative `path`,
+exact `bytes`, and `sha256`,
 using the existing retained-fixture file checks. Paths in these files resolve
 from the corpus directory. No command is executed during fixture validation.
 
 The answer key binds:
 
-- exact case, package, full test ID, and original test source path;
-- independent expected-behavior claim, nonblank accepted reviewer/rationale,
-  and retained semantic source artifacts with their source URLs;
+- exact case, package/version, library target, manifest/library source paths,
+  full test ID, and original test source path;
+- independent expected-behavior claim and retained semantic source artifacts
+  with their source URLs;
 - fixed/broken production and corrected/original/weak complete test files;
 - the two corrected assertions and their original opposite-polarity forms;
 - the actual source line of each intended assertion failure.
@@ -74,6 +78,16 @@ artifacts, wrong case identities, stale hashes, or a failure line that points
 to a neighboring assertion. Retained citations and independent review carry
 the semantic judgment; the checker does not infer arbitrary domain semantics
 or authenticate who authored that judgment.
+
+The separate independent-review record has accepted `disposition`, nonblank
+`reviewer` and `rationale`, and an exact `reviewed_subject` object containing
+the case ID, declared status, variant, and complete answer-key/native-pairing
+file descriptors. Those file hashes transitively bind the claim, citations,
+source/test bytes and every retained native capture to the actual judgment.
+Refreshing ordinary file hashes cannot carry an old review forward to changed
+subjects or a changed verdict. Review covers semantic basis and historical
+native capture together. This is a reviewed declaration, not an automated
+derivation of semantic truth or an authenticated attestation service.
 
 Valid/invalid acceptance also requires all six exact observed pairings:
 
@@ -99,6 +113,28 @@ must identify the exact named assertion and its source line. Missing, repeated,
 zero-subject, ignored, setup-failed, timed-out, compile-failed, process-failed,
 stale or wrong-subject observations cannot establish validity.
 
+Each observation also references one compact `retained_native_capture` file.
+Its case and complete observation must match the pairing row exactly. It binds
+the Cargo-selected package ID, manifest, library target/source, test profile
+and executable path to a nonempty artifact's byte count/digest. The retained
+executable, before/after digest, exact one-test discovery, and direct frozen
+artifact replay must agree with that artifact and the expected native result.
+Discovery/replay output is retained and checked by the same file/output
+machinery. Missing, swapped, duplicate or malformed capture records, or bare
+hash strings without these bindings, reject. Identical executable bytes across
+variants are allowed when the independently reviewed capture supports them.
+
+Artifact custody is explicit. `local` custody requires a contained retained
+file whose actual bytes match the captured executable; missing/corrupt local
+bytes reject without an external fallback. `external` custody carries a
+nonblank task-evidence locator and no local file claim. Routine fixture checks
+validate compact capture/review identities and disclose external executable
+bytes as **NOT_REVERIFIED**. They neither require large executables in Git nor
+claim to have inspected unavailable bytes. Historical native execution,
+independently reviewed capture, current local byte checks, and fresh execution
+remain separate facts. Portable replay retains source/tests and declared lock
+resolution; it never substitutes old capture for a new run.
+
 The native-pairing file binds the same case and answer-key digest and retains
 the exact Cargo.lock artifact. This is a replay lock generated for the stated
 toolchain when upstream has no lock; it must not be presented as an original
@@ -114,6 +150,9 @@ failed declaration is reported as rejected, not silently counted as its claimed
 valid status. Missing/unreadable corpus data yields NOT_ESTABLISHED rather
 than a successful zero-count disclosure. The disclosure is rendered on both
 passing and failing fixture checks.
+The report calls valid/invalid labels reviewed expected-behavior declarations,
+reports local byte-check and external NOT_REVERIFIED artifact counts, and states
+that the fixture check does not rerun tests or authenticate the producer.
 
 This fixture axis does not change static discrimination, `evidence_record`,
 Lane 1 audit/scorecard semantics, #3806 judgments, #4795 runtime calibration,

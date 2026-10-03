@@ -6855,7 +6855,7 @@ fn perl_packet_contract_migration_corpus_path() -> Result<PathBuf, String> {
     Ok(repo_root.join("fixtures/perl_packet_contract_migration/corpus.json"))
 }
 
-fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+pub(crate) fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir_all(destination).map_err(|err| err.to_string())?;
     for entry in fs::read_dir(source).map_err(|err| err.to_string())? {
         let entry = entry.map_err(|err| err.to_string())?;
