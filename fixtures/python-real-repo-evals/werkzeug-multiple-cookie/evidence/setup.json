@@ -1,0 +1,35 @@
+{
+  "runtime_setup_outside_analysis": true,
+  "python": "3.12.14",
+  "python_version": "3.12.14",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "architecture": "x86_64",
+  "interpreter": "/workspace/shared/ripr-werkzeug-case-evidence/venv/bin/python",
+  "interpreter_sha256": "fa67443527ed9647f760d807e2a38f26340757123e643c4639cf273ed15d5ea7",
+  "pytest": "9.1.1",
+  "pytest_xprocess": "1.0.2",
+  "historical_dependency_pins_replaced": true,
+  "replacement_reason": "Explicit modern CPython3.12 qualification environment; does not claim 2021 upstream environment or full upstream suite.",
+  "source_layout_setup": "PYTHONPATH=<owned subject>/src declared for every child pytest; original conftest preserved; no pytest plugin or conftest bypass",
+  "requirements_sha256": "d57609095c57bc971b174a20f546c378aef8473b55ab82c8a87a9fa034b0f57d",
+  "upstream_original_file_run": {
+    "selector": "tests/sansio/test_request.py",
+    "selected_and_executed": 5,
+    "passed": 5,
+    "exit_code": 0
+  },
+  "replay_install_command": "python -m pip install --no-cache-dir --require-hashes -r requirements.lock",
+  "observed_install_command": "python -m pip install --disable-pip-version-check --no-cache-dir --report dependency-install-report.json pytest==9.1.1 pytest-xprocess==1.0.2",
+  "lock_verified_download_command": "python -m pip download --disable-pip-version-check --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock -d <task-local wheels>",
+  "lock_verified_download_exit": 0,
+  "locked_environment_reproduction": {
+    "interpreter": "/workspace/shared/ripr-werkzeug-case-evidence/locked-venv/bin/python",
+    "interpreter_sha256": "fa67443527ed9647f760d807e2a38f26340757123e643c4639cf273ed15d5ea7",
+    "install_command": "python -m pip install --disable-pip-version-check --no-cache-dir --no-index --find-links <task-local wheels> --require-hashes -r requirements.lock",
+    "install_exit": 0,
+    "native_control_exit": 0,
+    "outer_controls": 7,
+    "inner_subjects": 15,
+    "intended_inner_assertion_failures": 1
+  }
+}
