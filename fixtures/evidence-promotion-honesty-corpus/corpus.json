@@ -3260,6 +3260,34 @@
           "class": "reachable_unrevealed"
         }
       ]
+    },
+    {
+      "id": "rust_predicate_empty_macro_boundary",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_empty_macro_boundary",
+      "vector": "discarded_empty_macro_call_cannot_activate_real_far_oracle",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

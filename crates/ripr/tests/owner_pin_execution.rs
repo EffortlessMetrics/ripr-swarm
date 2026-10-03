@@ -241,6 +241,67 @@ fn local_empty_macro_preserves_independent_equality_execution() -> Result<(), St
 }
 
 #[test]
+fn empty_macro_arguments_cannot_activate_a_real_far_oracle() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/predicate_empty_macro_boundary");
+    let discarded = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let far = discarded.replace("discard_tokens!(discounted_total(100, 100)); ", "");
+    let positive = discarded.replace(
+        "assert_eq!(discounted_total(90, 100), 90)",
+        "assert_eq!(discounted_total(100, 100), 90)",
+    );
+    assert_ne!(far, discarded);
+    assert_ne!(positive, discarded);
+    let mut observations = Vec::new();
+    for (name, source, exposed) in [
+        ("discarded_boundary_far", discarded, false),
+        ("far_only", far, false),
+        ("real_boundary_positive", positive, true),
+    ] {
+        // The existing helper allocates a separate runtime Scratch, so none
+        // of the compiled variants can enter the analyzed fixture below.
+        source_runtime_control(&source, &format!("{name}-correct"), 1, false)?;
+        let wrong = source.replace("amount >= discount_threshold", "amount > discount_threshold");
+        assert_ne!(wrong, source);
+        source_runtime_control(&wrong, &format!("{name}-wrong"), 1, exposed)?;
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(fixture.join("input/Cargo.toml"), scratch.0.join("Cargo.toml"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), &source)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(std::fs::read_dir(&scratch.0).map_err(|error| error.to_string())?.count(), 2);
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(), diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast, format: OutputFormat::Json, include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
+        let findings = json["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{name}: one predicate");
+        let finding = &findings[0];
+        assert_eq!(finding["probe"]["family"], "predicate");
+        assert_eq!(finding["related_tests"].as_array().map(Vec::len), Some(1));
+        assert_eq!(finding["related_tests"][0]["file"], "src/lib.rs");
+        assert_eq!(finding["oracle_strength"], "strong", "{name}");
+        for stage in ["observe", "discriminate"] {
+            assert_eq!(finding["ripr"][stage]["state"], "yes", "{name}: real far equality survives");
+        }
+        assert_eq!(finding["classification"], if exposed { "exposed" } else { "weakly_exposed" }, "{name}");
+        assert_eq!(finding["ripr"]["infect"]["state"], if exposed { "yes" } else { "weak" }, "{name}");
+        if !exposed {
+            assert!(finding["ripr"]["infect"]["summary"].as_str().is_some_and(|s| s.contains("equality-boundary discriminator is missing")));
+        }
+        observations.push(finding.clone());
+    }
+    assert_eq!(observations[0]["classification"], observations[1]["classification"]);
+    assert_eq!(observations[0]["ripr"]["infect"], observations[1]["ripr"]["infect"]);
+    Ok(())
+}
+
+#[test]
 fn owner_pin_matched_static_and_runtime_controls() -> Result<(), String> {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
     for (case, exposed) in [
