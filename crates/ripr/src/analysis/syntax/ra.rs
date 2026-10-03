@@ -255,6 +255,31 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
     Some(scopes)
 }
 
+/// How many times the first `fn` item in `fn_text` binds `name`: every
+/// named node inside it (parameter and `let`/`for`/`if let`/closure/match
+/// identifier patterns, nested items), the fn's own name excluded. `None`
+/// when the text does not parse cleanly or holds no `fn`, so a caller that
+/// needs an exact binding count fails closed. Identifiers bound inside a
+/// macro invocation's token tree are not parsed patterns and are not
+/// counted here; callers keep a lexical scan for those.
+pub(crate) fn fn_name_binding_count(fn_text: &str, name: &str) -> Option<usize> {
+    let parse = parse_clean_source_file(fn_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    Some(
+        function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+            .filter(|bound| bound.text() == name)
+            .count(),
+    )
+}
+
 pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
     let (_, arguments) = expression.split_once('!')?;
     let arguments = arguments.trim();

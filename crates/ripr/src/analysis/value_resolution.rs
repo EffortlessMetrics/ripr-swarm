@@ -1441,6 +1441,14 @@ pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<S
     if !test.nested_fn_names.is_empty() {
         return Vec::new();
     }
+    // Parser authority first: the case parameter must be the only binding
+    // of `ident` anywhere in the test (a char or raw-string literal cannot
+    // hide a later `let` from the parser), and an unparsable body binds
+    // nothing. The lexical scan below still covers bindings written inside
+    // macro token trees, which the parser does not expand.
+    if crate::analysis::syntax::fn_name_binding_count(&test.body, ident) != Some(1) {
+        return Vec::new();
+    }
     let cleaned = strip_comments_and_strings(&test.body);
     let rebound = find_all(&cleaned, "let ").into_iter().any(|start| {
         let after_let = &cleaned[start + 4..];

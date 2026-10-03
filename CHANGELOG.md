@@ -2045,8 +2045,9 @@ are scoped or reviewed.
   parameter parser read `#[case] x: u32` as a malformed name and bound no
   case values, so a test passing the boundary value through a case row was
   reported as never reaching the boundary. Case columns map to the
-  `#[case]` parameters only; a `mut` parameter, one rebound in the body,
-  or any test with a nested `fn` binds nothing. (#4601)
+  `#[case]` parameters only; a `mut` parameter, one bound again anywhere
+  in the parsed test, a test that does not parse, or any test with a
+  nested `fn` binds nothing. (#4601)
 - Rust: a changed line with no resolved owner, such as a line inside a
   `macro_rules!` template, is no longer `no_static_path` just because the
   only related tests are same-file neighbours. With no owner name, nothing
