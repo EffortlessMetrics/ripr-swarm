@@ -49,6 +49,60 @@ fn compiles(output: Output, phase: &str) -> Result<(), String> {
 }
 
 #[test]
+fn local_empty_macro_preserves_independent_equality_execution() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/predicate_oracle_execution_direct");
+    let original = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let (production, _) = original.split_once("#[cfg(test)]").ok_or("missing tests")?;
+    let empty = "macro_rules! discard_tokens { ($($ignored:tt)*) => {} }";
+    let returning = "macro_rules! discard_tokens { ($($ignored:tt)*) => { return; } }";
+    for (name, definitions, before, admitted, mutant_detected) in [
+        ("different_name_empty", empty.to_string(), "".to_string(), true, true),
+        ("empty_discards_return_tokens", empty.to_string(), "".to_string(), true, true),
+        ("returning", returning.to_string(), "".to_string(), false, false),
+        ("shadowed", empty.to_string(), returning.to_string(), false, false),
+        ("ambiguous", format!("{empty}\nmod elsewhere {{ {empty} }}"), "".to_string(), false, true),
+        ("disabled", format!("#[cfg(any())]\n{empty}\n{returning}"), "".to_string(), false, false),
+        ("imported", format!("mod exports {{ {empty}\npub(crate) use discard_tokens; }}\nuse exports::discard_tokens;"), "".to_string(), false, true),
+        ("opaque_nonempty", "macro_rules! discard_tokens { ($($ignored:tt)*) => { let _marker = (); } }".to_string(), "".to_string(), false, true),
+    ] {
+        let arguments = if name == "empty_discards_return_tokens" { "return;" } else { "discounted_total(100, 100)" };
+        let source = format!("{production}\n{definitions}\n#[cfg(test)]\nmod tests {{\nuse super::*;\n#[test]\nfn boundary() {{\n{before}\ndiscard_tokens!({arguments});\nassert_eq!(discounted_total(100, 100), 90);\n}}\n}}\n");
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(fixture.join("input/Cargo.toml"), scratch.0.join("Cargo.toml"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+        // Establish the real test's value independently of conservative static
+        // refusals for opaque, imported or ambiguous macro bindings.
+        for wrong in [false, true] {
+            let runtime_source = scratch.0.join("runtime.rs");
+            let runtime = scratch.0.join(format!("runtime{}", std::env::consts::EXE_SUFFIX));
+            let subject = if wrong { source.replace("amount >= discount_threshold", "amount > discount_threshold") } else { source.clone() };
+            std::fs::write(&runtime_source, subject).map_err(|error| error.to_string())?;
+            compiles(run(Path::new("rustc"), &["--edition=2024".as_ref(), "--test".as_ref(), runtime_source.as_os_str(), "-o".as_ref(), runtime.as_os_str()])?, name)?;
+            let result = run(&runtime, &[])?;
+            assert!(String::from_utf8_lossy(&result.stdout).contains("running 1 test"), "{name}: nonempty libtest subject");
+            assert_eq!(result.status.success(), !(wrong && mutant_detected), "{name}, wrong={wrong}");
+        }
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(), diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast, format: OutputFormat::Json, include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
+        let findings = json["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{name}: unique predicate");
+        assert_eq!(findings[0]["probe"]["family"], "predicate", "{name}");
+        assert_eq!(findings[0]["oracle_strength"], if admitted { "strong" } else { "none" }, "{name}");
+        if admitted { assert_eq!(findings[0]["classification"], "exposed", "{name}"); }
+    }
+    Ok(())
+}
+
+#[test]
 fn owner_pin_matched_static_and_runtime_controls() -> Result<(), String> {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
     for (case, exposed) in [
