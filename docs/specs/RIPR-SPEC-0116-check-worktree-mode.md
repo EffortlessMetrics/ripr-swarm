@@ -134,6 +134,10 @@ that untracked source was analyzed.
 - Changing `--diff` file semantics.
 - Adding or renaming output fields.
 - Promoting any finding based only on worktree scope.
+- Pinning a drill-in to the edits that existed when `check` ran. A worktree
+  drill-in re-reads the working tree when it runs, so an edit made between
+  `check` and `explain`/`context` can move a `file:line` or change a finding
+  id; the miss message then names the same-scope listing to re-list ids.
 
 ## Acceptance Examples
 

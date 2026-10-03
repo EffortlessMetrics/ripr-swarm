@@ -17107,6 +17107,32 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
     {
         return Err("explain --worktree --diff must fail with the named conflict".to_string());
     }
+    // An artifact from `--from` already fixes the diff scope, so `--worktree`
+    // beside it is refused by both drill-in commands, before any read.
+    for (command, selector) in [("explain", "src/lib.rs:2"), ("context", "--at")] {
+        let mut args = vec![
+            command,
+            "--root",
+            &root_str,
+            "--worktree",
+            "--from",
+            "missing-artifact.json",
+            selector,
+        ];
+        if command == "context" {
+            args.push("src/lib.rs:2");
+        }
+        let conflict = run_ripr(&args);
+        let expected = format!("{command} --worktree cannot be combined with --from");
+        if conflict.status.success()
+            || !String::from_utf8_lossy(&conflict.stderr).contains(&expected)
+        {
+            return Err(format!(
+                "{command} --worktree --from must fail with the named conflict:\n{}",
+                String::from_utf8_lossy(&conflict.stderr)
+            ));
+        }
+    }
 
     ignore_remove_dir_all(&root);
     Ok(())
