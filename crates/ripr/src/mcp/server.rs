@@ -488,8 +488,8 @@ impl ServerHandler for McpServer {
                 "resource_templates": [
                     protocol::SNAPSHOT_RESOURCE_TEMPLATE,
                     protocol::GAP_RESOURCE_TEMPLATE,
-                    protocol::REPAIR_ATTEMPT_TEMPLATE,
-                    protocol::RECEIPT_TEMPLATE,
+                    repair::REPAIR_ATTEMPT_TEMPLATE,
+                    repair::RECEIPT_TEMPLATE,
                 ],
             })),
         ))

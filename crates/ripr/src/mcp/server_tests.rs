@@ -59,8 +59,8 @@ fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), Strin
     for expected in [
         protocol::SNAPSHOT_RESOURCE_TEMPLATE,
         protocol::GAP_RESOURCE_TEMPLATE,
-        protocol::REPAIR_ATTEMPT_TEMPLATE,
-        protocol::RECEIPT_TEMPLATE,
+        repair::REPAIR_ATTEMPT_TEMPLATE,
+        repair::RECEIPT_TEMPLATE,
     ] {
         if !uris.contains(&expected) {
             return Err(format!("SDK resource templates lost {expected}: {uris:?}"));
