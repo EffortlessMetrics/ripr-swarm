@@ -313,7 +313,7 @@ function runNative(executablePath, argv, options = {}) {
     });
     child.once("exit", (code, signal) => {
       cleanup();
-      const effectiveSignal = signal || receivedSignal;
+      const effectiveSignal = receivedSignal || signal;
       if (effectiveSignal) {
         resolve({ code: null, signal: effectiveSignal });
       } else {

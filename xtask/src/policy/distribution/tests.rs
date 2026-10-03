@@ -443,7 +443,7 @@ fn npm_launcher_source_guards_reject_removed_safety_rails() -> Result<(), String
             .replace("process.exitCode = signalExitCode", "process.exitCode = 0")
             .replace("SIGNALS_TO_OBSERVE", "removed-observer")
             .replace(
-                "const effectiveSignal = signal || receivedSignal",
+                "const effectiveSignal = receivedSignal || signal",
                 "const effectiveSignal = signal",
             ),
         npm_launcher::TEST_PATH,

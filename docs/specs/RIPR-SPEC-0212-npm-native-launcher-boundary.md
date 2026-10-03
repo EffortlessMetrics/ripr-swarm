@@ -66,6 +66,9 @@ The package `@effortlessmetrics/ripr`:
   directory, and non-executable payloads;
 - a real POSIX subprocess control sends `SIGTERM` only to the launcher and
   observes exactly one child delivery with no surviving child;
+- a real POSIX escalation control sends `SIGINT` then `SIGTERM` only to the
+  launcher and observes no child `SIGINT`, exactly one child `SIGTERM`, and a
+  launcher exit that retains the first observed `SIGINT`;
 - a real POSIX process-group control sends terminal-style `SIGINT` and `SIGHUP`
   and observes exactly one child delivery each with no launcher duplication or
   surviving child;
@@ -108,6 +111,7 @@ The package `@effortlessmetrics/ripr`:
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects lifecycle scripts, version ranges, and dependency drift`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads`
 - `packaging/npm/launcher/test/launcher.test.cjs::forwards direct SIGTERM to native child exactly once and re-emits signal`
+- `packaging/npm/launcher/test/launcher.test.cjs::retains the first observed signal when a supervisor escalates SIGINT to SIGTERM`
 - `packaging/npm/launcher/test/launcher.test.cjs::observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child`
 - `packaging/npm/launcher/test/launcher.test.cjs::source bin missing-package failure never falls back to PATH or writes stdout`
 - `packaging/npm/launcher/test/launcher.test.cjs::npm package contents are explicit and exclude tests and build residue`

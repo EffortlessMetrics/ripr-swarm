@@ -11,6 +11,7 @@ const REQUIRED_PORTABLE_TESTS = Object.freeze([
 ]);
 const REQUIRED_POSIX_TESTS = Object.freeze([
   "forwards direct SIGTERM to native child exactly once and re-emits signal",
+  "retains the first observed signal when a supervisor escalates SIGINT to SIGTERM",
   "observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child",
 ]);
 const requiredTests = process.platform === "win32"

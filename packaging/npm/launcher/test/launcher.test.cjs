@@ -396,6 +396,40 @@ test(
 );
 
 test(
+  "retains the first observed signal when a supervisor escalates SIGINT to SIGTERM",
+  { skip: process.platform === "win32", timeout: 15000 },
+  async () => {
+    const fixture = nativeFixture();
+    const { child, ready, receipt } = spawnSignalLauncher(fixture, "SIGTERM");
+    let nativePid;
+    try {
+      nativePid = Number.parseInt(await waitForFile(ready), 10);
+      assert.ok(Number.isInteger(nativePid));
+      const exitPromise = waitForExit(child);
+      process.kill(child.pid, "SIGINT");
+      await delay(300);
+      assert.ok(!fs.existsSync(receipt), "observed SIGINT must not be forwarded to the native child");
+      process.kill(child.pid, "SIGTERM");
+      const exit = await exitPromise;
+      await waitForFile(receipt);
+      await delay(250);
+      assert.deepEqual(JSON.parse(fs.readFileSync(receipt, "utf8")), {
+        signal: "SIGTERM",
+        count: 1,
+        pid: nativePid,
+      });
+      assert.equal(exit.signal, "SIGINT");
+      assert.equal(exit.stdout, "");
+      assert.equal(exit.stderr, "");
+      await assertProcessGone(nativePid);
+    } finally {
+      killProcessGroup(child.pid);
+      cleanup(fixture.root);
+    }
+  },
+);
+
+test(
   "observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child",
   { skip: process.platform === "win32", timeout: 30000 },
   async () => {

@@ -297,7 +297,7 @@ pub(super) fn validate_launcher_sources(
             "terminal process-group signals must be observed without duplicate forwarding",
         ),
         (
-            "const effectiveSignal = signal || receivedSignal",
+            "const effectiveSignal = receivedSignal || signal",
             "the first observed termination signal must survive a graceful child exit",
         ),
     ] {
@@ -327,6 +327,7 @@ const REQUIRED_EXECUTED_TESTS: &[&str] = &[
     "rejects lifecycle scripts, version ranges, and dependency drift",
     "rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads",
     "forwards direct SIGTERM to native child exactly once and re-emits signal",
+    "retains the first observed signal when a supervisor escalates SIGINT to SIGTERM",
     "observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child",
     "source bin missing-package failure never falls back to PATH or writes stdout",
     "npm package contents are explicit and exclude tests and build residue",
