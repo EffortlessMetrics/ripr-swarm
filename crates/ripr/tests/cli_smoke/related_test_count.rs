@@ -41,10 +41,12 @@ fn direct_owner_related_total_survives_packing_in_json_and_human() -> Result<(),
                 2,
                 "the changed sink must produce both bounded families"
             );
+            let mut observed_families = std::collections::BTreeSet::new();
             for finding in findings {
                 let family = finding["probe"]["family"]
                     .as_str()
                     .ok_or("missing family")?;
+                observed_families.insert(family);
                 assert!(
                     matches!(family, "call_deletion" | "side_effect"),
                     "unexpected family {family}"
@@ -69,6 +71,10 @@ fn direct_owner_related_total_survives_packing_in_json_and_human() -> Result<(),
                     );
                 }
             }
+            assert_eq!(
+                observed_families,
+                ["call_deletion", "side_effect"].into_iter().collect()
+            );
             // Repeat on the same source/cache keys: classification must rebuild
             // the metadata from cached parser facts, rather than packed evidence.
             let warm = run_ripr(&[
