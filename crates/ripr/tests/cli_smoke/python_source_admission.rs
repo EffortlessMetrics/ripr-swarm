@@ -67,6 +67,126 @@ fn python_count(report: &Value) -> Option<u64> {
         .as_u64()
 }
 
+/// Hold Git's real behavioral diff fixed while changing only the worktree
+/// source's admission. All link targets are inert data inside this fixture.
+#[cfg(unix)]
+#[test]
+fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResult {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let root = git_path_fixture("python-symlink-admission", &["src/discount.py"], SOURCE)?;
+    let nested = root.join("nested/inner");
+    fs::create_dir_all(&nested)?;
+    let patch = fs::read(root.join("change.patch"))?;
+    eprintln!("retained Git diff: {}", String::from_utf8_lossy(&patch));
+    eprintln!("Git diff SHA256: {:x}", Sha256::digest(&patch));
+    let binary = env!("CARGO_BIN_EXE_ripr");
+    let mut binary_file = fs::File::open(binary)?;
+    let mut binary_digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = binary_file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        binary_digest.update(&buffer[..read]);
+    }
+    eprintln!(
+        "actual CLI binary: {binary}; SHA256: {:x}",
+        binary_digest.finalize()
+    );
+    let root_arg = root.to_str().ok_or("fixture root is not UTF-8")?;
+    let diff = root.join("change.patch");
+    let diff_arg = diff.to_str().ok_or("fixture diff is not UTF-8")?;
+    let collect = |state: &str| -> TestResult<Vec<(Value, String, Value)>> {
+        let mut reports = Vec::new();
+        for (route, cwd, explicit) in [
+            ("explicit-root", nested.as_path(), true),
+            ("implicit-repo-root", root.as_path(), false),
+            ("implicit-nested-cwd", nested.as_path(), false),
+        ] {
+            let mut outputs = Vec::new();
+            for format in ["json", "human", "badge-json"] {
+                let mut args = vec![
+                    "check", "--diff", diff_arg, "--mode", "fast", "--format", format,
+                ];
+                if explicit {
+                    args.extend(["--root", root_arg]);
+                }
+                let output = run_command(binary, Some(cwd), &args)?;
+                eprintln!(
+                    "CLI receipt state={state} route={route} format={format} cwd={} args={args:?} status={}\nstdout={}\nstderr={}",
+                    cwd.display(),
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    output.status.success(),
+                    "CLI invocation failed before outcome discrimination"
+                );
+                outputs.push(String::from_utf8(output.stdout)?);
+            }
+            reports.push((
+                serde_json::from_str(&outputs[0])?,
+                outputs[1].clone(),
+                serde_json::from_str(&outputs[2])?,
+            ));
+        }
+        Ok(reports)
+    };
+    let present = collect("regular")?;
+    let source = root.join("src/discount.py");
+    let target = root.join("held-source.txt");
+    fs::rename(&source, &target)?;
+    std::os::unix::fs::symlink(&target, &source)?;
+    assert!(fs::symlink_metadata(&source)?.file_type().is_symlink());
+    assert!(fs::metadata(&source)?.is_file());
+    assert_eq!(fs::read(&source)?, SOURCE.as_bytes());
+    let linked = collect("owned-regular-target-symlink")?;
+    fs::remove_file(&source)?;
+    fs::rename(&target, &source)?;
+    let restored = collect("restored-regular")?;
+    assert_eq!(
+        fs::read(&diff)?,
+        patch,
+        "the Git diff must remain byte-identical"
+    );
+    fs::remove_dir_all(&root)?;
+    // Gather every route and format before evaluating the disputed predicate:
+    // a first-route failure must not hide the remaining actual CLI receipts.
+    assert_eq!(present.len(), 3);
+    assert_eq!(linked.len(), 3);
+    assert_eq!(restored.len(), 3);
+    for (index, (report, human, badge)) in present.iter().enumerate() {
+        assert_eq!(
+            report["summary"]["findings"], 1,
+            "regular positive route {index}: {report}"
+        );
+        assert_eq!(python_count(report), Some(1));
+        assert_eq!(report["analysis_outcome"]["analysis_complete"], true);
+        assert!(human.contains("1 Python file analyzed"));
+        assert_eq!(badge["analysis_complete"], true);
+        assert_eq!(
+            &restored[index],
+            &(report.clone(), human.clone(), badge.clone()),
+            "restoration route {index}"
+        );
+        let (ref refused, ref refused_human, ref refused_badge) = linked[index];
+        assert_missing(refused, "src/discount.py");
+        assert_eq!(refused["summary"]["findings"], 0);
+        assert_eq!(python_count(refused), Some(0));
+        assert!(refused.get("preview_languages").is_none(), "{refused}");
+        assert!(!refused_human.contains("1 Python file analyzed"));
+        assert!(refused_human.contains("src/discount.py"));
+        assert_eq!(refused_badge["analysis_complete"], false);
+        assert_eq!(refused_badge["analysis_outcome"], *outcome(refused));
+        assert_ne!(refused_badge["color"], "brightgreen");
+        assert_ne!(refused_badge["status"], "pass");
+    }
+    Ok(())
+}
+
 fn assert_missing(report: &Value, path: &str) {
     assert_eq!(
         report["analysis_outcome"]["analysis_complete"], false,
