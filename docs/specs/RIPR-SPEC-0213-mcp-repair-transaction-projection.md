@@ -1,4 +1,4 @@
-# RIPR-SPEC-0212: MCP repair transaction projection — prepare, attempt reads, and receipt status
+# RIPR-SPEC-0213: MCP repair transaction projection — prepare, attempt reads, and receipt status
 
 Status: proposed
 
