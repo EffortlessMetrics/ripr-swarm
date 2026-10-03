@@ -9,6 +9,12 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Fixed
+
+- Source-subject stamps keep whitespace-bearing path identity, so a check JSON
+  stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
+  tab path, or treat a correct whitespace stamp as malformed (#5128).
+
 ### Changed
 
 - Rust finding output preserves the matched related-test/oracle count before
