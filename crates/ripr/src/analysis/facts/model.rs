@@ -429,6 +429,15 @@ pub enum SourceRoleProvenanceEdgeKind {
     Include,
 }
 
+/// An opaque property-macro invocation, retained only to name a limitation.
+/// These lexical mentions never establish functions, tests, calls or oracles.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UnresolvedPropertyMacroFact {
+    pub name: String,
+    pub line: usize,
+    pub mentioned_identifiers: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileFacts {
     pub path: PathBuf,
@@ -448,6 +457,10 @@ pub struct FileFacts {
     /// producer here yet. The lexical fallback emits no module declarations.
     #[serde(default)]
     pub module_declarations: Vec<ModuleDeclarationFact>,
+    /// Opaque property blocks from the existing source parse. No expansion or
+    /// executable-test authority is inferred from the macro's spelling.
+    #[serde(default)]
+    pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
     /// Source-role provenance for this file occurrence (#3533): the ordered
     /// edge chain from the compilation unit whose declarations and include
     /// edges composed this file's roles, plus the earliest edge in the chain
@@ -584,6 +597,42 @@ pub struct LetBindingFact {
     pub name: String,
 }
 
+/// The item container a function is declared in, read from the parser
+/// (#4478, #3727). It decides which call syntax can name the function: a
+/// bare `name(..)` names a module-level function, never a method, and a
+/// method call `recv.name(..)` names a function with a `self` receiver in an
+/// `impl` or `trait` block.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FunctionContainer {
+    /// Not established: the lexical fallback producer, or a cache entry
+    /// written before the fact existed. Consumers fail closed on it.
+    #[default]
+    Unknown,
+    /// A module-level `fn`.
+    Free,
+    /// A `fn` item nested in another function's body.
+    Local,
+    /// A `fn` in an inherent `impl <self_ty>` block.
+    Inherent { self_ty: String },
+    /// A `fn` in an `impl <trait_path> for <self_ty>` block.
+    TraitImpl { trait_path: String, self_ty: String },
+    /// A `fn` in a `trait <trait_name>` block: a default method when it has
+    /// a body, a required-method declaration when it does not.
+    Trait { trait_name: String },
+}
+
+/// Parser facts about a function item's declaration (#4478).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FunctionItemFact {
+    pub container: FunctionContainer,
+    /// Whether the parameter list starts with a `self` receiver.
+    pub has_self_param: bool,
+    /// Whether the item has a body block (a trait's required method does
+    /// not).
+    pub has_body: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionFact {
     pub id: SymbolId,
@@ -625,6 +674,10 @@ pub struct FunctionFact {
     /// empty.
     #[serde(default)]
     pub let_bindings: Vec<LetBindingFact>,
+    /// Where the item is declared (#4478). Parser-backed only; the lexical
+    /// fallback leaves it `Unknown`.
+    #[serde(default)]
+    pub item: FunctionItemFact,
     /// Where the definition sits for a type-path call `T::name(` (#4558).
     /// Parser-backed only; the lexical fallback leaves it `Unknown`.
     #[serde(default)]

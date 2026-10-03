@@ -7,6 +7,7 @@ use std::path::Path;
 pub(crate) struct FindingNavigation {
     explain_prefix: String,
     context_prefix: String,
+    list_prefix: String,
 }
 
 impl FindingNavigation {
@@ -14,6 +15,7 @@ impl FindingNavigation {
         Self {
             explain_prefix: "ripr explain".to_string(),
             context_prefix: "ripr context".to_string(),
+            list_prefix: "ripr check".to_string(),
         }
     }
 
@@ -24,6 +26,24 @@ impl FindingNavigation {
     pub(crate) fn context_command(&self, selector: &str) -> String {
         format!("{} --at {}", self.context_prefix, shell_arg(selector))
     }
+
+    /// The `ripr check --json` command that lists finding ids for the same
+    /// scope (root, base or diff, `--worktree`, mode), so a selector miss
+    /// recovers against the analysis it asked about. Only meaningful for a
+    /// fresh scope: `ripr check` has no `--from`.
+    pub(crate) fn list_command(&self) -> String {
+        format!("{} --json", self.list_prefix)
+    }
+}
+
+/// The drill-in guidance the human surfaces print (#4321). The block must
+/// never vanish silently: every check, including a `--worktree` run without
+/// an artifact, prints sibling commands that replay its own input identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FindingDrillIn {
+    /// Copy-pasteable `ripr explain` / `ripr context` commands that preserve
+    /// this run's input identity (`--worktree` included).
+    Commands(FindingNavigation),
 }
 
 /// Build sibling commands that preserve the input identity needed to replay a
@@ -93,6 +113,7 @@ pub(crate) fn finding_navigation_with_worktree(
     FindingNavigation {
         explain_prefix: format!("ripr explain {args}"),
         context_prefix: format!("ripr context {args}"),
+        list_prefix: format!("ripr check {args}"),
     }
 }
 
@@ -152,6 +173,11 @@ mod tests {
         assert_eq!(
             navigation.context_command("src/calc.py:5"),
             "ripr context --root . --base HEAD --worktree --at src/calc.py:5"
+        );
+        // A selector miss lists ids from the same worktree scope.
+        assert_eq!(
+            navigation.list_command(),
+            "ripr check --root . --base HEAD --worktree --json"
         );
         // An artifact already records the worktree diff; `--from` wins.
         let from_artifact =

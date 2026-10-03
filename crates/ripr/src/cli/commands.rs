@@ -4,7 +4,7 @@ use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
 };
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -16,6 +16,8 @@ use crate::cli::commands_timestamps::generated_at_unix_ms;
 
 #[path = "commands/agent.rs"]
 mod agent;
+#[path = "commands/agent_card.rs"]
+pub(crate) mod agent_card;
 #[path = "commands/agent_dispatch.rs"]
 mod agent_dispatch;
 #[path = "commands/agent_gap_packet.rs"]
@@ -35,8 +37,7 @@ mod receipt_command;
 #[path = "commands/swarm/mod.rs"]
 mod swarm_command;
 
-pub(super) use agent::agent;
-pub(super) use agent::run_before_repair_with_identity;
+pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
 // suggestions mine the same text `--help` prints.
@@ -127,7 +128,14 @@ pub(super) use gate::gate;
 mod init;
 pub(super) use init::init;
 #[cfg(test)]
-use init::{generated_github_actions_workflow, parse_init_options};
+use init::parse_init_options;
+
+// The generated `ripr init --ci github` workflow template lives beside the
+// init command; its tests here pin rendered placeholders against it.
+#[path = "commands/init_workflow.rs"]
+mod init_workflow;
+#[cfg(test)]
+use init_workflow::generated_github_actions_workflow;
 
 #[path = "commands/pilot.rs"]
 mod pilot;
@@ -1220,10 +1228,11 @@ fn parse_calibrate_cargo_mutants_options(args: &[String]) -> Result<CalibrateOpt
 }
 
 fn parse_calibrate_format(value: &str) -> Result<CalibrateFormat, String> {
+    const ACCEPTED: &[&str] = &["md", "markdown", "text", "json"];
     match value {
         "md" | "markdown" | "text" => Ok(CalibrateFormat::Markdown),
         "json" => Ok(CalibrateFormat::Json),
-        _ => Err(format!("unknown calibrate format {value:?}")),
+        _ => Err(unknown_value("calibrate format", value, ACCEPTED)),
     }
 }
 
@@ -2696,10 +2705,11 @@ fn non_empty_string_arg(
 }
 
 fn parse_outcome_format(value: &str) -> Result<OutcomeFormat, String> {
+    const ACCEPTED: &[&str] = &["md", "markdown", "text", "json"];
     match value {
         "md" | "markdown" | "text" => Ok(OutcomeFormat::Markdown),
         "json" => Ok(OutcomeFormat::Json),
-        _ => Err(format!("unknown outcome format {value:?}")),
+        _ => Err(unknown_value("outcome format", value, ACCEPTED)),
     }
 }
 
@@ -2940,12 +2950,14 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `--worktree` matches `ripr check --worktree`: the finding may come
     // from uncommitted edits the committed-history diff never sees.
     let mut worktree = false;
+    let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
                 input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicitly_provided = true;
             }
             "--base" => {
                 i += 1;
@@ -3019,11 +3031,22 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    let selector = selector.ok_or_else(|| {
-        "missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
-    })?;
+    if selector.is_none() && !worktree {
+        return Err(missing_selector_error(
+            "missing finding selector",
+            "ripr check --json",
+        ));
+    }
+    resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
+    let Some(selector) = selector else {
+        return Err(missing_selector_error(
+            "missing finding selector",
+            &app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree)
+                .list_command(),
+        ));
+    };
     let asserted_base = if base_explicitly_provided {
         input.base.clone()
     } else {
@@ -3054,6 +3077,31 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         }
     };
     println!("{rendered}");
+    Ok(())
+}
+
+/// The selector-less `explain`/`context` error. `listing` lists finding ids
+/// for the same scope: a `--worktree` run names a worktree-scoped listing,
+/// since plain `ripr check --json` omits findings only uncommitted edits
+/// produce.
+pub(super) fn missing_selector_error(what: &str, listing: &str) -> String {
+    format!(
+        "{what}; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `{listing}` to list finding ids"
+    )
+}
+
+/// A `--worktree` drill-in without `--root` resolves the implicit project
+/// root the same way `ripr check --worktree` does, so a manual invocation
+/// from a project subdirectory analyzes the scope that listed the finding.
+/// An explicit `--root` is kept as given.
+pub(super) fn resolve_worktree_root(
+    input: &mut CheckInput,
+    worktree: bool,
+    root_explicitly_provided: bool,
+) -> Result<(), String> {
+    if worktree && !root_explicitly_provided {
+        check::resolve_implicit_workspace_root(input)?;
+    }
     Ok(())
 }
 
@@ -6446,7 +6494,6 @@ language = "rust"
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove frontier dir: {err}"))?;
         Ok(())
     }
-
     #[test]
     fn outcome_defaults_to_markdown_stdout_shape() {
         assert_eq!(

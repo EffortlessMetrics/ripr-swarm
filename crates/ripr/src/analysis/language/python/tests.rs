@@ -259,6 +259,182 @@ class Policy:
     assert_eq!(owners[4].owner_kind, Some(OwnerKind::ClassMethod));
 }
 
+/// #4562, the dateutil `test_tz.py` shape: a `TestCase` subclass reached
+/// through a same-file base, and a mixin whose test methods run through a
+/// `TestCase` subclass, are collected; an uninherited mixin is not. Mixin
+/// members are recorded under each subclass that runs them, the node id the
+/// runner accepts, not under the uncollected mixin.
+#[test]
+fn extract_tests_follows_same_file_unittest_bases_and_mixins() {
+    let tests = extract_tests(
+        Path::new("tests/test_tz.py"),
+        r#"
+import unittest
+
+class TzFoldMixin(object):
+    def testFoldPositiveUTCOffset(self):
+        self.assertEqual(self.gettz("A"), 1)
+
+class GettzTest(unittest.TestCase, TzFoldMixin):
+    def testGettz(self):
+        self.assertEqual(gettz("A"), 1)
+
+class ZoneInfoGettzTest(GettzTest):
+    def testZoneInfoNewInstance(self):
+        self.assertIsNot(get_zonefile_instance(), get_zonefile_instance(new_instance=True))
+
+class UnusedMixin(object):
+    def test_never_runs(self):
+        helper()
+
+class Helper:
+    def test_not_a_test_class(self):
+        helper()
+
+class CheckMixin:
+    def test_shared(self):
+        helper()
+    def test_overridden(self):
+        helper()
+
+class TestFirst(CheckMixin):
+    def test_overridden(self):
+        pass
+
+class TestWithInit(CheckMixin):
+    def __init__(self):
+        pass
+    def test_never_collected(self):
+        helper()
+
+class TestInheritsInit(TestWithInit):
+    def test_not_collected_either(self):
+        helper()
+
+@dataclass
+class TestData:
+    def test_dataclass_not_collected(self):
+        helper()
+
+class UnitMixin:
+    def test_unit_overridden(self):
+        helper()
+    def test_unit_assigned_away(self):
+        helper()
+
+class UnitCase(unittest.TestCase, UnitMixin):
+    def test_unit_overridden(self):
+        pass
+    test_unit_assigned_away = None
+
+class FirstMixin:
+    def test_shadow(self):
+        helper()
+
+class SecondMixin:
+    def test_shadow(self):
+        helper()
+    def test_second_only(self):
+        helper()
+
+class TestShadowed(FirstMixin, SecondMixin):
+    pass
+
+class SharedMixin:
+    def test_kept_by_one(self):
+        helper()
+
+class TestOverrides(SharedMixin):
+    def test_kept_by_one(self):
+        pass
+
+class TestInherits(SharedMixin):
+    pass
+"#,
+    );
+    let collected: Vec<(&str, &str)> = tests
+        .iter()
+        .map(|test| (test.qualified_name.as_str(), test.framework))
+        .collect();
+    assert_eq!(
+        collected,
+        vec![
+            ("GettzTest.testGettz", "unittest"),
+            ("GettzTest.testFoldPositiveUTCOffset", "unittest"),
+            ("ZoneInfoGettzTest.testZoneInfoNewInstance", "unittest"),
+            ("ZoneInfoGettzTest.testFoldPositiveUTCOffset", "unittest"),
+            ("TestFirst.test_overridden", "pytest"),
+            ("TestFirst.test_shared", "pytest"),
+            ("UnitCase.test_unit_overridden", "unittest"),
+            ("TestShadowed.test_shadow", "pytest"),
+            ("TestShadowed.test_second_only", "pytest"),
+            ("TestOverrides.test_kept_by_one", "pytest"),
+            ("TestInherits.test_kept_by_one", "pytest"),
+        ]
+    );
+}
+
+/// Mixin members resolve along Python's C3 order, and only the last
+/// definition of a class name counts; a base defined later or twice is
+/// unknown, so its members are not collected.
+#[test]
+fn extract_tests_resolves_mixins_by_c3_order_and_last_definition() {
+    let tests = extract_tests(
+        Path::new("tests/test_mro.py"),
+        r#"
+class Base:
+    def test_limit(self):
+        helper()
+
+class Left(Base):
+    pass
+
+class Right(Base):
+    def test_limit(self):
+        pass
+
+class TestDiamond(Left, Right):
+    pass
+
+class Mixin:
+    def test_first(self):
+        pass
+
+class TestUsesFirstMixin(Mixin):
+    pass
+
+class Mixin:
+    def test_redefined(self):
+        helper()
+
+class TestForward(LaterBase):
+    pass
+
+class LaterBase:
+    def test_later(self):
+        helper()
+
+class TestTwice:
+    def __init__(self):
+        pass
+    def test_hidden_by_init(self):
+        helper()
+
+class TestTwice:
+    def test_last(self):
+        helper()
+"#,
+    );
+    let collected: Vec<&str> = tests
+        .iter()
+        .map(|test| test.qualified_name.as_str())
+        .collect();
+    assert_eq!(
+        collected,
+        vec!["TestDiamond.test_limit", "TestTwice.test_last"]
+    );
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(
@@ -4300,9 +4476,17 @@ fn classify_change_ignores_unrelated_text_mentions() -> Result<(), String> {
 
 #[test]
 fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), String> {
+    let root = unique_test_root("accepted-changed-files");
+    for path in ["scripts/run.py", "src/util.py"] {
+        let file = root.join(path);
+        let parent = file.parent().ok_or("fixture file must have a parent")?;
+        std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+        std::fs::write(&file, "# Readable non-behavioral source\n")
+            .map_err(|err| format!("write source: {err}"))?;
+    }
     let adapter = PythonAdapter;
     let options = AnalysisOptions {
-        root: PathBuf::from("."),
+        root: root.clone(),
         base: None,
         diff_file: None,
         mode: crate::analysis::AnalysisMode::Draft,
@@ -4314,6 +4498,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4326,6 +4511,8 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
     let result = adapter.analyze_diff(&options, &policy, &changed_files)?;
     assert!(result.findings.is_empty());
     assert_eq!(result.changed_files, 2);
+    assert!(result.limitations.is_empty());
+    std::fs::remove_dir_all(root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
 
@@ -4418,6 +4605,107 @@ fn analyze_diff_discloses_per_file_read_cap() -> Result<(), String> {
     // The under-limit file is analyzed normally: no skipped files.
     assert_eq!(result.skipped_files, 0);
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+/// #5022: when the read caps refuse more files than the disclosure sample
+/// cap, the limitation count stays bounded (a stable-sorted sample plus one
+/// summary entry) while the summary preserves the true refused count —
+/// not one limitation per refused file.
+#[test]
+fn analyze_diff_bounds_read_limit_disclosure_and_preserves_refused_total() -> Result<(), String> {
+    let root = unique_test_root("diff-bounded-read-sample");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    let sample_cap = crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
+    let total = sample_cap + 4;
+    for index in 0..total {
+        write_repo_file(
+            &root.join(format!("pkg_{index:02}.py")),
+            &format!("VALUE = {}\n", "1".repeat(200)),
+        )?;
+    }
+    let options = repo_options(&root);
+    let limits = PythonDiffWalkLimits {
+        max_file_read_bytes: 100,
+        ..generous_walk_limits()
+    };
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &[], limits)?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    let sample = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.path.is_some()
+                && matches!(
+                    &limitation.recovery.kind,
+                    AnalysisRecoveryKind::IncreaseConfiguredLimit
+                )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sample.len(),
+        sample_cap,
+        "per-file disclosure is bounded to the sample, got {:?}",
+        result
+            .limitations
+            .iter()
+            .map(|limitation| limitation.bounded_detail.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        sample.windows(2).all(|pair| pair[0].path <= pair[1].path),
+        "sample paths must be sorted so repeated runs are byte-stable"
+    );
+    assert!(
+        sample.iter().all(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("file_read_capped"))
+        }),
+        "sample entries keep the distinguishable refusal reason"
+    );
+    let summary = result
+        .limitations
+        .iter()
+        .find(|limitation| {
+            limitation.path.is_none()
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.starts_with("python_read_limit_sampled:"))
+        })
+        .ok_or_else(|| {
+            format!(
+                "expected one folded summary limitation, got {:?}",
+                result
+                    .limitations
+                    .iter()
+                    .map(|limitation| limitation.bounded_detail.clone())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    let refused_total =
+        u64::try_from(total).map_err(|err| format!("refused count overflows u64: {err}"))?;
+    assert_eq!(
+        summary.affected_items,
+        Some(refused_total),
+        "summary must carry the true refused count"
+    );
+    let detail = summary.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("not materialized in output"),
+        "summary must state why the full per-file list is absent: {detail}"
+    );
+    assert!(
+        summary
+            .recovery
+            .detail
+            .contains("RIPR_PYTHON_MAX_FILE_READ_BYTES"),
+        "the recovery must name the env knob, got {}",
+        summary.recovery.detail
+    );
     Ok(())
 }
 
@@ -4537,6 +4825,7 @@ fn repo_options(root: &Path) -> AnalysisOptions {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     }
 }
 

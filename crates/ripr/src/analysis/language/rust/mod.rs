@@ -27,13 +27,15 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
+use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
+use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 mod lexical_test_grip;
@@ -44,14 +46,26 @@ mod lexical_test_grip;
 /// packages), and building that working set can exhaust a constrained runner
 /// (issue #1023). Above this many files the analysis fails closed with a named
 /// `diff_scope_oversized` error rather than exhausting host memory and aborting.
-const DIFF_INDEX_FILE_LIMIT: usize = 800;
+///
+/// Raised from 800: this repository's own decomposition waves grew the
+/// diff/repo-indexed working set to 802 files (796 at main `1b61c4757`,
+/// +6 with the eval-sweep-check module split), so the repo's own dogfood
+/// and smoke analyses tripped the default on an in-spec tree. 1200 keeps
+/// real headroom for module splits while still failing closed on genuinely
+/// oversized external scopes; constrained operators retain the
+/// `RIPR_MAX_DIFF_INDEX_FILES` override.
+const DIFF_INDEX_FILE_LIMIT: usize = 1200;
 
 /// Hard analysis-cost guard for the repo-scoped path (#2109): the diff path
 /// caps its working set at [`DIFF_INDEX_FILE_LIMIT`], and the repo path now
 /// has the same guard so `ripr check --mode deep|ready` on a large monorepo
 /// fails closed with a named `repo_scope_oversized` error instead of loading
 /// and indexing the entire workspace unbounded.
-const REPO_INDEX_FILE_LIMIT: usize = 800;
+///
+/// Raised in lockstep with [`DIFF_INDEX_FILE_LIMIT`] for the same measured
+/// repo-growth reason; `RIPR_MAX_REPO_INDEX_FILES` remains the operator
+/// override.
+const REPO_INDEX_FILE_LIMIT: usize = 1200;
 
 /// Env override for [`REPO_INDEX_FILE_LIMIT`].
 const REPO_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_REPO_INDEX_FILES";
@@ -81,9 +95,12 @@ pub(crate) const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized";
 /// True when `error` is the named diff-scope guard error (#2299). Matchable
 /// in the style of `git::is_git_invocation_timeout`: only the raw,
 /// unwrapped guard error matches — a wrapped error (for example
-/// `workspace analysis failed: ...`) does not.
+/// `workspace analysis failed: ...`) does not. The exact tag must be followed
+/// immediately by its colon delimiter; lookalike names are different errors.
 pub(crate) fn is_diff_scope_oversized(error: &str) -> bool {
-    error.starts_with(DIFF_SCOPE_OVERSIZED_PREFIX)
+    error
+        .strip_prefix(DIFF_SCOPE_OVERSIZED_PREFIX)
+        .is_some_and(|suffix| suffix.starts_with(':'))
 }
 const NO_TESTS_INFECTION_SUMMARY: &str =
     "No tests were found, so activation/infection cannot be estimated";
@@ -92,6 +109,62 @@ const NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY: &str =
 
 fn diff_index_file_limit() -> Result<usize, String> {
     diff_index_file_limit_from_env(std::env::var(DIFF_INDEX_FILE_LIMIT_ENV))
+}
+
+/// Admit only Git-tracked open paths. Discovery excludes symlinks and
+/// generated surfaces separately; a newly opened untracked file does not
+/// enter the index solely because it is open. Inherited mode selection may
+/// independently load an untracked source and capture its consumed bytes.
+fn tracked_open_rust_index_paths(
+    options: &AnalysisOptions,
+    discovered: &[PathBuf],
+    scope_limit: usize,
+) -> Result<BTreeSet<PathBuf>, String> {
+    let discovered = discovered.iter().collect::<BTreeSet<_>>();
+    let candidates = options
+        .open_rust_index_paths
+        .iter()
+        .filter(|path| discovered.contains(*path))
+        .filter_map(|path| path.to_str().map(|text| text.replace('\\', "/")))
+        .collect::<BTreeSet<_>>();
+    if candidates.len() > scope_limit {
+        return Err(format!(
+            "diff_scope_oversized: {} admitted open Rust files exceed the \
+             {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}) before tracking; \
+             reduce the open-file scope or raise the limit",
+            candidates.len()
+        ));
+    }
+    let candidates = candidates.into_iter().collect::<Vec<_>>();
+    let admitted = candidates.iter().cloned().collect::<BTreeSet<_>>();
+    let mut tracked = BTreeSet::new();
+    for chunk in candidates.chunks(128) {
+        cancellation::checkpoint()?;
+        let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        let output = crate::git::run_git_output_with_optional_deadline_and_limit(
+            &options.root,
+            &args,
+            options.git_timeout,
+            4 * 1024 * 1024,
+        )
+        .map_err(|error| format!("open Rust source tracking probe failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "open Rust source tracking probe exited with {}",
+                output.status
+            ));
+        }
+        tracked.extend(
+            output
+                .stdout
+                .split(|byte| *byte == 0)
+                .filter_map(|record| std::str::from_utf8(record).ok())
+                .filter(|record| admitted.contains(*record))
+                .map(PathBuf::from),
+        );
+    }
+    Ok(tracked)
 }
 
 fn diff_index_file_limit_from_env(
@@ -721,6 +794,11 @@ fn owner_name_from_id(
     }
 }
 
+fn push_retained_finding(findings: &mut Vec<Finding>, finding: Finding) {
+    crate::analysis::witness::retain_finding_projection(&finding);
+    findings.push(finding);
+}
+
 /// Shared post-classify application of the extracted probe and oracle owners.
 /// `apply_rust_no_static_path_limit` stays at each pipeline because it is
 /// mixed reach/index work owned by later RA slices.
@@ -737,7 +815,12 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_cross_language_limit(finding, probe, index);
 }
 
-fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
+fn apply_rust_no_static_path_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    index: &RustIndex,
+    property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
+) {
     if !(finding.class == ExposureClass::NoStaticPath
         && finding.related_tests.is_empty()
         && finding.static_limit_kind.is_none())
@@ -794,6 +877,13 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
             test.start_line,
             test.name
         ));
+    } else if oracles::apply_unresolved_property_macro_limit(
+        finding,
+        &owner_name,
+        &probe.location.file,
+        property_macro_mentions,
+    ) {
+        replace_witnessed_no_path_infection_summary(finding);
     }
 }
 
@@ -925,30 +1015,32 @@ pub(crate) fn is_generated_rust_file_with_patterns(
 /// is meant to discriminate.
 ///
 /// Both signals are read through the committed-source overlay, so a
-/// committed-history check classifies the same bytes it indexes. A diff that
-/// touches a crate's `.cargo-checksum.json` also marks that crate vendored,
-/// which covers a crate `cargo vendor` deleted or renamed.
+/// committed-history check classifies the same bytes it indexes. A checksum
+/// path retained in the supplied changed-file facts also marks its crate
+/// vendored when the marker is unavailable in the worktree. Deleted-only
+/// paths are omitted by the diff parser, so this does not establish a marker
+/// after its complete deletion.
 pub(crate) struct GeneratedRustSources<'a> {
     root: &'a Path,
-    patterns: &'a [String],
+    config: &'a crate::config::RustLanguageConfig,
     diff_vendored_dirs: BTreeSet<PathBuf>,
 }
 
 impl<'a> GeneratedRustSources<'a> {
     /// Classifier for repository files, with no diff context.
-    pub(crate) fn for_repo(root: &'a Path, patterns: &'a [String]) -> Self {
+    pub(crate) fn for_repo(root: &'a Path, config: &'a crate::config::RustLanguageConfig) -> Self {
         Self {
             root,
-            patterns,
+            config,
             diff_vendored_dirs: BTreeSet::new(),
         }
     }
 
-    /// Classifier for a diff: crates whose checksum file the diff touches
-    /// count as vendored even when they no longer exist on disk.
+    /// Classifier for a diff: checksum paths in the supplied changed-file
+    /// facts mark their crate vendored even when unavailable on disk.
     pub(crate) fn for_diff(
         root: &'a Path,
-        patterns: &'a [String],
+        config: &'a crate::config::RustLanguageConfig,
         changed_files: &[ChangedFile],
     ) -> Self {
         let diff_vendored_dirs = changed_files
@@ -962,14 +1054,35 @@ impl<'a> GeneratedRustSources<'a> {
             .collect();
         Self {
             root,
-            patterns,
+            config,
             diff_vendored_dirs,
         }
     }
 
     /// Whether a repository-relative Rust path is generated or vendored.
     pub(crate) fn contains(&self, path: &Path) -> bool {
-        is_generated_rust_file_with_patterns(path, self.patterns)
+        self.is_convention_excluded(path) || self.has_stronger_exclusion(path)
+    }
+
+    /// Whether an exact handwritten declaration can recover this skipped path.
+    pub(crate) fn is_convention_only_exclusion(&self, path: &Path) -> bool {
+        self.is_convention_excluded(path) && !self.has_stronger_exclusion(path)
+    }
+
+    fn is_convention_excluded(&self, path: &Path) -> bool {
+        is_generated_rust_file(path)
+            && !self
+                .config
+                .handwritten_files
+                .iter()
+                .any(|declared| Path::new(declared) == path)
+    }
+
+    fn has_stronger_exclusion(&self, path: &Path) -> bool {
+        self.config
+            .generated_file_patterns
+            .iter()
+            .any(|pattern| generated_pattern_matches(pattern, path))
             || (route(path) == Some(LanguageId::Rust)
                 && (self.is_in_vendored_crate(path) || self.has_generated_header(path)))
     }
@@ -977,7 +1090,8 @@ impl<'a> GeneratedRustSources<'a> {
     fn is_in_vendored_crate(&self, path: &Path) -> bool {
         path.ancestors()
             .skip(1)
-            .filter(|ancestor| !ancestor.as_os_str().is_empty())
+            // The empty relative ancestor is the selected root, which may
+            // itself be a cargo-vendor crate or have diff-bound checksum metadata.
             .any(|ancestor| {
                 self.diff_vendored_dirs.contains(ancestor)
                     || self.subject_file_exists(&ancestor.join(CARGO_VENDOR_CHECKSUM_FILE))
@@ -1063,28 +1177,28 @@ impl RustAdapter {
         changed_files: &[ChangedFile],
         enabled_languages: &[LanguageId],
     ) -> Result<LanguageDiffResult, String> {
-        self.analyze_diff_for_languages_with_generated_file_patterns(
+        self.analyze_diff_for_languages_with_rust_config(
             options,
             oracle_policy,
             changed_files,
             enabled_languages,
-            &[],
+            &crate::config::RustLanguageConfig::default(),
         )
     }
 
-    pub(crate) fn analyze_diff_for_languages_with_generated_file_patterns(
+    pub(crate) fn analyze_diff_for_languages_with_rust_config(
         &self,
         options: &AnalysisOptions,
         oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
         enabled_languages: &[LanguageId],
-        generated_file_patterns: &[String],
+        rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
         // Exclude conventional generated surfaces before hard line limits and
         // partial-diff budgeting so machine output cannot consume the budget
         // that protects actionable source analysis.
         let generated_sources =
-            GeneratedRustSources::for_diff(&options.root, generated_file_patterns, changed_files);
+            GeneratedRustSources::for_diff(&options.root, rust_config, changed_files);
         let analyzable_changed_files = changed_files
             .iter()
             .filter(|file| !generated_sources.contains(&file.path))
@@ -1207,7 +1321,7 @@ impl RustAdapter {
             } else {
                 (std::collections::BTreeSet::new(), Vec::new())
             };
-        let index_files = workspace::select_rust_files_for_mode_with_dependent_packages(
+        let mut index_files = workspace::select_rust_files_for_mode_with_dependent_packages(
             &analyzable_rust_files,
             &changed_rust_paths,
             options.mode,
@@ -1215,10 +1329,22 @@ impl RustAdapter {
             &dependent_package_roots,
             &manifest_dir_prefixes,
         );
+        // Open saved Rust documents are index-only inputs. They do not seed
+        // changed-file probes, package expansion, or findings. Admit only
+        // discovered, analyzable files, then apply the ordinary index budget.
+        let scope_limit = diff_index_file_limit()?;
+        if !options.open_rust_index_paths.is_empty() {
+            index_files.extend(tracked_open_rust_index_paths(
+                options,
+                &analyzable_rust_files,
+                scope_limit,
+            )?);
+            index_files.sort();
+            index_files.dedup();
+        }
         // Fail closed before the working-set build that can exhaust a
         // constrained runner's memory (#1023): a too-large index is a named
         // limited state with a repair route, not an analysis result.
-        let scope_limit = diff_index_file_limit()?;
         if index_files.len() > scope_limit {
             return Err(format!(
                 "diff_scope_oversized: {} indexed Rust files exceed the \
@@ -1232,6 +1358,8 @@ impl RustAdapter {
         // cache. This avoids re-parsing unchanged files with ra_ap_syntax on
         // every ripr check / LSP save (#1912). The cache is keyed on a
         // content hash; unchanged files hit the cache and skip the parse.
+        let mut rust_consumed_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
         let loaded_files = index_files
             .iter()
             .map(|file| {
@@ -1243,7 +1371,10 @@ impl RustAdapter {
                 // Committed-history diffs read HEAD content for dirty
                 // tracked files; a path with no content at HEAD is skipped.
                 crate::analysis::committed_source::read_source_bytes(&options.root, file)
-                    .map(|bytes| bytes.map(|bytes| (file.clone(), bytes)))
+                    .map(|bytes| {
+                        rust_consumed_sources.record(file, bytes.as_deref());
+                        bytes.map(|bytes| (file.clone(), bytes))
+                    })
                     .map_err(|err| {
                         format!(
                             "failed to read {}: {err}",
@@ -1258,6 +1389,10 @@ impl RustAdapter {
             &loaded_files,
             &options.test_harnesses,
         )?;
+        #[cfg(test)]
+        {
+            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
+        }
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -1267,8 +1402,29 @@ impl RustAdapter {
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         let mut related_test_candidate_index = None;
+        let property_macro_mentions =
+            oracles::PropertyMacroMentionIndex::new(&index, &options.root);
+
+        let rust_changed_for_presence = analyzable_changed_files
+            .iter()
+            .filter(|file| self.accepts_path(&file.path))
+            .filter(|file| {
+                partial_scope
+                    .as_ref()
+                    .is_none_or(|scope| scope.selects(&file.path))
+            })
+            .map(|file| file.path.as_path());
+        let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
+            &options.root,
+            rust_changed_for_presence,
+        );
+        let absent_changed_set = absent_changed_files
+            .iter()
+            .map(|path| workspace::normalize_path(path))
+            .collect::<BTreeSet<_>>();
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
 
@@ -1336,6 +1492,10 @@ impl RustAdapter {
                 .map(|file| file.path.as_path()),
         )?;
 
+        // Files whose probes became findings: only their evidence can be
+        // missing a related test, so only they earn an unresolved-route
+        // limitation.
+        let mut files_with_findings = std::collections::BTreeSet::new();
         for changed in analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -1358,13 +1518,25 @@ impl RustAdapter {
             if !workspace::seeds_diff_probes(&changed.path, &source_role_context) {
                 continue;
             }
+            // #4586: a changed file the working tree does not contain has no
+            // owner in the disk-built index. Building a probe from the diff
+            // text alone yields a false `no_static_path`.
+            if absent_changed_set.contains(&workspace::normalize_path(&changed.path)) {
+                continue;
+            }
             // Cooperative cancellation (#1972): check once per changed file
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
             let probes =
                 analysis_probes::probes_for_file_with_relations(&options.root, changed, &index);
-            for (probe, binding_relation) in probes {
+            if !probes.is_empty() {
+                files_with_findings.insert(changed.path.clone());
+            }
+            for seeded in probes {
+                seeded.record_span(&mut parser_spans);
+                let probe = seeded.probe;
+                let binding_relation = seeded.binding_relation;
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let related_test_candidate_index = related_test_candidate_index
@@ -1392,7 +1564,12 @@ impl RustAdapter {
                 // RIPR-SPEC-0117: when no lexical transitive path is available,
                 // name a macro-reach limitation only when a same-repo macro
                 // definition lexically mentions the changed owner.
-                apply_rust_no_static_path_limit(&mut finding, &probe, &index);
+                apply_rust_no_static_path_limit(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    &property_macro_mentions,
+                );
                 // Name unresolved custom assertion macros only after reach has
                 // already been established and no recognized oracle observes
                 // the seam. This is an oracle limitation, not macro expansion
@@ -1412,7 +1589,7 @@ impl RustAdapter {
                     &index,
                     binding_relation.as_ref(),
                 );
-                findings.push(finding);
+                push_retained_finding(&mut findings, finding);
             }
         }
 
@@ -1429,6 +1606,16 @@ impl RustAdapter {
         {
             limitations.push(limitation);
         }
+
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
 
         Ok(LanguageDiffResult {
             findings,
@@ -1447,15 +1634,87 @@ impl RustAdapter {
                 .count(),
             limitations: limitations
                 .into_iter()
+                .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
                 .chain(unreached_module_limitations(
                     changed_rust_paths.iter().filter(|path| {
                         layout_seeded_rust_paths.contains(*path)
                             && source_role_context.module_graph_orphans.contains(*path)
                     }),
                 )?)
+                .chain(unresolved_route_limitations(
+                    files_with_findings.iter().filter_map(|path| {
+                        source_role_context
+                            .module_graph_unresolved_routes
+                            .get(path)
+                            .map(|route| (path, route))
+                    }),
+                )?)
                 .collect(),
+            rust_diagnostic_origins,
+            rust_consumed_sources,
         })
     }
+}
+
+/// Bounds a path to `max_chars` for a recovery sentence, whose length is
+/// capped: a long path shortens the sentence, never fails the analysis.
+fn bounded_path_display(path: &Path, max_chars: usize) -> String {
+    let display = path.to_string_lossy().replace('\\', "/");
+    if display.chars().count() > max_chars {
+        let kept = max_chars.saturating_sub(1);
+        format!("{}…", display.chars().take(kept).collect::<String>())
+    } else {
+        display
+    }
+}
+
+/// One typed limitation per changed Rust file whose only route into its
+/// crate is a `mod` with an unresolved `#[path]` target (#4435). The file
+/// still seeds, but ripr composes no module context for it, so related
+/// tests can be missed; the run names the declaration instead of reading as
+/// complete.
+fn unresolved_route_limitations<'a>(
+    routes: impl Iterator<Item = (&'a std::path::PathBuf, &'a (std::path::PathBuf, usize))>,
+) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    routes
+        .map(|(path, (declaring_file, line))| {
+            let display = path.to_string_lossy().replace('\\', "/");
+            // Two paths share the recovery sentence's character budget.
+            let named = bounded_path_display(path, 100);
+            let declaration = format!("{}:{line}", bounded_path_display(declaring_file, 100));
+            let limitation = AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    format!(
+                        "{named} is reached only through the `mod` at {declaration}, whose \
+                         `#[path]` target ripr cannot resolve (a `cfg_attr` or non-literal \
+                         path), so its related tests may be missing from these findings. \
+                         A plain `#[path = \"...\"]` declaration, or `#[cfg]`-gated \
+                         declarations per target, resolve."
+                    ),
+                )?,
+            );
+            // A path the portable form rejects drops the field, never the run;
+            // the recovery text still names the file.
+            limitation
+                .clone()
+                .with_path(&display)
+                .unwrap_or(limitation)
+                .with_affected_items(1)?
+                .with_detail(
+                    "No resolved `mod`, `#[path]` or `include!` edge reaches this changed \
+                     Rust file; a `mod` with an unresolved `#[path]` target names it, so ripr \
+                     composes no module context for it and its findings may miss related \
+                     tests.",
+                )
+        })
+        .collect()
 }
 
 /// One typed limitation per changed Rust file that no Cargo target's module
@@ -1471,13 +1730,7 @@ fn unreached_module_limitations<'a>(
     paths
         .map(|path| {
             let display = path.to_string_lossy().replace('\\', "/");
-            // The recovery text is bounded; a long path shortens the
-            // sentence, never fails the analysis.
-            let named = if display.chars().count() > 160 {
-                format!("{}…", display.chars().take(159).collect::<String>())
-            } else {
-                display.clone()
-            };
+            let named = bounded_path_display(path, 160);
             let limitation = AnalysisLimitation::new(
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 AnalysisStage::LanguageAdapter,
@@ -1601,20 +1854,23 @@ impl LanguageAdapter for RustAdapter {
         options: &AnalysisOptions,
         oracle_policy: &OraclePolicy,
     ) -> Result<LanguageRepoResult, String> {
-        self.analyze_repo_with_generated_file_patterns(options, oracle_policy, &[])
+        self.analyze_repo_with_rust_config(
+            options,
+            oracle_policy,
+            &crate::config::RustLanguageConfig::default(),
+        )
     }
 }
 
 impl RustAdapter {
-    pub(crate) fn analyze_repo_with_generated_file_patterns(
+    pub(crate) fn analyze_repo_with_rust_config(
         &self,
         options: &AnalysisOptions,
         oracle_policy: &OraclePolicy,
-        generated_file_patterns: &[String],
+        rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
         let rust_files = workspace::discover_rust_files(&options.root)?;
-        let generated_sources =
-            GeneratedRustSources::for_repo(&options.root, generated_file_patterns);
+        let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
         let skipped_files = rust_files
             .iter()
             .filter(|path| generated_sources.contains(path))
@@ -1661,12 +1917,15 @@ impl RustAdapter {
         // integration tests under `tests/` or `examples/`. Probe seeding
         // stays production-only so test bodies do not generate findings.
         // Use the content-addressed per-file fact cache (#1912).
+        let mut rust_consumed_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
         let loaded_rust_files = analyzable_rust_files
             .iter()
             .map(|file| {
                 let full = options.root.join(file);
                 let bytes = std::fs::read(&full)
                     .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
+                rust_consumed_sources.record(file, Some(&bytes));
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -1675,6 +1934,10 @@ impl RustAdapter {
             &loaded_rust_files,
             &options.test_harnesses,
         )?;
+        #[cfg(test)]
+        {
+            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
+        }
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -1687,8 +1950,11 @@ impl RustAdapter {
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         let mut related_test_candidate_index = None;
+        let property_macro_mentions =
+            oracles::PropertyMacroMentionIndex::new(&index, &options.root);
 
         let mut findings = Vec::new();
+        let mut parser_spans = BTreeMap::new();
 
         // #2972: one path-dependency edge context per repo pass. Repo mode
         // indexes the whole workspace, so the admit precondition holds by
@@ -1705,8 +1971,10 @@ impl RustAdapter {
         };
 
         for path in &production_files {
-            let probes = analysis_probes::probes_for_repo_file(&options.root, path, &index);
-            for probe in probes {
+            let probes = analysis_probes::probes_for_repo_file_seeded(&options.root, path, &index);
+            for seeded in probes {
+                seeded.record_span(&mut parser_spans);
+                let probe = seeded.probe;
                 let related_test_candidate_index = related_test_candidate_index
                     .get_or_insert_with(|| classify::RelatedTestCandidateIndex::new(&index));
                 let mut finding = classifier::classify_probe_with_candidate_index(
@@ -1724,11 +1992,26 @@ impl RustAdapter {
                 // `language_status` is omitted for Rust per RIPR-SPEC-0026.
                 // RIPR-SPEC-0114 + 0115 + 0117: no_static_path limitation
                 // disclosure for repo-mode (same logic as diff-mode).
-                apply_rust_no_static_path_limit(&mut finding, &probe, &index);
+                apply_rust_no_static_path_limit(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    &property_macro_mentions,
+                );
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
-                findings.push(finding);
+                push_retained_finding(&mut findings, finding);
             }
         }
+
+        let rust_diagnostic_origins = origins_for_rust_findings(
+            &findings,
+            &OriginBuildContext {
+                root: &options.root,
+                loaded_files: &loaded_rust_files,
+                index: &index,
+                parser_spans: &parser_spans,
+            },
+        );
 
         Ok(LanguageRepoResult {
             findings,
@@ -1739,6 +2022,8 @@ impl RustAdapter {
             production_files: production_files.len(),
             skipped_files,
             partial_reason: None,
+            rust_diagnostic_origins,
+            rust_consumed_sources,
         })
     }
 }
@@ -1750,12 +2035,13 @@ mod tests {
         PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
         PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
         PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets,
-        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT_ENV, RustAdapter,
-        apply_probe_and_oracle_limits, changed_rust_line_count,
+        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT, REPO_INDEX_FILE_LIMIT_ENV,
+        RustAdapter, apply_probe_and_oracle_limits, changed_rust_line_count,
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
         diff_index_file_limit_from_env, enforce_changed_rust_line_limit,
         enforce_repo_index_file_limit, is_binary_source_path, is_cargo_binary_invocation,
-        is_generated_rust_file, is_generated_rust_file_with_patterns, macro_reach_limit_kind,
+        is_generated_rust_file, is_generated_rust_file_with_patterns,
+        limitations_for_absent_changed_files, macro_reach_limit_kind,
         partial_diff_budgets_from_env, partition_canonical_form,
         replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
         select_partial_diff_partition, select_partial_diff_partition_with_identity, sha256_hex,
@@ -1840,6 +2126,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1884,6 +2171,231 @@ mod tests {
         Ok(())
     }
 
+    fn pricing_threshold_diff() -> &'static str {
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
+         --- a/src/lib.rs\n\
+         +++ b/src/lib.rs\n\
+         @@ -1,3 +1,3 @@\n\
+          pub fn discount(total: i32) -> i32 {\n\
+         -    if total > 100 { total / 10 } else { 0 }\n\
+         +    if total >= 100 { total / 10 } else { 0 }\n\
+          }\n"
+    }
+
+    fn write_pricing_crate(root: &Path, include_lib: bool) -> Result<(), String> {
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='pricing'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("tests/t.rs"),
+            "#[test]\nfn high_total_gets_discount() {\n    assert_eq!(pricing::discount(200), 20);\n}\n",
+        )?;
+        if include_lib {
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// #4586: a changed production file missing from the working tree
+    /// (sparse checkout / local delete) must not become a clean
+    /// `no_static_path`. The adapter withholds probes and names the file.
+    #[test]
+    fn analyze_diff_discloses_changed_file_absent_from_worktree() -> Result<(), String> {
+        let root = temp_root("absent-worktree-lib")?;
+        write_pricing_crate(&root, false)?;
+        let changed_files = diff::parse_unified_diff(pricing_threshold_diff());
+        assert_eq!(
+            changed_files.len(),
+            1,
+            "fixture must parse the changed production file"
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(
+            result.changed_files, 1,
+            "the absent file is still a changed Rust subject"
+        );
+        assert!(
+            result.findings.iter().all(|finding| {
+                finding.class != ExposureClass::NoStaticPath
+                    && finding.class != ExposureClass::StaticUnknown
+            }),
+            "probes for the absent file must be withheld, not classified: {:?}",
+            result.findings
+        );
+        let limitation = result
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind
+                    == crate::analysis_outcome::AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+            })
+            .ok_or_else(|| {
+                format!(
+                    "expected changed_file_absent_from_worktree, got {:?}",
+                    result.limitations
+                )
+            })?;
+        assert_eq!(limitation.path.as_deref(), Some("src/lib.rs"));
+        assert_eq!(limitation.affected_items, Some(1));
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("absent from the working tree"),
+            "detail must name the limitation, got {detail:?}"
+        );
+        assert!(
+            limitation.recovery.detail.contains("sparse checkout")
+                && limitation.recovery.detail.contains("Check out"),
+            "recovery must tell the operator to restore the file: {}",
+            limitation.recovery.detail
+        );
+        Ok(())
+    }
+
+    /// #4586: a deep absent path must still produce the typed limitation.
+    /// Embedding the path in `bounded_detail` would exceed 512 characters
+    /// and abort the run.
+    #[test]
+    fn absent_file_limitation_survives_a_detail_over_budget_path() -> Result<(), String> {
+        let deep = format!("src/{}missing.rs", "deep/".repeat(90));
+        assert!(
+            format!(
+                "changed file `{deep}` is absent from the working tree (sparse checkout or local delete); probes for this file were withheld"
+            )
+            .chars()
+            .count()
+                > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
+            "fixture must exceed the detail budget when the path is interpolated"
+        );
+        let limitations = limitations_for_absent_changed_files(&[std::path::PathBuf::from(&deep)])?;
+        assert_eq!(limitations.len(), 1);
+        assert_eq!(limitations[0].path.as_deref(), Some(deep.as_str()));
+        let detail = limitations[0].bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.chars().count() <= crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
+            "detail must stay bounded, got {} chars",
+            detail.chars().count()
+        );
+        assert!(
+            detail.contains("absent from the working tree"),
+            "detail must still name the limitation: {detail}"
+        );
+        Ok(())
+    }
+
+    /// #4586 negative: the same change on disk is ordinary analysis,
+    /// not an absent-worktree limitation.
+    #[test]
+    fn analyze_diff_does_not_name_absent_worktree_when_the_file_is_present() -> Result<(), String> {
+        let root = temp_root("present-worktree-lib")?;
+        write_pricing_crate(&root, true)?;
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &diff::parse_unified_diff(pricing_threshold_diff()),
+        )?;
+        assert!(
+            result.limitations.iter().all(|limitation| {
+                limitation.kind
+                    != crate::analysis_outcome::AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+            }),
+            "present file must not emit the absent-worktree limitation: {:?}",
+            result.limitations
+        );
+        assert!(
+            !result.findings.is_empty(),
+            "present changed production file must still produce findings"
+        );
+        Ok(())
+    }
+
+    /// #4586 mixed: analyze the file that is on disk; disclose only the
+    /// sibling that is not.
+    #[test]
+    fn analyze_diff_keeps_present_files_when_a_sibling_is_absent() -> Result<(), String> {
+        let root = temp_root("mixed-absent-sibling")?;
+        write_pricing_crate(&root, true)?;
+        write(
+            &root.join("src/present.rs"),
+            "pub fn present(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- a/src/lib.rs\n\
+             +++ b/src/lib.rs\n\
+             @@ -1,3 +1,3 @@\n\
+              pub fn discount(total: i32) -> i32 {\n\
+             -    if total > 100 { total / 10 } else { 0 }\n\
+             +    if total >= 100 { total / 10 } else { 0 }\n\
+              }\n\
+             diff --git a/src/missing.rs b/src/missing.rs\n\
+             --- a/src/missing.rs\n\
+             +++ b/src/missing.rs\n\
+             @@ -1,3 +1,3 @@\n\
+              pub fn extra(flag: bool) -> bool {\n\
+             -    if flag { true } else { false }\n\
+             +    if flag { false } else { true }\n\
+              }\n",
+        );
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        assert_eq!(result.changed_files, 2);
+        assert_eq!(
+            result
+                .limitations
+                .iter()
+                .filter(|limitation| {
+                    limitation.kind
+                        == crate::analysis_outcome::AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            result.limitations[0].path.as_deref(),
+            Some("src/missing.rs")
+        );
+        assert!(
+            result.findings.iter().any(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .ends_with("src/lib.rs")
+            }),
+            "the present sibling must still be classified: {:?}",
+            result.findings
+        );
+        assert!(
+            result.findings.iter().all(|finding| {
+                !finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .ends_with("src/missing.rs")
+            }),
+            "the absent sibling must not receive a probe: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
     // --- #2970 slice C: path-dependency diff-scope expansion ---
 
     fn diff_options(root: PathBuf, mode: AnalysisMode) -> AnalysisOptions {
@@ -1893,6 +2405,7 @@ mod tests {
             diff_file: None,
             mode,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -2166,6 +2679,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2318,6 +2832,7 @@ mod tests {
                     diff_file: None,
                     mode: AnalysisMode::Ready,
                     resolved_subject_identity: None,
+                    open_rust_index_paths: Default::default(),
                     include_unchanged_tests: true,
                     resolve_tsconfig_paths: false,
                     perl_facts_path: None,
@@ -2431,6 +2946,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2606,6 +3122,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2691,6 +3208,10 @@ fn absent_delimiter_boundary_returns_head() {
 
     #[test]
     fn diff_index_file_limit_defaults_when_unset() {
+        // Independent decision pin: the guard-raise set the measured default
+        // to 1200 (repo growth evidence); a revert of the constant must fail
+        // here rather than silently re-hide under the 800 default.
+        assert_eq!(DIFF_INDEX_FILE_LIMIT, 1200);
         assert_eq!(
             diff_index_file_limit_from_env(Err(VarError::NotPresent)),
             Ok(DIFF_INDEX_FILE_LIMIT)
@@ -3298,10 +3819,13 @@ fn absent_delimiter_boundary_returns_head() {
     fn repo_index_file_limit_env_parsing() -> Result<(), String> {
         // Default applies when unset; valid override wins; invalid fails
         // closed (#2109).
+        // Independent decision pin for the guard-raise default; see the diff
+        // guard test for the rationale.
+        assert_eq!(REPO_INDEX_FILE_LIMIT, 1200);
         let unset = repo_index_file_limit_from_env(Err(std::env::VarError::NotPresent))
             .map_err(|err| format!("default should parse: {err}"))?;
         assert_eq!(
-            unset, 800,
+            unset, REPO_INDEX_FILE_LIMIT,
             "default must be the {REPO_INDEX_FILE_LIMIT_ENV} guard"
         );
         let raised = repo_index_file_limit_from_env(Ok("5000".to_string()))
@@ -3666,6 +4190,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3923,7 +4448,8 @@ fn absent_delimiter_boundary_returns_head() {
         write("src/vendor/mod.rs", "pub fn seller() {}\n")?;
         write("src/lib.rs", "pub fn a() {}\n")?;
 
-        let generated = GeneratedRustSources::for_repo(&root, &[]);
+        let config = crate::config::RustLanguageConfig::default();
+        let generated = GeneratedRustSources::for_repo(&root, &config);
         for path in [
             "src/pb/shop.v1.rs",
             "src/ffi.rs",
@@ -3961,11 +4487,15 @@ fn absent_delimiter_boundary_returns_head() {
             removed("vendor/gone/src/lib.rs"),
         ];
         assert!(
-            GeneratedRustSources::for_diff(&root, &[], &diff)
-                .contains(Path::new("vendor/gone/src/lib.rs"))
+            GeneratedRustSources::for_diff(
+                &root,
+                &crate::config::RustLanguageConfig::default(),
+                &diff
+            )
+            .contains(Path::new("vendor/gone/src/lib.rs"))
         );
         assert!(
-            !GeneratedRustSources::for_repo(&root, &[])
+            !GeneratedRustSources::for_repo(&root, &crate::config::RustLanguageConfig::default())
                 .contains(Path::new("vendor/gone/src/lib.rs"))
         );
         let _ = fs::remove_dir_all(&root);
@@ -3993,7 +4523,8 @@ fn absent_delimiter_boundary_returns_head() {
             ],
         );
         with_overlay(Some(Arc::new(overlay)), || {
-            let generated = GeneratedRustSources::for_repo(&root, &[]);
+            let config = crate::config::RustLanguageConfig::default();
+            let generated = GeneratedRustSources::for_repo(&root, &config);
             assert!(generated.contains(Path::new("src/pb.rs")));
             assert!(!generated.contains(Path::new("src/hand.rs")));
         });
@@ -4104,6 +4635,7 @@ fn absent_delimiter_boundary_returns_head() {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: Vec::new(),
             recommended_next_step: None,
             language: None,
@@ -4146,6 +4678,7 @@ fn absent_delimiter_boundary_returns_head() {
             diff_file: None,
             mode: AnalysisMode::Ready,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -4255,6 +4788,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4344,6 +4878,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4424,6 +4959,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4490,6 +5026,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4545,6 +5082,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4640,6 +5178,101 @@ fn absent_delimiter_boundary_returns_head() {
         );
         assert_eq!(orphan_limitation_paths(&result), vec!["src/unused.rs"]);
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_names_the_unresolved_path_a_changed_file_is_reached_through()
+    -> Result<(), String> {
+        // #4435 follow-up: `src/platform/unix_impl.rs` enters the crate only
+        // through `#[cfg_attr(unix, path = ...)] mod sys;`, which ripr cannot
+        // resolve, so it gets no module context and its findings can miss
+        // related tests. It still seeds, and the run names the declaration.
+        // `src/used.rs` is reached by a resolved `mod` and earns nothing;
+        // `src/sys.rs` (the default resolution) changes only a comment, so
+        // it has no finding to qualify.
+        let root = temp_root("module-graph-unresolved-route")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='shop'\nversion='0.1.0'\nedition='2021'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub mod used;\n#[cfg_attr(unix, path = \"platform/unix_impl.rs\")]\nmod sys;\n",
+        )?;
+        write(&root.join("src/used.rs"), DISCOUNT_SOURCE)?;
+        write(&root.join("src/platform/unix_impl.rs"), DISCOUNT_SOURCE)?;
+        write(
+            &root.join("src/sys.rs"),
+            "// fallback\npub fn fallback() {}\n",
+        )?;
+        let diff = format!(
+            "{}{}diff --git a/src/sys.rs b/src/sys.rs\n\
+             --- a/src/sys.rs\n\
+             +++ b/src/sys.rs\n\
+             @@ -1,2 +1,2 @@\n\
+             -// old fallback\n\
+             +// fallback\n \
+             pub fn fallback() {{}}\n",
+            predicate_change_diff("src/used.rs"),
+            predicate_change_diff("src/platform/unix_impl.rs"),
+        );
+
+        let result = module_graph_diff(&root, &diff)?;
+
+        let files = finding_files(&root, &result);
+        for seeded in ["src/used.rs", "src/platform/unix_impl.rs"] {
+            assert!(
+                files.iter().any(|file| file == seeded),
+                "{seeded} must still seed: {files:?}"
+            );
+        }
+        let routes = result
+            .limitations
+            .iter()
+            .filter(|limitation| {
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("unresolved `#[path]` target"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            routes
+                .iter()
+                .filter_map(|limitation| limitation.path.clone())
+                .collect::<Vec<_>>(),
+            vec!["src/platform/unix_impl.rs"]
+        );
+        let recovery = routes
+            .first()
+            .map(|limitation| limitation.recovery.detail.clone())
+            .unwrap_or_default();
+        assert!(
+            recovery.contains("the `mod` at src/lib.rs:3"),
+            "the limitation must name the declaration: {recovery}"
+        );
+        assert!(orphan_limitation_paths(&result).is_empty());
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn unresolved_route_limitation_bounds_long_paths() -> Result<(), String> {
+        let long = PathBuf::from(format!("src/{}.rs", "deep/".repeat(80)));
+        let route = (
+            PathBuf::from(format!("src/{}/lib.rs", "x".repeat(300))),
+            usize::MAX,
+        );
+        let limitations = super::unresolved_route_limitations(std::iter::once((&long, &route)))?;
+        let recovery = limitations
+            .first()
+            .map(|limitation| limitation.recovery.detail.clone())
+            .unwrap_or_default();
+        assert!(
+            recovery.contains('…') && recovery.contains(&format!(":{}", usize::MAX)),
+            "{recovery}"
+        );
         Ok(())
     }
 
@@ -4982,6 +5615,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5067,6 +5701,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5203,6 +5838,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5337,6 +5973,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5449,6 +6086,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5543,6 +6181,7 @@ fn absent_delimiter_boundary_returns_head() {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
             impl_context: Default::default(),
+            item: Default::default(),
         };
         let rust_index = RustIndex {
             functions: vec![rust_owner.clone()],
@@ -5574,3 +6213,6 @@ fn absent_delimiter_boundary_returns_head() {
         );
     }
 }
+
+#[cfg(test)]
+mod handwritten_files_tests;

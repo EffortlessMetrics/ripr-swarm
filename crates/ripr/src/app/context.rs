@@ -66,7 +66,10 @@ pub(crate) fn collect_context_with_config_and_worktree(
             max_related_tests,
             Some(navigation.explain_command(&finding.id)),
         )),
-        None => Err(super::explain::no_finding_matched(selector, worktree)),
+        None => Err(super::explain::no_finding_matched(
+            selector,
+            &navigation.list_command(),
+        )),
     }
 }
 
@@ -100,7 +103,9 @@ pub(crate) fn collect_context_from_artifact(
             max_related_tests,
             Some(navigation.explain_command(&finding.id)),
         )),
-        None => Err(format!("no finding matched {selector:?}")),
+        None => Err(format!(
+            "no finding matched {selector:?}; run `ripr check --json` to list available finding ids"
+        )),
     }
 }
 

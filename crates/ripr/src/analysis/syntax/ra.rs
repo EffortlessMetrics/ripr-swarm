@@ -3,6 +3,8 @@ use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericParams, HasName},
 };
+mod property_macros;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +12,9 @@ use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
 use super::super::facts::FileFacts;
+use super::super::facts::FunctionContainer;
 use super::super::facts::FunctionImplContext;
+use super::super::facts::FunctionItemFact;
 use super::super::facts::FunctionSourceRole;
 use super::super::facts::LetBindingFact;
 use super::super::facts::ModuleDeclarationFact;
@@ -141,7 +145,7 @@ pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
     parse_rust_string_literal(inner).map(PathBuf::from)
 }
 
-fn parse_rust_string_literal(literal: &str) -> Option<String> {
+pub(super) fn parse_rust_string_literal(literal: &str) -> Option<String> {
     if let Some(body) = literal
         .strip_prefix('"')
         .and_then(|body| body.strip_suffix('"'))
@@ -199,6 +203,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
 
     let source = parse.tree();
     let line_index = LineIndex::new(text);
+    let empty_invocations = super::owner_pin::empty_local_macro_invocation_ranges(source.syntax());
     let module_declarations = module_declaration_facts(&source, &line_index);
     let mut functions = Vec::new();
     let mut tests = Vec::new();
@@ -220,7 +225,19 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let start_line = line_index.line(fn_start);
         let end_line = line_index.line_for_range_end(fn_end);
         let body = slice_text(text, fn_start, fn_end);
-        let calls = extract_call_facts(&body, start_line);
+        // Keep the original function body as source authority. Only call
+        // evidence excludes known-empty invocations, including their bytes on
+        // a mixed line that later argument/activation readers consume.
+        let call_offset = u32::from(fn_start) as usize;
+        let call_end = u32::from(fn_end) as usize;
+        let call_body = crate::analysis::extract::property_macros::mask_evidence_ranges(
+            &body,
+            empty_invocations
+                .iter()
+                .filter(|range| range.start >= call_offset && range.end <= call_end)
+                .map(|range| range.start - call_offset..range.end - call_offset),
+        );
+        let calls = extract_call_facts(&call_body, start_line);
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
         let probe_shapes = extract_parser_probe_shapes(&function, text, &line_index);
@@ -269,6 +286,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             impl_attrs: collect_impl_attr_syntax(&function),
             nested_fn_names: nested_fn_names.clone(),
             let_bindings: let_bindings.clone(),
+            item: function_item_fact(&function),
             impl_context: function_impl_context(&function),
         };
 
@@ -323,6 +341,10 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         probe_shapes: file_probe_shapes,
         used_lexical_fallback: false,
         module_declarations,
+        unresolved_property_macros: property_macros::unresolved_property_macros(
+            &source,
+            &line_index,
+        ),
         role_provenance: SourceRoleProvenance::default(),
         source: text.to_string(),
     })
@@ -571,6 +593,51 @@ fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
 
     segments.push(name.to_string());
     SymbolId(segments.join("::"))
+}
+
+/// Where `function` is declared (#4478): the nearest enclosing item that
+/// decides which call syntax can name it. The walk stops at the first `fn`,
+/// `impl` or `trait` ancestor, so a helper `fn` nested in a method body is
+/// `Local`, not a method of the `impl`.
+fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
+    let container = function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(|node| {
+            if ast::Fn::can_cast(node.kind()) {
+                return Some(FunctionContainer::Local);
+            }
+            if let Some(impl_block) = ast::Impl::cast(node.clone()) {
+                let self_ty = impl_block
+                    .self_ty()
+                    .map(|ty| compact_syntax_text(ty.syntax().text().to_string()));
+                return Some(match (impl_block.trait_(), self_ty) {
+                    (_, None) => FunctionContainer::Unknown,
+                    (None, Some(self_ty)) => FunctionContainer::Inherent { self_ty },
+                    (Some(trait_ty), Some(self_ty)) => FunctionContainer::TraitImpl {
+                        trait_path: compact_syntax_text(trait_ty.syntax().text().to_string()),
+                        self_ty,
+                    },
+                });
+            }
+            let trait_item = ast::Trait::cast(node)?;
+            Some(match trait_item.name() {
+                Some(name) => FunctionContainer::Trait {
+                    trait_name: name.text().to_string(),
+                },
+                None => FunctionContainer::Unknown,
+            })
+        })
+        .unwrap_or(FunctionContainer::Free);
+    let has_self_param = function
+        .param_list()
+        .is_some_and(|params| params.self_param().is_some());
+    FunctionItemFact {
+        container,
+        has_self_param,
+        has_body: function.body().is_some(),
+    }
 }
 
 /// The item a type-path call `T::name(` would find this `fn` in (#4558).
@@ -1301,7 +1368,10 @@ fn extract_parser_oracles(
     // RIPR-SPEC-0106 (Part A): pre-scan the function body for `unwrap_err`/
     // `expect_err` variable bindings so assertions on those variables can be
     // upgraded to ExactErrorVariant.
-    let function_text = function.syntax().text().to_string();
+    let original_function_text = function.syntax().text().to_string();
+    let function_text = crate::analysis::extract::property_macros::property_safe_scanner_text(
+        &original_function_text,
+    );
     let bound_error_vars = unwrap_err_bound_variables(&function_text);
 
     let mut assertions = Vec::new();
@@ -1406,10 +1476,9 @@ fn extract_parser_oracles(
             let_bindings: &let_bindings,
         },
     );
-    for oracle in
-        extract_line_scanned_oracles(&function.syntax().text().to_string(), function_start)
-            .into_iter()
-            .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
+    for oracle in extract_line_scanned_oracles(&function_text, function_start)
+        .into_iter()
+        .filter(|oracle| !guarded_matches.match_start_lines.contains(&oracle.line))
     {
         assertions.push(oracle);
     }
@@ -1485,7 +1554,7 @@ pub(crate) fn slice_text(text: &str, start: TextSize, end: TextSize) -> String {
     text.get(start..end).unwrap_or("").to_string()
 }
 
-fn slice_macro_call_text(text: &str, start: TextSize, end: TextSize) -> String {
+pub(super) fn slice_macro_call_text(text: &str, start: TextSize, end: TextSize) -> String {
     let start = text_size_to_usize(start);
     let mut end = text_size_to_usize(end);
     let bytes = text.as_bytes();
@@ -1870,6 +1939,72 @@ pub fn validate(value: i32) -> Result<i32, String> {
     }
 
     #[test]
+    fn predicate_start_byte_skips_a_string_decoy_on_the_same_line() -> Result<(), Box<dyn Error>> {
+        let source = concat!(
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {\n",
+            "    let decoy = \"montant_é > discount_threshold { false } else { true }\"; if montant_é > discount_threshold { false } else { true }\n",
+            "}\n",
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
+        let predicates: Vec<_> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .collect();
+        assert!(
+            !predicates.is_empty(),
+            "expected predicate shapes, got {:?}",
+            facts.probe_shapes
+        );
+        let decoy = source
+            .find("montant_é > discount_threshold")
+            .ok_or("decoy missing")?;
+        let rest = source
+            .get(decoy.saturating_add(1)..)
+            .ok_or("slice after decoy is not a scalar boundary")?;
+        let producer = rest
+            .find("montant_é > discount_threshold")
+            .map(|offset| decoy.saturating_add(1).saturating_add(offset))
+            .ok_or("producer missing")?;
+        assert!(
+            predicates.iter().any(|shape| shape.start_byte == producer),
+            "if-condition start_byte missing: decoy={decoy} producer={producer} shapes={predicates:?}"
+        );
+        assert!(
+            predicates.iter().all(|shape| shape.start_byte != decoy),
+            "string decoy was credited as a predicate origin: {predicates:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn predicate_start_byte_survives_tab_cjk_astral_and_combining_prefix()
+    -> Result<(), Box<dyn Error>> {
+        let prefix = "\tlet 日本語 = \"🎉e\u{0301}\"; if ";
+        let source = format!(
+            "pub fn price(montant_é: i32, discount_threshold: i32) -> bool {{\n{prefix}montant_é > discount_threshold {{ false }} else {{ true }}\n}}\n"
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        assert!(
+            !facts.used_lexical_fallback,
+            "parser should own this unicode prefix"
+        );
+        let predicates: Vec<_> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == PROBE_SHAPE_PREDICATE)
+            .collect();
+        let producer = source
+            .find("montant_é > discount_threshold")
+            .ok_or("predicate missing")?;
+        assert!(
+            predicates.iter().any(|shape| shape.start_byte == producer),
+            "producer={producer} shapes={predicates:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ra_adapter_extracts_unsafe_execution_boundaries_without_lexical_false_positives()
     -> Result<(), Box<dyn Error>> {
         let root = temp_dir("ra_unsafe_boundaries")?;
@@ -1978,6 +2113,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
                 probe_shapes: vec![],
                 used_lexical_fallback: false,
                 module_declarations: Vec::new(),
+                unresolved_property_macros: Vec::new(),
                 role_provenance: Default::default(),
                 source: String::new(),
             },

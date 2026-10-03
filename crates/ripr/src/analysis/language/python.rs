@@ -22,8 +22,12 @@
 use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
+use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod bounded_read;
+use crate::analysis::workspace::{
+    changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
+};
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
@@ -46,7 +50,7 @@ use bounded_read::{
 };
 use rustpython_parser::ast::Expr;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
@@ -60,6 +64,7 @@ mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod parametrize;
 mod parse_budget;
 mod probe_shape;
 mod reexports;
@@ -126,11 +131,13 @@ use source_facts::parse_module;
 use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod same_class_callees;
 mod static_limits;
 use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
+mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
     contains_dynamic_dispatch, contains_dynamic_import, contains_metaprogramming,
@@ -192,6 +199,11 @@ struct PythonOwner {
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
     module_constants: Vec<module_constants::PythonModuleConstant>,
+    /// Same-class methods this method may call through its receiver
+    /// (`self.` / `cls.`) or a bound-method alias (`f = self.x`). Empty for
+    /// non-methods and `@staticmethod`. Used only to name a Python
+    /// transitive-reach limitation on silent `no_static_path` findings (#4765).
+    same_class_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
@@ -265,6 +277,8 @@ struct PythonTest {
     decorators: Vec<String>,
     fixtures: Vec<String>,
     parametrized: bool,
+    /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
+    parametrize: Option<parametrize::PythonParametrizeCases>,
     framework: &'static str,
     assertions: Vec<PythonAssertion>,
     /// How the test and its module can rebind names and attributes; guards
@@ -334,6 +348,7 @@ fn expr_full_name(expr: &Expr) -> Option<String> {
 fn stop_reason_for_python_static_limit(limit: &PythonStaticLimit) -> StopReason {
     match limit.kind {
         StaticLimitKind::DynamicDispatch => StopReason::DynamicDispatchUnresolved,
+        StaticLimitKind::PythonTransitiveReachUnresolved => StopReason::TransitiveReachUnresolved,
         _ => StopReason::StaticProbeUnknown,
     }
 }
@@ -576,24 +591,23 @@ impl PythonAdapter {
             );
         }
 
-        // Read-bound disclosures: one named limitation per file refused by a
-        // size bound. The recovery names the env knobs so operators can raise
-        // the bounds; the detail carries the distinguishable reason.
-        for (file, err) in &workspace_read.limits {
-            limitations.push(
-                AnalysisLimitation::new(
-                    AnalysisLimitationKind::LanguageScopeUnsupported,
-                    AnalysisStage::LanguageAdapter,
-                    AnalysisRecovery::new(
-                        AnalysisRecoveryKind::IncreaseConfiguredLimit,
-                        "Raise RIPR_PYTHON_MAX_FILE_READ_BYTES and/or RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.",
-                    )?,
-                )
-                .with_path(normalized_path(file))?
-                .with_affected_items(1)?
-                .with_detail(err.reason())?,
-            );
-        }
+        // Read-bound disclosures: named limitations for the files the read
+        // caps refuse, bounded per run (#5022). The disclosure is a
+        // stable-sorted sample of refused paths; refusals beyond the sample
+        // fold into one summary entry carrying the true refused count, and
+        // its detail states why the full per-file list is not materialized.
+        // Fail-closed behavior is unchanged: every refused file is still
+        // refused; only the disclosure is sampled. The recovery names the
+        // env knobs so operators can raise the bounds.
+        limitations.extend(bounded_read_limit_limitations(
+            "python",
+            workspace_read
+                .limits
+                .iter()
+                .map(|(file, err)| (normalized_path(file), err.reason()))
+                .collect(),
+            "Raise RIPR_PYTHON_MAX_FILE_READ_BYTES and/or RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES, then re-run the analysis.",
+        )?);
 
         // Read-failure disclosure (the TypeScript adapter's #4099 model):
         // an unreadable CHANGED file is never classified and its tests
@@ -628,18 +642,35 @@ impl PythonAdapter {
         }
         let skipped_files = workspace_read.io_failures.len();
 
+        // Excluded subtrees and generated files are skipped before admission
+        // and counting (#3672); the pipeline owns their skipped-scope disclosure.
+        let python_changed_files = changed_files
+            .iter()
+            .filter(|changed| {
+                matches!(route(&changed.path), Some(LanguageId::Python))
+                    && !is_detectable_generated_python_path(&changed.path)
+                    && !is_detectable_excluded_python_path(&changed.path)
+            })
+            .collect::<Vec<_>>();
+        // The workspace walk cannot discover a missing NEW-side path. Reuse
+        // source admission before counting or classifying it (#5110); genuine
+        // deletions are already omitted by the diff parser.
+        let absent_changed_files = changed_source_files_absent_from_worktree(
+            &options.root,
+            python_changed_files
+                .iter()
+                .map(|changed| changed.path.as_path()),
+        );
+        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
+        let absent_changed_paths = absent_changed_files
+            .iter()
+            .map(|path| normalized_path(path))
+            .collect::<BTreeSet<_>>();
+
         let mut findings: Vec<Finding> = Vec::new();
         let mut changed_count: usize = 0;
-        for changed in changed_files {
-            // Excluded subtrees (vendor, environment, cache, build output)
-            // are skipped BEFORE counting (#3672): the diff workspace walk
-            // prunes them, so no workspace facts can back a changed file
-            // under one and no findings can ever be emitted for it. Counting
-            // it would put an uninspected file in the report denominator.
-            if !matches!(route(&changed.path), Some(LanguageId::Python))
-                || is_detectable_generated_python_path(&changed.path)
-                || is_detectable_excluded_python_path(&changed.path)
-            {
+        for changed in python_changed_files {
+            if absent_changed_paths.contains(&normalized_path(&changed.path)) {
                 continue;
             }
             changed_count += 1;
@@ -783,6 +814,8 @@ impl PythonAdapter {
             partial_scope: None,
             skipped_files,
             limitations,
+            rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 
@@ -815,6 +848,8 @@ impl PythonAdapter {
             production_files,
             skipped_files,
             partial_reason,
+            rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 }

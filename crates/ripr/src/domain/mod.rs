@@ -6,6 +6,7 @@ mod command_spec;
 pub mod context_packet;
 mod diagnostic_witness;
 mod evidence;
+mod evidence_state;
 pub(crate) mod executed_control;
 mod feedback;
 mod finding_test_evidence;
@@ -14,6 +15,7 @@ mod git_candidate;
 mod identity;
 mod language;
 mod probe;
+mod repair_card;
 mod summary;
 mod support;
 mod test_evidence_identity;
@@ -46,6 +48,7 @@ pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,
 };
+pub(crate) use evidence_state::EvidenceState;
 pub(crate) use executed_control::{
     EXECUTED_CONTROL_PACKET_KIND, EXECUTED_CONTROL_SCHEMA_VERSION, ExecutedControlPacketV1,
     ObligationSatisfaction, ResultState,
@@ -74,6 +77,18 @@ pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
+};
+pub use repair_card::{
+    AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
+    DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
+    EditCageGoal, FocusedExecutionGoal, MAX_REPAIR_CARD_REJECTED_ALTERNATIVES,
+    MutationConfirmationGoal, REPAIR_CARD_BUDGET_VERSION, REPAIR_CARD_CLAIM_BOUNDARY,
+    REPAIR_CARD_SCHEMA_VERSION, RepairCardAssertionGoal, RepairCardAttempt, RepairCardBudget,
+    RepairCardCommandRef, RepairCardDetailFamily, RepairCardDetailRef, RepairCardDetailState,
+    RepairCardDetailSummary, RepairCardDoneWhen, RepairCardOmissionClass,
+    RepairCardProposedTestKind, RepairCardReadinessFacts, RepairCardRejectedAlternative,
+    RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardTarget,
+    RepairCardTestKind, RepairCardV1, StaticMovementGoal, repair_card_route_exposable,
 };
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.

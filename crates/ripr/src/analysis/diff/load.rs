@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 #[cfg(test)]
@@ -269,11 +268,15 @@ pub fn resolve_effective_base(
 ///
 /// Default-base probes treat any git spawn failure as "ref absent". This
 /// classification is the single place that puts missing git, a non-repository
-/// root, and an unanswered probe back into distinct messages.
+/// root, Git's dubious-ownership refusal, and an unanswered probe back into
+/// distinct messages.
 #[derive(Debug, PartialEq, Eq)]
 enum GitRootProbe {
     GitNotFoundOnPath,
     NotAWorkTree,
+    /// Git ran and refused the repository because another user owns it; the
+    /// message carries the `safe.directory` repair rendered from Git's stderr.
+    DubiousOwnership(String),
     Unanswered,
 }
 
@@ -301,6 +304,7 @@ fn message_for_git_root_probe(probe: GitRootProbe, root: &Path) -> Option<String
             Some(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string())
         }
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
+        GitRootProbe::DubiousOwnership(message) => Some(message),
         GitRootProbe::Unanswered => None,
     }
 }
@@ -315,6 +319,15 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
         Ok(output) => {
             let inside =
                 output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true";
+            if !inside
+                && let Some(message) = crate::git::dubious_ownership_message(
+                    root,
+                    &output.stderr,
+                    " (the analysis did not run)",
+                )
+            {
+                return GitRootProbe::DubiousOwnership(message);
+            }
             classify_git_root_probe(Ok(inside))
         }
     }
@@ -336,10 +349,13 @@ fn probe_git_root(root: &Path, git_timeout: Option<Duration>) -> GitRootProbe {
 /// printed anything else — or failed, which is what it does outside a
 /// repository — is the case this names. Missing git is not this message; the
 /// omitted-`--base` path reads [`message_for_git_root_probe`] so PATH is named
-/// instead of "pass `--base`".
+/// instead of "pass `--base`". A repository Git refuses because another user
+/// owns it fails the same way, so that refusal is named with its
+/// `safe.directory` repair instead (#4530).
 fn not_a_work_tree(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     match probe_git_root(root, git_timeout) {
         GitRootProbe::NotAWorkTree => Some(not_a_work_tree_message(root)),
+        GitRootProbe::DubiousOwnership(message) => Some(message),
         GitRootProbe::GitNotFoundOnPath | GitRootProbe::Unanswered => None,
     }
 }
@@ -742,12 +758,20 @@ enum WorkingTreeProbe {
     Error(String),
 }
 
+/// Cooperative deadline for the working-tree change probe (#2303, #4363).
+/// The probe is a disclosure side channel on the analysis path, not the
+/// analysis itself: a hung `git status` must not block the run past the
+/// deadline. One minute matches the `GIT_DEADLINE` family used by the other
+/// bounded git consumers; unlike the loader's base-resolution probes, this
+/// public entry point carries no caller-supplied `git_timeout`.
+const WORKING_TREE_PROBE_DEADLINE: Duration = Duration::from_mins(1);
+
 fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
-    let result = Command::new("git")
-        .args(crate::git::UNTRUSTED_REPOSITORY_CONFIG)
-        .args(["status", "--porcelain", "--", "."])
-        .current_dir(root)
-        .output();
+    let result = crate::git::run_git_output_with_deadline(
+        root,
+        &["status", "--porcelain", "--", "."],
+        Some(WORKING_TREE_PROBE_DEADLINE),
+    );
     match result {
         Ok(out) if out.status.success() => {
             if String::from_utf8_lossy(&out.stdout)

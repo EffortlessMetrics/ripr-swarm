@@ -131,6 +131,7 @@ mod tests {
                 "typescript_oracle_confidence: high".to_string(),
                 "typescript_oracle_evidence_ref: tests/discount.test.ts:3".to_string(),
                 "missing_discriminator: amount == threshold".to_string(),
+                "typescript_boundary_parameters: parameter=amount;index=0;operand=threshold;operand_index=1".to_string(),
             ],
             missing: Vec::new(),
             flow_sinks: Vec::new(),
@@ -145,6 +146,7 @@ mod tests {
                 }],
             },
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: "applyDiscount applies discount when amount meets threshold".to_string(),
                 file: PathBuf::from("tests/discount.test.ts"),

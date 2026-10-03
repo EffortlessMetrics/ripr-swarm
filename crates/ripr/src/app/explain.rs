@@ -51,20 +51,16 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
             config,
             &navigation.context_command(selector),
         )),
-        None => Err(no_finding_matched(selector, worktree)),
+        None => Err(no_finding_matched(selector, &navigation.list_command())),
     }
 }
 
-/// The miss message names the listing command for the same scope: without
-/// `--worktree`, `ripr check --json` lists committed-history findings and
-/// omits the ones only the uncommitted edits produce.
-pub(crate) fn no_finding_matched(selector: &str, worktree: bool) -> String {
-    let list = if worktree {
-        "ripr check --worktree --json"
-    } else {
-        "ripr check --json"
-    };
-    format!("no finding matched {selector:?}; run `{list}` to list available finding ids")
+/// The miss message names the listing command for the same scope (root,
+/// base, `--worktree`, mode): a bare `ripr check --json` would list findings
+/// from the caller's directory and default base, and without `--worktree`
+/// it omits the findings only the uncommitted edits produce.
+pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
+    format!("no finding matched {selector:?}; run `{list_command}` to list available finding ids")
 }
 
 /// Like [`explain_finding_with_config`] but loads the finding set from a

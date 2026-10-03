@@ -18,9 +18,13 @@ mod lens;
 mod payload_bounds;
 mod position;
 mod progress;
+mod progress_stages;
 mod refresh_scheduler;
+mod repair_card;
 #[cfg(test)]
 mod saved_edit_sequence;
+#[cfg(test)]
+mod source_origin_tests;
 mod state;
 #[cfg(test)]
 mod tests;

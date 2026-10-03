@@ -148,10 +148,14 @@ that untracked source was analyzed.
 4. **File diff compatibility**: `ripr check --diff change.patch` keeps existing
    behavior; `ripr check --diff change.patch --worktree` returns an error.
 5. **Drill-in parity**: after `ripr check --base HEAD --worktree` finds an
-   uncommitted change, its printed `ripr explain` command carries
-   `--worktree` and resolves the finding; the same explain without
-   `--worktree` finds nothing. `ripr context --worktree --json` names an
-   explain command that carries `--worktree`.
+   uncommitted change, its printed `ripr explain` and `ripr context` commands
+   carry `--worktree` and, run verbatim from another directory, select that
+   finding; the same explain without `--worktree` finds nothing.
+   `ripr context --worktree --json` names an explain command that carries
+   `--worktree`. A selector miss or a missing selector under `--worktree`
+   names a `ripr check ... --worktree --json` listing with the same root and
+   base, and a `--worktree` drill-in without `--root` resolves the project
+   root from a subdirectory the way `ripr check` does.
 6. **Doctor**: dirty tracked-worktree guidance names
    `ripr check --base HEAD --worktree` when git is available. When git is not
    on PATH, doctor names the `--diff` route even if the tree is dirty.
@@ -242,6 +246,10 @@ that untracked source was analyzed.
 | Doctor git-unavailable first command | `crates/ripr/src/output/doctor.rs` |
 | Git spawn missing-PATH diagnosis | `crates/ripr/src/git.rs` |
 | User help | `crates/ripr/src/cli/help/core.rs` |
+| Drill-in and listing commands | `crates/ripr/src/app/navigation.rs` |
+| Worktree explain/context use cases | `crates/ripr/src/app/explain.rs`, `crates/ripr/src/app/context.rs` |
+| Worktree explain/context CLI adapters | `crates/ripr/src/cli/commands.rs`, `crates/ripr/src/cli/commands/context.rs` |
+| Implicit root resolution | `crates/ripr/src/cli/commands/check.rs` |
 | App-internal worktree check path | `crates/ripr/src/app/check.rs` |
 | Analysis worktree pipeline | `crates/ripr/src/analysis/mod.rs` |
 | Diff source selection | `crates/ripr/src/analysis/pipeline.rs` |
