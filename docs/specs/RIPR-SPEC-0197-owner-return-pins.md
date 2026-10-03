@@ -299,9 +299,25 @@ The existing workspace binding authority rejects competing definitions,
 imports and opaque binding-producing calls. This is not a property-macro name
 allowlist or a macro evaluator: other matchers, nonempty/returning expansions,
 qualified, imported, shadowed and ambiguous bindings remain unsupported.
-Discarded argument tokens supply no oracle or execution evidence. The same
-closure, CFG, collection and statement-prefix requirements still govern the
-independent equality. Calls after an assertion receive no new prefix exception.
+The same parser-backed local resolver also removes these empty invocations
+from the shared call-fact view. Both call discovery and retained mixed-line
+text exclude their arguments; a discarded 100/100 call cannot lend boundary
+activation to a real far equality on the same line. Original function/file
+source and AST coordinates remain intact. The far equality retains strong
+oracle strength and Observe/Discriminate=yes, with weak infection and
+`weakly_exposed`, just as when the empty invocation is removed. The real
+boundary positive remains exposed and rejects the wrong implementation.
+This does not govern arbitrary non-equality raw-oracle consumers or resolve
+general macro expansion. The same closure, CFG, collection and statement-prefix
+requirements still govern the independent equality. Calls after an assertion
+receive no new prefix exception.
+
+The repair changes extracted call facts, so predecessor facts are not
+interchangeable. Persisted file-fact/classified keys retain their existing
+build identity: an e290 predecessor uses a distinct producer from the repaired
+commit even when generations remain file facts 1.18/full 1.29/compact and
+sharded 0.35. Favorable predecessor self-hit, repaired-producer refusal and
+current reuse are separate controls; no cross-build cache bypass is inferred.
 
 Fourteen family fixtures pair direct and invoked-closure positives with uncalled,
 false-branch, macro-shadowed and no-assertion controls. Each family also has an

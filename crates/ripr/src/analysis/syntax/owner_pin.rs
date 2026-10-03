@@ -267,6 +267,26 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
         && call.syntax().ancestors().any(|ancestor| ancestor == scope)
 }
 
+/// Discarded call-argument spans from the same bounded local resolver used by
+/// execution admission. This only removes evidence; workspace macro ambiguity
+/// still independently refuses positive assertion admission.
+pub(super) fn empty_local_macro_invocation_ranges(
+    root: &SyntaxNode,
+) -> Vec<std::ops::Range<usize>> {
+    let empty = local_empty_macros(root);
+    if empty.is_empty() {
+        return Vec::new();
+    }
+    root.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| resolves_empty_local(call, &empty))
+        .map(|call| {
+            let range = call.syntax().text_range();
+            u32::from(range.start()) as usize..u32::from(range.end()) as usize
+        })
+        .collect()
+}
+
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {

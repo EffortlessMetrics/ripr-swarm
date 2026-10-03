@@ -10833,6 +10833,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities",
   "crates/ripr/tests/owner_pin_execution.rs::local_empty_macro_preserves_independent_equality_execution",
   "crates/ripr/tests/owner_pin_execution.rs::empty_macro_arguments_cannot_activate_a_real_far_oracle",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::empty_macro_call_predecessor_from_another_build_misses_and_current_reuses",
   "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::empty_local_macro_calls_preserve_real_call_text_and_original_source",
   "crates/ripr/tests/owner_pin_execution.rs::async_test_discovery_does_not_supply_execution_provenance",
   "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",

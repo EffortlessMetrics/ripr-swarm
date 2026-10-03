@@ -76,7 +76,11 @@ mod tests {
         assert_eq!(facts.source, source);
         assert_eq!(facts.tests.len(), 1);
         assert!(facts.tests[0].body.contains("discard_tokens!(owner(100)"));
-        let calls: Vec<_> = facts.tests[0].calls.iter().filter(|call| call.name == "owner").collect();
+        let calls: Vec<_> = facts.tests[0]
+            .calls
+            .iter()
+            .filter(|call| call.name == "owner")
+            .collect();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].line, 5);
         assert!(!calls[0].text.contains("owner(100)"));
@@ -85,7 +89,12 @@ mod tests {
         // A nonempty transcriber is not this denial authority.
         let nonempty = source.replace("=> {}", "=> { let _marker = (); }");
         let facts = summarize_file_with_parser(Path::new("src/lib.rs"), &nonempty)?;
-        assert!(facts.tests[0].calls.iter().any(|call| call.text.contains("owner(100)")));
+        assert!(
+            facts.tests[0]
+                .calls
+                .iter()
+                .any(|call| call.text.contains("owner(100)"))
+        );
         Ok(())
     }
 

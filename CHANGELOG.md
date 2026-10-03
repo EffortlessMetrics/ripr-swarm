@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Changed
 
+- Rust analysis: a proved-empty local macro cannot contribute discarded owner
+  calls or boundary arguments through a mixed-line call fact. A genuine far
+  assertion retains its strength and observation, while a real boundary test
+  still discriminates. Original source bytes remain authoritative; producer
+  build identity separates predecessor caches without reusing their facts. (#5027)
 - Rust analysis: ordinary turbofish calls remain eligible beside unresolved
   property macros. Opaque declarations cannot supply owner reach, and discarded
   property bodies cannot supply raw-scanned assertion oracles. These boundaries
