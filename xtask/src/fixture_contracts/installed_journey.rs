@@ -718,16 +718,32 @@ mod installed_journey_contract_tests {
     }
 
     #[test]
-    fn violation_messages_carry_the_contract_language_label() -> Result<(), String> {
+    fn violation_messages_render_the_exact_committed_language_bytes() -> Result<(), String> {
+        // Literal expectations pin the rendered bytes independently of the
+        // contract table: a corrupted label must fail this test, not define
+        // its own oracle.
         let manifest: Value = serde_json::json!({"schema_version": "not.a.real.schema"});
         let corpus: Value = serde_json::json!({"scenarios": []});
-        for contract in all_contracts() {
+        let cases = [
+            (
+                &INSTALLED_RUST_CONTRACT,
+                "blind journey installed rust manifest is missing journey_scenario_ids",
+            ),
+            (
+                &INSTALLED_TYPESCRIPT_CONTRACT,
+                "blind journey installed typescript manifest is missing journey_scenario_ids",
+            ),
+            (
+                &INSTALLED_PYTHON_CONTRACT,
+                "blind journey installed python manifest is missing journey_scenario_ids",
+            ),
+        ];
+        for (contract, expected) in cases {
             let missing = installed_journey_missing_scenarios(contract, &manifest, &corpus);
-            let joined = missing.join("\n");
-            let expected = format!("blind journey installed {}", contract.label);
-            if !joined.contains(&expected) {
+            if missing.len() != 1 || missing[0] != expected {
                 return Err(format!(
-                    "{expected} must prefix the missing-scenario messages, got: {joined}"
+                    "the {} contract must render `{expected}` exactly, got: {missing:?}",
+                    contract.label
                 ));
             }
         }
