@@ -48,7 +48,9 @@ proving a universal RSS threshold.
   shards use a new generation path so a failed publication leaves the
   previous valid generation or a miss, never a mixed authoritative
   manifest. An unpublished generation directory is removed on those
-  failure paths.
+  failure paths. A prior single entry is parked off the loader's
+  preferred path until the new manifest is admitted, then removed; a
+  pre-commit failure restores it.
 - If one classified seam cannot fit under the configured byte ceiling,
   the store returns `skipped_oversized_record_index_{i}_ceiling_{n}` and
   does not claim a populated cache. Analysis output stays usable.
@@ -81,6 +83,8 @@ proving a universal RSS threshold.
 - One oversized record skips without publishing a generation.
 - Failed replacement and cancellation leave the previous generation and
   do not retain an extra unpublished `g*` directory.
+- A failed sharded replacement of a single entry restores that entry;
+  a successful replacement leaves no preferred single path.
 - Size probes stop once encoded bytes exceed the ceiling; a large record
   cap still splits on the byte bound without serializing a full
   record-limit window.
@@ -111,6 +115,7 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::oversized_record_skips_without_claiming_a_populated_cache`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_replacement_keeps_the_previous_valid_generation`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::injected_fill_failure_does_not_admit_a_partial_generation`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_sharded_replace_restores_the_previous_single_entry`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::cancellation_before_manifest_preserves_the_prior_generation`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls`

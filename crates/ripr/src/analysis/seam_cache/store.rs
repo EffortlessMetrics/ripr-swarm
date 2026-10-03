@@ -25,6 +25,7 @@ std::thread_local! {
     static PLAN_ENCODE_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FAIL_AFTER_SHARDS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static FAIL_NEXT_FILL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_PARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -60,6 +61,16 @@ pub(super) fn fail_next_streamed_fill() {
 #[cfg(test)]
 fn take_fail_next_fill() -> bool {
     FAIL_NEXT_FILL.with(std::cell::Cell::take)
+}
+
+#[cfg(test)]
+pub(super) fn fail_after_parking_single_entry() {
+    FAIL_AFTER_PARK.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+fn take_fail_after_park() -> bool {
+    FAIL_AFTER_PARK.with(std::cell::Cell::take)
 }
 
 pub(super) fn publish_classified_generation(
@@ -332,11 +343,12 @@ fn publish_sharded_generation(
         clear_fail_after_shards();
         return Err("injected sharded cache publication failure before manifest".to_string());
     }
-    let single_path = cache.entry_path(key);
-    if single_path.exists() {
-        std::fs::remove_file(&single_path).map_err(|err| {
-            format!("remove competing single classified cache entry failed: {err}")
-        })?;
+    let mut parked = ParkedSingleEntry::park(cache.entry_path(key), &publication_id)?;
+    #[cfg(test)]
+    if take_fail_after_park() {
+        return Err(
+            "injected sharded cache publication failure after parking the single entry".to_string(),
+        );
     }
     let manifest = ShardedCacheManifest::new(
         key.clone(),
@@ -349,6 +361,9 @@ fn publish_sharded_generation(
     let digest = manifest.expected_digest()?;
     let manifest_path = cache.sharded_manifest_path(key);
     stream_checksummed_cache_file(manifest_path, "sharded cache manifest", &manifest, digest)?;
+    if let Some(parked) = parked.as_mut() {
+        parked.commit();
+    }
     unpublished.retain();
     if let Some(previous) = previous {
         remove_replaced_generation_files(&sharded_dir, &previous, &publication_id);
@@ -409,6 +424,43 @@ impl Drop for UnpublishedGeneration {
     fn drop(&mut self) {
         if !self.retain {
             let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+}
+
+struct ParkedSingleEntry {
+    original: PathBuf,
+    parked: PathBuf,
+    restore: bool,
+}
+
+impl ParkedSingleEntry {
+    fn park(original: PathBuf, publication_id: &str) -> Result<Option<Self>, String> {
+        if !original.exists() {
+            return Ok(None);
+        }
+        let mut parked = original.clone().into_os_string();
+        parked.push(format!(".parked-{publication_id}"));
+        let parked = PathBuf::from(parked);
+        std::fs::rename(&original, &parked)
+            .map_err(|err| format!("park competing single classified cache entry failed: {err}"))?;
+        Ok(Some(Self {
+            original,
+            parked,
+            restore: true,
+        }))
+    }
+
+    fn commit(&mut self) {
+        self.restore = false;
+        let _ = std::fs::remove_file(&self.parked);
+    }
+}
+
+impl Drop for ParkedSingleEntry {
+    fn drop(&mut self) {
+        if self.restore {
+            let _ = std::fs::rename(&self.parked, &self.original);
         }
     }
 }
@@ -1022,6 +1074,10 @@ mod tests {
             status.label
         );
         round_trip(&cache, &key, &seams)?;
+        assert!(
+            !cache.entry_path(&key).exists(),
+            "replacing a single entry with shards must not leave the preferred single path"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }
@@ -1175,6 +1231,51 @@ mod tests {
         assert!(
             err.contains("injected classified cache fill failure"),
             "fill failure should name the injected error: {err}"
+        );
+        round_trip(&cache, &key, &first)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_sharded_replace_restores_the_previous_single_entry() -> Result<(), String> {
+        let dir = isolated_dir("park-restore");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_key();
+        let first = vec![classified_with_pad("keep-single")];
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &first, None, 8, 1_000_000)?;
+        assert!(
+            cache.entry_path(&key).exists(),
+            "fixture must start as a preferred single entry"
+        );
+        fail_after_parking_single_entry();
+        let second: Vec<_> = (0..6)
+            .map(|i| classified_with_pad(&format!("next-{i}")))
+            .collect();
+        let err = match cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &second, None, 2, 1_000_000)
+        {
+            Ok(status) => {
+                return Err(format!(
+                    "injected park failure should not succeed: {}",
+                    status.label
+                ));
+            }
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("after parking the single entry"),
+            "park failure should keep the injected diagnostic: {err}"
+        );
+        assert!(
+            cache.entry_path(&key).exists(),
+            "failed sharded replace must restore the previous single entry"
+        );
+        assert!(
+            listed_generation_dirs(&cache, &key)?.is_empty(),
+            "failed sharded replace must not leave an unpublished generation"
         );
         round_trip(&cache, &key, &first)?;
         ignore_remove_dir_all(&dir);
