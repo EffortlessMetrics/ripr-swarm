@@ -4,6 +4,13 @@
 receipt consumed by the source release preflight. It preserves the complete
 swarm history as the selected parent; it does not create the join.
 
+This producer emits `ripr.source_promotion_preflight.v2`. The source verifier
+at `EffortlessMetrics/ripr` main `82b2d7c262d229d5244263d458d10cd0189cb966`
+accepts only v1 and rejects this receipt. Do not pass v2 to that verifier or
+use a v1 fallback to omit acceptance. Coordinated consumption and validation of
+the acceptance field remain a source-handoff prerequisite under
+[ripr#1769](https://github.com/EffortlessMetrics/ripr/issues/1769).
+
 The disposable merge probe requires Git 2.38 or newer because it uses
 `git merge-tree --write-tree --name-only -z`. The command fails closed on an
 older or malformed Git version rather than falling back to localized prose.
@@ -112,6 +119,8 @@ preparation/execution-custody route; its digest argument cannot issue a handoff.
 
 The trusted operator records exactly one fenced `ripr-release-acceptance`
 JSON block in each native #1609 and #2769 decision. Unknown JSON fields refuse.
+CRLF is normalized only in the parsing copy; retained bodies and digests use
+the exact raw response bytes.
 The command does not create, accept or publish those decisions. The following
 is the field contract, not an accepted packet or permission to mint one:
 

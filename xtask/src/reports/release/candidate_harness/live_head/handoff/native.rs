@@ -22,7 +22,9 @@ pub(super) struct NativeDecision {
 
 impl NativeDecision {
     pub(super) fn payload<T: DeserializeOwned>(&self) -> Result<T, String> {
-        let mut blocks = self.body.split(PAYLOAD_MARKER);
+        // Parse either GitHub newline form without changing retained raw bytes.
+        let normalized = self.body.replace("\r\n", "\n");
+        let mut blocks = normalized.split(PAYLOAD_MARKER);
         let _preamble = blocks.next();
         let rest = blocks
             .next()
@@ -60,7 +62,7 @@ fn comment_id(reference: &str, owner: u64) -> Result<u64, String> {
         ));
     }
     id.parse()
-        .map_err(|_| "native comment ID exceeds supported range".to_string())
+        .map_err(|error| format!("native comment ID exceeds supported range: {error}"))
 }
 
 pub(super) fn read_native(

@@ -68,6 +68,13 @@ It does not create a join or modify either authoritative checkout.
 
 ### Consumed native acceptance (receipt v2)
 
+The schema is `ripr.source_promotion_preflight.v2`. The source verifier at
+`EffortlessMetrics/ripr` main `82b2d7c262d229d5244263d458d10cd0189cb966`
+still accepts only v1; it must not consume this receipt until coordinated v2
+acceptance validation lands under
+[ripr#1769](https://github.com/EffortlessMetrics/ripr/issues/1769). There is no
+v1 acceptance-bypassing fallback. This is an integration blocker, not a waiver.
+
 Before the geometry probe, the command consumes the independently recorded
 #1609 selected-owner acceptance and #2769 complete-bundle acceptance using the
 existing direct-manifest custody owner. It retrieves the native #1609, bound

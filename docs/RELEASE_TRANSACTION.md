@@ -426,6 +426,11 @@ PREFLIGHT_JSON="$PACKET_ROOT/source-promotion/source-promotion-preflight.json"
 test "$(jq -r '.dry_merge.reviewed_resolved_tree // empty' "$PREFLIGHT_JSON")" = "$JOIN_TREE"
 ```
 
+The v2 receipt cannot be supplied to source main
+`82b2d7c262d229d5244263d458d10cd0189cb966`'s v1-only verifier. The transaction
+remains held until [ripr#1769](https://github.com/EffortlessMetrics/ripr/issues/1769)
+delivers coordinated v2 acceptance consumption; no v1 fallback waives it.
+
 Review every conflict path, survivor, swarm exclusion, authority candidate,
 and separately reviewed `JOIN_TREE`; record a resolution manifest. A clean
 textual merge is not semantic approval. Parent, ref, identity, ancestry,

@@ -11,6 +11,25 @@ struct Fixture {
     bundle: Value,
 }
 
+#[test]
+fn native_handoff_parses_crlf_without_changing_raw_decision_identity() -> Result<(), String> {
+    let payload = json!({"fixture": "raw-body-identity"});
+    let raw = body(&payload)?.replace("\n", "\r\n");
+    let decision = native::decode_native(
+        &reference(1609),
+        1609,
+        &serde_json::to_vec(&response(1609, raw.clone())).map_err(|error| error.to_string())?,
+    )?;
+    if decision.payload::<Value>()? != payload || decision.body_sha256 != digest(raw.as_bytes()) {
+        return Err("CRLF parsing changed the payload or raw decision digest".to_string());
+    }
+    let retained = serde_json::to_value(decision).map_err(|error| error.to_string())?;
+    if retained["body"] != json!(raw) {
+        return Err("CRLF parsing changed the retained native body".to_string());
+    }
+    Ok(())
+}
+
 fn reference(owner: u64) -> String {
     format!("https://github.com/EffortlessMetrics/ripr-swarm/issues/{owner}#issuecomment-{owner}")
 }
