@@ -94,12 +94,14 @@ impl SyntheticEvidence {
             b"Synthetic executable byte model; never executed",
         )?;
         let executable = "/synthetic/retained/library-test";
+        let verification = json!({"kind": "post_capture_frozen_executable_rehash", "observed_utc": "2000-01-01T00:00:00Z", "artifact": {"path": executable, "bytes": artifact["bytes"], "sha256": artifact["sha256"]}});
         let capture = json!({
             "kind": "retained_native_capture", "case_id": self.key["case_id"], "observation": row,
             "compiler_artifact": {"reason": "compiler-artifact", "package_id": "path+file:///synthetic/workspace#synthetic@0.0.0", "manifest_path": "/synthetic/workspace/Cargo.toml", "target": {"kind": ["lib"], "name": "synthetic", "src_path": "/synthetic/workspace/src/lib.rs"}, "profile": {"test": true}, "executable": "/synthetic/build/library-test"},
-            "artifact": {"compiled_path": "/synthetic/build/library-test", "bytes": artifact["bytes"], "sha256": artifact["sha256"], "sha256_after": artifact["sha256"], "retained": {"path": executable, "bytes": artifact["bytes"], "sha256": artifact["sha256"]}, "custody": {"status": "external", "locator": "synthetic external task evidence; absent here"}},
+            "artifact": {"compiled_path": "/synthetic/build/library-test", "bytes": artifact["bytes"], "sha256": artifact["sha256"], "retained": {"path": executable, "bytes": artifact["bytes"], "sha256": artifact["sha256"]}, "custody": {"status": "external", "locator": "synthetic external task evidence; absent here"}},
+            "retained_verification": self.file(&format!("verification-{index}.json"), &serde_json::to_vec(&verification).map_err(|error| error.to_string())?)?,
             "discovery": {"phase": "completed", "timed_out": false, "process_failed": false, "exit_code": 0, "argv": [executable, TEST_ID, "--exact", "--list"], "stdout": self.file(&format!("listing-{index}.stdout"), format!("{TEST_ID}: test\n\n1 test, 0 benchmarks\n").as_bytes())?, "stderr": self.file(&format!("listing-{index}.stderr"), b"")?},
-            "artifact_execution": {"phase": "completed", "timed_out": false, "process_failed": false, "exit_code": row["exit_code"], "argv": [executable, TEST_ID, "--exact"], "executable_sha256": artifact["sha256"], "executable_sha256_after": artifact["sha256"], "stdout": row["stdout"], "stderr": row["stderr"]}
+            "artifact_execution": {"phase": "completed", "timed_out": false, "process_failed": false, "exit_code": row["exit_code"], "argv": [executable, TEST_ID, "--exact"], "executable_sha256": artifact["sha256"], "stdout": row["stdout"], "stderr": row["stderr"]}
         });
         self.persist_capture(index, &capture)
     }
@@ -564,6 +566,8 @@ fn benchmark_semantic_oracle_rejects_unbound_or_swapped_native_capture() -> Resu
         "discovery",
         "replay",
         "timeout",
+        "missing_verification",
+        "stale_verification",
     ] {
         let mut fixture = SyntheticEvidence::new()?;
         assert_eq!(fixture.validate()?, "valid");
@@ -589,6 +593,16 @@ fn benchmark_semantic_oracle_rejects_unbound_or_swapped_native_capture() -> Resu
             }
             "replay" => capture["artifact_execution"]["argv"][1] = json!("neighbor"),
             "timeout" => capture["artifact_execution"]["timed_out"] = json!(true),
+            "missing_verification" => capture["retained_verification"] = Value::Null,
+            "stale_verification" => {
+                let mut verification =
+                    retained_json(&fixture.root, &capture["retained_verification"])?;
+                verification["artifact"]["sha256"] = json!("f".repeat(64));
+                capture["retained_verification"] = fixture.file(
+                    "stale-verification.json",
+                    &serde_json::to_vec(&verification).map_err(|error| error.to_string())?,
+                )?;
+            }
             _ => {}
         }
         fixture.persist_capture(0, &capture)?;
@@ -696,8 +710,9 @@ fn benchmark_semantic_oracle_production_command_discloses_custody_and_rejection(
                     || mode == "rejected"
             );
             assert!(report.contains(match mode {
-                "external" => "6 externally retained artifacts NOT_REVERIFIED",
-                "local" => "6 local artifact byte checks; 0 externally retained artifacts",
+                "external" => "6 externally retained artifact references NOT_REVERIFIED",
+                "local" =>
+                    "6 local artifact byte checks; 0 externally retained artifact references",
                 _ => "valid=0, invalid=0",
             }));
             assert!(report.contains(if mode == "rejected" {

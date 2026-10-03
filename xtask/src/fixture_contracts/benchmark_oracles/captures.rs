@@ -61,7 +61,6 @@ pub(super) fn validate(
         || selected["executable"] != artifact["compiled_path"]
         || !text(artifact, "compiled_path")?.starts_with('/')
         || artifact["sha256"] != runner["artifact_sha256"]
-        || artifact["sha256_after"] != artifact["sha256"]
         || artifact["bytes"].as_u64().is_none_or(|bytes| bytes == 0)
     {
         return Err(format!(
@@ -72,6 +71,15 @@ pub(super) fn validate(
     if retained["sha256"] != artifact["sha256"] || retained["bytes"] != artifact["bytes"] {
         return Err(format!("{variant}: retained executable identity differs"));
     }
+    let verification = retained_json(root, &capture["retained_verification"])?;
+    if verification["kind"].as_str() != Some("post_capture_frozen_executable_rehash")
+        || verification["artifact"] != *retained
+    {
+        return Err(format!(
+            "{variant}: stale or missing retained-executable measurement"
+        ));
+    }
+    let _ = text(&verification, "observed_utc")?;
     let executable = text(retained, "path")?;
     if !executable.starts_with('/') {
         return Err(format!(
@@ -94,7 +102,6 @@ pub(super) fn validate(
     validate_terminal(variant, execution, if passes { 0 } else { 101 })?;
     if execution["argv"] != serde_json::json!([executable, test_id, "--exact"])
         || execution["executable_sha256"] != artifact["sha256"]
-        || execution["executable_sha256_after"] != artifact["sha256"]
     {
         return Err(format!(
             "{variant}: retained artifact execution identity differs"

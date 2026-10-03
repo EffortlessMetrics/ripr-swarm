@@ -117,12 +117,16 @@ Each observation also references one compact `retained_native_capture` file.
 Its case and complete observation must match the pairing row exactly. It binds
 the Cargo-selected package ID, manifest, library target/source, test profile
 and executable path to a nonempty artifact's byte count/digest. The retained
-executable, before/after digest, exact one-test discovery, and direct frozen
+executable, exact one-test discovery, and direct frozen
 artifact replay must agree with that artifact and the expected native result.
 Discovery/replay output is retained and checked by the same file/output
 machinery. Missing, swapped, duplicate or malformed capture records, or bare
 hash strings without these bindings, reject. Identical executable bytes across
 variants are allowed when the independently reviewed capture supports them.
+A retained `post_capture_frozen_executable_rehash` record names its observation
+time and exact frozen artifact descriptor. It describes a later measurement
+of the retained executable, not a contemporaneous measurement of the mutable
+compiler-selected path. The record must match the capture's frozen artifact.
 
 Artifact custody is explicit. `local` custody requires a contained retained
 file whose actual bytes match the captured executable; missing/corrupt local
@@ -153,6 +157,8 @@ passing and failing fixture checks.
 The report calls valid/invalid labels reviewed expected-behavior declarations,
 reports local byte-check and external NOT_REVERIFIED artifact counts, and states
 that the fixture check does not rerun tests or authenticate the producer.
+These custody totals count accepted observation references/checks, not unique
+executable files; two declarations may refer to the same retained binaries.
 
 This fixture axis does not change static discrimination, `evidence_record`,
 Lane 1 audit/scorecard semantics, #3806 judgments, #4795 runtime calibration,

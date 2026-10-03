@@ -71,7 +71,7 @@ impl Summary {
             self.valid, self.invalid, self.unreviewed, self.legacy, self.rejected
         )];
         items.push(format!(
-            "Native executable custody: {} local artifact byte checks; {} externally retained artifacts NOT_REVERIFIED by this fixture check.",
+            "Native executable custody: {} local artifact byte checks; {} externally retained artifact references NOT_REVERIFIED by this fixture check.",
             self.local_artifacts, self.external_artifacts
         ));
         items.extend(self.declared.iter().take(20).cloned());
