@@ -776,8 +776,10 @@ impl CatFileBatch {
     /// stderr capture when the child exits non-zero.
     pub(crate) fn finish(mut self) -> Result<(), String> {
         // Budget first: dropping stdin partially moves `self`, after which
-        // no whole-`self` method may run.
+        // no whole-`self` method may run — both values are computed here and
+        // only field accesses remain below.
         let remaining = self.remaining();
+        let deadline = self.deadline();
         drop(self.stdin);
         let wait = poll_child(&mut self.child, Some(remaining), &self.describe);
         let timed_out = !matches!(&wait, ChildWait::Exited(_));
@@ -790,7 +792,25 @@ impl CatFileBatch {
             &self.describe,
         );
         match wait {
-            ChildWait::Exited(status) if status.success() => Ok(()),
+            ChildWait::Exited(status) if status.success() => {
+                // A child that exited before the deadline but was reaped
+                // after it has still overrun the budget: accept no success
+                // past the overall deadline. Field accesses only — stdin is
+                // already dropped, so no whole-`self` method may run.
+                if Instant::now() >= deadline {
+                    let message =
+                        git_invocation_timeout_message(&self.describe, self.budget.as_millis());
+                    return Err(match self.child.terminate_tree() {
+                        Ok(()) => message,
+                        Err(cleanup) => format!(
+                            "timeout of {} did not complete tree cleanup; the child may still \
+                             be running: {cleanup} (suppressed wait outcome: {message})",
+                            self.describe
+                        ),
+                    });
+                }
+                Ok(())
+            }
             ChildWait::Exited(status) => {
                 let detail = stderr
                     .map(|output| String::from_utf8_lossy(&output.bytes).trim().to_string())
@@ -844,7 +864,13 @@ impl CatFileBatchStream {
     /// `Ok(false)` is end of stream. The wait allowance is recomputed from
     /// the absolute `deadline` on every chunk so a stream dribbling
     /// fragments just under each wait can never outlive the overall budget.
+    /// Bytes buffered or queued before the deadline are still rejected once
+    /// it has passed: consumption after the budget is a timeout, not
+    /// success.
     fn next_chunk(&mut self, deadline: Instant) -> Result<bool, CatFileBatchReadError> {
+        if Instant::now() >= deadline {
+            return Err(CatFileBatchReadError::TimedOut);
+        }
         if self.offset < self.current.len() {
             return Ok(true);
         }
@@ -865,6 +891,9 @@ impl CatFileBatchStream {
     fn read_line(&mut self, deadline: Instant) -> Result<Vec<u8>, CatFileBatchReadError> {
         let mut line = Vec::new();
         loop {
+            if Instant::now() >= deadline {
+                return Err(CatFileBatchReadError::TimedOut);
+            }
             if let Some(position) = self.current[self.offset..]
                 .iter()
                 .position(|byte| *byte == b'\n')
@@ -898,6 +927,9 @@ impl CatFileBatchStream {
     ) -> Result<(), CatFileBatchReadError> {
         let mut filled = 0;
         while filled < buf.len() {
+            if Instant::now() >= deadline {
+                return Err(CatFileBatchReadError::TimedOut);
+            }
             if self.offset >= self.current.len() && !self.next_chunk(deadline)? {
                 return Err(CatFileBatchReadError::Failed(
                     "git cat-file --batch stream ended in the middle of a blob".to_string(),
@@ -2340,6 +2372,25 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             Err(CatFileBatchReadError::TimedOut) => Ok(()),
             other => Err(format!(
                 "spent budget must classify as timed out, got {other:?}"
+            )),
+        }
+    }
+
+    /// Bytes that were buffered or queued before the deadline are still
+    /// rejected once it has passed: consumption after the budget is a
+    /// timeout, not a late success.
+    #[test]
+    fn cat_file_batch_stream_rejects_ready_bytes_past_the_deadline() -> Result<(), String> {
+        let (sender, receiver) = mpsc::channel();
+        // Every byte is already available before the first read.
+        let _ = sender.send(Ok(b"ready".to_vec()));
+        let mut stream = CatFileBatchStream::new(receiver);
+        let mut buf = [0_u8; 5];
+        let outcome = stream.read_exact(&mut buf, Instant::now());
+        match outcome {
+            Err(CatFileBatchReadError::TimedOut) => Ok(()),
+            other => Err(format!(
+                "ready bytes past the deadline must still time out, got {other:?}"
             )),
         }
     }
