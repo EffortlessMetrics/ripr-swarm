@@ -21,24 +21,20 @@ fn event_block(source: &str) -> &str {
         .expect("workflow keeps permissions after event declarations")
 }
 
+fn pull_request_types(events: &str) -> &str {
+    events
+        .lines()
+        .find(|line| line.trim_start().starts_with("types: ["))
+        .map(str::trim)
+        .expect("pull_request keeps an explicit action allowlist")
+}
+
 fn assert_ready_only_pull_request(events: &str) {
-    assert!(
-        events.contains("types: [ready_for_review]"),
-        "protected PR qualification must be requested by ready_for_review"
+    assert_eq!(
+        pull_request_types(events),
+        "types: [ready_for_review]",
+        "protected PR qualification must be requested only by ready_for_review"
     );
-    for forbidden in [
-        "opened",
-        "reopened",
-        "synchronize",
-        "labeled",
-        "unlabeled",
-        "auto_merge_enabled",
-    ] {
-        assert!(
-            !events.contains(forbidden),
-            "protected workflow must not admit pull_request action {forbidden}"
-        );
-    }
 }
 
 #[test]
