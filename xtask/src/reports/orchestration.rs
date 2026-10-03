@@ -300,13 +300,13 @@ pub(crate) fn assess_orchestration_fixture_corpus(
                 scenario.id, scenario.expected.countable, assessment.counted, assessment.reasons
             ));
         }
-        if let Some(expected) = scenario.expected.disposition {
-            if assessment.disposition != Some(expected) {
-                failures.push(format!(
-                    "scenario `{}` drifted: expected disposition {expected:?}, got {:?} reasons={:?}",
-                    scenario.id, assessment.disposition, assessment.reasons
-                ));
-            }
+        if let Some(expected) = scenario.expected.disposition
+            && assessment.disposition != Some(expected)
+        {
+            failures.push(format!(
+                "scenario `{}` drifted: expected disposition {expected:?}, got {:?} reasons={:?}",
+                scenario.id, assessment.disposition, assessment.reasons
+            ));
         }
         for needle in &scenario.expected.reason_contains {
             if !assessment
