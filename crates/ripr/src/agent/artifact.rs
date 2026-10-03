@@ -1120,16 +1120,21 @@ mod tests {
             .ok_or("legacy artifact was accepted")?;
         for text in ["Bash/Git Bash:", "PowerShell:", "selected''s $root"] {
             if !error.contains(text) {
-                return Err(format!("shell-labeled literal recovery omitted {text}: {error}"));
+                return Err(format!(
+                    "shell-labeled literal recovery omitted {text}: {error}"
+                ));
             }
         }
-        let unsupported = validate_repo_exposure_artifact(Path::new("selected>root"), raw, "before")
-            .err()
-            .ok_or("legacy artifact was accepted")?;
+        let unsupported =
+            validate_repo_exposure_artifact(Path::new("selected>root"), raw, "before")
+                .err()
+                .ok_or("legacy artifact was accepted")?;
         if !unsupported.contains("Bash/Git Bash only:")
             || !unsupported.contains("PowerShell recovery unavailable")
         {
-            return Err(format!("unsupported PowerShell route was advertised: {unsupported}"));
+            return Err(format!(
+                "unsupported PowerShell route was advertised: {unsupported}"
+            ));
         }
         Ok(())
     }
