@@ -796,20 +796,20 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Runs the committed blind-journey fixture corpus through the typed prompt/answer-key/event/intervention/receipt validator and validates the versioned contract decision receipt; synthetic success claims no candidate qualification.",
         ),
         command_entry(
-            "orchestration-scorecard",
-            "report_only",
-            "target/ripr/reports/orchestration-scorecard.{md,json}",
-            false,
-            false,
-            "Runs a committed orchestration corpus (fixture corpus with expectations, or a plain real corpus) through the typed counting-law validator (identity, disposition, denominator, verification and cleanup gates) and projects one deterministic JSON/Markdown scorecard; synthetic mechanics rows never enter real denominators and a corpus with zero real attempts reports an honest not-measured rate.",
-        ),
-        command_entry(
             "blind-journey-execute",
             "report_only",
             "target/ripr/reports/blind-journey-execute.{md,json}",
             false,
             false,
             "Runs the committed scripted blind-journey corpus through the deterministic #4604 executor (stamping, per-kind digest presence, derived terminals) and validates the versioned executor decision receipt; synthetic success claims no installed usefulness.",
+        ),
+        command_entry(
+            "orchestration-scorecard",
+            "report_only",
+            "target/ripr/reports/orchestration-scorecard.{md,json}",
+            false,
+            false,
+            "Runs a committed orchestration corpus (fixture corpus with expectations, or a plain real corpus) through the typed counting-law validator (identity, disposition, denominator, verification and cleanup gates) and projects one deterministic JSON/Markdown scorecard; synthetic mechanics rows never enter real denominators and a corpus with zero real attempts reports an honest not-measured rate.",
         ),
         command_entry(
             "rust-judged-panel check",
