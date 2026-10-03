@@ -29,36 +29,36 @@
       "url": "https://github.com/rust-lang/regex/issues/859",
       "artifact": {
         "path": "regex-word-boundary-empty/basis/independent-matcher-capture.json",
-        "bytes": 10946,
-        "sha256": "e10dcf6747377a6ea5452791efe46306b67f86ed1f346251dfb43b1a21c9bb0f"
+        "bytes": 10962,
+        "sha256": "9bca8c0bd60fcdb98f3ca80a61fad617926bbcc08d104f7cd8431d46cace7356"
       }
     }
   ],
   "sources": {
     "fixed": {
-      "path": "regex-word-boundary-empty/sources/fixed.rs",
+      "path": "regex-word-boundary-empty/sources/fixed.rs.txt",
       "bytes": 82841,
       "sha256": "51f1642b75e298b0847855d7f490eca2e8f445c9039dd3aa91491f533ec83f15"
     },
     "broken": {
-      "path": "regex-word-boundary-empty/sources/broken.rs",
+      "path": "regex-word-boundary-empty/sources/broken.rs.txt",
       "bytes": 82549,
       "sha256": "325dc1e42eb8fb9daeb7a8a5e7f967fdee745a7a7c5e26c20dec0b6c66109ad7"
     }
   },
   "tests": {
     "corrected": {
-      "path": "regex-word-boundary-empty/tests/corrected.rs",
+      "path": "regex-word-boundary-empty/tests/corrected.rs.txt",
       "bytes": 109272,
       "sha256": "de10ee2928001567f80c6ab602de0e280a8e3a1e615cf73def91d2dcc4f9f199"
     },
     "original": {
-      "path": "regex-word-boundary-empty/tests/original.rs",
+      "path": "regex-word-boundary-empty/tests/original.rs.txt",
       "bytes": 109140,
       "sha256": "cee557e068927ef028fdd0c8b673b948aa52397ed7bd5500f1a38a51bc29ec55"
     },
     "weak": {
-      "path": "regex-word-boundary-empty/tests/weak.rs",
+      "path": "regex-word-boundary-empty/tests/weak.rs.txt",
       "bytes": 109179,
       "sha256": "9150ff57bf007f523ef1dc8f4c9680ea2edfd3fe55fca47f83b36b1b5834e169"
     }

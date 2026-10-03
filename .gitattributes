@@ -25,7 +25,7 @@ metrics/rust-judged-behavior-panel/diffs/*.diff -whitespace
 
 # SPEC-0035 retains the upstream matcher, native output, and patches verbatim.
 # Their recorded digests include original line endings and intentional blanks.
-fixtures/evidence-quality-benchmark/regex-word-boundary-empty/basis/matcher-original.rs -text -whitespace
+fixtures/evidence-quality-benchmark/regex-word-boundary-empty/basis/matcher-original.rs.txt -text -whitespace
 fixtures/evidence-quality-benchmark/regex-word-boundary-empty/outputs/*.stdout -text -whitespace
 fixtures/evidence-quality-benchmark/regex-word-boundary-empty/patches/*.patch -text whitespace=-blank-at-eol
 

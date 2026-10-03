@@ -1,20 +1,20 @@
 {
   "disposition": "accepted",
   "reviewer": "independent Codex review",
-  "rationale": "The corrected positive Unicode and ASCII word-boundary assertions are valid: a successful match may have zero length in surrounding context even though a word boundary does not match an entirely empty haystack. Independently reviewed the retained issue 859 semantic basis, exact complete source/test identities, generated lock, all six one-test native Cargo and frozen-artifact replay captures, and the separate regex::Regex matcher witness. The 98-descriptor portable graph was byte-checked and mapped to frozen raw packet b910ec9fafcdca9e1783218df877f8900313362a7741c51716d1c950a9045a0b and native receipt 8dca1d09ece7506e6f32302e310c55f0efc0eb6dcacb105e5cbdff88d74fe6b8. Current retained executable bytes were separately rehashed in this review; historical capture, the dated post-capture frozen-executable measurements and future source-only NOT_REVERIFIED external custody remain separate. The weak variant is only a removal control. Whole-test failures stop at the first Unicode assertion, so later ASCII assertion execution is not claimed for failing runs. This accepts this exact alternate semantic declaration and capture subject, not RIPR compilation, corpus insertion, calibration/opportunity credit or release.",
+  "rationale": "The corrected positive Unicode and ASCII word-boundary assertions remain valid: a successful match may have zero length in surrounding context even though a word boundary does not match an entirely empty haystack. Reaffirmed the prior independent issue 859 semantic-basis review, complete source/test identities, generated lock, six one-test Cargo and frozen-artifact replay captures, and separate regex::Regex matcher witness. This packaging review verified that all seven retained source/test/matcher payloads and their reconstructed copies are byte-identical to the previously accepted assets; only their portable data locators now end in .rs.txt. Four matcher program locators and their enclosing key/pairing descriptors were propagated without altering historical commands, inventories, executable identities, outputs or verdicts. Reconstructed parent-archive-plus-lock/source/test identities match all six 249-entry before/after native inventories. The frozen raw packet b910ec9fafcdca9e1783218df877f8900313362a7741c51716d1c950a9045a0b and native receipt 8dca1d09ece7506e6f32302e310c55f0efc0eb6dcacb105e5cbdff88d74fe6b8 are unchanged. Executable byte rehashes belong to the earlier review and retained dated measurements; this packaging review performed no new native execution or executable rehash. External executable custody remains NOT_REVERIFIED by the fixture consumer. Weak remains only a removal control. Failing whole-test runs stop at the first Unicode assertion; later ASCII assertion execution is not claimed for those runs. This accepts exactly the rebound semantic declaration and historical capture subject, not the validator implementation, static analysis, calibration/opportunity credit or release.",
   "reviewed_subject": {
     "case_id": "regex-word-boundary-empty",
     "status": "valid",
     "variant": "corrected",
     "answer_key": {
       "path": "regex-word-boundary-empty/answer-key.json",
-      "bytes": 3147,
-      "sha256": "dc8dc5730f274bbbc7137ff0617e01a751487574577132db034c58d922796c3e"
+      "bytes": 3167,
+      "sha256": "b6e3d1e019eb6d2f1b77b555a25e5ebc8f63211895b2827ba6316aba2951f90d"
     },
     "native_pairing": {
       "path": "regex-word-boundary-empty/native-pairing.json",
       "bytes": 20853,
-      "sha256": "312642ff1381d2ea400a40e1c9cde51d3d141ae900265803d6cacf8c7733369d"
+      "sha256": "27e635d40f0919eba7215984893f25e81f8842bf156719c56e32910ce8affebc"
     }
   }
 }

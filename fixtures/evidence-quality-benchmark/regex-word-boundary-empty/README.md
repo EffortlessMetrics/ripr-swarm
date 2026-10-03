@@ -63,6 +63,11 @@ Any later case-ID, claim, basis, source, test, capture or
 verdict change requires an updated exact reviewed-subject binding. No accepted
 review text may simply be carried forward to a changed subject.
 
+`reviews/native-evidence.md` preserves the review of the original portable
+locators. The current independent-review JSON records bind the byte-identical
+inputs under `.rs.txt` locators after a separate packaging review. Historical
+execution paths and native input inventories retain their original spellings.
+
 ## Reproduction envelope
 
 First materialize the complete original parent archive into one fixed replay
@@ -92,6 +97,23 @@ For each row, copy the full declared production source into
 before and after each command; only those two source paths vary. The parent
 CHANGELOG remains unchanged in this production/test experiment.
 
+The `.rs.txt` suffix identifies immutable source data retained for reproduction.
+Copy bytes without text conversion from the selected asset to the corresponding
+Rust path below. The source/test digests in `answer-key.json` and the complete
+native input inventories bind the result. The matcher program descriptors are
+in `basis/independent-matcher-capture.json`. Licenses and original archive paths
+remain unchanged.
+
+| Retained data asset | Reconstructed Rust destination |
+| --- | --- |
+| `sources/fixed.rs.txt` | `regex-syntax/src/hir/mod.rs` for fixed production |
+| `sources/broken.rs.txt` | `regex-syntax/src/hir/mod.rs` for broken production |
+| `tests/corrected.rs.txt` | `regex-syntax/src/hir/translate.rs` for corrected tests |
+| `tests/original.rs.txt` | `regex-syntax/src/hir/translate.rs` for original tests |
+| `tests/weak.rs.txt` | `regex-syntax/src/hir/translate.rs` for the removal control |
+| `basis/matcher-original.rs.txt` | `matcher-original.rs` in the separate witness source directory |
+| `basis/matcher-observed.rs.txt` | `matcher-observed.rs` in the separate witness source directory |
+
 Compile with `cargo test --locked --offline --manifest-path Cargo.toml -p
 regex-syntax --lib --no-run --message-format=json`, select the single library
 test artifact for regex-syntax 0.6.25, and list the exact subject from that
@@ -102,8 +124,8 @@ setup failure, timeout, wrong assertion or stale executable is not a substitute
 for any required native outcome. Input hashes and a Git stamp alone do not
 establish artifact behavior.
 
-Replay the independent matcher program in `basis/matcher-original.rs` against
-the original workspace root regex library. `basis/matcher-observed.rs` preserves
+Replay the independent matcher program in `basis/matcher-original.rs.txt` against
+the original workspace root regex library. `basis/matcher-observed.rs.txt` preserves
 the same four semantic assertions and prints the observed values. Both programs
 were compiled and run for fixed and broken production; their separate native
 identities and outputs are in `basis/independent-matcher-capture.json`.
