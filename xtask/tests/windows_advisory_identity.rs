@@ -544,6 +544,23 @@ fn rows_before_the_announcement_cannot_escape_completion_totals() -> Result<(), 
 }
 
 #[test]
+fn native_long_running_progress_is_not_an_extra_outcome() -> Result<(), String> {
+    // Retained native logs contain this libtest notice before the final row.
+    let progress = alpha("ok").replace(
+        "test same_name ... ok",
+        "test same_name has been running for over 60 seconds\ntest same_name ... ok",
+    );
+    let log = controls(None) + &progress;
+    verify(
+        log.clone(),
+        log,
+        0,
+        &["completed_clean", "observed 16 pass, 0 fail"],
+        &["incomplete_evidence", "provenance:"],
+    )
+}
+
+#[test]
 fn identical_names_in_distinct_targets_count_twice() -> Result<(), String> {
     let log = controls(None) + &alpha("ok") + &beta("ok");
     verify(log.clone(), log, 0, &["observed 17 pass, 0 fail"], &[])
