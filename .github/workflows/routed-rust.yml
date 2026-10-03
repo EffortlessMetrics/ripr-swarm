@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   # A second Ready transition means the prior admission transaction was
   # revoked. Preserve independent main/manual work.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
