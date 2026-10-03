@@ -1,10 +1,13 @@
-# RIPR-SPEC-0181: npm Native Launcher Boundary
+# RIPR-SPEC-0212: npm Native Launcher Boundary
 
 Status: accepted
 
 Owner: product / swarm
 
 Created: 2026-09-29
+
+Renumbered: from RIPR-SPEC-0181 after main landed the inline test-module
+region cage spec under RIPR-SPEC-0181 first.
 
 Linked issues: #4491, #4710
 
@@ -63,8 +66,9 @@ The package `@effortlessmetrics/ripr`:
   directory, and non-executable payloads;
 - a real POSIX subprocess control sends `SIGTERM` only to the launcher and
   observes exactly one child delivery with no surviving child;
-- a real POSIX process-group control sends terminal-style `SIGINT` and observes
-  exactly one child delivery with no launcher duplication or surviving child;
+- a real POSIX process-group control sends terminal-style `SIGINT` and `SIGHUP`
+  and observes exactly one child delivery each with no launcher duplication or
+  surviving child;
 - a planted `ripr` on `PATH` is never selected when the required package is
   absent;
 - the packed launcher inventory contains only the declared runtime files and
@@ -104,7 +108,7 @@ The package `@effortlessmetrics/ripr`:
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects lifecycle scripts, version ranges, and dependency drift`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads`
 - `packaging/npm/launcher/test/launcher.test.cjs::forwards direct SIGTERM to native child exactly once and re-emits signal`
-- `packaging/npm/launcher/test/launcher.test.cjs::observes terminal SIGINT without forwarding a duplicate to the native child`
+- `packaging/npm/launcher/test/launcher.test.cjs::observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child`
 - `packaging/npm/launcher/test/launcher.test.cjs::source bin missing-package failure never falls back to PATH or writes stdout`
 - `packaging/npm/launcher/test/launcher.test.cjs::npm package contents are explicit and exclude tests and build residue`
 - `xtask/src/policy/distribution/tests.rs`
