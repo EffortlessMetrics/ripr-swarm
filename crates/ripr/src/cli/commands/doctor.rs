@@ -2018,13 +2018,13 @@ mod tests {
             Some(PathBuf::from("/opt/perl/bin/perllsp"))
         );
         assert_eq!(
-            doctor_program(r"C:\Strawberry\perl\bin\perllsp"),
-            Some(PathBuf::from(r"C:\Strawberry\perl\bin\perllsp"))
+            doctor_program(r"fixture-bin\perllsp"),
+            Some(PathBuf::from(r"fixture-bin\perllsp"))
         );
         assert_eq!(doctor_program(""), None);
         // A bare name is PATH-only; this process PATH is not under test here.
         assert!(program_name_is_explicit_path("/usr/bin/prove"));
-        assert!(program_name_is_explicit_path(r"C:\tools\prove.cmd"));
+        assert!(program_name_is_explicit_path(r"tools\prove.cmd"));
         assert!(!program_name_is_explicit_path("prove"));
         assert!(!program_name_is_explicit_path("prove.cmd"));
     }
