@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use super::*;
 
 mod controls;
+mod retained_support;
 
 const TEST_ID: &str = "synthetic::expected_empty";
 const CORRECTED: &str = "fn synthetic() {\n    assert!(boundary());\n    assert!(ascii_boundary());\n    assert!(neighbor());\n}\n";

@@ -450,6 +450,67 @@ fn benchmark_semantic_controls_real_corpus_identity_and_disclosure() -> Result<(
         .ok_or_else(|| "corpus has no parent".to_string())?;
     let key = retained_json(root, &controls[0]["semantic_oracle"]["answer_key"])?;
     let pairing = retained_json(root, &controls[0]["semantic_oracle"]["native_pairing"])?;
+    let retained_support = [
+        (
+            "/original_workspace/archives/parent",
+            json!({"path": "regex-word-boundary-empty/upstream/regex-72f09f1.tar.gz", "bytes": 3317228, "sha256": "8d73a0ebb84927de0fb6df939720a8cc7328cbe7972449ac06097db7af7d4dc2"}),
+        ),
+        (
+            "/original_workspace/archives/fixed",
+            json!({"path": "regex-word-boundary-empty/upstream/regex-88a2a62.tar.gz", "bytes": 3317664, "sha256": "4baf4cec952ef02a9eaa66a3c7d72514cd9cfef7cba36cf9fcda08a89559db6b"}),
+        ),
+        (
+            "/original_workspace/inventories/parent",
+            json!({"path": "regex-word-boundary-empty/upstream/parent-archive-files.json", "bytes": 64504, "sha256": "81029ea5e7fdc20c842a782547841247a22b76c0d66cbed100c025e34dc0222f"}),
+        ),
+        (
+            "/original_workspace/inventories/fixed",
+            json!({"path": "regex-word-boundary-empty/upstream/fixed-archive-files.json", "bytes": 64504, "sha256": "be21d5bf82723f6819d83f1a11518d1ff786c89230e72af582d0cd7d63b1de0a"}),
+        ),
+        (
+            "/original_workspace/provenance/parent-git-commit.json",
+            json!({"path": "regex-word-boundary-empty/upstream/parent-git-commit.json", "bytes": 2001, "sha256": "4d3cd0f4900c7ecf59b3d016f8e98746dd9e13a2f406cca3d1943585a51bbe4c"}),
+        ),
+        (
+            "/original_workspace/provenance/fixed-git-commit.json",
+            json!({"path": "regex-word-boundary-empty/upstream/fixed-git-commit.json", "bytes": 1992, "sha256": "bcf8d60dbc1e805f5368a26959fa92e6176b3353dd692d9a6ceb71d2e950db1e"}),
+        ),
+        (
+            "/original_workspace/provenance/parent-git-tree.json",
+            json!({"path": "regex-word-boundary-empty/upstream/parent-git-tree.json", "bytes": 81990, "sha256": "0cb0fae21a0344e7b5d24da852d99147d4bfbefeab5f7b0e45b19de6b4022bfa"}),
+        ),
+        (
+            "/original_workspace/provenance/fixed-git-tree.json",
+            json!({"path": "regex-word-boundary-empty/upstream/fixed-git-tree.json", "bytes": 81990, "sha256": "e6ae330a4b938b1e536ce3aa34d7e1e587e84f4377cb32b7d2d58d55853193e7"}),
+        ),
+        (
+            "/native_packet",
+            json!({"path": "regex-word-boundary-empty/capture/original-native-result-packet.json", "bytes": 50067, "sha256": "b910ec9fafcdca9e1783218df877f8900313362a7741c51716d1c950a9045a0b"}),
+        ),
+        (
+            "/native_receipt",
+            json!({"path": "regex-word-boundary-empty/capture/original-native-receipt.json", "bytes": 87202, "sha256": "8dca1d09ece7506e6f32302e310c55f0efc0eb6dcacb105e5cbdff88d74fe6b8"}),
+        ),
+        (
+            "/resolution_receipt",
+            json!({"path": "regex-word-boundary-empty/capture/resolution-and-offline-compile-receipt.json", "bytes": 7123, "sha256": "53b23722085f90ded5647dac2a9bb6c13796087139c80191c303e3d72ecfad04"}),
+        ),
+        (
+            "/offline_setup_receipt",
+            json!({"path": "regex-word-boundary-empty/capture/offline-setup-receipt.json", "bytes": 6454, "sha256": "03bbc87f7105db3376605c05ebfdf014ce8ac5bdde0299250b52c795e0979ec6"}),
+        ),
+        (
+            "/capture_checker_interruption",
+            json!({"path": "regex-word-boundary-empty/capture/checker-interruption-receipt.json", "bytes": 23673, "sha256": "a47592ed1dde8e45ca8d8a45fc16a53c85e1c3dc9845df329f8c0da5622966bd"}),
+        ),
+    ];
+    for (pointer, expected) in retained_support {
+        assert_eq!(
+            pairing.pointer(pointer),
+            Some(&expected),
+            "retained support {pointer}"
+        );
+    }
     assert_eq!(
         key["test_id"],
         "hir::translate::tests::analysis_is_match_empty"

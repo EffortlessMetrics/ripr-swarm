@@ -3219,6 +3219,10 @@ id = "RIPR-SPEC-0035"
 name = "Evidence quality benchmark corpus"
 spec = "docs/specs/RIPR-SPEC-0035-evidence-quality-benchmark-corpus.md"
 tests = [
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_optional_and_complete",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_rejects_missing_or_corrupt_files",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_rejects_malformed_declarations",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/retained_support.rs::benchmark_semantic_oracle_retained_support_production_report_rejects_damage",
   "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_legacy_absent_is_unreviewed",
   "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_polarity_is_separate_from_discrimination",
   "xtask/src/fixture_contracts/benchmark_oracles/tests.rs::benchmark_semantic_oracle_requires_independent_basis_and_exact_removal",
