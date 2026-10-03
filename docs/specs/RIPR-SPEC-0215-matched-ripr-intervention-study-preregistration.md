@@ -1,4 +1,4 @@
-# RIPR-SPEC-0205: Matched RIPR intervention-study preregistration
+# RIPR-SPEC-0215: Matched RIPR intervention-study preregistration
 
 Status: proposed
 

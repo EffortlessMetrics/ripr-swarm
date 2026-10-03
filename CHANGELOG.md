@@ -11,6 +11,33 @@ are scoped or reviewed.
 
 ### Changed
 
+- Rust finding output preserves the matched related-test/oracle count before
+  bounded packing. JSON, SARIF, and human totals agree while retained rows and
+  exposure classification remain unchanged. (#5146)
+
+- Evidence output: retained lexical and statically derived values are described
+  as source values in both human and JSON evidence paths, including values in
+  refused assertions. Typed facts, provenance, classes and admitted oracle
+  stages stay unchanged. (#5027)
+- Rust analysis: a proved-empty local macro cannot contribute discarded owner
+  calls or boundary arguments through a mixed-line call fact. A genuine far
+  assertion retains its strength and observation, while a real boundary test
+  still discriminates. Original source bytes remain authoritative; producer
+  build identity separates predecessor caches without reusing their facts. (#5027)
+- Rust analysis: ordinary turbofish calls remain eligible beside unresolved
+  property macros. Opaque declarations cannot supply owner reach, and discarded
+  property bodies cannot supply raw-scanned assertion oracles. These boundaries
+  preserve ordinary source authority without assuming macro expansion. (#5131)
+- Python: a changed source path missing from the working tree now carries an
+  exact-path `changed_file_absent_from_worktree` limitation and checkout recovery.
+  It is excluded from analyzed-file counts and preview samples; available findings
+  remain visible and shared outcome/badge projections report incomplete analysis
+  instead of a complete green zero (#5110).
+
+- Human output: a selected `no_static_path` finding without a typed limitation
+  asks readers to review the unresolved static path and existing tests, rather
+  than inspect a nonexistent named limitation. State, classification, JSON and
+  typed-limitation guidance are unchanged. (#5051)
 - CLI: `ripr cache status --json --help` and `ripr cache clear --dry-run
   --help` now print the subcommand help and exit 0; help was previously
   recognized only as the sole argument, so any combined invocation failed
@@ -70,8 +97,37 @@ are scoped or reviewed.
   sampled, and the summary states that the full per-file list is not
   materialized in output. No JSON/SARIF schema shape changes. (#5022)
 
+- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
+  identity, including target kind/source and exact executable hash. Required
+  release controls must resolve to one owning artifact across both samples;
+  missing or ambiguous provenance is refused instead of borrowing another
+  target's pass. Log-derived report entries use bounded excerpts and section
+  counts with explicit truncation and omissions; doctest transitions are
+  explicit and never assigned an inferred package (#5043).
+
 ### Added
 
+- LSP: the accepted refresh's work-done progress now consumes the shared
+  producer stage vocabulary — the blocking analysis runs through the shared
+  progress-bearing entry point and a best-effort bridge forwards
+  `loading input`, `analyzing workspace`, and `building output` as bounded
+  message-only `$/progress` reports on the existing
+  `ripr-analysis-{generation}` token. Reports never carry percentages or
+  terminal stages; cancellation, deadline, supersession, failure, and
+  disclosed limited/deferred states keep their outcome-derived terminal
+  messages, and clients without `window/workDoneProgress` see no traffic.
+  The post-analysis stage drain is bounded, so a stalled client can delay
+  diagnostics handling by at most twice the drain budget, never block it. A
+  cross-surface parity oracle pins CLI and LSP stage identity, ordering,
+  denominator honesty, and terminal disposition against one normalized
+  producer trace (RIPR-SPEC-0208, #4811).
+- CLI: `ripr pilot` now projects the shared analysis progress stream on
+  stderr — `ripr progress: <stage> [repo]` stage lines and throttled
+  `still active after <elapsed class>` heartbeats, exactly as `ripr check`
+  reports them — while its repo inventory runs, including the cold-cache
+  auto-retry, so the primary first-run command no longer sits silent for
+  minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
+  suppresses the stream (RIPR-SPEC-0185, #5019).
 - Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
   a frozen protocol names study identity, assignment, equal budgets, the named
   RIPR evidence surface, leakage controls, retries, stopping, non-compensating
@@ -209,6 +265,23 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust: bare equality oracles for error-path and predicate probes now share the
+  existing execution/collectability/macro-binding admission (#5027). Uncalled,
+  false-branch and shadowed assertions retain their test relation without
+  observation or oracle credit; direct and invoked positives remain supported.
+  Family-selected runtime/honesty controls preserve static-only confidence.
+  Boundary pairing now consumes that same admission decision, so refused
+  boundary assertions cannot borrow a far oracle to restore exposure.
+  A bounded statement-prefix refinement preserves earlier synchronous equality
+  before a later return and ignores returns owned by nested helpers/futures.
+  Independent ordinary equality also survives a uniquely bound local empty
+  catch-all macro; imported, shadowed and nonempty expansions remain unsupported.
+  Updated inherited human denominator/base-side labels and precise boundary
+  guidance without changing classification, oracle strength or stage states.
+  Async/test-macro execution remains unsupported: the
+  real Tokio fixture keeps discovery but loses strong static oracle credit, an
+  explicit conservative usefulness tradeoff tracked by #5040.
+
 - File-policy coverage arrays preserve valid TOML comments and decoded string
   values for common, Unix, and Windows selectors. Parser-owned spans retain
   entry attribution; numeric admission, governed-field refusals, and nonzero
@@ -236,10 +309,15 @@ are scoped or reviewed.
   error no longer cites an internal campaign (#4534).
 - `ripr check` refuses two output selections that disagree, such as
   `--json --format human`. Before, the last one silently won (#4535).
-- Rust `proptest!` and `quickcheck!` token trees are reparsed as items, so
-  inner `#[test]` / `quickcheck!` functions keep their real lines, owner
-  calls, and `prop_assert*` oracles. An unmarked `proptest!` fn stays a
-  function fact, not a test (#4789).
+- Rust property macros remain opaque pending macro-provenance support
+  (#4789, corrective successor to #4835). Their names no longer invent
+  executable tests or strong `prop_assert*` evidence. Owner mentions carry
+  an explicit macro limitation, with guidance to inspect existing tests.
+  Property-only argument calls and parser-fallback token-tree tests remain
+  unresolved; unrelated packages cannot suppress a real gap through a shared
+  name. Independent ordinary calls and helper routes retain their evidence.
+  Ordinary assertions keep their established behavior; no-property files
+  no longer allocate or parse a file-sized overlay.
 - Review guidance: admit workspace and changed-owner inputs before either
   index build, with file/byte limits and a `review_guidance_oversized` failed
   receipt instead of silently truncated guidance (#4388, RIPR-SPEC-0012).

@@ -30,10 +30,7 @@ use crate::analysis::committed_source::{self, CommittedSourceRead};
 use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
-use crate::analysis_outcome::{
-    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
-    AnalysisStage,
-};
+use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
@@ -818,7 +815,12 @@ fn apply_probe_and_oracle_limits(
     oracles::apply_cross_language_limit(finding, probe, index);
 }
 
-fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
+fn apply_rust_no_static_path_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    index: &RustIndex,
+    property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
+) {
     if !(finding.class == ExposureClass::NoStaticPath
         && finding.related_tests.is_empty()
         && finding.static_limit_kind.is_none())
@@ -875,6 +877,13 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
             test.start_line,
             test.name
         ));
+    } else if oracles::apply_unresolved_property_macro_limit(
+        finding,
+        &owner_name,
+        &probe.location.file,
+        property_macro_mentions,
+    ) {
+        replace_witnessed_no_path_infection_summary(finding);
     }
 }
 
@@ -1393,6 +1402,8 @@ impl RustAdapter {
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         let mut related_test_candidate_index = None;
+        let property_macro_mentions =
+            oracles::PropertyMacroMentionIndex::new(&index, &options.root);
 
         let rust_changed_for_presence = analyzable_changed_files
             .iter()
@@ -1553,7 +1564,12 @@ impl RustAdapter {
                 // RIPR-SPEC-0117: when no lexical transitive path is available,
                 // name a macro-reach limitation only when a same-repo macro
                 // definition lexically mentions the changed owner.
-                apply_rust_no_static_path_limit(&mut finding, &probe, &index);
+                apply_rust_no_static_path_limit(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    &property_macro_mentions,
+                );
                 // Name unresolved custom assertion macros only after reach has
                 // already been established and no recognized oracle observes
                 // the seam. This is an oracle limitation, not macro expansion
@@ -1638,30 +1654,6 @@ impl RustAdapter {
             rust_consumed_sources,
         })
     }
-}
-
-fn limitations_for_absent_changed_files(
-    paths: &[std::path::PathBuf],
-) -> Result<Vec<AnalysisLimitation>, String> {
-    paths
-        .iter()
-        .map(|path| {
-            let display = workspace::normalize_path(path);
-            AnalysisLimitation::new(
-                AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
-                AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    "Check out the missing file, or disable sparse checkout for it, then re-run the analysis.",
-                )?,
-            )
-            .with_path(&display)?
-            .with_affected_items(1)?
-            .with_detail(
-                "changed file is absent from the working tree (sparse checkout or local delete); probes for this file were withheld",
-            )
-        })
-        .collect()
 }
 
 /// Bounds a path to `max_chars` for a recovery sentence, whose length is
@@ -1958,6 +1950,8 @@ impl RustAdapter {
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
         let mut related_test_candidate_index = None;
+        let property_macro_mentions =
+            oracles::PropertyMacroMentionIndex::new(&index, &options.root);
 
         let mut findings = Vec::new();
         let mut parser_spans = BTreeMap::new();
@@ -1998,7 +1992,12 @@ impl RustAdapter {
                 // `language_status` is omitted for Rust per RIPR-SPEC-0026.
                 // RIPR-SPEC-0114 + 0115 + 0117: no_static_path limitation
                 // disclosure for repo-mode (same logic as diff-mode).
-                apply_rust_no_static_path_limit(&mut finding, &probe, &index);
+                apply_rust_no_static_path_limit(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    &property_macro_mentions,
+                );
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
                 push_retained_finding(&mut findings, finding);
             }
@@ -4636,6 +4635,7 @@ fn absent_delimiter_boundary_returns_head() {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: Vec::new(),
             recommended_next_step: None,
             language: None,

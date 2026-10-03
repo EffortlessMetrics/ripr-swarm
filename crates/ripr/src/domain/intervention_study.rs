@@ -1,4 +1,4 @@
-//! Matched RIPR intervention-study preregistration (RIPR-SPEC-0205 / #4649).
+//! Matched RIPR intervention-study preregistration (RIPR-SPEC-0215 / #4649).
 //!
 //! This module owns the frozen protocol object and the study-law validator.
 //! It does not execute agents, grade repairs, or emit an intervention-value
@@ -403,8 +403,24 @@ impl RiprInterventionStudyV1 {
     ) -> Result<(), InterventionStudyError> {
         self.validate()?;
         successor.validate()?;
+        if self.study_id != successor.study_id {
+            return Ok(());
+        }
+        // The recorded-attempt lock is monotonic under one study identity:
+        // clearing it would reopen the protocol for later same-ID mutation.
         if self.protocol_lock.first_attempt_recorded
-            && self.study_id == successor.study_id
+            && !successor.protocol_lock.first_attempt_recorded
+        {
+            return Err(error(
+                codes::PROTOCOL_MUTATION_REQUIRES_NEW_STUDY_ID,
+                "a recorded first attempt cannot be cleared under the same study_id",
+            ));
+        }
+        // Either side carrying a recorded attempt freezes the payload, so a
+        // mutation cannot ride along with the transition that records the
+        // first attempt.
+        if (self.protocol_lock.first_attempt_recorded
+            || successor.protocol_lock.first_attempt_recorded)
             && self.canonical_protocol_payload() != successor.canonical_protocol_payload()
         {
             return Err(error(
@@ -1205,6 +1221,43 @@ mod tests {
             codes::PROTOCOL_MUTATION_REQUIRES_NEW_STUDY_ID,
         )?;
         successor.study_id = "study:ripr-intervention:iv01:successor".to_string();
+        predecessor
+            .validate_successor(&successor)
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn recorded_attempt_lock_cannot_be_cleared_under_the_same_study_id() -> Result<(), String> {
+        let mut predecessor = example_preregistered_study();
+        predecessor.protocol_lock.first_attempt_recorded = true;
+        let mut reset = predecessor.clone();
+        reset.protocol_lock.first_attempt_recorded = false;
+        assert_code(
+            predecessor.validate_successor(&reset),
+            codes::PROTOCOL_MUTATION_REQUIRES_NEW_STUDY_ID,
+        )?;
+        // An unchanged recorded successor remains a valid transition.
+        predecessor
+            .validate_successor(&predecessor.clone())
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn mutation_cannot_ride_along_with_recording_the_first_attempt() -> Result<(), String> {
+        let predecessor = example_preregistered_study();
+        let mut successor = predecessor.clone();
+        successor.protocol_lock.first_attempt_recorded = true;
+        // Recording the first attempt without mutation is the ordinary start.
+        predecessor
+            .validate_successor(&successor)
+            .map_err(|error| error.to_string())?;
+        successor.shared_budget.token_budget = 40_000;
+        assert_code(
+            predecessor.validate_successor(&successor),
+            codes::PROTOCOL_MUTATION_REQUIRES_NEW_STUDY_ID,
+        )?;
+        // Pre-start amendment without a recorded attempt stays permitted.
+        successor.protocol_lock.first_attempt_recorded = false;
         predecessor
             .validate_successor(&successor)
             .map_err(|error| error.to_string())

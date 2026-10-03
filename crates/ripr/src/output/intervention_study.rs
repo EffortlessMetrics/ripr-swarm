@@ -1,5 +1,5 @@
 //! Deterministic JSON and Markdown projections for a preregistered
-//! intervention study (RIPR-SPEC-0205 / #4649).
+//! intervention study (RIPR-SPEC-0215 / #4649).
 //!
 //! Projections are derived from one validated semantic object. This module
 //! does not execute the study, grade attempts, or claim intervention value.
@@ -59,14 +59,7 @@ pub(crate) fn parse_study_json(
 pub(crate) fn render_study_json(
     study: &RiprInterventionStudyV1,
 ) -> Result<String, InterventionStudyError> {
-    study.validate()?;
-    let expected = protocol_digest(study)?;
-    if study.protocol_digest != expected {
-        return Err(InterventionStudyError {
-            code: codes::PROTOCOL_DIGEST_MISMATCH,
-            message: "protocol must be sealed before JSON projection".to_string(),
-        });
-    }
+    require_sealed(study, "JSON")?;
     json::render_pretty_with_newline(study, "intervention study").map_err(|error| {
         InterventionStudyError {
             code: codes::MALFORMED_IDENTITY,
@@ -75,11 +68,28 @@ pub(crate) fn render_study_json(
     })
 }
 
+/// Validate study laws and require the stored digest to match the payload,
+/// so every projection shares one sealed-object boundary.
+fn require_sealed(
+    study: &RiprInterventionStudyV1,
+    projection: &str,
+) -> Result<(), InterventionStudyError> {
+    study.validate()?;
+    let expected = protocol_digest(study)?;
+    if study.protocol_digest != expected {
+        return Err(InterventionStudyError {
+            code: codes::PROTOCOL_DIGEST_MISMATCH,
+            message: format!("protocol must be sealed before {projection} projection"),
+        });
+    }
+    Ok(())
+}
+
 /// Render the sealed protocol as bounded Markdown.
 pub(crate) fn render_study_markdown(
     study: &RiprInterventionStudyV1,
 ) -> Result<String, InterventionStudyError> {
-    study.validate()?;
+    require_sealed(study, "Markdown")?;
     let mut markdown = String::new();
     markdown.push_str("# RIPR intervention study preregistration\n\n");
     markdown.push_str(&format!("- schema: `{}`\n", study.schema_version));
@@ -261,7 +271,7 @@ mod tests {
         Ok(json!({
             "schema_version": "ripr_intervention_study_corpus.v1",
             "kind": "ripr_intervention_study_corpus",
-            "spec": "RIPR-SPEC-0205",
+            "spec": "RIPR-SPEC-0215",
             "valid": serde_json::to_value(seal(example_preregistered_study()).map_err(|error| error.to_string())?)
                 .map_err(|error| error.to_string())?,
             "falsifiers": [
@@ -500,6 +510,30 @@ mod tests {
             )),
             Ok(_) => Err("digest mismatch was accepted".to_string()),
         }
+    }
+
+    #[test]
+    fn markdown_rejects_a_stale_digest_after_post_seal_mutation() -> Result<(), String> {
+        let mut study = seal(example_preregistered_study()).map_err(|error| error.to_string())?;
+        render_study_markdown(&study).map_err(|error| error.to_string())?;
+        study.shared_budget.token_budget = 40_000;
+        study.validate().map_err(|error| error.to_string())?;
+        for (surface, result) in [
+            ("markdown", render_study_markdown(&study)),
+            ("json", render_study_json(&study)),
+        ] {
+            match result {
+                Err(error) if error.code == codes::PROTOCOL_DIGEST_MISMATCH => {}
+                Err(error) => {
+                    return Err(format!(
+                        "{surface}: expected protocol_digest_mismatch, got {}: {}",
+                        error.code, error.message
+                    ));
+                }
+                Ok(_) => return Err(format!("{surface} projected a stale digest")),
+            }
+        }
+        Ok(())
     }
 
     #[test]

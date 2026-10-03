@@ -19,11 +19,14 @@ use sha2::{Digest, Sha256};
 mod editor_validators;
 mod gap_validators;
 mod general_validators;
+mod installed_journey;
 mod report_validators;
+mod upstream_python;
 
 pub(crate) use editor_validators::*;
 pub(crate) use gap_validators::*;
 pub(crate) use general_validators::*;
+pub(crate) use installed_journey::*;
 pub(crate) use report_validators::*;
 
 pub(crate) fn check_fixture_contracts() -> Result<(), String> {
@@ -83,6 +86,11 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_release_scope_fixture_corpus(&mut violations)?;
     validate_intervention_study_fixture_corpus(&mut violations)?;
     validate_blind_journey_contract_fixture_corpus(&mut violations)?;
+    validate_orchestration_attempt_receipts_fixture_corpus(&mut violations)?;
+    validate_blind_journey_execute_fixture_corpus(&mut violations)?;
+    validate_blind_journey_installed_rust_fixture(&mut violations)?;
+    validate_blind_journey_installed_python_fixture(&mut violations)?;
+    validate_blind_journey_installed_typescript_fixture(&mut violations)?;
     for entry in
         fs::read_dir(fixtures_dir).map_err(|err| format!("failed to read fixtures: {err}"))?
     {
@@ -162,10 +170,10 @@ fn validate_intervention_study_fixture_corpus(violations: &mut Vec<String>) -> R
         let text = read_text_lossy(&spec)?;
         if !text
             .lines()
-            .any(|line| line.starts_with("Spec: RIPR-SPEC-0205"))
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0215"))
         {
             violations.push(format!(
-                "{} is missing `Spec: RIPR-SPEC-0205`",
+                "{} is missing `Spec: RIPR-SPEC-0215`",
                 normalize_path(&spec)
             ));
         }
@@ -1803,6 +1811,10 @@ pub(crate) const PYTHON_REAL_REPO_EVAL_REQUIRED_CASES: &[(&str, &str)] = &[
 
 pub(crate) const PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES: &[(&str, &str)] = &[
     ("dynamic_dispatch_no_packet_eval", "dynamic_dispatch"),
+    (
+        "werkzeug_multiple_cookie_headers_2065_historical_limit",
+        "decorator_indirection",
+    ),
     (
         "decorator_indirection_no_packet_eval",
         "decorator_indirection",

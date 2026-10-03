@@ -23,6 +23,7 @@ use ripr::output::start_here_state::{
 
 mod agent_skills;
 mod blind_journey;
+mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod command;
@@ -40,6 +41,7 @@ mod fixture_contracts;
 mod gap_source_subject_shared;
 mod identity_registry;
 mod no_panic;
+mod orchestration_attempt;
 mod output_enum_contracts;
 mod package_qualification;
 mod policy;
