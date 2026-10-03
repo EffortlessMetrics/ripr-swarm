@@ -4008,7 +4008,7 @@ mod tests {
                 base_explicit: true,
                 ..FirstPrOptions::default()
             },
-            &selected.join("proof packet"),
+            &alias.join("proof packet"),
             false,
         );
         assert!(error.contains(&format!("rerun `{refresh}`")), "{error}");
@@ -4021,7 +4021,7 @@ mod tests {
         // and output arguments; this is not a shell replay of the recovery text.
         args = first_pr_args(
             &expected_root,
-            &crate::output::path::human_path(&selected.join("proof packet")),
+            &crate::output::path::human_path(&alias.join("proof packet")),
         );
         first_pr(&args)?;
         args.push("--check".into());
