@@ -137,6 +137,12 @@ impl LanguageId {
             LanguageId::Perl => format!(
                 "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it"
             ),
+            // The TypeScript adapter analyzes the whole TS/JS family, and a
+            // JavaScript-only diff is disclosed under it (#4555).
+            LanguageId::TypeScript => format!(
+                "rebuild ripr with Cargo feature `{}` to analyze TypeScript and JavaScript files",
+                LanguageId::TypeScript.required_feature()
+            ),
             other => format!(
                 "rebuild ripr with Cargo feature `{}` to analyze {} files",
                 other.required_feature(),
@@ -319,6 +325,13 @@ pub enum StaticLimitKind {
     /// This label names the unresolved conversion binding, not a coverage
     /// claim. See #3700.
     WrapperErrorBindingUnresolved,
+    /// A Python test constructs or calls into the owner's class, and a
+    /// bounded same-class `self.` / `cls.` path may reach the changed
+    /// method, but the preview adapter does not relate that path. The
+    /// classification stays `no_static_path`; this label names the
+    /// unresolved method-to-method edge, not a coverage claim. See
+    /// RIPR-SPEC-0201 / #4765.
+    PythonTransitiveReachUnresolved,
 }
 
 impl StaticLimitKind {
@@ -354,6 +367,9 @@ impl StaticLimitKind {
                 "rust_subprocess_binary_reach_unresolved"
             }
             StaticLimitKind::WrapperErrorBindingUnresolved => "wrapper_error_binding_unresolved",
+            StaticLimitKind::PythonTransitiveReachUnresolved => {
+                "python_transitive_reach_unresolved"
+            }
         }
     }
 
@@ -441,7 +457,15 @@ impl StaticLimitKind {
                  limitation, not a reach, receipt, or coverage claim."
             }
             StaticLimitKind::WrapperErrorBindingUnresolved => {
-                "The changed line converts a callee's error through a boxed wrapper                  (`map_err(Into::into)`), so whether the wrapper faithfully carries the                  callee's error variant is not statically established; ripr cannot credit                  a downcast witness to this conversion."
+                "The changed line converts a callee's error through a boxed wrapper \
+                 (`map_err(Into::into)`), so whether the wrapper faithfully carries the \
+                 callee's error variant is not statically established; ripr cannot credit \
+                 a downcast witness to this conversion."
+            }
+            StaticLimitKind::PythonTransitiveReachUnresolved => {
+                "A Python test may reach this change through another method on the owner's \
+                 class, a bound-method alias, or a protocol entry point that ripr does not \
+                 fully trace. This is a named limitation, not a coverage claim."
             }
         }
     }
@@ -450,6 +474,18 @@ impl StaticLimitKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4323: a lost string-literal continuation left ~18-space runs inside
+    /// this gloss, which rendered as mid-sentence gaps in human and JSON output.
+    #[test]
+    fn wrapper_error_binding_gloss_has_no_whitespace_runs() {
+        let gloss = StaticLimitKind::WrapperErrorBindingUnresolved.describe();
+        assert!(!gloss.contains("  "), "{gloss}");
+        assert!(
+            gloss.contains("boxed wrapper (`map_err(Into::into)`), so"),
+            "{gloss}"
+        );
+    }
 
     #[test]
     fn pytest_verify_command_accepts_module_and_legacy_bare_forms() {
@@ -474,11 +510,14 @@ mod tests {
 
     #[test]
     fn unavailable_adapter_recovery_names_the_feature_for_non_perl_languages() {
-        for language in [
-            LanguageId::TypeScript,
-            LanguageId::JavaScript,
-            LanguageId::Python,
-        ] {
+        assert_eq!(
+            LanguageId::TypeScript.unavailable_adapter_recovery(),
+            format!(
+                "rebuild ripr with Cargo feature `{}` to analyze TypeScript and JavaScript files",
+                LanguageId::TypeScript.required_feature()
+            )
+        );
+        for language in [LanguageId::JavaScript, LanguageId::Python] {
             let recovery = language.unavailable_adapter_recovery();
             assert_eq!(
                 recovery,
@@ -623,6 +662,10 @@ mod tests {
             "rust_subprocess_binary_reach_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::WrapperErrorBindingUnresolved.as_str(),
+            "wrapper_error_binding_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustMacroReachUnresolved.as_str(),
             "rust_macro_reach_unresolved"
         );
@@ -633,6 +676,10 @@ mod tests {
         assert_eq!(
             StaticLimitKind::RustMacroWrappedAssertionUnresolved.as_str(),
             "rust_macro_wrapped_assertion_unresolved"
+        );
+        assert_eq!(
+            StaticLimitKind::PythonTransitiveReachUnresolved.as_str(),
+            "python_transitive_reach_unresolved"
         );
     }
 
@@ -656,6 +703,8 @@ mod tests {
             StaticLimitKind::RustMacroWrappedAssertionUnresolved,
             StaticLimitKind::RustValuePropagationUnresolved,
             StaticLimitKind::RustSubprocessBinaryReachUnresolved,
+            StaticLimitKind::WrapperErrorBindingUnresolved,
+            StaticLimitKind::PythonTransitiveReachUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
@@ -680,6 +729,15 @@ mod tests {
                 .contains("depth greater than 5"),
             "transitive-reach limitation text must match RIPR-SPEC-0114's depth-5 bound"
         );
+    }
+
+    #[test]
+    fn python_transitive_reach_description_is_named_limitation_not_coverage() {
+        let described = StaticLimitKind::PythonTransitiveReachUnresolved.describe();
+        assert!(described.contains("may"));
+        assert!(described.contains("named limitation"));
+        assert!(!described.contains("covers"));
+        assert!(!described.contains("tested"));
     }
 
     #[test]

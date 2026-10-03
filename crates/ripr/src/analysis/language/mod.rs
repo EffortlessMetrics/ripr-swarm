@@ -26,6 +26,8 @@ mod id;
 mod perl;
 #[cfg(feature = "lang-python")]
 mod python;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+mod read_limit_disclosure;
 mod router;
 mod rust;
 #[cfg(feature = "lang-typescript")]
@@ -37,13 +39,15 @@ pub(crate) use id::LanguageId;
 pub(crate) use perl::PerlAdapter;
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{PythonAdapter, detect_python_test_framework};
+#[cfg(test)]
+pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{
-    JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind,
-    is_ts_js_source_extension, route, ts_js_source_kind,
+    JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_script_language,
+    is_ts_js_source_extension, route, ts_js_source_kind, unanalyzed_source_language,
 };
 pub(crate) use rust::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, RustAdapter, changed_let_binding, is_diff_scope_oversized,
-    is_generated_rust_file_with_patterns, mask_rust_comments_and_strings,
+    DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,
+    is_diff_scope_oversized, is_generated_rust_file_with_patterns, mask_rust_comments_and_strings,
 };
 pub use rust::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,

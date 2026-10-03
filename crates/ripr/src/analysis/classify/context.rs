@@ -1,4 +1,5 @@
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use super::activation::TestValueFacts;
 use super::helper_transfer::HelperChain;
 use super::reveal::FileUseStatements;
 use crate::domain::{Probe, RelationReason};
@@ -27,6 +28,11 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Run-scoped per-file `use` scan, attached by the classifier; `None`
     /// (unit-test contexts) scans on every query.
     pub file_use_statements: Option<&'a FileUseStatements>,
+    /// Run-scoped per-(test, owner) value facts, attached by the
+    /// classifier; `None` (unit-test contexts) computes them per probe.
+    pub test_value_facts: Option<&'a TestValueFacts>,
+    /// Run-scoped private assertion context, shared across all probes.
+    pub owner_pin_syntax: Option<&'a super::OwnerPinSyntax>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -47,6 +53,8 @@ impl<'a> ProbeContext<'a> {
             index,
             workspace_complete,
             file_use_statements: None,
+            test_value_facts: None,
+            owner_pin_syntax: None,
         }
     }
 
@@ -56,6 +64,23 @@ impl<'a> ProbeContext<'a> {
         file_use_statements: &'a FileUseStatements,
     ) -> Self {
         self.file_use_statements = Some(file_use_statements);
+        self
+    }
+
+    pub(in crate::analysis) fn with_owner_pin_syntax(
+        mut self,
+        syntax: &'a super::OwnerPinSyntax,
+    ) -> Self {
+        self.owner_pin_syntax = Some(syntax);
+        self
+    }
+
+    /// Share one classification run's per-test value facts across probes.
+    pub(in crate::analysis) fn with_test_value_facts(
+        mut self,
+        test_value_facts: &'a TestValueFacts,
+    ) -> Self {
+        self.test_value_facts = Some(test_value_facts);
         self
     }
 

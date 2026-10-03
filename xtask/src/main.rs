@@ -22,6 +22,8 @@ use ripr::output::start_here_state::{
 };
 
 mod agent_skills;
+mod blind_journey;
+mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod command;
@@ -33,9 +35,17 @@ mod evidence_audit;
 mod evidence_promotion;
 mod evidence_quality;
 mod fixture_contracts;
+// #4544: one definition of the gap `source_subject` contract, shared with the
+// ripr crate's LSP validator without widening ripr's public API.
+#[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
+mod gap_source_subject_shared;
+mod identity_registry;
 mod no_panic;
 mod output_enum_contracts;
+mod package_qualification;
 mod policy;
+#[cfg(test)]
+mod portable_consumer;
 mod product_gate_plan;
 mod public_api_surface;
 mod python_judged_panel;
@@ -165,8 +175,9 @@ pub(crate) use evidence_audit::{
     lane1_runtime_status_limited_input, lane1_runtime_status_priority,
     lane1_runtime_status_push_markdown, lane1_runtime_status_with_input_path,
     lane1_static_limitation_backlog_sample_json, repo_exposure_latency_trace_json,
-    static_limitation_backlog_packet_non_claims, static_limitation_repair_route,
-    static_limitation_unlock_condition, static_limitation_why_not_actionable,
+    stamp_actionable_gaps_source_subject, static_limitation_backlog_packet_non_claims,
+    static_limitation_repair_route, static_limitation_unlock_condition,
+    static_limitation_why_not_actionable,
 };
 #[cfg(test)]
 pub(crate) use evidence_promotion::{
@@ -177,7 +188,8 @@ pub(crate) use evidence_promotion::{
     evidence_promotion_external_failure_kind, evidence_promotion_external_semantic_violations,
     evidence_promotion_human_class_line_matches, evidence_promotion_human_oracle_line_matches,
     evidence_promotion_pure_failure_kind, evidence_promotion_semantic_violations,
-    validate_evidence_promotion_honesty_corpus_at, write_evidence_promotion_external_report,
+    evidence_promotion_semantic_violations_scoped, validate_evidence_promotion_honesty_corpus_at,
+    write_evidence_promotion_external_report,
 };
 pub(crate) use evidence_promotion::{
     check_evidence_promotion_honesty, validate_evidence_promotion_honesty_corpus,
@@ -253,7 +265,7 @@ use policy::{
     check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
     check_network_policy, check_no_panic_family, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_workflows,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -555,6 +567,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-rust-source-role-authority",
     "check-public-api",
     "check-output-contracts",
+    "check-identity-registry",
     "check-doc-artifacts",
     "check-doc-index",
     "check-readme-state",
@@ -571,6 +584,10 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-network-policy",
     "check-lint-policy",
 ];
+
+fn check_identity_registry() -> Result<(), String> {
+    identity_registry::check_identity_registry()
+}
 
 fn precommit() -> Result<(), String> {
     ensure_reports_dir()?;
@@ -598,6 +615,7 @@ fn precommit() -> Result<(), String> {
     check_rust_source_role_authority()?;
     check_public_api()?;
     check_output_contracts()?;
+    check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
     check_readme_state()?;
@@ -1318,6 +1336,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_architecture()?;
     check_public_api()?;
     check_output_contracts()?;
+    check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
     check_readme_state()?;
@@ -4624,7 +4643,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -5141,6 +5160,18 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
             current_surface: "VS Code extension TypeScript".to_string(),
             recommendation: "Keep this code in the editor adapter; only move server behavior into ripr Rust modules or xtask.".to_string(),
             reason: "The VS Code Extension Host API is TypeScript-native, so this is an approved adapter boundary rather than core automation.".to_string(),
+        });
+    }
+
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "portable native-ripr consumer packet".to_string(),
+            recommendation: "Keep packet-local transport in stdlib Python; keep packet staging, policy, and oracles in Rust/xtask.".to_string(),
+            reason: "The consumer has to run in Python-capable agent environments that cannot compile or search PATH for ripr (#4713).".to_string(),
         });
     }
 
@@ -5856,6 +5887,200 @@ fn routed_rust_workflow_contract_violations(
     routed_rust_workflow_contract_violations_with_reusable(workflow, None, settings, lane_whitelist)
 }
 
+/// How Routed Rust Small treats one GitHub event after reading the workflow YAML.
+///
+/// The workflow file is the authority. This classifier inspects `on.pull_request.types`
+/// and the route-job `if:` so a missing filter cannot be hidden behind a hardcoded
+/// desired policy (#4380).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoutedRustEventRoute {
+    LaunchFullGate,
+    IgnoreWithoutRequiredResult,
+    WorkflowNotTriggered,
+}
+
+const ROUTED_RUST_PROOF_ACTIONS_SNIPPET: &str =
+    r#"contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)"#;
+const ROUTED_RUST_FULL_CI_LABELED_SNIPPET: &str =
+    "github.event.action == 'labeled' && github.event.label.name == 'full-ci'";
+const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
+const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
+const ROUTED_RUST_SYNCHRONIZE_CANCEL_SNIPPET: &str = "cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}";
+
+fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
+    workflow.lines().map(str::trim).find_map(|line| {
+        line.strip_prefix("types:")
+            .map(str::trim)
+            .filter(|rest| rest.starts_with('['))
+            .map(|rest| {
+                rest.trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+    })
+}
+
+fn routed_rust_job_if_text(workflow: &str, job: &str) -> String {
+    let job_header = format!("{job}:");
+    let mut in_block = false;
+    let mut in_if = false;
+    let mut text = String::new();
+    for line in workflow.lines() {
+        let job_level_key = line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.trim_end().ends_with(':')
+            && !line.trim_start().starts_with('-');
+        if job_level_key {
+            if in_block {
+                break;
+            }
+            in_block = line.trim() == job_header;
+            in_if = false;
+            continue;
+        }
+        if in_block && !line.is_empty() && !line.starts_with(' ') {
+            break;
+        }
+        if !in_block {
+            continue;
+        }
+        if in_if {
+            let indent = line.len() - line.trim_start().len();
+            if !line.trim().is_empty() && indent <= 4 {
+                in_if = false;
+            } else {
+                if !line.trim().is_empty() && !line.trim_start().starts_with('#') {
+                    text.push(' ');
+                    text.push_str(line.trim());
+                }
+                continue;
+            }
+        }
+        if line.starts_with("    if:") && !line.starts_with("     ") {
+            let rest = line.trim().trim_start_matches("if:").trim();
+            if rest == "|" || rest == ">" || rest == "|-" || rest == ">-" {
+                in_if = true;
+            } else {
+                text.push_str(rest);
+            }
+        }
+    }
+    text
+}
+
+fn routed_rust_job_has_proof_event_if(workflow: &str, job: &str) -> bool {
+    let if_text = routed_rust_job_if_text(workflow, job);
+    if_text.contains(ROUTED_RUST_PROOF_ACTIONS_SNIPPET)
+        && if_text.contains(ROUTED_RUST_FULL_CI_LABELED_SNIPPET)
+}
+
+#[cfg(test)]
+fn routed_rust_proof_event(event_name: &str, action: Option<&str>, label: Option<&str>) -> bool {
+    if event_name != "pull_request" {
+        return true;
+    }
+    match action {
+        Some("opened" | "synchronize" | "reopened") => true,
+        Some("labeled") if label == Some("full-ci") => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+fn routed_rust_event_route(
+    workflow: &str,
+    event_name: &str,
+    action: Option<&str>,
+    label: Option<&str>,
+) -> RoutedRustEventRoute {
+    if event_name == "pull_request" {
+        let action = action.unwrap_or("");
+        if let Some(types) = routed_rust_pull_request_types(workflow)
+            && !types.iter().any(|value| value == action)
+        {
+            return RoutedRustEventRoute::WorkflowNotTriggered;
+        }
+        if !routed_rust_proof_event(event_name, Some(action), label) {
+            if routed_rust_job_has_proof_event_if(workflow, "route") {
+                return RoutedRustEventRoute::IgnoreWithoutRequiredResult;
+            }
+            return RoutedRustEventRoute::LaunchFullGate;
+        }
+    }
+    RoutedRustEventRoute::LaunchFullGate
+}
+
+fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
+    let has_pull_request_trigger = workflow
+        .lines()
+        .map(str::trim)
+        .any(|line| line == "pull_request:");
+    if !has_pull_request_trigger {
+        return Vec::new();
+    }
+    let Some(types) = routed_rust_pull_request_types(workflow) else {
+        return vec![
+            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so opened/synchronize/reopened and full-ci labeled events still launch".to_string(),
+        ];
+    };
+    let mut violations = Vec::new();
+    for required in ["opened", "synchronize", "reopened", "labeled"] {
+        if !types.iter().any(|value| value == required) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml pull_request types must keep `{required}` so ordinary proof events still launch the required Rust or docs gate"
+            ));
+        }
+    }
+    if types.iter().any(|value| value == "unlabeled") {
+        violations.push(
+            ".github/workflows/routed-rust.yml must not subscribe to unlabeled pull_request events; an unrelated label removal must not launch a full Rust gate (#4380)".to_string(),
+        );
+    }
+    if !workflow.contains(ROUTED_RUST_SYNCHRONIZE_CANCEL_SNIPPET) {
+        violations.push(
+            ".github/workflows/routed-rust.yml must keep synchronize-only cancel-in-progress; do not flip cancellation globally for label events (#4380)".to_string(),
+        );
+    }
+    if !workflow.contains("-label-ignore")
+        || !workflow.contains(
+            "github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore'",
+        )
+    {
+        violations.push(
+            ".github/workflows/routed-rust.yml must put unrelated labeled events in a distinct `-label-ignore` concurrency group so they cannot replace a pending synchronize proof".to_string(),
+        );
+    }
+    for job in ["route", "detect-docs-only"] {
+        if !routed_rust_job_has_proof_event_if(workflow, job) {
+            violations.push(format!(
+                ".github/workflows/routed-rust.yml job `{job}` must launch only on opened/synchronize/reopened or full-ci labeled events"
+            ));
+        }
+    }
+    if !routed_rust_job_block_any(workflow, "result", |line| {
+        line.contains(ROUTED_RUST_IGNORED_LABEL_RESULT_NAME)
+            && line.contains(ROUTED_RUST_REQUIRED_RESULT_NAME)
+    }) {
+        violations.push(
+            ".github/workflows/routed-rust.yml result job must post `Ripr Rust Small Ignored Label Event` instead of the required result on unrelated labeled events".to_string(),
+        );
+    }
+    if !routed_rust_job_block_any(workflow, "result", |line| {
+        line.contains(r#"[ "$EVENT_ACTION" = "unlabeled" ]"#)
+            && line.contains(r#"[ "$LABEL_NAME" != "full-ci" ]"#)
+    }) {
+        violations.push(
+            ".github/workflows/routed-rust.yml result job must short-circuit unlabeled and non-full-ci labeled events without manufacturing a required green result".to_string(),
+        );
+    }
+    violations
+}
+
 fn routed_rust_workflow_contract_violations_with_reusable(
     workflow: &str,
     reusable_workflow: Option<&str>,
@@ -5914,7 +6139,7 @@ fn routed_rust_workflow_contract_violations_with_reusable(
         ("CX43 capacity label", "rust-medium"),
         ("CPX42 capacity label", "rust-16gb"),
         ("CX53 capacity label", "rust-large"),
-        ("normalized result job", "name: Ripr Rust Small Result"),
+        ("normalized result job", "Ripr Rust Small Result"),
         (
             "CX43 conditional implementation job",
             "if: needs.route.outputs.router_target == 'cx43'",
@@ -6205,6 +6430,8 @@ fn routed_rust_workflow_contract_violations_with_reusable(
             );
         }
     }
+
+    violations.extend(routed_rust_label_event_contract_violations(workflow));
 
     violations.sort();
     violations.dedup();
@@ -12913,25 +13140,20 @@ fn check_workspace_shape() -> Result<(), String> {
 }
 
 fn check_architecture() -> Result<(), String> {
-    let rules = read_pipe_records("policy/architecture.txt", 3)?;
+    let records = read_pipe_records("policy/architecture.txt", 3)?;
     let files = tracked_files()?;
-    let mut violations = Vec::new();
-    for rule in rules {
-        let glob = &rule[0];
-        let forbidden = &rule[1];
-        let reason = &rule[2];
-        for file in &files {
-            if !glob_matches(glob, file) {
-                continue;
-            }
-            let text = read_text_lossy(Path::new(file))?;
-            if text.contains(forbidden) {
-                violations.push(format!(
-                    "{file} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
-                ));
-            }
+    let rule_globs = records
+        .iter()
+        .filter(|record| !record[0].starts_with('!'))
+        .map(|record| record[0].as_str())
+        .collect::<Vec<_>>();
+    let mut file_texts = Vec::new();
+    for file in &files {
+        if rule_globs.iter().any(|glob| glob_matches(glob, file)) {
+            file_texts.push((file.clone(), read_text_lossy(Path::new(file))?));
         }
     }
+    let mut violations = architecture_rule_violations(&records, &file_texts);
 
     for file in files
         .iter()
@@ -12978,10 +13200,230 @@ fn check_architecture() -> Result<(), String> {
                 "Update policy/architecture.txt only when the architecture rule itself changes.",
             ],
             rerun_command: "cargo xtask check-architecture",
-            exception_template: Some("glob|forbidden_pattern|reason"),
+            exception_template: Some(
+                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)",
+            ),
         },
         &violations,
     )
+}
+
+/// Applies `policy/architecture.txt` records to the tracked file texts.
+/// Plain records are deny rules (`glob|forbidden_pattern|reason`). A record
+/// whose first field is prefixed `!` is a scoped exception
+/// (`!path|forbidden_pattern|reason`): it suppresses a deny-rule violation
+/// only when BOTH the literal file path and the exact forbidden pattern
+/// match. Exception paths are literal tracked-file paths, never globs, so
+/// one entry can never waive a rule for other files or other patterns
+/// (#4146). An exception that suppresses nothing is itself a violation,
+/// mirroring the count-policy stale/orphan convention (#2413): exception
+/// budget that matches nothing is invisible slack, so the entry must be
+/// removed or the denied usage restored.
+fn architecture_rule_violations(
+    records: &[Vec<String>],
+    file_texts: &[(String, String)],
+) -> Vec<String> {
+    let mut rules = Vec::new();
+    let mut exceptions = Vec::new();
+    for record in records {
+        match record[0].strip_prefix('!') {
+            Some(glob) => exceptions.push((glob.to_string(), record[1].clone(), record[2].clone())),
+            None => rules.push((record[0].clone(), record[1].clone(), record[2].clone())),
+        }
+    }
+
+    let mut suppressed = vec![false; exceptions.len()];
+    let mut violations = Vec::new();
+    for (glob, forbidden, reason) in &rules {
+        for (path, text) in file_texts {
+            if !glob_matches(glob, path) || !text.contains(forbidden) {
+                continue;
+            }
+            let exception_index =
+                exceptions
+                    .iter()
+                    .position(|(exception_path, exception_pattern, _)| {
+                        exception_pattern == forbidden && exception_path == path
+                    });
+            match exception_index {
+                Some(index) => suppressed[index] = true,
+                None => violations.push(format!(
+                    "{path} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
+                )),
+            }
+        }
+    }
+
+    for ((exception_path, exception_pattern, _), suppressed) in exceptions.iter().zip(&suppressed) {
+        if !suppressed {
+            violations.push(format!(
+                "!{exception_path} exception for `{exception_pattern}` is stale: it matches no current architecture violation; remove the entry or restore the denied usage"
+            ));
+        }
+    }
+    violations
+}
+
+#[cfg(test)]
+mod architecture_rule_tests {
+    use super::architecture_rule_violations;
+
+    fn record(line: &str) -> Vec<String> {
+        line.split('|').map(str::trim).map(str::to_string).collect()
+    }
+
+    const BROAD_RULE: &str =
+        "crates/ripr/src/analysis/**|crate::output|analysis must not render user output";
+    const RUNNER_TESTS_PATH: &str =
+        "crates/ripr/src/analysis/language/perl/static_limit/runner_tests.rs";
+    const EXCEPTION: &str = concat!(
+        "!crates/ripr/src/analysis/language/perl/static_limit/runner_tests.rs|crate::output|",
+        "#4146: cfg(test) assertions verify the missing-runner guidance IS rendered - ",
+        "the rendered output is the discriminator under test; production rendering paths remain denied by the broad rule"
+    );
+
+    #[test]
+    fn scoped_exception_suppresses_exact_path_and_pattern() {
+        let violations = architecture_rule_violations(
+            &[record(BROAD_RULE), record(EXCEPTION)],
+            &[(
+                RUNNER_TESTS_PATH.to_string(),
+                "let human = crate::output::human::render_finding(&observed);".to_string(),
+            )],
+        );
+        assert_eq!(violations, Vec::<String>::new());
+    }
+
+    #[test]
+    fn exception_does_not_suppress_other_patterns_in_same_file() {
+        let violations = architecture_rule_violations(
+            &[
+                record(BROAD_RULE),
+                record(
+                    "crates/ripr/src/analysis/**|serde_json|analysis must not know JSON rendering",
+                ),
+                record(EXCEPTION),
+            ],
+            &[(
+                RUNNER_TESTS_PATH.to_string(),
+                "serde_json::from_str(&text);".to_string(),
+            )],
+        );
+        // The serde_json violation survives, and because the exception
+        // suppressed nothing it is also reported stale.
+        assert_eq!(violations.len(), 2);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("forbidden architecture pattern `serde_json`"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is stale"))
+        );
+    }
+
+    #[test]
+    fn exception_does_not_suppress_other_files() {
+        let violations = architecture_rule_violations(
+            &[record(BROAD_RULE), record(EXCEPTION)],
+            &[(
+                "crates/ripr/src/analysis/workspace/classify.rs".to_string(),
+                "use crate::output::human;".to_string(),
+            )],
+        );
+        // The other file's violation survives; the exception is also stale.
+        assert_eq!(violations.len(), 2);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(
+                    "crates/ripr/src/analysis/workspace/classify.rs contains forbidden architecture pattern `crate::output`"
+                ))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is stale"))
+        );
+    }
+
+    #[test]
+    fn stale_exception_is_reported() {
+        // Pattern no longer present anywhere: the exception matches nothing.
+        let stale = architecture_rule_violations(
+            &[record(BROAD_RULE), record(EXCEPTION)],
+            &[(
+                RUNNER_TESTS_PATH.to_string(),
+                "let human = render_locally(&observed);".to_string(),
+            )],
+        );
+        assert_eq!(stale.len(), 1);
+        assert!(stale[0].contains("is stale: it matches no current architecture violation"));
+
+        // File removed: the exception matches nothing either. The unrelated
+        // file's own violation survives, and the stale exception is reported.
+        let orphaned = architecture_rule_violations(
+            &[record(BROAD_RULE), record(EXCEPTION)],
+            &[(
+                "crates/ripr/src/analysis/other.rs".to_string(),
+                "crate::output".to_string(),
+            )],
+        );
+        assert_eq!(
+            orphaned.len(),
+            2,
+            "unrelated file violation plus stale exception expected: {orphaned:?}"
+        );
+        assert!(
+            orphaned
+                .iter()
+                .any(|violation| violation.contains("is stale"))
+        );
+    }
+
+    #[test]
+    fn plain_rules_still_deny_without_exceptions() {
+        let violations = architecture_rule_violations(
+            &[record(BROAD_RULE)],
+            &[(
+                RUNNER_TESTS_PATH.to_string(),
+                "crate::output::json::render(&output)".to_string(),
+            )],
+        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains(RUNNER_TESTS_PATH));
+    }
+
+    #[test]
+    fn wildcard_exception_suppresses_nothing_and_is_stale() {
+        // Exception paths are literal, never globs: a wildcarded exception
+        // cannot act as a blanket waiver for every matching file.
+        let wildcard = record("!crates/ripr/src/analysis/**|crate::output|temporary waiver");
+        let violations = architecture_rule_violations(
+            &[record(BROAD_RULE), wildcard],
+            &[(
+                RUNNER_TESTS_PATH.to_string(),
+                "crate::output::human::render_finding(&observed);".to_string(),
+            )],
+        );
+        assert_eq!(
+            violations.len(),
+            2,
+            "wildcard exception must neither suppress nor be silently ignored: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(RUNNER_TESTS_PATH))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is stale"))
+        );
+    }
 }
 
 /// #3534: Rust source-role authority. Producer modules derive source role
@@ -13014,7 +13456,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 7] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",
@@ -13044,6 +13486,11 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "crates/ripr/src/analysis/classify/related_tests.rs",
             "starts_with(\"tests",
             "package_prefix/package_scope derive package identity from paths, which the source-role contract explicitly permits; they do not classify role",
+        ),
+        (
+            "crates/ripr/src/analysis/classify/owner_pin/tests.rs",
+            "\"#[cfg(test)]\"",
+            "owner-pin collectability preservation fixture in the cfg(test)-gated tests module; source spelling is input data, while cfg_predicates owns the production availability decision (#4478)",
         ),
         (
             "crates/ripr/src/lsp/tests.rs",
@@ -13079,13 +13526,23 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 6] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 9] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
         "crates/ripr/src/analysis/source_role_corpus.rs",
         "crates/ripr/src/analysis/mod.rs",
-        "crates/ripr/src/analysis/language/rust.rs",
+        "crates/ripr/src/analysis/language/rust/mod.rs",
+        // #4775: consulted unchanged lexical-fallback files that live under
+        // `tests/**` are test evidence even when the lexical scanner extracted
+        // no TestFact. The layout authority stays `is_test_file`; this module
+        // does not re-derive role from names or cfg strings.
+        "crates/ripr/src/analysis/language/rust/lexical_test_grip.rs",
+        // InlineUnit admission refuses tests/** owners as InlineUnitOutOfScope
+        // rather than inventing a second path heuristic (#4784). Integration
+        // admission uses the same authority for proposed tests/*.rs leaves (#4576).
+        "crates/ripr/src/analysis/new_test_target.rs",
+        "crates/ripr/src/analysis/new_test_target/integration.rs",
     ];
 
     let files = tracked_files()?;
@@ -13419,6 +13876,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/evidence.rs",
         "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/probe.rs",
+        "crates/ripr/src/domain/repair_card.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
     ] {
@@ -13426,6 +13884,7 @@ fn check_output_contracts() -> Result<(), String> {
         domain.push('\n');
     }
     let app = read_text_lossy(Path::new("crates/ripr/src/app.rs"))?;
+    let repair_card_domain = read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
     let evidence_record = read_text_lossy(Path::new("crates/ripr/src/output/evidence_record.rs"))?;
     let mutation_calibration =
         read_text_lossy(Path::new("crates/ripr/src/output/mutation_calibration.rs"))?;
@@ -13484,6 +13943,38 @@ fn check_output_contracts() -> Result<(), String> {
                 );
                 validate_evidence_record_contract_schema_version(value, &mut violations)?;
             }
+            "repair_card_schema_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "repair_card_budget_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
             "context_version" => {
                 require_contract_value(
                     "crates/ripr/src/output/json/",
@@ -13516,9 +14007,21 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
             }
-            "exposure_class" | "severity" | "probe_family" | "delta" | "flow_sink"
-            | "stage_state" | "confidence" | "oracle_kind" | "oracle_strength" | "stop_reason"
-            | "value_context" | "oracle_alignment" | "source_currentness" | "static_limit_kind" => {
+            "exposure_class"
+            | "severity"
+            | "probe_family"
+            | "delta"
+            | "flow_sink"
+            | "stage_state"
+            | "confidence"
+            | "oracle_kind"
+            | "oracle_strength"
+            | "stop_reason"
+            | "value_context"
+            | "oracle_alignment"
+            | "source_currentness"
+            | "static_limit_kind"
+            | "agent_card_refusal_kind" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",
                     &domain,
@@ -13552,6 +14055,7 @@ fn check_output_contracts() -> Result<(), String> {
             }
             "kind" => {
                 let producer = match value.as_str() {
+                    "agent_card_refusal" => "crates/ripr/src/cli/commands/agent_card.rs",
                     "python_repair_driver_binding" => {
                         "crates/ripr/src/app/python_repair_binding.rs"
                     }
@@ -20692,19 +21196,50 @@ pub(crate) fn read_file_policy_allowlist(path: &str) -> Result<Vec<GlobAllow>, S
         .collect())
 }
 
-pub(crate) fn read_file_policy_test_commands(path: &str) -> Result<Vec<(usize, String)>, String> {
+pub(crate) fn read_file_policy_test_commands(
+    path: &str,
+) -> Result<Vec<FilePolicyTestCommand>, String> {
     let entries = parse_file_policy_allowlist(path)?;
-    Ok(entries
-        .into_iter()
-        .flat_map(|entry| {
-            entry
-                .covered_by
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|command| is_cargo_test_command(command))
-                .map(move |command| (entry.line, command))
-        })
-        .collect())
+    let mut commands = Vec::new();
+    for entry in entries {
+        for (host, values) in [
+            (None, entry.covered_by),
+            (Some(FilePolicyHost::Unix), entry.covered_by_unix),
+            (Some(FilePolicyHost::Windows), entry.covered_by_windows),
+        ] {
+            for command in values.unwrap_or_default() {
+                if is_cargo_test_command(&command) {
+                    commands.push(FilePolicyTestCommand {
+                        line: entry.line,
+                        command,
+                        host,
+                    });
+                }
+            }
+        }
+    }
+    Ok(commands)
+}
+
+impl FilePolicyHost {
+    fn parse(family: &str) -> Result<Self, String> {
+        match family {
+            "unix" => Ok(Self::Unix),
+            "windows" => Ok(Self::Windows),
+            _ => Err(format!("unsupported file-policy host family `{family}`")),
+        }
+    }
+
+    fn current() -> Result<Self, String> {
+        Self::parse(std::env::consts::FAMILY)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Unix => "unix",
+            Self::Windows => "windows",
+        }
+    }
 }
 
 pub(crate) fn is_cargo_test_command(command: &str) -> bool {
@@ -20714,65 +21249,126 @@ pub(crate) fn is_cargo_test_command(command: &str) -> bool {
 
 fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, String> {
     let text = read_text_lossy(Path::new(path))?;
+    // Consume the same TOML parser that validates syntax and duplicate keys,
+    // retaining its spans instead of reparsing coverage arrays line by line.
+    let document = toml::de::DeTable::parse(&text)
+        .map_err(|error| format!("{path}: invalid non-Rust allowlist TOML: {error}"))?;
+    // Retain Value's numeric representability checks, even for ignored
+    // metadata, without parsing again or discarding the original spans.
+    let _: toml::Value = serde::Deserialize::deserialize(toml::de::Deserializer::from(
+        document.clone(),
+    ))
+    .map_err(|mut error: toml::de::Error| {
+        error.set_input(Some(&text));
+        format!("{path}: invalid non-Rust allowlist TOML: {error}")
+    })?;
+    let line_number = |offset| {
+        text.bytes()
+            .take(offset)
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1
+    };
     let mut entries = Vec::new();
-    let mut current = FilePolicyAllowEntry::default();
-    let mut in_entry = false;
-
-    let lines = text.lines().collect::<Vec<_>>();
-    let mut idx = 0;
-    while idx < lines.len() {
-        let line_number = idx + 1;
-        let trimmed = lines[idx].trim();
-        idx += 1;
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if trimmed == "[[allow]]" {
-            if in_entry {
-                validate_file_policy_allow_entry(path, &current)?;
-                entries.push(current);
-            }
-            current = FilePolicyAllowEntry {
-                line: line_number,
-                ..FilePolicyAllowEntry::default()
-            };
-            in_entry = true;
-            continue;
-        }
-        let Some((key, value)) = parse_toml_key_value(trimmed) else {
-            continue;
-        };
-        if !in_entry {
-            continue;
-        }
-        match key {
-            "glob" => current.glob = Some(parse_string_value(value, path, line_number)?),
-            "kind" => current.kind = Some(parse_string_value(value, path, line_number)?),
-            "owner" => current.owner = Some(parse_string_value(value, path, line_number)?),
-            "surface" => current.surface = Some(parse_string_value(value, path, line_number)?),
-            "classification" => {
-                current.classification = Some(parse_string_value(value, path, line_number)?)
-            }
-            "reason" => current.reason = Some(parse_string_value(value, path, line_number)?),
-            "generated_by" => {
-                current.generated_by = Some(parse_string_value(value, path, line_number)?)
-            }
-            "covered_by" => {
-                let value = collect_toml_array_value(path, line_number, value, &lines, &mut idx)?;
-                current.covered_by = Some(parse_inline_array(&value)?);
-            }
-            "expires" | "retired" => {}
-            other => {
+    for (key, value) in document.get_ref().iter() {
+        let key = key.get_ref().as_ref();
+        if key != "allow" {
+            let line = line_number(value.span().start);
+            if key.starts_with("covered_by") {
                 return Err(format!(
-                    "{path}:{line_number} unsupported non-Rust allowlist field `{other}`"
+                    "{path}:{line} coverage requires an [[allow]] entry"
                 ));
             }
+            if file_policy_has_table_header(value, &text) {
+                return Err(format!(
+                    "{path}:{line} unsupported non-Rust allowlist table `{key}`"
+                ));
+            }
+            continue;
         }
-    }
-
-    if in_entry {
-        validate_file_policy_allow_entry(path, &current)?;
-        entries.push(current);
+        let declarations = value.get_ref().as_array().ok_or_else(|| {
+            format!(
+                "{path}:{} expected [[allow]] entries",
+                line_number(value.span().start)
+            )
+        })?;
+        for declaration in declarations {
+            let line = line_number(declaration.span().start);
+            let fields = declaration
+                .get_ref()
+                .as_table()
+                .filter(|_| text.get(declaration.span()) == Some("[[allow]]"))
+                .ok_or_else(|| format!("{path}:{line} expected an [[allow]] entry"))?;
+            let mut entry = FilePolicyAllowEntry {
+                line,
+                ..FilePolicyAllowEntry::default()
+            };
+            let mut fields = fields.iter().collect::<Vec<_>>();
+            fields.sort_by_key(|(key, _)| key.span().start);
+            for (key, value) in fields {
+                let field_line = line_number(key.span().start);
+                let key = key.get_ref().as_ref();
+                // Keep the established scalar field reader and ignored metadata
+                // semantics; only coverage arrays adopt parsed string values.
+                let scalar = || {
+                    let raw = text.get(value.span()).ok_or_else(|| {
+                        format!("{path}:{field_line} missing non-Rust allowlist value span")
+                    })?;
+                    parse_string_value(raw, path, field_line)
+                };
+                match key {
+                    "glob" => entry.glob = Some(scalar()?),
+                    "kind" => entry.kind = Some(scalar()?),
+                    "owner" => entry.owner = Some(scalar()?),
+                    "surface" => entry.surface = Some(scalar()?),
+                    "classification" => entry.classification = Some(scalar()?),
+                    "reason" => entry.reason = Some(scalar()?),
+                    "generated_by" => entry.generated_by = Some(scalar()?),
+                    "covered_by" | "covered_by_unix" | "covered_by_windows" => {
+                        let array_error = || {
+                            format!(
+                                "{path}:{field_line} non-Rust allowlist `{key}` requires a string array"
+                            )
+                        };
+                        let commands = value
+                            .get_ref()
+                            .as_array()
+                            .ok_or_else(array_error)?
+                            .iter()
+                            .map(|item| {
+                                item.get_ref()
+                                    .as_str()
+                                    .map(str::to_string)
+                                    .ok_or_else(array_error)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        match key {
+                            "covered_by_unix" => entry.covered_by_unix = Some(commands),
+                            "covered_by_windows" => entry.covered_by_windows = Some(commands),
+                            _ => entry.covered_by = Some(commands),
+                        }
+                    }
+                    "expires" | "retired" => {
+                        let nested = value.get_ref().is_table()
+                            && !text
+                                .get(value.span())
+                                .is_some_and(|raw| raw.starts_with('{'));
+                        if nested || file_policy_has_table_header(value, &text) {
+                            return Err(format!(
+                                "{path}:{field_line} unsupported non-Rust allowlist table `{key}`"
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "{path}:{field_line} unsupported non-Rust allowlist field `{other}`"
+                        ));
+                    }
+                }
+            }
+            validate_file_policy_allow_entry(path, &entry)?;
+            entries.push(entry);
+        }
     }
     if entries.is_empty() {
         return Err(format!("{path} has no [[allow]] entries"));
@@ -20780,29 +21376,22 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
     Ok(entries)
 }
 
-fn collect_toml_array_value(
-    path: &str,
-    line_number: usize,
-    first_value: &str,
-    lines: &[&str],
-    idx: &mut usize,
-) -> Result<String, String> {
-    let mut value = first_value.trim().to_string();
-    if !value.starts_with('[') || value.ends_with(']') {
-        return Ok(value);
-    }
-    while *idx < lines.len() {
-        let next = lines[*idx].trim();
-        *idx += 1;
-        value.push(' ');
-        value.push_str(next);
-        if next.ends_with(']') {
-            return Ok(value);
+// The parser owns these spans: a bracket-like string or comment cannot supply
+// a header. Inline values of ignored metadata remain ignored as before.
+fn file_policy_has_table_header(value: &toml::Spanned<toml::de::DeValue<'_>>, text: &str) -> bool {
+    match value.get_ref() {
+        toml::de::DeValue::Table(fields) => {
+            text.get(value.span())
+                .is_some_and(|raw| raw.starts_with('['))
+                || fields
+                    .values()
+                    .any(|field| file_policy_has_table_header(field, text))
         }
+        toml::de::DeValue::Array(items) => items
+            .iter()
+            .any(|item| file_policy_has_table_header(item, text)),
+        _ => false,
     }
-    Err(format!(
-        "{path}:{line_number} unterminated non-Rust allowlist array"
-    ))
 }
 
 fn validate_file_policy_allow_entry(
@@ -20836,6 +21425,19 @@ fn validate_file_policy_allow_entry(
             "{path}:{} non-Rust allowlist `covered_by` values must be non-empty",
             entry.line
         ));
+    }
+    for (field, commands) in [
+        ("covered_by_unix", &entry.covered_by_unix),
+        ("covered_by_windows", &entry.covered_by_windows),
+    ] {
+        if let Some(commands) = commands
+            && (commands.is_empty() || commands.iter().any(|value| !is_cargo_test_command(value)))
+        {
+            return Err(format!(
+                "{path}:{} `{field}` requires a non-empty array of cargo test commands",
+                entry.line
+            ));
+        }
     }
     Ok(())
 }
@@ -21502,6 +22104,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(
+            "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
+        );
+    }
+
     if path.starts_with("fixtures/")
         && (path.ends_with(".ts")
             || path.ends_with(".tsx")
@@ -21562,7 +22170,9 @@ fn is_dependency_surface_candidate(path: &str) -> bool {
 }
 
 fn is_process_policy_candidate(path: &str) -> bool {
-    path.ends_with(".rs") || path.ends_with(".ts")
+    path.ends_with(".rs")
+        || path.ends_with(".ts")
+        || (path.starts_with("tools/python/") && path.ends_with(".py"))
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -21586,6 +22196,9 @@ fn process_policy_patterns() -> Vec<String> {
         concat!("cp.", "spawn"),
         concat!("cp.", "exec("),
         concat!("cp.", "execFile"),
+        concat!("subprocess.", "Popen"),
+        concat!("subprocess.", "run"),
+        concat!("os.", "system"),
     ]
     .iter()
     .map(|value| value.to_string())

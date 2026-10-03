@@ -16,6 +16,8 @@ mod process;
 mod product_copy;
 pub(crate) mod proof_packs;
 mod release_targets;
+
+pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
 mod static_language;
 mod test_inventory;
 mod workflows;
@@ -52,4 +54,8 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
     } else {
         Err(failures.join("\n"))
     }
+}
+
+pub(crate) fn qualify_python_wheelhouse(args: &[String]) -> Result<(), String> {
+    distribution::wheelhouse::run(args)
 }

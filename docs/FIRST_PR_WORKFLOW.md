@@ -18,6 +18,24 @@ run ripr
 This workflow is advisory. `ripr` does not edit source, generate tests, run
 mutation testing, call providers, or make merge decisions by default.
 
+If `ripr doctor --root PATH` finds an existing or stale start-here packet, its
+refresh command keeps that selected repository even when pasted from another
+directory, including roots that traverse a symlink before `..`. If the selected
+directory can no longer be resolved, doctor withholds the refresh command and
+asks you to restore access and retry. Use the labeled PowerShell form when one
+is printed. This generic
+refresh uses the repository's default base and `HEAD`; add explicit `--base REF`
+and `--head REF` to keep a custom comparison. If no default base resolves,
+first-pr reports the missing selection and leaves the existing packet unchanged.
+The rooted recommended first check also keeps the physical selected directory;
+missing-root recovery remains diagnostic and does not create a repository.
+An unavailable root keeps its absolute input spelling, including `..`, rather
+than redirecting recovery to a different directory through lexical cleanup.
+A UTF-8 alias is retained when the physical directory name is not UTF-8. If
+doctor cannot render a lossless rooted command, it asks for an alias instead of
+printing a lossy replacement-character path.
+That recovery is also the first action when no packet has been generated.
+
 ## 1. Pick One PR
 
 Start with a normal PR where a reviewer can understand the intended behavior
@@ -162,7 +180,18 @@ run before the test edit. A `ripr receipt write` command printed there records
 `--status not_run`, which is true when it runs as printed; a `Receipt status`
 line follows it and says to pass `--status passed` when the verify command
 exited 0 and `--status failed` when it did not, since only the reader knows
-that outcome. `ripr pr-summary` carries the same start command as
+that outcome. That receipt records the verify status it is given and
+re-checks nothing. On the Python and TypeScript preview route, when the check
+report the gap came from is on disk, a `Static re-check after verify` line
+follows: `ripr check ... --worktree --json > .../check.after.json && ripr
+outcome --before .../check.json --after .../check.after.json`. It reads the
+test edit even before it is committed and shows the gap under `Moved` or
+`Removed` when its static evidence changed, under `Unchanged` when it did not;
+a `Receipt boundary` line says so. That movement is static evidence, not a
+runtime or mutation result. Rerunning `ripr first-pr` after the edit reports
+the evidence as stale and prints a refresh that also passes `--worktree`, so
+the next run selects the next open gap rather than the one just closed.
+`ripr pr-summary` carries the same start command as
 its first local reproduction command, and its Markdown, like
 `gate-decision.md`, follows the start with the after-phase step and the same
 manual labels. The generated CI job summary leads its `First-run status` block

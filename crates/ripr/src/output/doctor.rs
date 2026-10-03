@@ -13,7 +13,10 @@
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
 use crate::domain::LanguageId;
-use crate::output::path::human_path;
+pub(crate) use crate::output::path::command_root_display as doctor_command_root_display;
+use crate::output::path::{
+    absolute_command_root_display as absolute_doctor_root_display, human_path,
+};
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use std::path::Path;
@@ -30,6 +33,205 @@ use std::time::{Duration, Instant};
 /// text.
 pub(crate) const DOCTOR_FAILED_LINE: &str =
     "! doctor checks failed; each `!` line above names the check and its fix\n";
+
+/// First command doctor prints after the checks. Git-backed routes are only
+/// recommended when the `tool_git` check actually passed (#4735). A root Git
+/// refuses gets the repository-free scan instead of a command that cannot run
+/// there (#4531); a missing root keeps a runnable recovery command naming its
+/// lossless root spelling (#5010) plus the `--root` guidance (#4606 review),
+/// and is never probed for work-tree changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DoctorFirstCommand {
+    /// `root_directory` failed while git runs: render the runnable recovery
+    /// command with its lossless root spelling, plus the rerun-with-`--root`
+    /// guidance, and never probe the work tree (#4531, #5010).
+    MissingRoot,
+    /// `git_repository` failed while git itself runs: the repository-free scan
+    /// is the only route that can run here.
+    OutsideGit,
+    SavedDiff,
+    Worktree,
+    DefaultCheck,
+}
+
+impl DoctorFirstCommand {
+    pub(crate) const SAVED_DIFF_LINE: &'static str = "ripr check --diff PATH";
+    pub(crate) const WORKTREE_LINE: &'static str = "ripr check --base HEAD --worktree";
+    pub(crate) const DEFAULT_LINE: &'static str = "ripr check";
+
+    /// `dirty_worktree` is only evaluated when git can run, so a gitless
+    /// environment is not probed (and not told to run `--worktree`).
+    pub(crate) fn resolve(git_can_run: bool, dirty_worktree: impl FnOnce() -> bool) -> Self {
+        if !git_can_run {
+            Self::SavedDiff
+        } else if dirty_worktree() {
+            Self::Worktree
+        } else {
+            Self::DefaultCheck
+        }
+    }
+
+    /// `resolve` for the diagnosed report. The check states decide before any
+    /// probe runs: a missing root (#4531) must not be probed for work-tree
+    /// changes — the probe would print a raw git failure for a problem the
+    /// checks above already name — and a root Git refuses must not be sent to
+    /// `ripr check`, which cannot run there. A git binary that cannot run
+    /// still outranks the repository state (#4735), because `--diff PATH`
+    /// does not need git.
+    pub(crate) fn resolve_for_report(
+        report: &DoctorReport,
+        dirty_worktree: impl FnOnce() -> bool,
+    ) -> Self {
+        let passed = |name: &str| {
+            report
+                .checks
+                .iter()
+                .any(|check| check.name == name && check.status == DoctorCheckStatus::Pass)
+        };
+        if !passed("root_directory") {
+            // #5010 renders the lossless root spelling for recovery, so the
+            // route stays runnable; only the work-tree probe is withheld
+            // (#4531). Gitless hosts keep the `--diff` route, which does not
+            // need the root to exist.
+            if git_tool_can_run(report) {
+                Self::MissingRoot
+            } else {
+                Self::SavedDiff
+            }
+        } else if !git_tool_can_run(report) {
+            Self::SavedDiff
+        } else if !passed("git_repository") {
+            Self::OutsideGit
+        } else {
+            Self::resolve(true, dirty_worktree)
+        }
+    }
+
+    /// The runnable `ripr check` form, or `None` for the state variant, which
+    /// recommends no git-backed command; `recommendation_lines_for` renders
+    /// that directly.
+    pub(crate) fn command_line(self) -> Option<&'static str> {
+        match self {
+            Self::SavedDiff => Some(Self::SAVED_DIFF_LINE),
+            Self::Worktree => Some(Self::WORKTREE_LINE),
+            Self::DefaultCheck => Some(Self::DEFAULT_LINE),
+            Self::MissingRoot | Self::OutsideGit => None,
+        }
+    }
+
+    /// `command_line` for the diagnosed `root`. `ripr check` defaults to
+    /// `.`, so a doctor run with `--root` from another directory must name
+    /// the root, or the recommended command analyzes the caller's directory.
+    /// Existing directories use filesystem resolution, matching diagnosis
+    /// even when a root traverses a symlink before `..`. Unresolved paths
+    /// keep an absolute, uncollapsed spelling for error-recovery guidance.
+    /// Empty for the state variant; render that through
+    /// `recommendation_lines_for`.
+    pub(crate) fn command_line_for_root(self, root: &Path) -> Result<String, String> {
+        use crate::agent::loop_commands::shell_arg;
+        let Some(line) = self.command_line() else {
+            return Ok(String::new());
+        };
+        if root == Path::new(".") {
+            return Ok(line.to_string());
+        }
+        let flags = line.strip_prefix("ripr check").unwrap_or_default();
+        let bound = match root.canonicalize() {
+            Ok(resolved) => doctor_command_root_display(root, &resolved)?,
+            Err(_) => absolute_doctor_root_display(root)?,
+        };
+        Ok(format!("ripr check --root {}{flags}", shell_arg(&bound)))
+    }
+
+    /// The full recommendation for `root`: the runnable variants render
+    /// through the shared physical-root command line, and the #4531 state
+    /// variant renders its own line.
+    pub(crate) fn recommendation_lines_for(self, root: &Path) -> Vec<String> {
+        match self {
+            // The recovery command names the lossless spelling of the missing
+            // root exactly as the runnable variants do (#5010); the guidance
+            // line says what to replace it with, since the path it names does
+            // not exist yet (#4606 review).
+            Self::MissingRoot => {
+                let mut lines =
+                    Self::recommendation_lines(Self::DefaultCheck.command_line_for_root(root));
+                lines.push(
+                    "- The selected root does not exist; rerun with `--root <path>` naming an \
+                     existing repository directory"
+                        .to_string(),
+                );
+                lines
+            }
+            Self::OutsideGit => {
+                use crate::agent::loop_commands::shell_arg;
+                // The repository-free scan is a runnable command, so its root
+                // follows the same physical-root rule as the git-backed
+                // recommendations (#5010): a spaced, quoted, or aliased root
+                // must still analyze the diagnosed directory after the paste.
+                // The translator reads bare commands only, so the prose
+                // wrapper wraps each shell form, never enters it.
+                let bound = match root.canonicalize() {
+                    Ok(resolved) => doctor_command_root_display(root, &resolved),
+                    Err(_) => absolute_doctor_root_display(root),
+                };
+                let bash = bound.map(|bound| {
+                    format!(
+                        "ripr check --root {} --format repo-exposure-md",
+                        shell_arg(&bound)
+                    )
+                });
+                match bash {
+                    Ok(bash) => {
+                        let mut lines = vec![format!(
+                            "- Recommended first command: fix the Git check above, or scan \
+                             without Git history: `{bash}`"
+                        )];
+                        if let crate::output::markdown::PowershellForm::Translated(powershell) =
+                            crate::output::markdown::powershell_form(&bash)
+                        {
+                            lines.push(format!(
+                                "- Recommended first command (PowerShell): fix the Git check \
+                                 above, or scan without Git history: `{powershell}`"
+                            ));
+                        }
+                        lines
+                    }
+                    Err(error) => Self::recommendation_lines(Err(error)),
+                }
+            }
+            Self::SavedDiff | Self::Worktree | Self::DefaultCheck => {
+                Self::recommendation_lines(self.command_line_for_root(root))
+            }
+        }
+    }
+
+    /// Render the selected recommendation: the Bash line, then a labeled
+    /// PowerShell form only when the shared translator rewrites it (a root
+    /// with an apostrophe, which Bash and PowerShell escape differently).
+    pub(crate) fn recommendation_lines(command: Result<String, String>) -> Vec<String> {
+        let line = match command {
+            Ok(line) => line,
+            Err(error) => return vec![format!("- Recommended first command unavailable: {error}")],
+        };
+        let mut lines = vec![format!("- Recommended first command: {line}")];
+        if let crate::output::markdown::PowershellForm::Translated(powershell) =
+            crate::output::markdown::powershell_form(&line)
+        {
+            lines.push(format!(
+                "- Recommended first command (PowerShell): {powershell}"
+            ));
+        }
+        lines
+    }
+}
+
+/// Fail closed: only an explicit passing `tool_git` check means git can run.
+pub(crate) fn git_tool_can_run(report: &DoctorReport) -> bool {
+    report
+        .checks
+        .iter()
+        .any(|check| check.name == "tool_git" && check.status == DoctorCheckStatus::Pass)
+}
 
 /// The single source of truth for which tools doctor probes for availability.
 /// Both the evaluation (which actually spawns each tool to check it) and the
@@ -451,8 +653,10 @@ impl DoctorReport {
 /// (RIPR-SPEC-0007, P2). The first line alone (path, "invalid ripr.toml",
 /// parse location) is enough to act on and contains no source text, so
 /// doctor's JSON evidence keeps only that line.
+/// The misplaced-key hint (#4534) is kept too: it names only a key and a
+/// table from a fixed allowlist, never file content.
 fn redact_config_parse_error(error: &str) -> String {
-    error.lines().next().unwrap_or(error).trim().to_string()
+    crate::config::config_error_summary(error)
 }
 
 /// Result of evaluating the doctor core checks, plus the raw config load
@@ -540,7 +744,14 @@ pub(crate) fn rust_toolchain_scope(
 /// different state from git running and reporting no work tree, and only the
 /// second one has a repair the user can act on. `rev-parse` exiting nonzero
 /// is git answering, so that arm reports `false` rather than the unknown.
-fn is_inside_work_tree(root: &Path) -> Option<bool> {
+enum WorkTreeProbe {
+    Inside,
+    Outside,
+    /// Git refused the repository for its owner (#4530); carries the repair.
+    Refused(String),
+}
+
+fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
     let output = crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-inside-work-tree"],
@@ -548,9 +759,18 @@ fn is_inside_work_tree(root: &Path) -> Option<bool> {
     )
     .ok()?;
     if !output.status.success() {
-        return Some(false);
+        return Some(
+            crate::git::dubious_ownership_message(root, &output.stderr, "")
+                .map_or(WorkTreeProbe::Outside, WorkTreeProbe::Refused),
+        );
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim() == "true")
+    Some(
+        if String::from_utf8_lossy(&output.stdout).trim() == "true" {
+            WorkTreeProbe::Inside
+        } else {
+            WorkTreeProbe::Outside
+        },
+    )
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
@@ -627,13 +847,20 @@ fn evaluate_doctor_core_with_probe_for_profile(
             Some(format!("no Cargo.toml found at {}", human_path(root))),
         );
     }
-    match is_inside_work_tree(root) {
-        Some(true) => report.add_check(
+    match root.is_dir().then(|| work_tree_probe(root)).flatten() {
+        None if !root.is_dir() => report.add_skipped_check(
+            "git_repository",
+            "Git work tree check skipped: the root directory does not exist".to_string(),
+        ),
+        Some(WorkTreeProbe::Inside) => report.add_check(
             "git_repository",
             DoctorStatus::Pass,
             Some(format!("inside a Git work tree at {}", human_path(root))),
         ),
-        Some(false) => report.add_check(
+        Some(WorkTreeProbe::Refused(message)) => {
+            report.add_check("git_repository", DoctorStatus::Fail, Some(message));
+        }
+        Some(WorkTreeProbe::Outside) => report.add_check(
             "git_repository",
             DoctorStatus::Fail,
             Some(format!(
@@ -676,6 +903,14 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis =>
             {
                 report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
+            }
+            // The toolchain is probed in the selected root; a missing root
+            // fails the spawn and would read as a missing tool (#4531).
+            _ if RUST_TOOLCHAIN_TOOLS.contains(&tool) && !root.is_dir() => {
+                report.add_skipped_check(
+                    &name,
+                    format!("{tool} check skipped: the root directory does not exist"),
+                );
             }
             _ => {
                 let (status, evidence) = probe_tool(tool, root);
@@ -855,6 +1090,7 @@ fn doctor_tool_check_with_command(
     root: Option<&Path>,
 ) -> DoctorToolCheckResult {
     command.arg("--version");
+    crate::process_owner::forbid_rustup_auto_install(&mut command);
     if let Some(root) = root {
         command.current_dir(root);
     }
@@ -868,6 +1104,7 @@ fn doctor_tool_run_result(
 ) -> DoctorToolCheckResult {
     match run {
         Ok(output) if output.status.success() => doctor_tool_check_success(tool, &output.stdout),
+        Ok(output) => DoctorToolCheckResult::failure(doctor_exit_failure_evidence(tool, &output)),
         Err(DoctorToolRunError::TimedOut) => {
             DoctorToolCheckResult::failure(doctor_timeout_evidence(tool, timeout))
         }
@@ -883,6 +1120,24 @@ fn doctor_tool_run_result(
         }
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
         _ => DoctorToolCheckResult::failure(format!("{tool} not available")),
+    }
+}
+
+/// Evidence for a probe that ran and exited non-zero. The tool exists, so
+/// "not available" would be false; its stderr carries the real cause, such
+/// as rustup's "toolchain ... is not installed" (#4734). The first `error:`
+/// line wins, because rustup can print a `warn:` line first (duplicate
+/// toolchain files); otherwise the first nonempty line.
+fn doctor_exit_failure_evidence(tool: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut lines = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let first = lines.clone().next();
+    match lines.find(|line| line.starts_with("error:")).or(first) {
+        Some(line) => format!("{tool} --version failed ({}): {line}", output.status),
+        None => format!("{tool} --version failed ({})", output.status),
     }
 }
 
@@ -930,7 +1185,9 @@ impl DoctorToolCheckResult {
 fn doctor_spawn_failure(tool: &str, kind: std::io::ErrorKind) -> DoctorToolCheckResult {
     DoctorToolCheckResult {
         status: DoctorStatus::Fail,
-        evidence: if kind == std::io::ErrorKind::NotFound {
+        evidence: if kind == std::io::ErrorKind::NotFound && tool == "git" {
+            crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string()
+        } else if kind == std::io::ErrorKind::NotFound {
             format!("{tool} not available")
         } else {
             format!("{tool} could not be launched: {kind:?}")
@@ -1743,6 +2000,38 @@ mod tests {
         (report, probed)
     }
 
+    #[test]
+    fn a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools() -> Result<(), String> {
+        // #4531: cargo and rustc are probed with the root as their working
+        // directory, so a missing root failed the spawn and read as a
+        // missing tool; the Git work tree probe failed the same way.
+        let root = std::env::temp_dir().join(format!(
+            "ripr-doctor-missing-root-{}-does-not-exist",
+            std::process::id()
+        ));
+        let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
+        if probed != ["git"] {
+            return Err(format!(
+                "only git may be probed for a missing root: {probed:?}"
+            ));
+        }
+        if check(&report, "root_directory")?.status != DoctorCheckStatus::Fail {
+            return Err("the missing root itself must still fail doctor".to_string());
+        }
+        for name in ["tool_cargo", "tool_rustc", "git_repository"] {
+            let found = check(&report, name)?;
+            if found.status != DoctorCheckStatus::Skipped
+                || !found
+                    .evidence
+                    .as_deref()
+                    .is_some_and(|text| text.ends_with("the root directory does not exist"))
+            {
+                return Err(format!("{name} must be skipped with the reason: {found:?}"));
+            }
+        }
+        Ok(())
+    }
+
     fn check<'a>(report: &'a DoctorReport, name: &str) -> Result<&'a DoctorCheck, String> {
         report
             .checks
@@ -2396,7 +2685,258 @@ mod tests {
         Ok(())
     }
 
-    /// Deterministic missing-tool assertion: probing a guaranteed-absent
+    #[test]
+    fn doctor_spawn_failure_names_the_shared_git_path_fix() {
+        let git_missing = doctor_spawn_failure("git", std::io::ErrorKind::NotFound);
+        assert_eq!(git_missing.status, DoctorStatus::Fail);
+        assert_eq!(
+            git_missing.evidence,
+            crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE
+        );
+        assert!(git_missing.evidence.contains("`--diff PATH` / `--diff -`"));
+        assert!(
+            !git_missing.evidence.contains('['),
+            "git argv must not appear on the doctor ! line: {}",
+            git_missing.evidence
+        );
+
+        let cargo_missing = doctor_spawn_failure("cargo", std::io::ErrorKind::NotFound);
+        assert_eq!(cargo_missing.evidence, "cargo not available");
+        assert!(
+            !cargo_missing.evidence.contains("--diff"),
+            "cargo must not inherit git's saved-diff repair"
+        );
+
+        let denied = doctor_spawn_failure("git", std::io::ErrorKind::PermissionDenied);
+        assert!(
+            denied.evidence.contains("could not be launched"),
+            "permission denied is not a missing-PATH diagnosis: {}",
+            denied.evidence
+        );
+        assert!(!denied.evidence.contains("--diff"));
+    }
+
+    #[test]
+    fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() -> Result<(), String> {
+        let mut probed = false;
+        assert_eq!(
+            DoctorFirstCommand::resolve(false, || {
+                probed = true;
+                false
+            }),
+            DoctorFirstCommand::SavedDiff
+        );
+        assert!(!probed, "a gitless doctor must not probe the worktree");
+        assert_eq!(
+            DoctorFirstCommand::resolve(true, || true),
+            DoctorFirstCommand::Worktree
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve(true, || false),
+            DoctorFirstCommand::DefaultCheck
+        );
+        assert_eq!(
+            DoctorFirstCommand::SavedDiff.command_line(),
+            Some(DoctorFirstCommand::SAVED_DIFF_LINE)
+        );
+        assert_eq!(
+            DoctorFirstCommand::OutsideGit.command_line(),
+            None,
+            "a refused repository recommends no git-backed command"
+        );
+        assert_eq!(
+            DoctorFirstCommand::DefaultCheck.command_line_for_root(Path::new("."))?,
+            "ripr check"
+        );
+        // `/work/...` is absolute only on Unix; Windows needs a drive.
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                DoctorFirstCommand::SavedDiff.command_line_for_root(Path::new("/work/app"))?,
+                "ripr check --root /work/app --diff PATH"
+            );
+            assert_eq!(
+                DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app"))?,
+                "ripr check --root '/work/my app' --base HEAD --worktree"
+            );
+            assert_eq!(
+                DoctorFirstCommand::recommendation_lines(
+                    DoctorFirstCommand::DefaultCheck
+                        .command_line_for_root(Path::new("/work/my app"))
+                ),
+                ["- Recommended first command: ripr check --root '/work/my app'"],
+                "a form PowerShell reads unchanged prints once"
+            );
+            assert_eq!(
+                DoctorFirstCommand::recommendation_lines(
+                    DoctorFirstCommand::SavedDiff
+                        .command_line_for_root(Path::new("/work/it's app"))
+                ),
+                [
+                    r"- Recommended first command: ripr check --root '/work/it'\''s app' --diff PATH",
+                    "- Recommended first command (PowerShell): ripr check --root '/work/it''s app' --diff PATH",
+                ],
+                "an apostrophe escapes differently in PowerShell"
+            );
+            assert_eq!(
+                DoctorFirstCommand::OutsideGit
+                    .recommendation_lines_for(Path::new("/work/it's app")),
+                [
+                    r"- Recommended first command: fix the Git check above, or scan without Git history: `ripr check --root '/work/it'\''s app' --format repo-exposure-md`",
+                    "- Recommended first command (PowerShell): fix the Git check above, or scan without Git history: `ripr check --root '/work/it''s app' --format repo-exposure-md`",
+                ],
+                "the repository-free route quotes and translates like the runnable ones"
+            );
+            assert_eq!(
+                DoctorFirstCommand::MissingRoot
+                    .recommendation_lines_for(Path::new("/work/missing")),
+                [
+                    "- Recommended first command: ripr check --root /work/missing",
+                    "- The selected root does not exist; rerun with `--root <path>` naming an \
+                     existing repository directory",
+                ],
+                "the missing-root recovery names the runnable command and the --root guidance"
+            );
+        }
+        // An unavailable relative root is bound to the producing directory,
+        // but `..` must retain filesystem traversal rather than lexical cleanup.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let relative_root = Path::new("..").join(format!(
+            "ripr-doctor-missing-{}-{nonce}",
+            std::process::id()
+        ));
+        let bound = std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(&relative_root);
+        assert!(!bound.exists(), "fixture root must remain unavailable");
+        let relative = DoctorFirstCommand::DefaultCheck.command_line_for_root(&relative_root)?;
+        assert_eq!(
+            relative,
+            format!(
+                "ripr check --root {}",
+                crate::agent::loop_commands::shell_arg(&human_path(&bound))
+            )
+        );
+
+        let mut missing_git = DoctorReport::new(".");
+        missing_git.add_check(
+            "tool_git",
+            DoctorStatus::Fail,
+            Some(crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string()),
+        );
+        assert!(!git_tool_can_run(&missing_git));
+        assert_eq!(
+            DoctorFirstCommand::resolve(git_tool_can_run(&missing_git), || true),
+            DoctorFirstCommand::SavedDiff,
+            "a dirty tree cannot win over a missing git binary"
+        );
+
+        let mut git_ok = DoctorReport::new(".");
+        git_ok.add_check(
+            "tool_git",
+            DoctorStatus::Pass,
+            Some("git version 2.43.0".to_string()),
+        );
+        assert!(git_tool_can_run(&git_ok));
+        assert!(!git_tool_can_run(&DoctorReport::new(".")));
+        Ok(())
+    }
+
+    /// The report states decide before any probe runs, and a missing git
+    /// binary still outranks the repository state (#4735).
+    #[test]
+    fn doctor_first_command_report_states_decide_before_probes() {
+        // A missing root keeps a runnable recovery route (#5010) but is never
+        // probed for work-tree changes (#4531): the raw probe failure would
+        // only restate what the failing root_directory check already names.
+        let mut probed = false;
+        let mut missing_root_gitless = DoctorReport::new(".");
+        missing_root_gitless.add_check(
+            "root_directory",
+            DoctorStatus::Fail,
+            Some("root directory does not exist".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&missing_root_gitless, || {
+                probed = true;
+                true
+            }),
+            DoctorFirstCommand::SavedDiff,
+            "a gitless host still routes the missing root to the --diff recovery"
+        );
+        let mut missing_root_git = DoctorReport::new(".");
+        missing_root_git.add_check(
+            "root_directory",
+            DoctorStatus::Fail,
+            Some("root directory does not exist".to_string()),
+        );
+        missing_root_git.add_check(
+            "tool_git",
+            DoctorStatus::Pass,
+            Some("git version 2.43.0".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&missing_root_git, || {
+                probed = true;
+                true
+            }),
+            DoctorFirstCommand::MissingRoot,
+            "a missing root renders its lossless spelling plus --root guidance, without probing"
+        );
+        assert!(!probed, "a missing root must not probe the work tree");
+
+        let pass = |report: &mut DoctorReport, name: &str| {
+            report.add_check(name, DoctorStatus::Pass, Some("ok".to_string()));
+        };
+        let mut refused = DoctorReport::new(".");
+        pass(&mut refused, "root_directory");
+        pass(&mut refused, "tool_git");
+        refused.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some("refused".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&refused, || false),
+            DoctorFirstCommand::OutsideGit,
+            "a non-repository root gets the repository-free scan, not a check that cannot run"
+        );
+
+        // A git binary that cannot run outranks the repository state (#4735):
+        // `--diff PATH` does not need git.
+        let mut gitless = DoctorReport::new(".");
+        pass(&mut gitless, "root_directory");
+        gitless.add_check(
+            "tool_git",
+            DoctorStatus::Fail,
+            Some("not found".to_string()),
+        );
+        gitless.add_check(
+            "git_repository",
+            DoctorStatus::Fail,
+            Some("refused".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&gitless, || true),
+            DoctorFirstCommand::SavedDiff
+        );
+
+        let mut healthy = DoctorReport::new(".");
+        pass(&mut healthy, "root_directory");
+        pass(&mut healthy, "tool_git");
+        pass(&mut healthy, "git_repository");
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&healthy, || true),
+            DoctorFirstCommand::Worktree
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&healthy, || false),
+            DoctorFirstCommand::DefaultCheck
+        );
+    }
     /// absolute path must fail closed with actionable evidence, independent
     /// of what happens to be (or not be) on the host's PATH.
     #[test]
@@ -2415,6 +2955,40 @@ mod tests {
         assert!(
             evidence.ends_with("not available"),
             "unexpected evidence for missing tool: {evidence:?}"
+        );
+    }
+
+    /// A doctor probe runs with rustup auto-install off (#4734), even when
+    /// the caller's environment turned it on: `cargo --version` in a
+    /// checkout pinning a missing toolchain must not download it.
+    #[cfg(unix)]
+    #[test]
+    fn doctor_tool_probe_forbids_rustup_auto_install() {
+        let mut command = doctor_tool_command("sh");
+        command
+            .args(["-c", "echo \"auto=${RUSTUP_AUTO_INSTALL-unset}\""])
+            .env("RUSTUP_AUTO_INSTALL", "1");
+        let result = doctor_tool_check_with_command("cargo", command, DOCTOR_TOOL_TIMEOUT, None);
+        assert_eq!(result.status, DoctorStatus::Pass);
+        assert_eq!(result.evidence, "auto=0");
+    }
+
+    /// A tool that runs and exits non-zero is present, so doctor names the
+    /// exit and the tool's own `error:` line, skipping a leading `warn:`,
+    /// instead of "not available" (#4734).
+    #[cfg(unix)]
+    #[test]
+    fn doctor_tool_nonzero_exit_names_the_tool_error() {
+        let mut command = doctor_tool_command("sh");
+        command.args([
+            "-c",
+            "printf '\\nwarn: both rust-toolchain and rust-toolchain.toml exist\\nerror: toolchain 1.81.0 is not installed\\nhelp: run rustup\\n' >&2; exit 1",
+        ]);
+        let result = doctor_tool_check_with_command("rustc", command, DOCTOR_TOOL_TIMEOUT, None);
+        assert_eq!(result.status, DoctorStatus::Fail);
+        assert_eq!(
+            result.evidence,
+            "rustc --version failed (exit status: 1): error: toolchain 1.81.0 is not installed"
         );
     }
 

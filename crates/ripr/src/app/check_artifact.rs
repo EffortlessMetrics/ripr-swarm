@@ -40,7 +40,8 @@ pub(crate) const CHECK_ARTIFACT_SCHEMA_VERSION: &str = "ripr-check-artifact-v1";
 pub(crate) struct CheckArtifactV1 {
     pub(crate) schema_version: String,
     pub(crate) tool: String,
-    /// `env!("CARGO_PKG_VERSION")` of the writing binary; part of the gate.
+    /// Build identity of the writing binary (version plus commit or source
+    /// digest; see `build_identity::cache_identity`); part of the gate.
     pub(crate) analyzer_version: String,
     pub(crate) identity: CheckArtifactIdentityV1,
     /// The complete finding set: uncapped related-tests lists and probe
@@ -140,7 +141,7 @@ pub(crate) fn write_check_artifact(
     let artifact = CheckArtifactV1 {
         schema_version: CHECK_ARTIFACT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),
-        analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+        analyzer_version: crate::build_identity::cache_identity().to_string(),
         identity,
         findings: rewrite_non_utf8_finding_paths(findings),
     };
@@ -314,7 +315,7 @@ fn verify_identity(
     if recorded.config_identity_hash != current.config_identity_hash {
         mismatched.push("config_identity_hash");
     }
-    if artifact.analyzer_version != env!("CARGO_PKG_VERSION") {
+    if artifact.analyzer_version != crate::build_identity::cache_identity() {
         mismatched.push("analyzer_version");
     }
     if mismatched.is_empty() {
@@ -339,6 +340,14 @@ fn verify_scope_assertions(
 ) -> Result<(), String> {
     let mut mismatched: Vec<&str> = Vec::new();
     if let Some(asserted_diff) = input.diff_file.as_ref() {
+        // The stdin sentinel is not an assertion about a file named '-'.
+        // Do not accept that unrelated file as evidence for supplied stdin.
+        if asserted_diff == Path::new("-") {
+            return Err(
+                "--from cannot be combined with --diff -: stdin cannot verify a recorded diff-file identity; save stdin to a named diff file and pass --diff <path> when creating and reusing the artifact"
+                    .to_string(),
+            );
+        }
         let asserted = std::fs::canonicalize(asserted_diff).map_err(|err| {
             format!(
                 "asserted --diff {} cannot be resolved: {err}",
@@ -446,6 +455,8 @@ fn closed_analysis_options_view(options: &AnalysisOptions) -> (bool, Option<&Pat
         resolved_subject_identity: _, // derived, not caller input: the R2
         // producer sets it on the internal options clone only (#3278);
         // the caller-visible subject flows through `git_candidate`
+        open_rust_index_paths: _, // private LSP refresh index-only input;
+        // check artifacts use the ordinary empty-path public check route
         git_candidate: _, // unreachable at write time: `run_check` rejects
         // Git candidate subjects before analysis, so an
         // artifact can never carry one until #3277/#3278
@@ -574,6 +585,7 @@ mod raw_path_tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: vec![StopReason::NoChangedRustLine],
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: "nearby".to_string(),
                 file: raw,

@@ -83,8 +83,10 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 
 The before phase writes the before snapshot, brief, packet, and workflow files
 and prints the exact `--attempt` command for the after phase. The after phase
-writes the after snapshot, analysis outcome, verify JSON, and receipt. Its
-stdout is exactly one JSON document — the versioned `repair_after_result`
+writes the after snapshot, analysis outcome, verify JSON, and receipt. Both
+phases print a short human summary on stdout by default that names the next
+command and where the JSON files were written; pass `--json` for the machine documents. With `--json` the after
+phase's stdout is exactly one JSON document — the versioned `repair_after_result`
 envelope (`schema_version` `0.1`) carrying the verify 0.3 document unchanged
 under `verify` with the status report embedded beside it under
 `agent_status` — so an orchestrator can `JSON.parse` stdout once and every
@@ -132,17 +134,32 @@ command and a warning that lists the choices. It never picks the newest attempt.
 The full selection order is in RIPR-SPEC-0011 (amendment #3906).
 
 The numbered steps below are the manual path. If no before snapshot exists yet,
-create one:
+create one. First create the workflow directory in the shell that runs the
+snapshots — the redirect fails in a fresh workspace because every shell opens
+the redirect before `ripr` runs:
 
 ```bash
 mkdir -p target/ripr/workflow
+```
+
+```cmd
+mkdir target\ripr\workflow
+```
+
+```powershell
+New-Item -ItemType Directory -Force -Path target/ripr/workflow | Out-Null
+```
+
+Then capture the before snapshot:
+
+```bash
 ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json
 ```
 
-If you already ran `ripr pilot`, you can reuse its snapshot:
+If you already ran `ripr pilot`, you can reuse its snapshot (after creating
+the workflow directory as above):
 
 ```bash
-mkdir -p target/ripr/workflow
 cp target/ripr/pilot/repo-exposure.json target/ripr/workflow/before.repo-exposure.json
 cp target/ripr/pilot/agent-seam-packets.json target/ripr/workflow/agent-seam-packets.json
 ```
@@ -189,6 +206,22 @@ artifact. A spec describes a route, not permission to execute it. See the
 [workflow output contract](OUTPUT_SCHEMA.md#agent-workflow-manifest) for the complete fields. For the
 ordinary focused-test loop, prefer the two-phase `ripr agent repair` path above
 to wiring these artifacts together manually.
+
+For the default bounded handoff to an external agent, prefer the compact
+repair card over the full packet:
+
+```bash
+ripr agent card --root . --seam-id <seam-id> --json > target/ripr/workflow/agent-card.json
+```
+
+`ripr agent card` (RIPR-SPEC-0194, #4667) is the default bounded agent
+handoff: it projects the compact `RepairCardV1` — the fix-instruction summary,
+repair-route readiness, typed target selection, typed command references, and
+optional repair-attempt state — with the complete canonical packet behind the
+card's explicit detail route. `ripr agent packet` remains the compatibility
+and full-detail path. See the
+[Output Schema](OUTPUT_SCHEMA.md) § "Repair card" for the field reference; do
+not duplicate card field documentation here.
 
 If the operator needs the full seam packet as well:
 
@@ -440,10 +473,11 @@ the same command and artifact model shown above.
 When handing work to a human or external LLM tool, include:
 
 ```text
+target/ripr/workflow/agent-card.json from `ripr agent card --seam-id <seam-id> --json > target/ripr/workflow/agent-card.json` (default compact handoff)
 target/ripr/workflow/workflow.json
 target/ripr/workflow/commands.md
 target/ripr/workflow/agent-brief.json
-target/ripr/workflow/agent-packet.json when present
+target/ripr/workflow/agent-packet.json when full packet detail is needed
 target/ripr/workflow/agent-verify.json after edit
 target/ripr/reports/agent-receipt.json after verify
 target/ripr/workflow/agent-review-summary.md

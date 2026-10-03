@@ -22,6 +22,7 @@ pub(crate) struct PilotOptions {
     pub(crate) explicit: CheckInputExplicit,
     pub(crate) max_seams: usize,
     pub(crate) timeout_ms: u64,
+    pub(crate) quiet: bool,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct OutcomeOptions {
@@ -125,6 +126,7 @@ pub(crate) struct PolicyHistoryOptions {
     pub(crate) pr_number: Option<String>,
     pub(crate) out: PathBuf,
     pub(crate) out_md: PathBuf,
+    pub(crate) out_jsonl: Option<PathBuf>,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PolicyPromotionOptions {
@@ -176,6 +178,7 @@ pub(crate) struct PrEvidenceLedgerOptions {
     pub(crate) history: Option<PathBuf>,
     pub(crate) out: PathBuf,
     pub(crate) out_md: PathBuf,
+    pub(crate) out_jsonl: Option<PathBuf>,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PrCommentsPlanOptions {

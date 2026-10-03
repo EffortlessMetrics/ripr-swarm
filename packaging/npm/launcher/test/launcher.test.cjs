@@ -72,6 +72,15 @@ function cleanup(root) {
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+function hostPlatformOrSkip(t) {
+  try {
+    return launcher.selectPlatform(launcher.validateLauncherManifest(manifest).platforms);
+  } catch (error) {
+    t.skip(`host platform is not a supported target: ${error.message}`);
+    return null;
+  }
+}
+
 test("validates the exact five-target contract", () => {
   const contract = launcher.validateLauncherManifest(manifest);
   assert.equal(contract.version, "0.11.0");
@@ -249,8 +258,12 @@ test("launch sets a nonzero exit code before forwarding a child signal", async (
   }
 });
 
-test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", () => {
-  const fixture = nativeFixture();
+test("runs a real synthetic executable and preserves argv, cwd, env, stdout, stderr, and exit status", (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) {
+    return;
+  }
+  const fixture = nativeFixture({ selected });
   const script = path.join(fixture.root, "probe.cjs");
   fs.writeFileSync(
     script,
@@ -281,7 +294,10 @@ test("runs a real synthetic executable and preserves argv, cwd, env, stdout, std
   }
 });
 
-test("source bin missing-package failure never falls back to PATH or writes stdout", () => {
+test("source bin missing-package failure never falls back to PATH or writes stdout", (t) => {
+  if (!hostPlatformOrSkip(t)) {
+    return;
+  }
   const fakePath = fixtureRoot("path-fallback");
   const foreignCwd = fixtureRoot("foreign-cwd");
   const fakeExecutable = path.join(fakePath, process.platform === "win32" ? "ripr.cmd" : "ripr");
