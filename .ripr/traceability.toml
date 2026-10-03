@@ -10918,6 +10918,10 @@ fixtures = [
   "fixtures/owner_return_pin_out_of_line_cfg",
 ]
 code = [
+  "crates/ripr/src/output/observed_values.rs",
+  "crates/ripr/src/output/human/evidence_lines.rs",
+  "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",

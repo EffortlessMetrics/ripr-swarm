@@ -400,6 +400,15 @@ The covered route is Rust diff classification. Its consumer inventory is:
 | `classify/activation.rs` / `classify/related_tests.rs` | Raw source value/missing-fact and relationship scans remain their own static authorities. They are not oracle admission or runtime execution proof and cannot bypass the final admitted pairing requirement. |
 | `test_grip_evidence.rs` | Repository grip has a separate raw-oracle consumer. This diff-path repair does not claim repository-grip execution parity; #4793 owns the shared-witness migration. |
 
+The `observed_values` field retains lexical and bounded statically derived
+source facts independently of oracle admission, including enum tokens in
+refused assertions. Its historical name and structured fields remain stable;
+it does not establish execution or observation. Human and JSON evidence paths
+share neutral `source ... value` wording, including source-value cap disclosure.
+Direct/invoked error oracles retain strong observation, while uncalled, disabled
+or shadowed assertions retain source facts without contradicting Observe=no.
+This presentation repair changes no class, stage, score or admission decision.
+
 The two executed bypasses, family dispatch before reveal and raw boundary pairing
 after reveal, motivate an admitted-oracle iteration contract under #4793. That
 follow-up must carry original cardinality separately and preserve source facts

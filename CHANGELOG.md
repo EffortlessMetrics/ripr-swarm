@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Changed
 
+- Evidence output: retained lexical and statically derived values are described
+  as source values in both human and JSON evidence paths, including values in
+  refused assertions. Typed facts, provenance, classes and admitted oracle
+  stages stay unchanged. (#5027)
 - Rust analysis: a proved-empty local macro cannot contribute discarded owner
   calls or boundary arguments through a mixed-line call fact. A genuine far
   assertion retains its strength and observation, while a real boundary test
