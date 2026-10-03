@@ -372,7 +372,8 @@ fn mixed_python_paths_keep_whitespace_distinct_from_available_sibling() -> TestR
 #[test]
 fn shared_absence_disclosure_preserves_rust_path_identity() -> TestResult {
     let path = " src/lib.rs";
-    let source = "pub fn discount(total: i32) -> bool {\n    total >= 100\n}\n";
+    let source =
+        "pub fn discount(total: i32) -> bool {\n    if total >= 100 { true } else { false }\n}\n";
     let root = git_path_fixture("rust-space-path-restoration", &[path], source)?;
     fs::write(
         root.join("Cargo.toml"),
