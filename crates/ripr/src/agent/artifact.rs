@@ -220,12 +220,12 @@ pub(crate) fn validate_repo_exposure_artifact(
     let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
         if is_unversioned_repo_exposure(raw) {
             let recovery = super::loop_commands::check_repo_exposure_command(
-                &root.to_string_lossy(),
+                &super::loop_commands::bound_root(&root.to_string_lossy()),
                 "draft",
                 "recovered.repo-exposure.json",
             );
             return format!(
-                "agent verify {label} artifact has no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable: `{recovery}`. Use the regenerated path as --{label}; the legacy artifact was not accepted",
+                "agent verify {label} artifact has no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable: `{recovery}`. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
                 env!("CARGO_PKG_VERSION")
             );
         }
@@ -1038,7 +1038,7 @@ mod tests {
         let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
         let root = Path::new("selected root");
         let expected = super::super::loop_commands::check_repo_exposure_command(
-            "selected root",
+            &super::super::loop_commands::bound_root("selected root"),
             "draft",
             "recovered.repo-exposure.json",
         );
@@ -1049,7 +1049,7 @@ mod tests {
             "legacy or unknown producer",
             env!("CARGO_PKG_VERSION"),
             expected.as_str(),
-            "--before",
+            "Replace this input",
         ] {
             if !error.contains(text) {
                 return Err(format!("legacy recovery omitted {text}: {error}"));
@@ -1057,6 +1057,26 @@ mod tests {
         }
         if error.contains("missing field") {
             return Err("legacy recovery exposed an opaque schema error".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_recovery_binds_relative_root_and_does_not_invent_label_flags() -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
+        let bound = super::super::loop_commands::bound_root("selected root");
+        let expected = super::super::loop_commands::check_repo_exposure_command(
+            &bound,
+            "draft",
+            "recovered.repo-exposure.json",
+        );
+        for label in ["receipt before", "repair attempt before", "packet input"] {
+            let error = validate_repo_exposure_artifact(Path::new("selected root"), raw, label)
+                .err()
+                .ok_or("legacy artifact was accepted")?;
+            if !error.contains(&expected) || error.contains(&format!("--{label}")) {
+                return Err(format!("invalid rooted/shared-consumer recovery: {error}"));
+            }
         }
         Ok(())
     }
