@@ -4248,6 +4248,10 @@ id = "RIPR-SPEC-0051"
 name = "First successful PR UX"
 spec = "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md"
 tests = [
+  "crates/ripr/src/output/markdown.rs::tests::rooted_bash_accepts_literal_argument_equals_without_powershell_translation",
+  "crates/ripr/src/output/markdown.rs::tests::rooted_bash_withholds_unbounded_or_malformed_commands",
+  "crates/ripr/src/output/markdown.rs::tests::rooted_bash_executes_from_selected_directory_preserving_arguments_and_status",
+  "crates/ripr/src/output/markdown.rs::tests::rooted_bash_withholds_unquoted_tildes_in_equals_arguments",
   "crates/ripr/src/output/first_pr.rs::tests::first_pr_check_refuses_relocated_context_with_old_root_decoy",
   "crates/ripr/src/output/first_pr.rs::tests::first_pr_check_refuses_invalid_context_and_preserves_legacy",
   "crates/ripr/src/output/first_pr.rs::tests::first_pr_check_accepts_context_for_same_physical_root_alias",
@@ -4281,6 +4285,7 @@ fixtures = [
   "fixtures/first_successful_pr",
 ]
 code = [
+  "crates/ripr/src/output/markdown.rs",
   "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/output/first_pr/freshness.rs",
   "crates/ripr/src/cli/commands/doctor.rs",
@@ -5861,6 +5866,13 @@ id = "RIPR-SPEC-0082"
 name = "preview-language disclosure"
 spec = "docs/specs/RIPR-SPEC-0082-preview-language-disclosure.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::missing_changed_python_source_is_incomplete_and_restorable",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::git_generated_python_paths_preserve_whitespace_and_restore",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::git_quoted_python_path_preserves_tab_identity",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::mixed_python_paths_keep_whitespace_distinct_from_available_sibling",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::mixed_missing_python_source_preserves_available_findings_and_counts",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::python_source_admission_preserves_read_failure_and_honest_comment_zero",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::python_source_admission_preserves_exclusions_and_genuine_git_deletions",
   "crates/ripr/src/output/human.rs::tests::render_emits_preview_disclosure_when_typescript_files_in_scope",
   "crates/ripr/src/output/human.rs::tests::preview_disclosure_counts_files_with_language_display_names",
   "crates/ripr/src/domain/language.rs::tests::display_names_use_product_casing_and_round_trip_wire_strings",
@@ -7341,6 +7353,8 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
+  "crates/ripr/src/analysis_outcome.rs::tests::limitation_paths_preserve_whitespace_identity_through_round_trip",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::shared_absence_disclosure_preserves_rust_path_identity",
   "crates/ripr/src/analysis/pipeline.rs::tests::changed_file_absent_from_worktree_is_a_partial_limitation",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::analyze_diff_discloses_changed_file_absent_from_worktree",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::analyze_diff_does_not_name_absent_worktree_when_the_file_is_present",
@@ -8731,6 +8745,8 @@ id = "RIPR-SPEC-0140"
 name = "check-artifact reuse for explain/context"
 spec = "docs/specs/RIPR-SPEC-0140-check-artifact-reuse.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery",
+  "crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery",
   "crates/ripr/src/config/tests.rs::handwritten_files_identities_follow_semantic_paths_and_consumed_language",
   "crates/ripr/src/agent/artifact.rs::tests::repo_exposure_input_identity_tracks_handwritten_files",
   "crates/ripr/src/app/check_artifact/tests.rs::artifact_round_trip_preserves_full_fidelity_findings",
@@ -8773,6 +8789,7 @@ code = [
   "crates/ripr/src/app/context.rs",
   "crates/ripr/src/analysis/mod.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/cli/help/core.rs",
   "crates/ripr/src/config/model.rs",
   "crates/ripr/src/config.rs",
@@ -11201,4 +11218,34 @@ outputs = []
 metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0207"
+name = "Installed Rust journey fixture"
+spec = "docs/specs/RIPR-SPEC-0207-installed-rust-journey-fixture.md"
+tests = [
+  "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::committed_installed_rust_manifest_binds_the_snapshot_bytes",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::committed_installed_rust_scenarios_exist_in_the_executor_corpus",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::unknown_installed_rust_scenario_is_reported_missing",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::drifted_snapshot_digest_is_rejected",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::unlisted_snapshot_file_is_rejected",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::scenario_candidate_must_bind_the_manifest_snapshots",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::git_identity_binding_accepts_only_lowercase_hex",
+  "xtask/src/reports/blind_journey_execute.rs::tests::committed_corpus_and_receipt_validate_against_the_live_executor",
+  "xtask/src/reports/blind_journey_execute.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
+]
+fixtures = [
+  "fixtures/blind_journey_installed_rust",
+  "fixtures/blind_journey_execute",
+]
+code = [
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/blind_journey_execute.rs",
+  "xtask/src/reports/fixtures.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "blind_journey_execute_positive_scenarios",
 ]
