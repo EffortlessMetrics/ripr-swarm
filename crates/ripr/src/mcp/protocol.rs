@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 
 use super::gaps::GAP_SCHEMA_VERSION;
 use super::workspace::{
-    AttemptFailure, SessionProfile, WorkspaceSession, CODE_NO_SNAPSHOT, REFRESH_SCHEMA_VERSION,
-    RESERVED_FAILURE_CODES, SESSION_SCHEMA_VERSION, SNAPSHOT_SCHEMA_VERSION,
+    AttemptFailure, CODE_NO_SNAPSHOT, REFRESH_SCHEMA_VERSION, RESERVED_FAILURE_CODES,
+    SESSION_SCHEMA_VERSION, SessionProfile, WorkspaceSession,
 };
 
 pub(super) const STATUS_TOOL_NAME: &str = "ripr_workspace_status";
@@ -163,7 +163,13 @@ pub(super) fn status_tool_result(
     max_message_bytes: usize,
     max_response_bytes: usize,
 ) -> Result<Value, String> {
-    let document = status_document(status, session, profile, max_message_bytes, max_response_bytes);
+    let document = status_document(
+        status,
+        session,
+        profile,
+        max_message_bytes,
+        max_response_bytes,
+    );
     let text = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("render workspace status: {error}"))?;
     let mut content = vec![json!({
@@ -197,7 +203,10 @@ pub(super) fn tool_result(document: Value) -> Result<Value, String> {
 
 /// A typed tool failure envelope: standard `isError` semantics with the
 /// failure as structured content and one recovery sentence in text form.
-pub(super) fn tool_failure(failure: &AttemptFailure, schema_version: &str) -> Result<Value, String> {
+pub(super) fn tool_failure(
+    failure: &AttemptFailure,
+    schema_version: &str,
+) -> Result<Value, String> {
     let document = failure.document(schema_version);
     Ok(json!({
         "content": [{
@@ -235,7 +244,13 @@ pub(super) fn status_resource_result(
     max_message_bytes: usize,
     max_response_bytes: usize,
 ) -> Result<Value, String> {
-    let document = status_document(status, session, profile, max_message_bytes, max_response_bytes);
+    let document = status_document(
+        status,
+        session,
+        profile,
+        max_message_bytes,
+        max_response_bytes,
+    );
     let text = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("render workspace status: {error}"))?;
     Ok(json!({
@@ -801,7 +816,9 @@ mod tests {
             .map(|tools| tools.len())
             .ok_or_else(|| "tools/list payload drifted".to_string())?;
         if names != 4 {
-            return Err(format!("expected the four-tool slice surface, got {names} tools"));
+            return Err(format!(
+                "expected the four-tool slice surface, got {names} tools"
+            ));
         }
         let description = json_str(&tools, "/tools/0/description")?;
         for required in [
@@ -825,29 +842,41 @@ mod tests {
     fn tool_descriptions_state_positive_contracts_and_bounds() -> Result<(), String> {
         let tools = tools_list_result();
         let descriptions = [
-            ("/tools/1/description", REFRESH_TOOL_NAME, [
-                "shared check authority",
-                "never edits source, executes verification or mutation commands",
-                "cancelled or superseded attempt is never committed",
-                "workspace_unavailable",
-                "unsupported_profile",
-            ]),
-            ("/tools/2/description", LIST_GAPS_TOOL_NAME, [
-                "deterministic bounded working set",
-                "never truncates silently",
-                "no business risk",
-                "stale_snapshot",
-                "no_snapshot",
-                "result_too_large",
-                "ripr_get_gap",
-            ]),
-            ("/tools/3/description", GET_GAP_TOOL_NAME, [
-                "complete bounded evidence",
-                "repair_packet_ready = false",
-                "never authorizes an edit",
-                "item_not_found",
-                "ripr://gap/{canonical_item_id}",
-            ]),
+            (
+                "/tools/1/description",
+                REFRESH_TOOL_NAME,
+                [
+                    "shared check authority",
+                    "never edits source, executes verification or mutation commands",
+                    "cancelled or superseded attempt is never committed",
+                    "workspace_unavailable",
+                    "unsupported_profile",
+                ],
+            ),
+            (
+                "/tools/2/description",
+                LIST_GAPS_TOOL_NAME,
+                [
+                    "deterministic bounded working set",
+                    "never truncates silently",
+                    "no business risk",
+                    "stale_snapshot",
+                    "no_snapshot",
+                    "result_too_large",
+                    "ripr_get_gap",
+                ],
+            ),
+            (
+                "/tools/3/description",
+                GET_GAP_TOOL_NAME,
+                [
+                    "complete bounded evidence",
+                    "repair_packet_ready = false",
+                    "never authorizes an edit",
+                    "item_not_found",
+                    "ripr://gap/{canonical_item_id}",
+                ],
+            ),
         ];
         for (pointer, name, required_words) in descriptions {
             let tool_name = json_str(&tools, pointer.replace("/description", "/name").as_str())?;
@@ -896,12 +925,12 @@ mod tests {
             .and_then(Value::as_array)
             .ok_or_else(|| "resourceTemplates payload drifted".to_string())?;
         if templates.len() != 2 {
-            return Err(format!("expected two resource templates, got {}", templates.len()));
+            return Err(format!(
+                "expected two resource templates, got {}",
+                templates.len()
+            ));
         }
-        for (index, expected) in [
-            (0, SNAPSHOT_RESOURCE_TEMPLATE),
-            (1, GAP_RESOURCE_TEMPLATE),
-        ] {
+        for (index, expected) in [(0, SNAPSHOT_RESOURCE_TEMPLATE), (1, GAP_RESOURCE_TEMPLATE)] {
             let value = templates
                 .get(index)
                 .ok_or_else(|| format!("template {index} missing"))?;

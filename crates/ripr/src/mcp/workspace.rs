@@ -13,7 +13,7 @@
 //! executes verification or mutation commands, never loads project-local
 //! provider configuration, and never reports a repair-ready state.
 
-use super::gaps::{self, GapItem, GAP_LIST_SCHEMA_VERSION};
+use super::gaps::{self, GAP_LIST_SCHEMA_VERSION, GapItem};
 use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeKind};
 use crate::lsp::diagnostic_budget::{
     self, DiagnosticBudget, DiagnosticBudgetResult, DiagnosticOverflowReason,
@@ -62,7 +62,11 @@ pub(crate) struct AttemptFailure {
 }
 
 impl AttemptFailure {
-    pub(crate) fn new(code: &'static str, detail: impl Into<String>, recovery: &'static str) -> Self {
+    pub(crate) fn new(
+        code: &'static str,
+        detail: impl Into<String>,
+        recovery: &'static str,
+    ) -> Self {
         Self {
             code,
             detail: bounded_detail(detail),
@@ -372,7 +376,11 @@ impl WorkspaceSession {
     }
 
     /// One canonical item's complete bounded evidence.
-    pub(crate) fn get_gap(&self, gap_id: &str, requested: Option<&str>) -> Result<Value, AttemptFailure> {
+    pub(crate) fn get_gap(
+        &self,
+        gap_id: &str,
+        requested: Option<&str>,
+    ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let Some(item) = snapshot.item(gap_id) else {
             return Err(AttemptFailure::new(
@@ -559,7 +567,10 @@ impl SessionProfile {
 /// into a snapshot. This is the only bridge from the session to the
 /// producer: read-only static analysis, identical to what `ripr check` and
 /// the LSP run in-process.
-pub(crate) fn run_check(root: &Path, root_identity: Option<&str>) -> Result<Snapshot, AttemptFailure> {
+pub(crate) fn run_check(
+    root: &Path,
+    root_identity: Option<&str>,
+) -> Result<Snapshot, AttemptFailure> {
     let input = crate::app::CheckInput {
         root: PathBuf::from(root),
         git_timeout: Some(crate::app::default_cli_git_timeout()),
@@ -718,7 +729,9 @@ mod tests {
             last_failure: None,
         };
         let _ = complete.list_gaps(None).map_err(|failure| failure.detail)?;
-        let incomplete_doc = incomplete.list_gaps(None).map_err(|failure| failure.detail)?;
+        let incomplete_doc = incomplete
+            .list_gaps(None)
+            .map_err(|failure| failure.detail)?;
         let complete_snapshot = complete
             .last_good
             .as_ref()
@@ -733,7 +746,9 @@ mod tests {
             );
         }
         if complete_snapshot.outcome.kind == incomplete_snapshot.outcome.kind {
-            return Err("complete-zero and incomplete-zero must keep distinct outcome kinds".to_string());
+            return Err(
+                "complete-zero and incomplete-zero must keep distinct outcome kinds".to_string(),
+            );
         }
         let incomplete_list = incomplete_doc
             .pointer("/items")
@@ -811,7 +826,10 @@ mod tests {
                 Err(format!("unexpected failure code: {}", failure.code))
             }
             Err(failure) => {
-                if failure.data.pointer("/current_snapshot_id").and_then(Value::as_str)
+                if failure
+                    .data
+                    .pointer("/current_snapshot_id")
+                    .and_then(Value::as_str)
                     != Some(current.as_str())
                 {
                     return Err(format!(
@@ -844,8 +862,7 @@ mod tests {
         if document.pointer("/snapshot_id").and_then(Value::as_str) != Some(current.as_str()) {
             return Err("snapshot resource lost its identity".to_string());
         }
-        if document.pointer("/outcome/kind").and_then(Value::as_str)
-            != Some("complete_no_findings")
+        if document.pointer("/outcome/kind").and_then(Value::as_str) != Some("complete_no_findings")
         {
             return Err(format!(
                 "snapshot resource lost the typed outcome: {document}"
@@ -868,12 +885,17 @@ mod tests {
         if document.pointer("/attempt_state").and_then(Value::as_str) != Some("completed") {
             return Err(format!("completed session state drifted: {document}"));
         }
-        if document.pointer("/profile/project_config").and_then(Value::as_str)
+        if document
+            .pointer("/profile/project_config")
+            .and_then(Value::as_str)
             != Some("detected_not_loaded")
         {
             return Err("session profile must stay detected-not-loaded".to_string());
         }
-        if document.pointer("/last_completed_snapshot/snapshot_id").is_none() {
+        if document
+            .pointer("/last_completed_snapshot/snapshot_id")
+            .is_none()
+        {
             return Err("session lost its last completed snapshot identity".to_string());
         }
         if document.pointer("/analysis_outcome/kind").is_none() {
@@ -891,7 +913,10 @@ mod tests {
         let long = "x".repeat(MAX_FAILURE_DETAIL_CHARS * 2);
         let failure = AttemptFailure::new(CODE_ANALYSIS_FAILED, long, "retry");
         if failure.detail.chars().count() > MAX_FAILURE_DETAIL_CHARS + 1 {
-            return Err(format!("failure detail was not bounded: {}", failure.detail.len()));
+            return Err(format!(
+                "failure detail was not bounded: {}",
+                failure.detail.len()
+            ));
         }
         let document = failure.document(REFRESH_SCHEMA_VERSION);
         if document.pointer("/schema_version").and_then(Value::as_str)
@@ -913,15 +938,15 @@ mod tests {
         if document.pointer("/attempt/state").and_then(Value::as_str) != Some("failed") {
             return Err(format!("failed attempt state drifted: {document}"));
         }
-        if document.pointer("/attempt/failure/code").and_then(Value::as_str)
+        if document
+            .pointer("/attempt/failure/code")
+            .and_then(Value::as_str)
             != Some(CODE_ANALYSIS_FAILED)
         {
             return Err("failed attempt lost its typed failure".to_string());
         }
         if document.pointer("/last_known_good/snapshot_id").is_none() {
-            return Err(
-                "a failed refresh must not drop the last-known-good snapshot".to_string(),
-            );
+            return Err("a failed refresh must not drop the last-known-good snapshot".to_string());
         }
         if document.pointer("/snapshot/snapshot_id").is_none() {
             return Err("the committed snapshot summary must survive a later failure".to_string());

@@ -809,10 +809,7 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
     let output = run_mcp(&root, &[&request_bytes])?;
     let responses = response_lines(&output)?;
     if responses.len() != 5 {
-        return Err(format!(
-            "expected 5 MCP responses, got {}",
-            responses.len()
-        ));
+        return Err(format!("expected 5 MCP responses, got {}", responses.len()));
     }
     let templates = responses[1]
         .pointer("/result/resourceTemplates")
@@ -827,7 +824,9 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
         "ripr://gap/{canonical_item_id}",
     ] {
         if !template_uris.contains(&expected) {
-            return Err(format!("resource templates lost {expected}: {template_uris:?}"));
+            return Err(format!(
+                "resource templates lost {expected}: {template_uris:?}"
+            ));
         }
     }
     for (index, id) in [(2, "list"), (3, "get")] {
@@ -836,9 +835,13 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
             return Err(format!("{id} response lost its request id: {response}"));
         }
         if response.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
-            return Err(format!("{id} must fail closed with isError before refresh: {response}"));
+            return Err(format!(
+                "{id} must fail closed with isError before refresh: {response}"
+            ));
         }
-        if response.pointer("/result/structuredContent/failure/code").and_then(Value::as_str)
+        if response
+            .pointer("/result/structuredContent/failure/code")
+            .and_then(Value::as_str)
             != Some("no_snapshot")
         {
             return Err(format!(

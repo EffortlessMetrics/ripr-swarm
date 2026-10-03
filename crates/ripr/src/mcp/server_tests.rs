@@ -42,15 +42,19 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
 fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), String> {
     let server =
         McpServer::new(WorkspaceStatus::resolve(None), None).map_err(|error| error.to_string())?;
-    let templates = serde_json::to_value(&server.resource_templates)
-        .map_err(|error| error.to_string())?;
+    let templates =
+        serde_json::to_value(&server.resource_templates).map_err(|error| error.to_string())?;
     let templates = templates
         .pointer("/resourceTemplates")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| "SDK resource templates missing".to_string())?;
     let uris = templates
         .iter()
-        .filter_map(|template| template.pointer("/uriTemplate").and_then(serde_json::Value::as_str))
+        .filter_map(|template| {
+            template
+                .pointer("/uriTemplate")
+                .and_then(serde_json::Value::as_str)
+        })
         .collect::<Vec<_>>();
     for expected in [
         protocol::SNAPSHOT_RESOURCE_TEMPLATE,
@@ -64,8 +68,7 @@ fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), Strin
 }
 
 #[tokio::test]
-async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure(
-) -> Result<(), String> {
+async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result<(), String> {
     let server =
         McpServer::new(WorkspaceStatus::resolve(None), None).map_err(|error| error.to_string())?;
     let response = server
@@ -81,10 +84,18 @@ async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure(
         }
     };
     let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
-    if value.pointer("/isError").and_then(serde_json::Value::as_bool) != Some(true) {
-        return Err(format!("pre-refresh list_gaps must be a typed failure: {value}"));
+    if value
+        .pointer("/isError")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Err(format!(
+            "pre-refresh list_gaps must be a typed failure: {value}"
+        ));
     }
-    if value.pointer("/structuredContent/failure/code").and_then(serde_json::Value::as_str)
+    if value
+        .pointer("/structuredContent/failure/code")
+        .and_then(serde_json::Value::as_str)
         != Some(workspace::CODE_NO_SNAPSHOT)
     {
         return Err(format!("pre-refresh list_gaps lost no_snapshot: {value}"));

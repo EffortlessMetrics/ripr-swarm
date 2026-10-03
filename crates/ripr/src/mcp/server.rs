@@ -43,10 +43,11 @@ impl McpServer {
         server.resources = ListResourcesResult::with_all_items(server.resources.resources)
             .with_ttl_ms(0)
             .with_cache_scope(CacheScope::Private);
-        server.resource_templates =
-            ListResourceTemplatesResult::with_all_items(server.resource_templates.resource_templates)
-                .with_ttl_ms(0)
-                .with_cache_scope(CacheScope::Private);
+        server.resource_templates = ListResourceTemplatesResult::with_all_items(
+            server.resource_templates.resource_templates,
+        )
+        .with_ttl_ms(0)
+        .with_cache_scope(CacheScope::Private);
         Ok(server)
     }
 
@@ -88,7 +89,9 @@ impl McpServer {
             }
             session.in_flight = true;
         }
-        let worker = tokio::task::spawn_blocking(move || workspace::run_check(&root, root_identity.as_deref()));
+        let worker = tokio::task::spawn_blocking(move || {
+            workspace::run_check(&root, root_identity.as_deref())
+        });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
             Err(_join_error) => Err(workspace::AttemptFailure::new(
@@ -129,9 +132,8 @@ impl McpServer {
         let session = self.session.lock().await;
         match session.list_gaps(requested.as_deref()) {
             Ok(document) => {
-                let result = protocol::tool_result(document).map_err(|_error| {
-                    ErrorData::internal_error("serialize gap list", None)
-                })?;
+                let result = protocol::tool_result(document)
+                    .map_err(|_error| ErrorData::internal_error("serialize gap list", None))?;
                 let mut result: CallToolResult = typed(result)?;
                 result.result_type = Some(ResultType::COMPLETE);
                 Ok(result.into())
@@ -150,9 +152,8 @@ impl McpServer {
         let session = self.session.lock().await;
         match session.get_gap(&gap_id, requested.as_deref()) {
             Ok(document) => {
-                let result = protocol::tool_result(document).map_err(|_error| {
-                    ErrorData::internal_error("serialize gap evidence", None)
-                })?;
+                let result = protocol::tool_result(document)
+                    .map_err(|_error| ErrorData::internal_error("serialize gap evidence", None))?;
                 let mut result: CallToolResult = typed(result)?;
                 result.result_type = Some(ResultType::COMPLETE);
                 Ok(result.into())
@@ -218,7 +219,10 @@ fn required_string_argument(
 ) -> Result<String, ErrorData> {
     let value = optional_string_argument(arguments, name)?;
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
-        ErrorData::invalid_params(format!("{name} is required and must be a non-empty string"), None)
+        ErrorData::invalid_params(
+            format!("{name} is required and must be a non-empty string"),
+            None,
+        )
     })
 }
 
@@ -271,7 +275,7 @@ impl ServerHandler for McpServer {
         request: CallToolRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        match request.name.as_str() {
+        match request.name.as_ref() {
             protocol::STATUS_TOOL_NAME => {
                 if request
                     .arguments

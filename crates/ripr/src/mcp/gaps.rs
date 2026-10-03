@@ -44,7 +44,10 @@ impl GapItem {
             .unwrap_or_else(|| finding.id.clone());
         let file = crate::analysis::stable_path_text(&finding.probe.location.file);
         let class = finding.class.as_str().to_string();
-        let language = finding.language.as_ref().map(|language| language.as_str().to_string());
+        let language = finding
+            .language
+            .as_ref()
+            .map(|language| language.as_str().to_string());
         let line = finding.probe.location.line;
 
         let list_summary = json!({
@@ -197,7 +200,9 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
 /// eligible, and the selection key uses the same unset (128) ranks the LSP
 /// delivery bridge uses, so the budget's evidence-owned order (selection
 /// key, then canonical id, then document) is the only ordering applied.
-pub(crate) fn budget_items(items: &[GapItem]) -> Vec<crate::lsp::diagnostic_budget::DiagnosticBudgetItem> {
+pub(crate) fn budget_items(
+    items: &[GapItem],
+) -> Vec<crate::lsp::diagnostic_budget::DiagnosticBudgetItem> {
     use crate::lsp::diagnostic_budget::{
         DiagnosticBudgetEligibility, DiagnosticBudgetItem, DiagnosticSelectionKey,
     };
@@ -245,8 +250,8 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         use crate::domain::{
-            ActivationEvidence, Confidence, DeltaKind, Probe, ProbeFamily, ProbeId,
-            RelatedTest, RiprEvidence, SourceLocation, StageEvidence, StageState,
+            ActivationEvidence, Confidence, DeltaKind, Probe, ProbeFamily, ProbeId, RelatedTest,
+            RiprEvidence, SourceLocation, StageEvidence, StageState,
         };
         let stage = || StageEvidence::new(StageState::Unknown, Confidence::Unknown, "test");
         Ok(Finding {
@@ -324,7 +329,10 @@ mod tests {
             return Err(format!("unexpected class wire token: {}", item.class));
         }
         if item.file != "src/lib.rs" || item.line != 12 {
-            return Err(format!("location projection drifted: {}:{}", item.file, item.line));
+            return Err(format!(
+                "location projection drifted: {}:{}",
+                item.file, item.line
+            ));
         }
         Ok(())
     }
@@ -358,7 +366,9 @@ mod tests {
             .and_then(Value::as_str)
             .ok_or_else(|| "readiness refusal needs its reason".to_string())?;
         if !reason.contains("#3090") {
-            return Err(format!("readiness reason lost the repair-slice owner: {reason}"));
+            return Err(format!(
+                "readiness reason lost the repair-slice owner: {reason}"
+            ));
         }
         if document.pointer("/item/repair_boundary/allowed_edit_surface")
             != Some(&serde_json::json!("none_declared"))
@@ -385,7 +395,10 @@ mod tests {
         let complete = GapItem::from_finding(&with_gap)?;
         let incomplete = GapItem::from_finding(&finding()?)?;
         if complete.evidence_bytes == incomplete.evidence_bytes {
-            return Err("missing-evidence and complete-evidence items must not project identically".to_string());
+            return Err(
+                "missing-evidence and complete-evidence items must not project identically"
+                    .to_string(),
+            );
         }
         Ok(())
     }
@@ -393,7 +406,10 @@ mod tests {
     #[test]
     fn resource_uri_parsing_is_strict() {
         assert_eq!(gap_resource_id("ripr://gap/gap:test:1"), Some("gap:test:1"));
-        assert_eq!(snapshot_resource_id("ripr://snapshot/snapshot:sha256:x"), Some("snapshot:sha256:x"));
+        assert_eq!(
+            snapshot_resource_id("ripr://snapshot/snapshot:sha256:x"),
+            Some("snapshot:sha256:x")
+        );
         for other in [
             "ripr://workspace/status",
             "ripr://gap/",

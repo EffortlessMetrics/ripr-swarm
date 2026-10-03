@@ -253,7 +253,13 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
 }
 pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), String> {
     let (status, analysis_root) = WorkspaceStatus::resolve_with_root(explicit_root);
-    serve(tokio::io::stdin(), tokio::io::stdout(), status, analysis_root).await
+    serve(
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+        status,
+        analysis_root,
+    )
+    .await
 }
 async fn serve<R, W>(
     reader: R,

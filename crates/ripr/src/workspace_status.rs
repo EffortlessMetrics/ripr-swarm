@@ -175,7 +175,7 @@ impl WorkspaceStatus {
             project_config_state: resolved.project_config_state,
         };
 
-        Self {
+        let status = Self {
             schema_version: WORKSPACE_STATUS_SCHEMA_VERSION,
             workspace_state,
             root: resolved.root,
