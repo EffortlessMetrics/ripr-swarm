@@ -1141,6 +1141,10 @@ path = "docs/specs/RIPR-SPEC-0212-npm-native-launcher-boundary.md"
 status = "accepted"
 owner = "product-swarm"
 standalone_reason = "Source-package contract for exact native package selection, six-hook lifecycle denial, executable confinement, literal spawn semantics, non-duplicating POSIX signal handling, first-signal retention, and executed named controls; no registry or support-tier claim."
+
+[[artifact]]
+id = "RIPR-SPEC-0213"
+kind = "spec"
 path = "docs/specs/RIPR-SPEC-0213-mcp-repair-transaction-projection.md"
 status = "proposed"
 owner = "mcp"
