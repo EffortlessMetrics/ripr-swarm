@@ -295,7 +295,7 @@ impl<'a> CompactGripContext<'a> {
                     .map(strip_comments_and_strings)
                     // Filter after stripping: removing a quoted segment can
                     // itself form a qualified path in the existing scanner.
-                    .filter(|line| line.contains("::") || line.trim_start().starts_with("use "))
+                    .filter(|line| is_import_relevant_line(line))
                     .collect::<Vec<_>>();
                 let module_import_aliases = module_import_aliases_by_file.get(&test.file);
                 let mut helper_owner_call_names = helper_owner_call_names_for_test(
