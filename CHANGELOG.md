@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Changed
 
+- Rust analysis: ordinary turbofish calls remain eligible beside unresolved
+  property macros. Opaque declarations cannot supply owner reach, and discarded
+  property bodies cannot supply raw-scanned assertion oracles. These boundaries
+  preserve ordinary source authority without assuming macro expansion. (#5131)
+
 - Human output: a selected `no_static_path` finding without a typed limitation
   asks readers to review the unresolved static path and existing tests, rather
   than inspect a nonexistent named limitation. State, classification, JSON and
