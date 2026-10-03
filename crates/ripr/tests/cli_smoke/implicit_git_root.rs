@@ -1,5 +1,5 @@
 //! A marker must not replace the standalone project's actual analysis context.
-use super::{run_command, run_command_with_env, run_git, unique_temp_workspace};
+use super::{run_command, run_command_with_env, run_git, unique_external_workspace};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,10 +7,24 @@ use std::path::{Path, PathBuf};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn python_fixture(label: &str) -> TestResult<(PathBuf, PathBuf)> {
-    let sandbox = unique_temp_workspace(label);
+    let sandbox = unique_external_workspace(label)?;
     let project = sandbox.join("project");
     fs::create_dir_all(project.join("src"))?;
     fs::create_dir_all(project.join("tests"))?;
+    // Cargo points TMPDIR into this checkout. This fixture must instead be
+    // outside its real Git ancestor before adding deliberately inert metadata.
+    let outside = run_command_with_env(
+        "git",
+        &sandbox,
+        &["rev-parse", "--show-toplevel"],
+        &[("LC_ALL", "C")],
+    )?;
+    assert_eq!(outside.status.code(), Some(128));
+    assert!(
+        String::from_utf8_lossy(&outside.stderr).contains("not a git repository"),
+        "fixture must lack an ambient Git ancestor before setup: {}",
+        String::from_utf8_lossy(&outside.stderr)
+    );
     fs::write(
         project.join("pyproject.toml"),
         "[project]\nname = \"discount\"\nversion = \"0.1.0\"\n",
