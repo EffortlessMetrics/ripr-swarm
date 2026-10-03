@@ -234,6 +234,8 @@ Current tests:
 - `crates/ripr/src/cli/commands/doctor.rs::tests::source_build_profile_keeps_enabled_language_runtime_failure_advisory`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_ignores_a_repo_local_prove_cmd`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_prefers_path_prove_over_repo_local_prove_cmd`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_windows_prefers_pathext_over_extensionless`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::is_cwd_path_entry_treats_empty_dot_and_backslash_dot_as_cwd`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::path_command_in_unix_prove_cmd_is_not_a_prove_binary`
 - `crates/ripr/src/cli/commands/doctor.rs::tests::doctor_program_keeps_explicit_paths_and_skips_bare_names_off_path`
 - `crates/ripr/tests/cli_smoke.rs::doctor_does_not_treat_a_repo_local_prove_cmd_as_path_prove`

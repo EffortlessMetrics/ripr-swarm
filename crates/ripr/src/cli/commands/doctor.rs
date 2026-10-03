@@ -1082,15 +1082,16 @@ fn path_command(name: &str) -> Option<PathBuf> {
 }
 
 fn path_command_exists(path: &Path) -> bool {
-    if !path.is_file() {
+    let Ok(meta) = path.metadata() else {
+        return false;
+    };
+    if !meta.is_file() {
         return false;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        path.metadata()
-            .map(|meta| meta.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
+        meta.permissions().mode() & 0o111 != 0
     }
     #[cfg(not(unix))]
     {
@@ -1123,10 +1124,11 @@ fn path_command_in(
 }
 
 fn is_cwd_path_entry(dir: &Path) -> bool {
-    dir.as_os_str().is_empty()
-        || dir == Path::new(".")
-        || dir == Path::new("./")
-        || dir == Path::new(".\\")
+    // Empty and `.` are cwd aliases (`where` / Windows empty PATH components).
+    // `./` equals `.` via Path components on every host. `.\\` equals `.` on
+    // Windows, but Unix Path treats `.\\` as a Normal filename, so keep the
+    // token for host-independent Windows PATH strings (#5103).
+    dir.as_os_str().is_empty() || dir == Path::new(".") || dir == Path::new(".\\")
 }
 
 fn path_command_candidates(
@@ -1138,7 +1140,9 @@ fn path_command_candidates(
     if !windows {
         return vec![dir.join(name)];
     }
-    let mut candidates = vec![dir.join(name)];
+    // PATHEXT suffixes first, then the extensionless name as a fallback. An
+    // extensionless `perllsp` must not hide `perllsp.bat` from exporter spawn.
+    let mut candidates = Vec::new();
     let exts = pathext.unwrap_or(".COM;.EXE;.BAT;.CMD");
     for ext in exts.split(';') {
         let ext = ext.trim();
@@ -1154,6 +1158,10 @@ fn path_command_candidates(
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
         }
+    }
+    let bare = dir.join(name);
+    if !candidates.contains(&bare) {
+        candidates.push(bare);
     }
     candidates
 }
@@ -1985,6 +1993,41 @@ mod tests {
         );
         assert_eq!(found, Some(path_cmd), "PATH prove.cmd must win: {found:?}");
         Ok(())
+    }
+
+    #[test]
+    fn path_command_in_windows_prefers_pathext_over_extensionless() -> Result<(), String> {
+        let path_dir = PathBuf::from("bin");
+        let bare = path_dir.join("prove");
+        let cmd = path_dir.join("prove.cmd");
+        let path = joined_path(&[path_dir.to_str().ok_or("path dir utf-8")?])?;
+        let found = path_command_in("prove", &path, Some(".CMD"), true, &|candidate| {
+            candidate == bare.as_path() || candidate == cmd.as_path()
+        });
+        assert_eq!(
+            found,
+            Some(cmd),
+            "Windows PATHEXT prove.cmd must beat extensionless prove: {found:?}"
+        );
+        let bare_only = path_command_in("prove", &path, Some(".CMD"), true, &|candidate| {
+            candidate == bare.as_path()
+        });
+        assert_eq!(
+            bare_only,
+            Some(bare),
+            "extensionless PATH prove remains a fallback: {bare_only:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn is_cwd_path_entry_treats_empty_dot_and_backslash_dot_as_cwd() {
+        assert!(is_cwd_path_entry(Path::new("")));
+        assert!(is_cwd_path_entry(Path::new(".")));
+        assert!(is_cwd_path_entry(Path::new("./")));
+        assert!(is_cwd_path_entry(Path::new(".\\")));
+        assert!(!is_cwd_path_entry(Path::new("bin")));
+        assert!(!is_cwd_path_entry(Path::new("strawberry-bin")));
     }
 
     #[test]
