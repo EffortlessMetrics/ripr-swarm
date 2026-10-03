@@ -18,9 +18,11 @@ const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
 ];
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
 
-/// Read the candidate workflow from the workspace root used by repository checks.
+/// Read the candidate workflow from the repository root above the xtask package.
 fn workflow_source() -> String {
-    let root = std::env::current_dir().expect("read workspace root");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask package has a repository parent");
     fs::read_to_string(root.join(WORKFLOW)).expect("read routed Rust workflow")
 }
 
