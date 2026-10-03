@@ -11,14 +11,90 @@ are scoped or reviewed.
 
 ### Changed
 
+- Human output: a selected `no_static_path` finding without a typed limitation
+  asks readers to review the unresolved static path and existing tests, rather
+  than inspect a nonexistent named limitation. State, classification, JSON and
+  typed-limitation guidance are unchanged. (#5051)
+- CLI: `ripr cache status --json --help` and `ripr cache clear --dry-run
+  --help` now print the subcommand help and exit 0; help was previously
+  recognized only as the sole argument, so any combined invocation failed
+  with a self-referential "Run `ripr cache status --help`" error. `ripr cache
+  --help <anything>` prints the family usage, matching the sibling command
+  families (#5024).
+- CLI: `ripr doctor --profile foo` now renders the accepted set with the
+  standard backticks — `unknown doctor profile \`foo\`; expected \`analysis\`
+  or \`source-build\`` — matching the gate/diff/mode enumeration errors; the
+  outcome and calibrate `--format` errors already name their accepted set via
+  the argument-error alignment pass (#5016).
+- CLI: the `ripr cache status` cleanup hint names `ripr cache clear
+  [--dry-run] [--force]` — the command an installed-binary user can actually
+  run — instead of routing to the maintainer-only `cargo xtask cache gc`
+  (#5012; the text change landed with #4411, this PR pins and verifies it).
+- CLI: the global `-v`/`--verbose` flag is now documented on the
+  `ripr help --all` reference (extra stderr pipeline diagnostics; accepted
+  in any position, never consumed as another flag's value), and one shared
+  stripping pass removes every occurrence, so `ripr -v -v <command>`
+  behaves identically for `mcp` and every other command family instead of
+  routing on one family and failing on the rest (#5009).
+- Human output: the Summary denominator is now `N of M finding(s)
+  unsuppressed` instead of `N of M finding(s) shown`; the digest renders one
+  finding and names the rest under `Hidden:`, so "shown" read as "rendered"
+  and contradicted the omitted count on the same page. The #4322 suppression
+  disclosure is unchanged. (#5017)
+- Human output: when a top gap is selected, the `Hidden:` count line now
+  names the omitted set's currentness mix instead of labeling every omission
+  lower-priority — `L lower-priority finding(s) omitted; B base-side
+  evidence, not candidate edit targets` (with an unresolved-currentness
+  clause when present), and an all-base-side or all-unresolved omitted set
+  says so directly. Pure lower-priority omitted sets keep the legacy single
+  clause. (#5021)
+- LSP: the work-done progress terminal end for a limited run no longer
+  interpolates the raw internal run-status tag (`analysis limited (run
+  status: seams_deferred)`); the end message is now the human phrase
+  `analysis completed with limited evidence`, and the run-status tag stays
+  machine-only on the typed `ripr/analysisStatus` payload (#5003).
+- MCP: the `ripr_workspace_status` tool description and the
+  `ripr://workspace/status` resource description state positively what the
+  document contains (repository-root discovery, configuration presence, and
+  launch-trust/authority facts), disavow reading `workspace_state: ready`
+  as an analysis result, and name the real evidence route (`ripr check
+  --format json` and editor diagnostics from the ripr language server)
+  (#5002).
 - LSP: identity-law tests pin that `action_id` excludes title, range,
   message, snapshot handles, client capability, and disabled reason; build
   and parse share one fingerprint; analysis input identity excludes
   deadlines and position encoding; diagnostic result IDs ignore refresh
   clock and attempt handles. (#1932)
+- TypeScript/Python adapters: capped-read refusals are now disclosed as a
+  bounded, stable-sorted sample of refused paths (at most 8 per run) plus
+  one summary entry carrying the true refused count, instead of one
+  `AnalysisLimitation` per refused file — a correctly-capped monorepo no
+  longer emits up to ~20,000 limitation entries that dwarf the findings.
+  Every refused file is still refused (fail-closed); only the disclosure is
+  sampled, and the summary states that the full per-file list is not
+  materialized in output. No JSON/SARIF schema shape changes. (#5022)
+
+- CI: Windows advisory observations, verdicts and reasons retain Cargo artifact
+  identity, including target kind/source and exact executable hash. Required
+  release controls must resolve to one owning artifact across both samples;
+  missing or ambiguous provenance is refused instead of borrowing another
+  target's pass. Log-derived report entries use bounded excerpts and section
+  counts with explicit truncation and omissions; doctest transitions are
+  explicit and never assigned an inferred package (#5043).
 
 ### Added
 
+- CLI: `ripr pilot` now projects the shared analysis progress stream on
+  stderr — `ripr progress: <stage> [repo]` stage lines and throttled
+  `still active after <elapsed class>` heartbeats, exactly as `ripr check`
+  reports them — while its repo inventory runs, including the cold-cache
+  auto-retry, so the primary first-run command no longer sits silent for
+  minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
+  suppresses the stream (RIPR-SPEC-0185, #5019).
+- Python same-class method owners that tests reach only through construction
+  or another method on that class now keep `no_static_path` but name
+  `static_limit_kind: python_transitive_reach_unresolved` (RIPR-SPEC-0201,
+  #4765). This is a named limitation, not a related-test or coverage claim.
 - LSP: the seam code actions and seam hover project the compact RepairCard
   (RIPR-SPEC-0198, #4668). "Agent handoff: copy repair card" copies the same
   versioned `repair_card.v1` document the CLI `ripr agent card` handoff
@@ -78,7 +154,11 @@ are scoped or reviewed.
   app-layer builder owns the projection; a sha256 semantic digest covers the
   load-bearing surface, a single fail-closed gate keeps stale/limited/
   unavailable cards from exposing a route, and `done_when` keeps five axes
-  separate. No CLI/LSP/MCP projection consumes the card yet (#4663).
+  separate. At introduction no projection consumed the card (#4663); the CLI
+  projection `ripr agent card` shipped later in this unreleased window
+  (#4667), the LSP seam handoff code action projects the same card and the
+  seam hover shows a bounded summary of it (#4668), and no MCP projection
+  emits the card yet.
 - CLI: the seven full-repo audit-path formats (`repo-seams-json`,
   `repo-seams-md`, `repo-exposure-json`, `repo-exposure-summary-json`,
   `repo-exposure-md`, `repo-sarif`, `agent-seam-packets-json`) are no longer
@@ -155,11 +235,42 @@ are scoped or reviewed.
   real Tokio fixture keeps discovery but loses strong static oracle credit, an
   explicit conservative usefulness tradeoff tracked by #5040.
 
-- Rust `proptest!` and `quickcheck!` token trees are reparsed as items, so
-  inner `#[test]` / `quickcheck!` functions keep their real lines, owner
-  calls, and `prop_assert*` oracles. An unmarked `proptest!` fn stays a
-  function fact, not a test (#4789).
+- File-policy coverage arrays preserve valid TOML comments and decoded string
+  values for common, Unix, and Windows selectors. Parser-owned spans retain
+  entry attribution; numeric admission, governed-field refusals, and nonzero
+  applicable-test enumeration remain enforced (#5053).
 
+- `RIPR_REPO_EXPOSURE_SEAM_LIMIT` and `RIPR_PILOT_SEAM_BUDGET` refuse a
+  value that is not a seam count. Before, `abc`, `1k` or `-1` read as the `0`
+  opt-out and silently removed the cap. Now the run exits 2 and names the
+  variable (#4529).
+- A repository Git refuses because another user owns it (`detected dubious
+  ownership`) is reported as that, with the `git config --global --add
+  safe.directory` repair. `ripr check` and `ripr doctor` used to say the
+  directory was not inside a Git work tree (#4530).
+- `ripr doctor` on a missing `--root` skips the cargo and rustc checks
+  instead of reporting both tools as unavailable. Outside a Git work tree it
+  no longer prints a raw `git status` failure, and it no longer recommends
+  `ripr check`, which cannot run there (#4531).
+- LSP: an invalid `ripr.toml` now shows a warning in editors without the VS
+  Code integration, at startup and when a later edit breaks the file. The
+  warning names the error location without quoting file contents. Before,
+  analysis paused and the reason went only to the log (#4532).
+- `ripr.toml` errors: an invalid oracle strength names its key. A valid key
+  in the wrong table (for example a top-level `mode`) names the table it
+  belongs under, in the CLI and in `ripr doctor` JSON. The unknown-language
+  error no longer cites an internal campaign (#4534).
+- `ripr check` refuses two output selections that disagree, such as
+  `--json --format human`. Before, the last one silently won (#4535).
+- Rust property macros remain opaque pending macro-provenance support
+  (#4789, corrective successor to #4835). Their names no longer invent
+  executable tests or strong `prop_assert*` evidence. Owner mentions carry
+  an explicit macro limitation, with guidance to inspect existing tests.
+  Property-only argument calls and parser-fallback token-tree tests remain
+  unresolved; unrelated packages cannot suppress a real gap through a shared
+  name. Independent ordinary calls and helper routes retain their evidence.
+  Ordinary assertions keep their established behavior; no-property files
+  no longer allocate or parse a file-sized overlay.
 - Review guidance: admit workspace and changed-owner inputs before either
   index build, with file/byte limits and a `review_guidance_oversized` failed
   receipt instead of silently truncated guidance (#4388, RIPR-SPEC-0012).
@@ -2596,6 +2707,23 @@ are scoped or reviewed.
   workflows, and `help --json` emits the versioned machine-readable catalog.
   The guide no longer defers these to #1613 as future work, and its help row
   includes the workflow surface (#2930, #4976).
+
+- The README and `docs/QUICKSTART.md` no longer claim the released 0.10 CLI
+  hard-defaults to `origin/main`; they describe the five-step default-base
+  cascade (`origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`)
+  that v0.10.0 actually implements, and QUICKSTART stops attributing that
+  cascade to the development CLI only. `docs/LLM_OPERATOR_GUIDE.md`,
+  `docs/AGENT_WORKFLOWS.md`, `docs/REPAIR_ATTEMPT.md`, and
+  `docs/COMMAND_HIERARCHY.md` now name `ripr agent card` as the default
+  bounded agent handoff (compact `RepairCardV1`, RIPR-SPEC-0194) with
+  `ripr agent packet` as the compatibility and full-detail route. The
+  Unreleased changelog and `docs/OUTPUT_SCHEMA.md` no longer state that no
+  CLI/LSP projection consumes the RepairCard — the CLI and LSP projections
+  shipped in this unreleased window (#4667, #4668); only the MCP projection
+  remains unshipped
+  ([#5013](https://github.com/EffortlessMetrics/ripr-swarm/issues/5013),
+  [#5018](https://github.com/EffortlessMetrics/ripr-swarm/issues/5018),
+  [#5023](https://github.com/EffortlessMetrics/ripr-swarm/issues/5023)).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 

@@ -78,6 +78,8 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{LspService, Server};
 
+mod consumed_source_tests;
+
 /// Render a fixture path the way the LSP surface renders paths.
 ///
 /// The server normalizes every emitted path to forward slashes on all
@@ -988,6 +990,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
 
     let snapshot = AnalysisSnapshot {
         root: std::path::PathBuf::from(root),
+        rust_consumed_sources: Default::default(),
         input_identity: None,
         base: None,
         mode: crate::app::Mode::Draft,
@@ -1000,6 +1003,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -10925,6 +10929,195 @@ fn workspace_folder_transitions_rejected_event_warns_a_generic_client() -> Resul
     })
 }
 
+/// Initialize with one folder and return the `window/showMessage` texts the
+/// server sent before its initialize response (#4532).
+async fn initialize_show_messages(
+    client: &mut WorkspaceFolderTransitionsClient,
+    folders: serde_json::Value,
+    capabilities: serde_json::Value,
+) -> Result<Vec<String>, String> {
+    let id = client.request_id();
+    write_lsp_message(
+        &mut client.writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "workspaceFolders": folders,
+                "initializationOptions": { "checkMode": "instant" },
+                "capabilities": capabilities
+            }
+        }),
+    )
+    .await?;
+    let mut shown = Vec::new();
+    loop {
+        let message = read_lsp_message(&mut client.reader).await?;
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+            return Ok(shown);
+        }
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("window/showMessage") {
+            shown.push(
+                message["params"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_repo_config_at_initialize_is_shown_to_a_generic_client_only() -> Result<(), String> {
+    // #4532: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so the paused analysis must reach it on the
+    // standard channel. The VS Code integration renders the status itself.
+    run_workspace_folder_transitions_exchange("config failure disclosure did not complete", async {
+        let root = unique_lsp_test_root("config-failure-shown")?;
+        std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+        std::fs::write(
+            root.path().join("ripr.toml"),
+            "[analysis]\nmode = \"turbo\"\n",
+        )
+        .map_err(|err| format!("write ripr.toml failed: {err}"))?;
+        let uri = file_uri_for_path(root.path())?;
+        let folders = serde_json::json!([workspace_folder_json(&uri)]);
+
+        let mut generic = WorkspaceFolderTransitionsClient::spawn();
+        let shown =
+            initialize_show_messages(&mut generic, folders.clone(), serde_json::json!({})).await?;
+        generic.finish().await?;
+        if !shown.iter().any(|text| {
+            text.starts_with("ripr config load failed; analysis is paused")
+                && text.contains("analysis.mode `turbo`")
+        }) {
+            return Err(format!(
+                "a generic client must be shown the config failure: {shown:?}"
+            ));
+        }
+
+        let mut integrated = WorkspaceFolderTransitionsClient::spawn();
+        let shown = initialize_show_messages(
+            &mut integrated,
+            folders,
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+        )
+        .await?;
+        integrated.finish().await?;
+        if shown.iter().any(|text| text.contains("config load failed")) {
+            return Err(format!(
+                "the riprEditor integration renders the failure from its status: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Send one watched-file change for `ripr.toml`, then a `shutdown` request,
+/// and return the `window/showMessage` texts that arrived before the
+/// shutdown response. Notifications are handled in order, so the change's
+/// disclosure lands before the response.
+async fn reload_show_messages_then_shutdown(
+    client: &mut WorkspaceFolderTransitionsClient,
+    config_uri: &str,
+) -> Result<Vec<String>, String> {
+    write_lsp_message(
+        &mut client.writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "workspace/didChangeWatchedFiles",
+            "params": {"changes": [{"uri": config_uri, "type": 2}]}
+        }),
+    )
+    .await?;
+    let id = client.request_id();
+    write_lsp_message(
+        &mut client.writer,
+        serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "shutdown", "params": null}),
+    )
+    .await?;
+    let mut shown = Vec::new();
+    loop {
+        let message = read_lsp_message(&mut client.reader).await?;
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+            return Ok(shown);
+        }
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("window/showMessage") {
+            shown.push(
+                message["params"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+        }
+    }
+}
+
+#[test]
+fn a_reload_that_breaks_ripr_toml_is_shown_once_without_source_text() -> Result<(), String> {
+    // #4532 review: the reload path shows the failure to a generic client
+    // once per distinct error, and the notice carries the source-free
+    // summary, never the TOML parser's excerpt of the file.
+    run_workspace_folder_transitions_exchange("config reload disclosure did not complete", async {
+        let root = unique_lsp_test_root("config-reload-shown")?;
+        std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+        let uri = file_uri_for_path(root.path())?;
+        let config_uri = file_uri_for_path(&root.path().join("ripr.toml"))?;
+        let mut client = WorkspaceFolderTransitionsClient::spawn();
+        let shown = initialize_show_messages(
+            &mut client,
+            serde_json::json!([workspace_folder_json(&uri)]),
+            serde_json::json!({}),
+        )
+        .await?;
+        if !shown.is_empty() {
+            return Err(format!("a missing config must not warn: {shown:?}"));
+        }
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        std::fs::write(root.path().join("ripr.toml"), "secret_marker = [\n")
+            .map_err(|err| format!("write ripr.toml failed: {err}"))?;
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": config_uri.as_str(), "type": 2}]}
+            }),
+        )
+        .await?;
+        let first = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+        let text = first["params"]["message"].as_str().unwrap_or_default();
+        if !text.starts_with("ripr config load failed; analysis is paused:")
+            || !text.contains("invalid ripr.toml")
+            || text.contains("secret_marker")
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the reload notice must be the one-line source-free summary: {first}"
+            ));
+        }
+        let repeated = reload_show_messages_then_shutdown(&mut client, config_uri.as_str()).await?;
+        if !repeated.is_empty() {
+            return Err(format!(
+                "an unchanged error must not be shown again: {repeated:?}"
+            ));
+        }
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await
+    })
+}
+
 #[test]
 fn workspace_folder_transitions_duplicate_and_contradictory_events_rejected_typed()
 -> Result<(), String> {
@@ -12402,6 +12595,7 @@ fn sample_analysis_snapshot(
     );
     AnalysisSnapshot {
         root,
+        rust_consumed_sources: Default::default(),
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -12414,6 +12608,7 @@ fn sample_analysis_snapshot(
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -17769,7 +17964,10 @@ fn quarantine_finding(id: &str, file: &str) -> Finding {
     finding
 }
 
-fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDiagnostics {
+fn quarantine_workspace_diagnostics(
+    fixture: &QuarantineFixture,
+    source_a: &str,
+) -> WorkspaceDiagnostics {
     // `headline_eligible` is the producer-owned eligibility signal the
     // delivery budget reads (#1973); without it the stored selection omits
     // the diagnostics and pull/push serve an empty set.
@@ -17796,8 +17994,15 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         1,
         &LspAnalysisConfig::default(),
     );
+    // This synthetic snapshot explicitly names the bytes it purports to have
+    // consumed. Preparation must never mint that claim from a later disk read.
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(Path::new("src/a.rs"), Some(source_a.as_bytes()));
+    rust_consumed_sources.record(Path::new("src/b.rs"), Some(QUARANTINE_TEXT_B.as_bytes()));
     let snapshot = AnalysisSnapshot {
         root: fixture.root.clone(),
+        rust_consumed_sources,
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -17810,6 +18015,7 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -17834,9 +18040,10 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
 fn commit_quarantine_snapshot(
     backend: &Backend,
     fixture: &QuarantineFixture,
+    source_a: &str,
 ) -> Result<(), String> {
     backend
-        .refresh_plan(quarantine_workspace_diagnostics(fixture))
+        .refresh_plan(quarantine_workspace_diagnostics(fixture, source_a))
         .ok_or_else(|| "expected committed snapshot".to_string())?;
     Ok(())
 }
@@ -17946,7 +18153,7 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Clean documents are served on pull.
     let served = pull_document_json(backend, &fixture.uri_a, None).await?;
@@ -18081,7 +18288,7 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -18190,7 +18397,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -18223,7 +18430,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
 
     // The refresh commits: the analyzed saved content catches up with the
     // buffer and the quarantine lifts.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18285,7 +18492,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // A rejected incremental change (position past the line end) disowns the
     // retained buffer and enters the fail-closed quarantine.
@@ -18347,7 +18554,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     {
         return Err("saved identity must stay the persisted bytes".to_string());
     }
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18375,7 +18582,7 @@ async fn save_with_unchanged_content_dedups_and_keeps_lifted_quarantine() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     // Record the initial save so the dedup path has a recorded digest.
     backend
         .did_save(quarantine_save_params(&fixture.uri_a, QUARANTINE_TEXT_A))
@@ -18494,7 +18701,7 @@ async fn repeated_open_change_save_cycles_keep_identities_consistent() -> Result
         }
 
         // The refresh analyzes the new saved content and the quarantine lifts.
-        commit_quarantine_snapshot(backend, &fixture)?;
+        commit_quarantine_snapshot(backend, &fixture, &dirty_text)?;
         let state = backend
             .document_state_for_test(&fixture.uri_a)
             .ok_or_else(|| "expected document state".to_string())?;
@@ -18542,7 +18749,7 @@ async fn unsaved_buffer_text_never_enters_snapshot_or_status_payloads() -> Resul
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     const UNSAVED: &str = "fn a() -> bool { UNSAVED_BUFFER_MARKER }";
     backend
@@ -18633,7 +18840,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Save new content; the document is quarantined until the new saved
     // content is analyzed. The fixture mirrors the persisted bytes.
@@ -18650,7 +18857,10 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     // superseded: it never becomes latest_analysis. Document identities
     // must not advance with it.
     let transaction = backend
-        .prepare_refresh_transaction(quarantine_workspace_diagnostics(&fixture))
+        .prepare_refresh_transaction(quarantine_workspace_diagnostics(
+            &fixture,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
         .ok_or_else(|| "expected prepared transaction".to_string())?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
@@ -18682,7 +18892,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     drop(transaction);
 
     // When a transaction does commit, identities advance with it.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18706,7 +18916,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18721,7 +18931,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     // old-content buffer must not be marked clean against them.
     std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
         .map_err(|err| format!("external rewrite failed: {err}"))?;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18776,6 +18986,7 @@ where
     let mut notifications = Vec::new();
     let mut log_seen = false;
     let mut status_seen = false;
+    let mut observed_run_statuses = std::collections::BTreeSet::new();
     tokio::time::timeout(Duration::from_mins(1), async {
         while !(log_seen && status_seen) {
             let message = read_lsp_message(reader).await?;
@@ -18801,7 +19012,11 @@ where
                     notifications.push(message);
                 }
                 Some("ripr/analysisStatus") => {
-                    if message["params"]["run_status"].as_str() == Some(expected_run_status) {
+                    let run_status = message["params"]["run_status"]
+                        .as_str()
+                        .unwrap_or("<missing>");
+                    observed_run_statuses.insert(run_status.to_string());
+                    if run_status == expected_run_status {
                         status_seen = true;
                     }
                     notifications.push(message);
@@ -18815,7 +19030,7 @@ where
     .await
     .map_err(|_elapsed| {
         format!(
-            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen})"
+            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen}, observed_run_statuses={observed_run_statuses:?})"
         )
     })??;
     Ok(notifications)
@@ -20055,7 +20270,7 @@ fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(),
             message.get("method").and_then(serde_json::Value::as_str) == Some("$/progress")
                 && message["params"]["value"]["kind"].as_str() == Some("end")
                 && message["params"]["value"]["message"].as_str()
-                    == Some("analysis limited (run status: limited)")
+                    == Some("analysis completed with limited evidence")
         });
         if !progress_end_limited {
             return Err(format!(

@@ -19,7 +19,7 @@ pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairi
 
 pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     format!(
-        "Discriminator unconfirmed: no admitted oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"
+        "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"
     )
 }
 

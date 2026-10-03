@@ -67,6 +67,7 @@ map is:
 | `ripr help --json` | `schema_version` | `1` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
+| `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -116,8 +117,10 @@ The schema is additive within `repair_card.v1`: new fields arrive with
 `#[serde(default)]`; a breaking shape change mints a new version. The CLI
 projection is `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194,
 #4667): the compact card is the default agent handoff, the complete packet
-stays behind the card's explicit detail route, and no LSP or MCP projection
-emits the card yet; measured field/budget ratification lands in #4669.
+stays behind the card's explicit detail route, and the LSP seam handoff code
+action emits the same card while the seam hover shows a bounded summary of it
+(RIPR-SPEC-0198, #4668); no MCP projection emits the card yet. Measured
+field/budget ratification landed in #4669.
 
 Detail references and overflow disclosure (RIPR-SPEC-0193, #4666) keep the
 default card finite: nine load-bearing evidence families — the full fix
@@ -139,6 +142,69 @@ card, 4 KiB per compact inline field) is provisional but versioned; #4669
 ratifies the numbers. The budget-version constant lives in
 `crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
 `cargo xtask check-output-contracts`.
+
+## Agent card refusal envelope (`agent_card_refusal`, schema `0.1`)
+
+Every deliberate named refusal of the `ripr agent card` handoff — the default
+agent work handoff — renders one versioned typed envelope on stderr under
+`--json` and maps to exit code `3`, the same contract `agent verify`,
+`agent verify-execute`, and `agent repair --phase after` already use
+(RIPR-SPEC-0202, #5007; exit-code semantics in
+[EXIT_CODES](EXIT_CODES.md)). Orchestrators branch on the exit status and the
+typed `error.kind` alone; the human prose is the non-authority rendering and
+stays free to change. Without `--json` stderr carries the same prose it
+always did.
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "agent_card_refusal",
+  "error": {
+    "kind": "seam_not_found",
+    "seam_id": "<the seam id the call asked for>",
+    "message": "<the exact human prose of the refusal>",
+    "remedy_route": "<one typed command to run instead>"
+  }
+}
+```
+
+Field contract:
+
+- `schema_version` — currently `"0.1"`, deliberately distinct from the
+  success document's `repair_card.v1`, so a consumer dispatching on
+  `schema_version` never confuses a refusal with a card. Bump rules are
+  per-contract: additive changes keep this version, shape changes mint a new
+  one.
+- `kind` — always `"agent_card_refusal"`.
+- `error.kind` — the typed refusal kind. The five values are
+  `seam_not_found` (re-list seams / correct the id),
+  `policy_omitted` (check the `agent brief` policy config; the seam is a dead
+  end), `witness_unavailable` (rerun the analysis or pick another seam),
+  `identity_unnameable` (retrieve the full packet instead), and
+  `budget_overflow` (the builder, route gate, or budget refused the card;
+  fall back to the canonical packet). The set is closed and pinned by
+  `cargo xtask check-output-contracts` against the owning enum, the registry,
+  and the `## Enums` list below. Opposite-remedy pairs (`seam_not_found` vs
+  `policy_omitted`) stay distinguishable by `error.kind` alone.
+- `error.seam_id` — the seam id the invocation asked for; present on every
+  refusal kind.
+- `error.message` — the exact human prose of the refusal, verbatim. It is the
+  non-authority rendering: consumers branch on `error.kind`, never on this
+  text.
+- `error.remedy_route` — one typed command spelling the next action the kind
+  names, bound to the same root the failing call used. It is a presentation
+  of the typed remedy family of the kind, not a new authority.
+
+The card's own stdout contract is unchanged: on a refusal stdout stays empty
+(like `agent verify`, its stdout is the handoff artifact), and on success the
+envelope never appears. Operational could-not-complete failures of
+`agent card` (an unreadable config, a failed git probe, a detail-source
+serialization failure) still exit `2` with human prose only. The refusal
+kinds never claim more than they enforce: each names a producer-owned
+fail-closed decision, not a severity and not an analysis verdict. A seam with
+no witness-producing finding still renders its card with the `unavailable`
+instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
+already and is not a refusal.
 
 ## Executed-control packet (`executed_control_packet`, schema `1`)
 
@@ -1583,12 +1649,13 @@ JSON fields:
   `rust_macro_reach_unresolved`, or
   `rust_macro_wrapped_test_call_unresolved`, or
   `rust_macro_wrapped_assertion_unresolved`, or
-  `rust_value_propagation_unresolved`.
+  `rust_value_propagation_unresolved`, or
+  `python_transitive_reach_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
-  macro-reach, direct test macro-call, macro-wrapped assertion, and
-  value-propagation limitations
+  macro-reach, direct test macro-call, macro-wrapped assertion,
+  value-propagation, and Python same-class transitive-reach limitations
   populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
@@ -1948,6 +2015,8 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `wrapper_error_binding_unresolved` -- (additive, #3700) A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and ripr cannot establish that the boxed conversion preserves that variant. The seam stays below `exposed`; this is a named limitation, not a coverage or repair claim.
 
+- `python_transitive_reach_unresolved` -- (RIPR-SPEC-0201, additive) A Python test constructs or calls into the owner's class, and a bounded same-class `self.` / `cls.` path may reach the changed method, but the preview adapter does not fully trace that path. Classification stays `no_static_path`; this is a named limitation, not a related-test or coverage claim.
+
 Reserved `flow_sink` values:
 
 - `return_value`
@@ -2031,6 +2100,14 @@ while `call_effect` remains the fallback for other observable calls.
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
 - `static_probe_unknown`
+
+`agent_card_refusal_kind` values:
+
+- `seam_not_found`
+- `policy_omitted`
+- `witness_unavailable`
+- `identity_unnameable`
+- `budget_overflow`
 
 ## Badge Output
 
@@ -16899,7 +16976,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.15",
+    "schema_version": "1.17",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16910,7 +16987,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.25",
+      "schema_version": "1.27",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

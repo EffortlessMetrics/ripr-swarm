@@ -24,6 +24,34 @@ The canonical allowlist lives in
 records its `surface`, `classification`, `covered_by` checks, owner, and reason
 in one Rust-read policy file.
 
+### Host applicability of test coverage
+
+`covered_by` remains required and applies on every host. Optional
+`covered_by_unix` and `covered_by_windows` arrays supplement those common
+checks with `cargo test` selectors for the named host family. These scoped
+arrays must be nonempty. Unknown platform fields, duplicate keys, malformed
+TOML, and non-test commands in scoped arrays are rejected.
+
+Coverage arrays use decoded TOML string values, including multiline arrays,
+trailing and inter-item comments, quoted `#`, and escaped content. Entry-line
+attribution comes from parsed table spans, so header-like text in strings or
+comments does not create an entry. TOML value-admission checks still apply to
+ignored metadata, including numeric representability; this does not add type
+restrictions to the existing `expires` or `retired` fields.
+
+The existing file-policy validator enumerates every applicable test selector
+and rejects failed enumeration or zero selected tests. It reports the host,
+declared applicability, selected counts, and test identities in
+`target/ripr/reports/file-policy.md`. An inapplicable selector is explicitly
+`not_applicable`, with `selected=not_enumerated`; it provides no coverage on
+that host. Enumeration does not claim the tests executed or passed.
+
+For the portable native consumer, common packet-digest and source controls
+remain required on Windows. The native check/pilot integration target and
+Python runtime/classifier controls are Unix-only. The ledger retains the
+native target under `covered_by_unix`; a native Windows consumer journey is
+not implemented or claimed by this applicability declaration (#5037).
+
 ## Adding A Non-Rust Programming File
 
 If a PR adds a non-Rust programming file, it must explain:
