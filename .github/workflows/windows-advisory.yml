@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "17 5 * * *"
   pull_request:
-    types: [labeled, opened, synchronize, reopened, ready_for_review]
+    types: [labeled, opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       repeat_nested_alias:
@@ -81,7 +81,11 @@ concurrency:
 jobs:
   windows-advisory:
     name: windows-advisory
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'windows-ci') ||
+      contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -241,6 +245,7 @@ jobs:
             target/windows-run2.log
             target/windows-run1.status
             target/windows-run2.status
+            target/ripr/reports/file-policy.md
             target/nofeatures-check.log
             target/nofeatures-check.status
             target/nofeatures-test.log
@@ -289,7 +294,6 @@ jobs:
   # leaves native-Windows verification of new product behavior an author and
   # audit responsibility (docs/CI.md, Advisory Windows Lane).
   windows-advisory-subset:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     name: windows-advisory-subset
     runs-on: windows-latest
     timeout-minutes: 45

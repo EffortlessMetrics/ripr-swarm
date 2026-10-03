@@ -1,10 +1,12 @@
 use crate::analysis::classify::{
-    ProbeContext, PropagationWitnessV1, activation_evidence_with_value_facts, classify,
-    confidence_score, current_path_witness, has_same_test_boundary_oracle_pairing,
-    infection_evidence, local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
+    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
+    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
     same_test_pairing_missing_summary,
 };
+use crate::analysis::facts::FunctionSummary;
 use crate::domain::*;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -78,11 +80,23 @@ impl ClassifiedProbeEvidence {
         // defeat is memoized per probe because it also depends on the
         // owner's package; the import scan does not, so it uses the
         // run-scoped per-file memo on the context.
+        // #4478: the owner-side half of the owner-return pin, established
+        // once per probe; `None` keeps every assertion on the token rule.
+        let fallback_pin_syntax = OwnerPinSyntax::default();
+        let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
+        let owner_return_pin = context
+            .owner_fn
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
         let package_defeats_by_file = FileDefeatMemo::default();
+        let owner_locals = context
+            .owner_fn
+            .map(owner_local_binding_names)
+            .unwrap_or_default();
         let (observe, discriminate, related_tests) = reveal_evidence_with_expression(
             context.probe,
             reveal_expression,
             &context.related_tests,
+            &owner_locals,
             // #3731 review (F11): the related test's file source is
             // reachable here, so the caller computes the same-name-import
             // defeat per test instead of restructuring the reveal inputs.
@@ -118,6 +132,35 @@ impl ClassifiedProbeEvidence {
                                 == Some(test_package.as_str())
                     })
                 })
+            },
+            &ReturnOracleAdmission {
+                owner_return_pin: &|test, assertion| {
+                    owner_return_pin.as_ref().is_some_and(|pin| {
+                        pin.admits(
+                            test,
+                            assertion,
+                            context.index,
+                            &|file, name| {
+                                context.index.files.get(file).is_some_and(|facts| {
+                                    context.test_file_imports_foreign_callee_name(
+                                        file,
+                                        &facts.source,
+                                        name,
+                                    )
+                                })
+                            },
+                            pin_syntax,
+                        )
+                    })
+                },
+                assertion_admitted: &|test, assertion| {
+                    pin_syntax.admits_return_assertion(
+                        context.probe,
+                        test,
+                        assertion,
+                        context.index,
+                    )
+                },
             },
         );
 
@@ -286,6 +329,27 @@ fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -
     summaries
 }
 
+/// Names the owner binds with `let` that are not also named in its
+/// signature. Such a binding exists only inside the owner, so a test's
+/// same-named local can never be it. A `let` that rebinds a parameter
+/// (`let cache = cache;`) keeps the parameter's name out of this list.
+/// Parser-backed facts only; a lexically indexed owner yields none.
+fn owner_local_binding_names(owner: &FunctionSummary) -> Vec<String> {
+    let signature = owner
+        .body
+        .split_once('{')
+        .map_or(owner.body.as_str(), |(head, _)| head);
+    let mut names = owner
+        .let_bindings
+        .iter()
+        .map(|binding| binding.name.clone())
+        .filter(|name| !contains_as_whole_word(signature, name))
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Per-file defeat results for one probe, keyed by test file then callee.
 type FileDefeatMemo = RefCell<BTreeMap<PathBuf, BTreeMap<String, bool>>>;
 
@@ -314,9 +378,11 @@ fn memoized_file_defeat(
 #[cfg(test)]
 mod tests {
     use super::evidence_summaries;
+    use super::owner_local_binding_names;
     use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
     use crate::analysis::classifier::finding::build_finding;
     use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::LetBindingFact;
     use crate::analysis::facts::{FunctionFact, FunctionSummary, ReturnFact, RustIndex};
     use crate::analysis::rust_index::{OracleFact, TestSummary, extract_identifier_tokens};
     use crate::domain::{
@@ -373,6 +439,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         }
     }
@@ -415,6 +482,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         };
         let context = ProbeContext::new(
@@ -566,6 +634,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         };
         let index = RustIndex::default();
@@ -612,6 +681,7 @@ mod tests {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         };
         let index = RustIndex::default();
@@ -636,5 +706,32 @@ mod tests {
             return Err("corrupt witness diagnostic was not emitted".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn owner_local_bindings_exclude_names_the_signature_binds() {
+        let binding = |name: &str| LetBindingFact {
+            line: 1,
+            name: name.to_string(),
+        };
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::from_rows".to_string()),
+            name: "from_rows".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 6,
+            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".to_string(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: vec![binding("cache"), binding("table"), binding("table")],
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        assert_eq!(owner_local_binding_names(&owner), vec!["table".to_string()]);
     }
 }

@@ -3,7 +3,7 @@ name: PR Plan
 on:
   pull_request:
     branches: [main, master]
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -24,7 +24,6 @@ permissions:
 
 jobs:
   pr-plan:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     name: pr-plan
     runs-on: ubuntu-latest
     timeout-minutes: 10

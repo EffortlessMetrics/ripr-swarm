@@ -1,6 +1,8 @@
 mod annotations;
 mod back_sync;
 mod badges;
+mod blind_journey;
+mod blind_journey_execute;
 mod bun;
 mod candidate_control;
 mod ci_budget;
@@ -39,6 +41,7 @@ mod release_denominator;
 mod release_negative;
 mod release_scope;
 pub(crate) mod release_server;
+mod repair_card_usability;
 mod repo;
 #[cfg(test)]
 mod reverse_authorization;
@@ -82,6 +85,12 @@ pub(crate) use badges::{
 pub(crate) use badges::{
     badge_artifacts, badge_basis, check_badge_diff_policy, check_badge_endpoints,
     repo_badge_artifacts, ripr_plus, update_badge_endpoints,
+};
+pub(crate) use blind_journey::{
+    assess_blind_journey_fixture_corpus, blind_journey_contract_report,
+};
+pub(crate) use blind_journey_execute::{
+    assess_blind_journey_execute_corpus, blind_journey_execute_report,
 };
 pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use ci_budget::ci_budget;
@@ -130,6 +139,7 @@ pub(crate) use release_control::release_control;
 pub(crate) use release_denominator::release_denominator;
 pub(crate) use release_negative::release_negative_corpus;
 pub(crate) use release_scope::release_scope;
+pub(crate) use repair_card_usability::repair_card_usability_report;
 pub(crate) use repo::{
     actionable_gap_outcomes_report, agent_seam_packets_report, evidence_health_report,
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,

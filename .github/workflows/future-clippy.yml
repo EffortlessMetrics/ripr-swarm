@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
-    types: [labeled, opened, synchronize, reopened, ready_for_review]
+    types: [labeled, opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -36,7 +36,11 @@ concurrency:
 jobs:
   future-clippy:
     name: future-clippy
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'clippy-future') ||
+      contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

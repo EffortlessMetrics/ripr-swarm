@@ -3,6 +3,40 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-02: Assertion diagnostics are not error observers (#4748)
+
+`assert_eq!(rdr.len(), 10, "read error")` observes a successful length, not
+an error path. Exclude every formatting operand, including non-string arguments,
+before typing an assertion or confirming a changed reader/error variant. A
+quote-stripper alone still credits identifiers passed as diagnostic arguments;
+a reveal-only filter still trusts an error kind manufactured during extraction.
+
+Keep the argument boundary in `analysis/extract/oracles/arguments.rs`, shared
+by classification, bound-error recognition and ErrorPath matching. Preserve the
+original oracle text for rendering. The `error_path_diagnostic_*` fixtures pin
+absent, neutral, raw, escaped, formatted and typed-diagnostic controls in the
+RIPR-SPEC-0108 honesty corpus. Genuine typed and guarded Result oracles retain
+their producer-owned evidence; this is not general Rust name/dataflow resolution.
+
+## 2026-09-29: Absent worktree files are not `no_static_path` (#4586)
+
+Rust discovery walks the disk. A changed file that is in the diff but not
+on disk (sparse checkout, local delete) drops out of the index. Probes
+are still built from the diff text, find no owner, and used to classify
+as a complete `no_static_path`. That is a false-clean: a test may reach
+the owner; ripr could not see the file.
+
+Name `changed_file_absent_from_worktree`, withhold the probe (or emit
+`static_unknown`), and keep the outcome partial. Do not read git objects
+as a silent substitute for the missing worktree file in this lane.
+review-comments must list the dropped path the same way; `0/0` scoped
+production files without that disclosure is the same false-clean.
+
+Presence is not `root.join(diff_path)` alone. Git diffs keep the
+repository-relative path while `--root` is often a crate subdirectory;
+treat a suffix as the same file only when the stripped prefix is a
+trailing component sequence of `--root`. A sibling crate's `src/lib.rs`
+must not satisfy another crate's missing path.
 ## 2026-09-29: Same-crate trait methods are not unique just because they share a crate (#4760)
 
 `body_contains_owner_call` and `tests_by_call_name` match `size_hint(` including
@@ -107,6 +141,30 @@ git-root probe on that failure path must name PATH/`--diff` ahead of the
 default-base text. An explicit `--base` still falls through to `run_git_diff`,
 which already passes the named missing-git error through.
 
+## 2026-09-29: Shared-witness adapters must not promote candidate reach (#4790)
+
+`analysis::witness` projects existing `Finding` and `ClassifiedSeam` facts. It
+does not recompute stage meaning. Two traps showed up while writing the
+parity corpus:
+
+- A producer `reach=yes` backed only by `weak_token_substring` (or other
+  candidate relations) must keep those identities in `candidate_facts`. Copying
+  them into established reach is a false promotion even if the producer class
+  stays unchanged.
+- Inherent `diff_only_subject_set` versus `workspace_complete` is the normal
+  cross-path pairing. Treating that pair as an explaining scope difference
+  collapses exact-vs-broad, sibling-field, and missing-observer contradictions
+  into `explained_scope_difference`. Only partial index, stale/wrong input,
+  preview language, and named cross-language limits explain a difference.
+- Scope tokens cannot explain an owner, family, discriminator, or sink
+  mismatch. A partial-index witness paired with the wrong identity is a
+  `contradiction`, not an explained scope difference.
+- Stage `source_identities` belong in the digest. Clearing one without
+  rewriting the digest must make the row `not_comparable`.
+
+Pin both with the #4790 corpus. Later slices (#4792–#4794) migrate authority;
+they must not delete these controls.
+
 ## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
 
 `ripr pilot` and `ripr first-pr` create `target/ripr/pilot` and
@@ -119,6 +177,23 @@ or `--out-dir PATH` only for `PermissionDenied` / `ReadOnlyFilesystem`. A path
 that is already a file is a different failure and must not grow that hint.
 Both commands share `output::file_write::create_output_dir`; do not special-case
 one command's prefix or flag in the other.
+## 2026-09-29: `proptest!` / `quickcheck!` bodies are token trees (#4789)
+
+The Rust grammar does not turn a macro call's body into items. A
+`#[test] fn name(x in 0u32..100) { prop_assert_eq!(gate(x), x > 10); }`
+inside `proptest! { .. }` is therefore not a test, and neither is a
+`quickcheck!` fn, until the inner bytes are copied into a same-length
+overlay (other bytes blanked to spaces) and reparsed.
+
+The overlay must blank proptest strategy parameter lists (`x in
+strategy`, including nested `any::<Vec<(u32, u32)>>()`). Those tokens
+are not a Rust param list; leaving them in place makes the grammar drop
+the function body, so the owner call and oracle never appear.
+
+A `proptest!` fn is a test only when it spells `#[test]`. Every
+`quickcheck!` fn is a test, with `#[quickcheck]` recorded so the test-
+style normalizer keeps the parser-backed `TestFact`. Do not expand
+lookalikes, comments, strings, or macros nested in a function body.
 
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 

@@ -108,6 +108,32 @@ binary as `stale_evidence` and name the `ripr first-pr` refresh command. They
 must not present that packet as current first-screen evidence. A packet without
 the field is a pre-0.11 artifact, not a contract-invalid document.
 
+Doctor's packet-refresh command binds the diagnosed repository to an absolute
+root, including when diagnosis used a relative root or `.`. Existing roots
+resolve through the filesystem before rendering, so a symlink followed by `..`
+still names the directory whose packet doctor read. If that resolution fails,
+doctor names the failure and omits the refresh command rather than guessing a
+lexical destination. It quotes the resolved root for Bash and prints a labeled
+PowerShell form when the spelling differs.
+When the physical spelling is not UTF-8, a lossless absolute spelling of the
+supplied alias is retained without collapsing `..`. If neither spelling can
+be represented losslessly, doctor explains the limitation and omits the rooted
+command; lossy replacement characters are never executable path authority.
+Without a packet, that same unavailable recommendation supplies the safe-action
+recovery; the screen must not point to a nonexistent command below.
+The rooted recommended first check also resolves existing directories through
+the filesystem. If the selected directory is unavailable, recovery retains a
+lossless absolute input spelling without collapsing `..`, so it cannot select
+an existing lexical decoy. Its existing `.` shorthand is unchanged; a missing-root
+diagnosis still fails without creating paths. The shared lexical helper for
+not-yet-created output targets is unchanged.
+The generic refresh recomposes against the repository's default base and
+`HEAD`, through first-pr's existing resolver; it does not recover a historical
+custom comparison from packet metadata. Doctor names that scope and explains
+that a custom comparison needs explicit `--base REF` and `--head REF`. If no
+default base resolves, first-pr reports its existing actionable error without
+rewriting the packet. Missing-packet diagnosis still recommends analysis first.
+
 ### Selection rules
 
 The packet should select at most one top item for the first screen:
@@ -146,6 +172,38 @@ A repairable top gap should include:
 The packet must not present raw exposure class, static limitation, or numeric
 confidence as the instruction. Raw evidence may appear under artifact links or
 supporting context.
+
+### Selected-root command presentation
+
+Current ledger selections add `selected.command_context` with authority
+`advisory_display_only`, a lossless existing-directory `cwd` (or null), and
+`verify` / `receipt` objects containing `bash`, `powershell`, and `recovery`
+(string or null). Existing roots follow filesystem resolution, including a
+symlink before `..`; a missing root never falls back to the caller directory.
+
+First-pr and PR-summary human projections consume these forms. Bash uses a
+subshell with `cd -P -- <quoted root> && <raw command>`, preserving the caller's
+directory and exact native exit status. Physical `cd -P` also preserves a
+lossless UTF-8 alias containing symlink/`..` traversal when its canonical target
+has non-UTF-8 bytes. Unsupported compound, redirecting,
+expanding, or multiline forms are withheld with recovery guidance. The shared
+simple-command translator bounds accepted syntax without introducing a parser.
+
+Rooted PowerShell forms are withheld with explicit recovery: the existing
+translator cannot establish native exit-status authority for generic shell
+strings, and a location wrapper alone cannot guarantee it. This repair makes
+no native PowerShell runtime claim. Legacy packets without context retain their
+historical raw lines, which do not carry a selected-root guarantee. Regenerate
+with `ripr first-pr --root <path>` to obtain current ledger presentation context;
+review-card fallback commands remain outside this repair.
+
+This is presentation only. Raw `selected.verify_command`,
+`selected.receipt_command`, `commands.verify`, `commands.receipt`, receipt
+source/path/state, and the receipt's nested `--verify-command` stay unchanged.
+No legacy display string becomes a `CommandSpec`, signature, digest, eligibility,
+execution permission, or authenticated receipt. Editor/LSP command allowlists
+continue to consume the raw route. Runtime execution and receipt authenticity
+remain separate authorities.
 
 ### No-action states
 

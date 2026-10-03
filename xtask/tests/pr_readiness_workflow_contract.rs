@@ -1,87 +1,79 @@
-//! Pin the native draft/ready lifecycle before any automatic PR runner starts.
-//! Actual expression evaluation remains part of workflow-change review.
+//! Pin the protected PR qualification event at the workflow boundary.
+//!
+//! Draft activity must not create the required `Ripr Rust Small Result` check.
+//! The native Draft -> Ready transition is the only pull-request admission
+//! event; main and explicit manual authorities remain separate.
 
 use std::fs;
 use std::path::Path;
 
-const DRAFT_GUARD: &str =
-    "(github.event_name != 'pull_request' || github.event.pull_request.draft == false)";
+const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
 
-fn readiness_findings(source: &str) -> Vec<String> {
-    let mut findings = Vec::new();
-    let Some((events, jobs)) = source.split_once("\njobs:\n") else {
-        return vec!["missing jobs".to_owned()];
-    };
-    if !events.contains("ready_for_review") {
-        findings.push("missing ready transition".to_owned());
-    }
-    let mut job = None;
-    let mut guarded = false;
-    for line in jobs.lines().chain(std::iter::once("  end:")) {
-        if line.starts_with("  ")
-            && !line.starts_with("   ")
-            && line.ends_with(':')
-            && !line.trim_start().starts_with('#')
-        {
-            if let Some(name) = job
-                && !guarded
-            {
-                findings.push(format!("{name}: missing server-side draft guard"));
-            }
-            job = Some(line.trim().trim_end_matches(':'));
-            guarded = false;
-        } else if let Some(expression) = line.strip_prefix("    if: ${{ ") {
-            guarded = expression.starts_with(DRAFT_GUARD);
-        }
-    }
-    findings
+fn workflow_source() -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    fs::read_to_string(root.join(WORKFLOW)).expect("read routed Rust workflow")
 }
 
-#[test]
-fn every_automatic_pr_job_is_guarded_and_has_a_ready_transition()
--> Result<(), Box<dyn std::error::Error>> {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows");
-    let mut workflows = 0;
-    for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
-        // Explicit @droid invocations are requests, not automatic PR CI.
-        if path.file_name().is_some_and(|name| name == "droid.yml") {
-            continue;
-        }
-        let source = fs::read_to_string(&path)?;
-        if !source.contains("\n  pull_request:") {
-            continue;
-        }
-        workflows += 1;
-        let findings = readiness_findings(&source);
-        assert!(findings.is_empty(), "{}: {findings:?}", path.display());
-    }
+fn event_block(source: &str) -> &str {
+    source
+        .split_once("\npermissions:\n")
+        .map(|(events, _)| events)
+        .expect("workflow keeps permissions after event declarations")
+}
+
+fn assert_ready_only_pull_request(events: &str) {
     assert!(
-        workflows >= 14,
-        "automatic PR workflow inventory disappeared"
+        events.contains("types: [ready_for_review]"),
+        "protected PR qualification must be requested by ready_for_review"
     );
-    Ok(())
+    for forbidden in [
+        "opened",
+        "reopened",
+        "synchronize",
+        "labeled",
+        "unlabeled",
+        "auto_merge_enabled",
+    ] {
+        assert!(
+            !events.contains(forbidden),
+            "protected workflow must not admit pull_request action {forbidden}"
+        );
+    }
 }
 
 #[test]
-fn readiness_contract_rejects_missing_gate_even_on_finalizer() {
-    let source = include_str!("../../.github/workflows/routed-rust.yml");
+fn required_pr_context_is_withheld_until_ready() {
+    let source = workflow_source();
+    let events = event_block(&source);
+
+    assert_ready_only_pull_request(events);
+    assert!(events.contains("push:\n    branches: [main, master]"));
+    assert!(events.contains("workflow_dispatch:"));
+    assert!(source.contains("  result:\n    name: Ripr Rust Small Result"));
+    assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
+    assert!(!source.contains("github.event.pull_request.draft"));
+}
+
+#[test]
+fn contract_rejects_draft_or_mutation_triggers() {
+    let source = workflow_source();
     let changed = source.replace(
-        &format!("    if: ${{{{ {DRAFT_GUARD} && (always()) }}}}"),
-        "    if: always()",
+        "types: [ready_for_review]",
+        "types: [ready_for_review, synchronize]",
     );
-    assert_ne!(changed, source, "result guard mutation must engage");
-    assert!(
-        readiness_findings(&changed)
-            .iter()
-            .any(|finding| { finding == "result: missing server-side draft guard" })
-    );
+    assert_ne!(changed, source, "trigger mutation must engage");
+
+    let result = std::panic::catch_unwind(|| assert_ready_only_pull_request(event_block(&changed)));
+    assert!(result.is_err(), "synchronize must violate the protected event law");
 }
 
 #[test]
-fn readiness_contract_rejects_missing_ready_transition() {
-    let source = include_str!("../../.github/workflows/security.yml");
-    let changed = source.replace(", ready_for_review", "");
-    assert_ne!(changed, source, "ready event mutation must engage");
-    assert!(readiness_findings(&changed).contains(&"missing ready transition".to_owned()));
+fn contract_rejects_a_noncanonical_terminal_context() {
+    let source = workflow_source();
+    let changed = source.replace(
+        "  result:\n    name: Ripr Rust Small Result",
+        "  result:\n    name: Ripr Rust Small Draft Result",
+    );
+    assert_ne!(changed, source, "result-name mutation must engage");
+    assert!(!changed.contains("  result:\n    name: Ripr Rust Small Result"));
 }

@@ -254,7 +254,7 @@ generated_file_patterns = ["*.gen.rs", "src/generated/**/*.rs"]
     )?;
 
     assert_eq!(
-        config.languages().generated_file_patterns(),
+        config.languages().rust.generated_file_patterns.as_slice(),
         &["*.gen.rs".to_string(), "src/generated/**/*.rs".to_string()]
     );
     Ok(())
@@ -996,7 +996,9 @@ fn malformed_or_unknown_config_is_actionable() {
     assert!(matches!(unknown_field, Err(message) if message.contains("unknown field")));
 
     let invalid_oracle = parse_config("[oracles]\nsnapshot_strength = \"mystery\"\n");
-    assert!(matches!(invalid_oracle, Err(message) if message.contains("oracle strength")));
+    assert!(
+        matches!(invalid_oracle, Err(message) if message.contains("oracles.snapshot_strength `mystery`"))
+    );
 
     let finding_off = parse_config("[severity.findings]\nweakly_exposed = \"off\"\n");
     assert!(matches!(finding_off, Err(message) if message.contains("use suppressions")));
@@ -1067,6 +1069,7 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
 
     let finding_affecting = [
         "languages.rust.generated_file_patterns",
+        "languages.rust.handwritten_files",
         "analysis.production_like_targets",
         "analysis.test_harnesses",
         "oracles.broad_error_strength",
@@ -1609,6 +1612,92 @@ fn perl_executable_from_repo_config_needs_user_opt_in() -> Result<(), String> {
 }
 
 #[test]
+fn a_valid_key_in_the_wrong_table_names_its_table() -> Result<(), String> {
+    // #4534: a top-level `mode` is a real key in the wrong place, not a typo.
+    let Err(message) = parse_config("mode = \"draft\"\n") else {
+        return Err("a top-level `mode` must be refused".to_string());
+    };
+    assert!(
+        message.contains("unknown field `mode`")
+            && message.ends_with("`mode` is a valid key, but it belongs under [analysis]"),
+        "expected the [analysis] hint, got {message}"
+    );
+    let Err(message) = parse_config("[analysis]\nmax_related_tests = 3\n") else {
+        return Err("`max_related_tests` under [analysis] must be refused".to_string());
+    };
+    assert!(
+        message.ends_with("belongs under [reports]"),
+        "expected the [reports] hint, got {message}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_config_error_summary_keeps_the_table_hint_but_no_source_text() -> Result<(), String> {
+    // #4532/#4534: doctor JSON and editor notices carry the summary, which
+    // must keep the allowlisted hint and drop the parser's source excerpt.
+    let Err(message) = parse_config("secret_marker_mode = 1\nmode = \"draft\"\n") else {
+        return Err("a top-level `mode` must be refused".to_string());
+    };
+    let summary = config_error_summary(&message);
+    assert!(
+        !summary.contains('\n') && !summary.contains("secret_marker"),
+        "summary must be one source-free line, got {summary}"
+    );
+    assert!(
+        summary.ends_with("; `mode` is a valid key, but it belongs under [analysis]"),
+        "summary must keep the hint, got {summary}"
+    );
+    // A line that only looks like a hint is file content and is dropped.
+    let forged = "TOML parse error\n`secret` is a valid key, but it belongs under [analysis]";
+    assert_eq!(config_error_summary(forged), "TOML parse error");
+    Ok(())
+}
+
+#[test]
+fn an_unknown_key_gets_no_table_hint() -> Result<(), String> {
+    // The hint names a table only for real keys; a typo or a key shared by
+    // two tables keeps the plain serde error.
+    for text in [
+        "[analysis]\nmdoe = \"draft\"\n",
+        "reachable_unrevealed = \"warning\"\n",
+    ] {
+        let Err(message) = parse_config(text) else {
+            return Err(format!("`{text}` must be refused"));
+        };
+        assert!(
+            !message.contains("belongs under"),
+            "no table hint expected for `{text}`, got {message}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_invalid_oracle_strength_names_its_key() -> Result<(), String> {
+    let Err(message) = parse_config("[oracles]\nbroad_error_strength = \"mega\"\n") else {
+        return Err("an unknown strength must be refused".to_string());
+    };
+    assert!(
+        message.starts_with("oracles.broad_error_strength `mega` is not supported"),
+        "expected the key in the error, got {message}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unknown_language_error_names_only_the_repair() -> Result<(), String> {
+    let Err(message) = parse_config("[languages]\nenabled = [\"cobol\"]\n") else {
+        return Err("an unknown language must be refused".to_string());
+    };
+    assert!(
+        message.contains("unknown language `cobol`") && !message.contains("Campaign"),
+        "expected no internal tracking reference, got {message}"
+    );
+    Ok(())
+}
+
+#[test]
 fn bytes_fingerprint_matches_text_fingerprint_and_keeps_invalid_bytes_distinct() {
     // Recorded check artifacts hash `--diff` input bytes; UTF-8 input keeps
     // the hash it had as text, and two invalid bytes never share one.
@@ -1620,4 +1709,90 @@ fn bytes_fingerprint_matches_text_fingerprint_and_keeps_invalid_bytes_distinct()
         bytes_fingerprint(b"+caf\x80\n"),
         bytes_fingerprint(b"+caf\x81\n")
     );
+}
+
+#[test]
+fn rust_handwritten_files_accepts_scoped_recovery_configuration() -> Result<(), String> {
+    let config = parse_config(
+        "[languages.rust]\nhandwritten_files = ['tests/./generated_weight_tests.rs']\n",
+    )?;
+    assert_eq!(
+        config.languages.rust.handwritten_files,
+        ["tests/generated_weight_tests.rs"]
+    );
+    Ok(())
+}
+
+#[test]
+fn handwritten_files_rejects_ambiguous_or_escaping_paths() {
+    // Construct the synthetic drive prefix as in the local-context checker's
+    // own negative fixtures; this is not a real machine path in source.
+    let drive = "C";
+    let drive_path = format!("['{drive}:/schema.rs']");
+    for paths in [
+        "['']",
+        "['.']",
+        "['../schema.rs']",
+        "['/tmp/schema.rs']",
+        drive_path.as_str(),
+        "['src\\schema.rs']",
+        "['src/*.rs']",
+        "['src/file?.rs']",
+        "['src/[a].rs']",
+        "['src/schema.txt']",
+        "['src/schema.rs', './src//schema.rs']",
+        r#"["src/schema\u000A.rs"]"#,
+    ] {
+        let result = parse_config(&format!("[languages.rust]\nhandwritten_files = {paths}\n"));
+        assert!(
+            result.is_err(),
+            "invalid exact-path declaration was accepted: {paths}"
+        );
+    }
+}
+
+#[test]
+fn handwritten_files_identities_follow_semantic_paths_and_consumed_language() -> Result<(), String>
+{
+    let default = RiprConfig::default();
+    let first = parse_config(
+        "[languages.rust]\nhandwritten_files = ['src/./schema.rs', 'tests/generated_a.rs']\n",
+    )?;
+    let reordered = parse_config(
+        "[languages.rust]\nhandwritten_files = ['tests/generated_a.rs', './src//schema.rs']\n",
+    )?;
+    assert_eq!(
+        check_artifact_config_identity_hash(&first),
+        check_artifact_config_identity_hash(&reordered)
+    );
+    assert_eq!(
+        repo_exposure_config_identity_hash(&first),
+        repo_exposure_config_identity_hash(&reordered)
+    );
+    assert_ne!(
+        check_artifact_config_identity_hash(&default),
+        check_artifact_config_identity_hash(&first)
+    );
+    assert_ne!(
+        repo_exposure_config_identity_hash(&default),
+        repo_exposure_config_identity_hash(&first)
+    );
+    let mut python = default.clone();
+    python.languages.enabled = vec![LanguageId::Python];
+    let mut python_with_rust = first.clone();
+    python_with_rust.languages.enabled = vec![LanguageId::Python];
+    assert_eq!(
+        check_artifact_config_identity_hash(&python),
+        check_artifact_config_identity_hash(&python_with_rust)
+    );
+    // Repo exposure remains Rust-only even when diff adapter selection is Python.
+    assert_eq!(
+        repo_exposure_config_identity_hash(&first),
+        repo_exposure_config_identity_hash(&python_with_rust)
+    );
+    assert_ne!(
+        repo_exposure_config_identity_hash(&python),
+        repo_exposure_config_identity_hash(&python_with_rust)
+    );
+    Ok(())
 }

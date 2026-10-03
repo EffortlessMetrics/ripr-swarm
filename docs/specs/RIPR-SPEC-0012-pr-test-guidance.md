@@ -65,6 +65,51 @@ Generated CI should publish that report through the least intrusive useful
 surfaces first: job summary and check annotations by default, optional inline PR
 review comments only when explicitly enabled.
 
+### Guidance input admission
+
+Before changed-line owner attribution builds an index or canonical inventory
+loads source files, the diff route measures the union of the analyzable Rust
+workspace corpus and present changed owner-attribution inputs. Generated or
+excluded changed inputs are still counted when attribution reads them; each
+path is counted once. Missing changed paths remain available to the existing
+absent-file disclosure. A file already observed by corpus discovery that then
+disappears fails closed, even if the diff also names it. Census reuses
+`GeneratedRustSources`, including handwritten-file declarations and stronger
+header/vendor/pattern exclusions. This classification may read bounded headers
+and vendor markers; byte totals use metadata without materializing the corpus
+or computing its cache fingerprint. The owned cancellation token is checked
+before classification and metadata operations. A deadline records
+`limited_timeout` in `language_facts`, before owner indexing. It never truncates
+the inputs or the guidance silently.
+
+`RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` defaults to 1200, aligned with the
+current diff/repo family after #4972's measured self-repo growth beyond 800.
+`RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` defaults to 268435456 (256 MiB) and
+covers that source-byte total plus changed diff text. Exact equality is
+admitted. Both overrides must be positive integers for a real dispatch;
+`--help` and `-h` bypass runtime override validation.
+
+Either exceeded limit returns `review_guidance_oversized` before owner
+indexing. The existing run-receipt vocabulary is preserved: `status = failed`,
+`active_phase = language_facts`, `last_completed_phase = diff_discovery`, and a
+`limitations` entry with category `review_guidance_oversized` plus the repair
+route. No guidance JSON or Markdown is published by the refused dispatch.
+The xtask wrapper preserves the named category and incomplete/non-all-clear
+semantics, rather than turning refusal into clean guidance or a real gap. It
+matches the exact colon-terminated error tag line-wise (after removing an
+optional reporter prefix consisting of `ripr:` followed by one space), retaining
+classification when warnings precede the guard while rejecting bare or lookalike
+category prefixes.
+
+The repair route may raise the owning limit on a measured, sufficiently
+resourced runner or reduce the actual workspace inputs. Narrowing only the
+diff cannot shrink a whole-workspace file census. These limits are admission
+budgets, not an RSS bound or a guarantee that admitted analysis completes.
+They do not prove hosted replay acceptance (#4693), remove the second index
+(#4692), or bound the earlier Git diff capture (#5000). Bounded evidence
+windows retain their independent contract; a refusal alone does not deliver
+completed guidance for a large downstream workspace.
+
 ### Cooperative analysis budget
 
 `--timeout-ms` defaults to 120000ms. The default diff route consumes one
@@ -79,11 +124,40 @@ with the active phase. An ordinary source error remains `failed`, even if a
 later clock observation would expire. Default LSP tokens remain deadline-free,
 and scoped command contexts restore the caller's token.
 
-This is cooperative cancellation, not preemption. Individual parser, helper-map,
-filesystem, syscall, and classification operations may overrun the budget;
-Rayon workers do not inherit the caller's thread-local token. An outer wrapper
-is required for a hard process bound. The wider phase/shutdown contract remains
-under #1778/#1699/#1604; this canonical slice does not complete those issues.
+Index parse workers install the owning request's captured cancellation context
+for each job and restore the prior pool-thread context afterward, including
+unwind. They check before/after each file; the caller checks before cache stores,
+index insertion, and post-parse role phases. At a parallel batch join, the first
+collected error in input order (source failure or worker cancellation) is
+preserved before observing a later deadline; successful siblings are not stored
+or inserted after that failed batch. Source-role normalization checks
+per file and function, including whole-index identity-map construction. A
+cancelled partial index is returned as an error, never as complete guidance.
+Already completed per-file cache entries remain reusable parser facts, not
+run-level completion receipts.
+
+The opt-in `RIPR_REPO_EXPOSURE_LATENCY_TRACE` stream names cached/plain parsing,
+parameterized-test promotion, test-style normalization, role composition and
+harness-registration phases. This separates stage attribution from inference
+based only on process RSS.
+
+This is cooperative cancellation, not preemption. One parser call, filesystem
+operation, syscall, or classification operation can still overrun the budget;
+there is no hard allocator ceiling. An outer wrapper is required for a hard
+process bound. The wider phase/shutdown contract remains under
+#1778/#1699/#1604; this index-boundary repair does not complete those issues.
+
+### Qualified-helper candidate work
+
+After lexical cleaning, a call without `::` has no qualified-module candidate:
+all existing direct-path and module-alias spellings require that separator.
+Context preparation skips the corpus-wide qualified-helper module walk for
+those calls. This is only candidate generation; existing path boundaries,
+alias scopes and owner membership still decide every retained relation.
+Direct/unqualified helper routes, analyzed tests, ranking and coverage are
+unchanged. The work control requires zero module candidates for an unqualified
+call even when thousands of modules exist, with old-traversal parity for
+qualified and aliased positives and comment/string/boundary negatives.
 
 ## Surfaces
 

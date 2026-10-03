@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   release-proof:
     name: Perl and release proof
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -87,7 +87,7 @@ jobs:
     # fixtures, or Cargo manifests, and on every push to main; label events
     # and docs-only PRs skip the compile, matching the routed lane's posture.
     name: Rust-only feature lane
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened", "ready_for_review"]'), github.event.action)) }}
+    if: github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -117,7 +117,7 @@ jobs:
     # Routed Rust already runs the declared 1.95.0 toolchain on every ordinary
     # PR and main push. Keep the duplicate named proof only for explicit full
     # CI and manual investigation.
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))) }}
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -130,7 +130,7 @@ jobs:
       - run: cargo check --workspace --all-targets
 
   vscode:
-    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:

@@ -96,23 +96,6 @@ Use `review-pr` when:
 
 The lead Claude context may perform the pass directly. Delegate only when another context changes the available evidence, oracle, tools, threat model, platform access, or failure perspective. The lead verifies the returned evidence and owns the final disposition.
 
-# Late qualification boundary
-
-Publish development checkpoints as draft. Complete implementation, focused
-local/owned-compute proof, applicable format/lint/type/build checks, source/oracle
-review and the evidence packet before marking ready. `ready_for_review` is the
-native request for final CI, not `REVIEW_READY` or permission to merge. Missing
-remote evidence may still be `REVIEW_INCOMPLETE` at this transition when source
-review is complete and its remaining proof gaps are named. `REVIEW_READY` and
-current required proof remain mandatory before auto-merge/protected merge.
-
-Return to draft for repair or base retarget, refresh affected proof/review, then
-mark ready again. Ready-state pushes refresh the exact current subject only as
-a safety net. Do not repeatedly use CI to shape the candidate, trigger duplicate
-draft/ready qualification, or run CI again merely when enabling auto-merge.
-Commits/pushes remain useful checkpoints. See the root's CI readiness policy.
-
-
 # Workflow
 
 1. **Bind the subject.** Retain repository, PR or branch, exact `reviewed_head_sha`, base and integration basis, issue/claim boundary, acceptance, non-goals, and review time. Re-read the head before posting. A moved head invalidates affected review dimensions. Bind it from an inspection workspace you own; see **Inspection workspace**.

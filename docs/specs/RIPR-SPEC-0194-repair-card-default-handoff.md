@@ -14,6 +14,7 @@ Linked issues:
 - #4666 (bounded detail references; landed as PR #4980, RIPR-SPEC-0193)
 - #4669 (measured budget ratification)
 - #4330 (edit-cage authority)
+- EffortlessMetrics/ripr#1810 (primary journey truthfulness)
 
 Support-tier impact:
 
@@ -62,10 +63,13 @@ check), then assembles one `RepairCardV1`:
   owner, so another seam's witness is never credited to this card. The
   repository head (`git rev-parse HEAD`), the portable
   workspace identity, the seam's most recent repair-attempt manifest by
-  `created_unix_ms`, the rendered canonical packet behind
-  `PacketCommandContext::Standalone`, and the typed packet inspection
-  command. `assemble_repair_card` is the pure, unit-tested projection from
-  those facts.
+  `created_unix_ms`, the rendered canonical packet behind a portable
+  `PacketCommandContext::Standalone { root: "." }` render — the
+  content-bound bytes feed `detail_digest` / `complete_evidence_digest`,
+  so equivalent checkout roots must hash identically and the render never
+  carries the bound checkout spelling (#5005) — and the typed packet
+  inspection command. `assemble_repair_card` is the pure, unit-tested
+  projection from those facts.
 - Snapshot identity is producer-owned through admitted `TestTargetEvidence`
   (the selected Existing target's identity, else the first related test's
   admitted target identity). When nothing on the seam names a portable
@@ -75,20 +79,41 @@ check), then assembles one `RepairCardV1`:
   else the seam expression), the exact blocker (first witness
   missing-discriminator fact), the observer-setup flag, the
   suggested-assertion detail, and limitation lines are copied verbatim from
-  the witness; with no witness the instruction is `unavailable`, the blocker
-  and assertion detail are absent, and the changed behavior falls back to
-  the seam expression.
+  the witness; with no witness the instruction is `unavailable`, the witness
+  contributes no blocker or assertion detail, and the changed behavior falls
+  back to the seam expression. A route can still have static target readiness
+  without a finding witness; in that case the separate edit-cage admission
+  below may supply a refusal as the blocker.
 - The edit cage reuses the packet authority's exact derivation
   (`task_for(entry) == TASK_WRITE_TARGETED_TEST` and
   `recommended_test_for(entry)`): allowed files carry the recommended test
   file, forbidden files carry the production file unless they coincide, and
   the two shared edit-cage stop conditions ride on the card unchanged. The
   card cannot promise a different edit surface than the attempt enforces.
-- `done_when` is projection-only: static movement `closed_by_selected_route`,
-  edit cage `compliant`, mutation confirmation `not_requested`, currentness
-  `current`; focused test execution is `verified_pass` exactly when the
-  packet task is the targeted-test task, else `explicitly_not_run`. The card
-  never marks the work complete.
+- A statically ready route's rendered packet is admitted by the same
+  `app::repair_attempt::edit_cage_policy_from_packet` that Before consumes.
+  A refusal closes card readiness and the next-action gate, appears verbatim
+  as the exact blocker and in missing evidence, and does not erase the
+  producer's selected-target identity. In particular, an inline test in a
+  production file stays visible but cannot make the card repair-ready when
+  the current transaction has no allowed test-only edit surface.
+  Already-limited routes retain their original static diagnosis without
+  replacing it with a secondary edit-cage refusal.
+- `done_when` is projection-only: static movement
+  `closed_by_selected_route`, edit cage `compliant`, mutation confirmation
+  `not_requested`; focused test execution is `verified_pass` exactly when
+  the packet task is the targeted-test task, else `explicitly_not_run`.
+  Both currentness axes (`snapshot.currentness` and `done_when.currentness`)
+  project one producer-observed tree fact: a bounded
+  `git status --porcelain --ignored` probe, scoped to the seam file, every
+  related-test file, and the recommended test file (in their filesystem
+  spelling, not a display encoding), reads `current` when that scope is
+  clean against the bound head and `accepted_dirty_draft` when any
+  uncommitted change — tracked, untracked, or ignored — touches it,
+  because the analysis reads working-tree bytes while the snapshot binds
+  the committed head. A probe failure fails closed: no card is minted, so
+  no unchecked `current` claim escapes. The card never marks the work
+  complete.
 - The next action is the typed `ripr agent packet --seam-id ID --json`
   inspection command, and only when the shared fail-closed route gate opens
   (`repair_card_route_exposable(instruction.state, readiness.repair_ready)`
@@ -197,6 +222,10 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
   updated unknown-subcommand listing.
 - `crates/ripr/tests/cli_smoke.rs` `agent_card_hands_off_one_seam_as_the_default_repair_card`
   covers the JSON and human journeys plus the cold-agent refusal.
+- `agent_card_readiness_agrees_with_repair_target_admission` compares inline
+  refusal against a successful separate-test Before publication; the card's
+  blocker must be the actual transaction refusal. The shared builder also
+  rejects an attempted command when that admission failed.
 - `crates/ripr/tests/cli_help_hierarchy.rs` pins the new `help --all` row
   with its `[advanced]` marker; `command_metadata` agreement tests pin the
   catalog row, metadata row, and help-body registration.

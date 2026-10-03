@@ -3,6 +3,11 @@ use ra_ap_syntax::{
     AstNode, Edition, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericParams, HasName},
 };
+
+mod property_macros;
+use property_macros::{
+    PropertyMacroOrigin, PropertyMacroOverlay, executable_test_attribute, record_quickcheck_attr,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +15,9 @@ use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
 use super::super::facts::FileFacts;
+use super::super::facts::FunctionContainer;
 use super::super::facts::FunctionImplContext;
+use super::super::facts::FunctionItemFact;
 use super::super::facts::FunctionSourceRole;
 use super::super::facts::LetBindingFact;
 use super::super::facts::ModuleDeclarationFact;
@@ -187,6 +194,121 @@ impl RustSyntaxAdapter for RaRustSyntaxAdapter {
     }
 }
 
+struct ParsedFunctionAcc<'a> {
+    functions: &'a mut Vec<FunctionFact>,
+    tests: &'a mut Vec<TestFact>,
+    file_calls: &'a mut Vec<crate::analysis::facts::CallFact>,
+    file_returns: &'a mut Vec<crate::analysis::facts::ReturnFact>,
+    file_literals: &'a mut Vec<crate::analysis::facts::LiteralFact>,
+    file_probe_shapes: &'a mut Vec<ProbeShapeFact>,
+}
+
+fn push_parsed_function(
+    function: &ast::Fn,
+    origin: Option<&PropertyMacroOrigin>,
+    path: &Path,
+    text: &str,
+    line_index: &LineIndex,
+    acc: &mut ParsedFunctionAcc<'_>,
+) {
+    let Some(name) = function.name().map(|name| name.text().to_string()) else {
+        return;
+    };
+    let fn_start = function
+        .fn_token()
+        .map(|token| token.text_range().start())
+        .unwrap_or_else(|| function.syntax().text_range().start());
+    let fn_end = function.syntax().text_range().end();
+    let start_line = line_index.line(fn_start);
+    let end_line = line_index.line_for_range_end(fn_end);
+    let body = slice_text(text, fn_start, fn_end);
+    let calls = extract_call_facts(&body, start_line);
+    let returns = extract_return_facts(&body, start_line);
+    let literals = extract_literal_facts(&body, start_line);
+    let probe_shapes = extract_parser_probe_shapes(function, text, line_index);
+    // A plain helper inside an inline `#[cfg(test)]` module is test
+    // infrastructure even when it has no `#[test]` attribute. Classify
+    // that role at the producer boundary so diff probes, seam inventory,
+    // evidence relation, and every downstream renderer consume the same
+    // fact instead of re-inferring it independently. The typed role
+    // (#3531) keeps the executable-test and evidence-only helper
+    // meanings apart instead of collapsing both into one bit.
+    //
+    // #4789: every `quickcheck!` fn is an executable test even without a
+    // spelled `#[test]`; a `proptest!` fn is a test only when it spells
+    // `#[test]`. Unmarked proptest fns stay function facts.
+    let has_test_attribute = executable_test_attribute(origin, has_test_attribute(function));
+    let source_role = if has_test_attribute {
+        FunctionSourceRole::TestAttribute
+    } else if origin.is_some_and(|origin| origin.inside_cfg_test)
+        || is_cfg_test_module_member(function.syntax())
+    {
+        FunctionSourceRole::CfgTestModule
+    } else {
+        FunctionSourceRole::Production
+    };
+    let mut attrs = collect_attr_syntax(function);
+    record_quickcheck_attr(origin, &mut attrs);
+    // #3727 Slice A: parser-backed test-body shadow facts. Nested `fn`
+    // item names and `let` binding facts over this function's body,
+    // body-relative (relative to the `fn` keyword line, which is also
+    // where the stored `body` slice starts). The lexical fallback
+    // producer leaves both fields empty; on parser-backed files an
+    // empty set is a real "no definition" result.
+    let (nested_fn_names, let_bindings) =
+        collect_body_shadow_facts(function, &|offset| line_index.line(offset), start_line);
+
+    acc.file_calls.extend(calls.clone());
+    acc.file_returns.extend(returns.clone());
+    acc.file_literals.extend(literals.clone());
+    acc.file_probe_shapes.extend(probe_shapes);
+
+    let id = match origin {
+        Some(origin) => {
+            parser_symbol_id_with_modules(path, &origin.module_segments, function, &name)
+        }
+        None => parser_symbol_id(path, function, &name),
+    };
+    let file = path.to_path_buf();
+
+    let function_fact = FunctionFact {
+        id,
+        name: name.clone(),
+        file: file.clone(),
+        start_line,
+        end_line,
+        body: body.clone(),
+        calls: calls.clone(),
+        returns: returns.clone(),
+        literals: literals.clone(),
+        source_role,
+        attrs: attrs.clone(),
+        impl_attrs: collect_impl_attr_syntax(function),
+        nested_fn_names: nested_fn_names.clone(),
+        let_bindings: let_bindings.clone(),
+        item: function_item_fact(function),
+        impl_context: function_impl_context(function),
+    };
+
+    if has_test_attribute {
+        acc.tests.push(TestFact {
+            name,
+            file,
+            start_line,
+            end_line,
+            body,
+            calls,
+            assertions: extract_parser_oracles(function, text, line_index),
+            literals,
+            attrs,
+            nested_fn_names,
+            let_bindings,
+        });
+    }
+
+    acc.functions.push(function_fact);
+}
+
 pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, String> {
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
@@ -206,89 +328,24 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
     let mut file_returns = Vec::new();
     let mut file_literals = Vec::new();
     let mut file_probe_shapes = Vec::new();
-    let path_buf = path.to_path_buf();
-
-    for function in source.syntax().descendants().filter_map(ast::Fn::cast) {
-        let Some(name) = function.name().map(|name| name.text().to_string()) else {
-            continue;
-        };
-        let fn_start = function
-            .fn_token()
-            .map(|token| token.text_range().start())
-            .unwrap_or_else(|| function.syntax().text_range().start());
-        let fn_end = function.syntax().text_range().end();
-        let start_line = line_index.line(fn_start);
-        let end_line = line_index.line_for_range_end(fn_end);
-        let body = slice_text(text, fn_start, fn_end);
-        let calls = extract_call_facts(&body, start_line);
-        let returns = extract_return_facts(&body, start_line);
-        let literals = extract_literal_facts(&body, start_line);
-        let probe_shapes = extract_parser_probe_shapes(&function, text, &line_index);
-        // A plain helper inside an inline `#[cfg(test)]` module is test
-        // infrastructure even when it has no `#[test]` attribute. Classify
-        // that role at the producer boundary so diff probes, seam inventory,
-        // evidence relation, and every downstream renderer consume the same
-        // fact instead of re-inferring it independently. The typed role
-        // (#3531) keeps the executable-test and evidence-only helper
-        // meanings apart instead of collapsing both into one bit.
-        let has_test_attribute = has_test_attribute(&function);
-        let source_role = if has_test_attribute {
-            FunctionSourceRole::TestAttribute
-        } else if is_cfg_test_module_member(&function) {
-            FunctionSourceRole::CfgTestModule
-        } else {
-            FunctionSourceRole::Production
-        };
-        let attrs = collect_attr_syntax(&function);
-        // #3727 Slice A: parser-backed test-body shadow facts. Nested `fn`
-        // item names and `let` binding facts over this function's body,
-        // body-relative (relative to the `fn` keyword line, which is also
-        // where the stored `body` slice starts). The lexical fallback
-        // producer leaves both fields empty; on parser-backed files an
-        // empty set is a real "no definition" result.
-        let (nested_fn_names, let_bindings) =
-            collect_body_shadow_facts(&function, &|offset| line_index.line(offset), start_line);
-
-        file_calls.extend(calls.clone());
-        file_returns.extend(returns.clone());
-        file_literals.extend(literals.clone());
-        file_probe_shapes.extend(probe_shapes);
-
-        let function_fact = FunctionFact {
-            id: parser_symbol_id(path, &function, &name),
-            name: name.clone(),
-            file: path_buf.clone(),
-            start_line,
-            end_line,
-            body: body.clone(),
-            calls: calls.clone(),
-            returns: returns.clone(),
-            literals: literals.clone(),
-            source_role,
-            attrs: attrs.clone(),
-            impl_attrs: collect_impl_attr_syntax(&function),
-            nested_fn_names: nested_fn_names.clone(),
-            let_bindings: let_bindings.clone(),
-            impl_context: function_impl_context(&function),
+    {
+        let mut acc = ParsedFunctionAcc {
+            functions: &mut functions,
+            tests: &mut tests,
+            file_calls: &mut file_calls,
+            file_returns: &mut file_returns,
+            file_literals: &mut file_literals,
+            file_probe_shapes: &mut file_probe_shapes,
         };
 
-        if has_test_attribute {
-            tests.push(TestFact {
-                name,
-                file: path_buf.clone(),
-                start_line,
-                end_line,
-                body,
-                calls,
-                assertions: extract_parser_oracles(&function, text, &line_index),
-                literals,
-                attrs,
-                nested_fn_names,
-                let_bindings,
-            });
+        for function in source.syntax().descendants().filter_map(ast::Fn::cast) {
+            push_parsed_function(&function, None, path, text, &line_index, &mut acc);
         }
 
-        functions.push(function_fact);
+        let overlay = PropertyMacroOverlay::from_source(&source, text);
+        for (function, origin) in overlay.functions() {
+            push_parsed_function(&function, Some(origin), path, text, &line_index, &mut acc);
+        }
     }
 
     disambiguate_duplicate_symbol_ids(&mut functions);
@@ -314,7 +371,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
     });
 
     Ok(FileFacts {
-        path: path_buf,
+        path: path.to_path_buf(),
         functions,
         tests,
         calls: file_calls,
@@ -541,13 +598,16 @@ fn attribute_string_literal(attribute: &str) -> Option<String> {
 }
 
 fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
-    // The stable text projection keeps distinct raw-byte paths distinct
-    // in owner identity; lossy rendering would merge same-named
-    // functions across invalid-byte filenames (#3609).
-    let mut segments = vec![crate::analysis::stable_path_text(path)];
+    parser_symbol_id_with_modules(
+        path,
+        &function_module_segments(function.syntax()),
+        function,
+        name,
+    )
+}
 
-    let mut modules = function
-        .syntax()
+pub(super) fn function_module_segments(node: &ra_ap_syntax::SyntaxNode) -> Vec<String> {
+    let mut modules = node
         .ancestors()
         .skip(1)
         .filter_map(ast::Module::cast)
@@ -558,7 +618,20 @@ fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
         })
         .collect::<Vec<_>>();
     modules.reverse();
-    segments.extend(modules);
+    modules
+}
+
+fn parser_symbol_id_with_modules(
+    path: &Path,
+    modules: &[String],
+    function: &ast::Fn,
+    name: &str,
+) -> SymbolId {
+    // The stable text projection keeps distinct raw-byte paths distinct
+    // in owner identity; lossy rendering would merge same-named
+    // functions across invalid-byte filenames (#3609).
+    let mut segments = vec![crate::analysis::stable_path_text(path)];
+    segments.extend(modules.iter().cloned());
 
     if let Some(impl_block) = function
         .syntax()
@@ -571,6 +644,51 @@ fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
 
     segments.push(name.to_string());
     SymbolId(segments.join("::"))
+}
+
+/// Where `function` is declared (#4478): the nearest enclosing item that
+/// decides which call syntax can name it. The walk stops at the first `fn`,
+/// `impl` or `trait` ancestor, so a helper `fn` nested in a method body is
+/// `Local`, not a method of the `impl`.
+fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
+    let container = function
+        .syntax()
+        .ancestors()
+        .skip(1)
+        .find_map(|node| {
+            if ast::Fn::can_cast(node.kind()) {
+                return Some(FunctionContainer::Local);
+            }
+            if let Some(impl_block) = ast::Impl::cast(node.clone()) {
+                let self_ty = impl_block
+                    .self_ty()
+                    .map(|ty| compact_syntax_text(ty.syntax().text().to_string()));
+                return Some(match (impl_block.trait_(), self_ty) {
+                    (_, None) => FunctionContainer::Unknown,
+                    (None, Some(self_ty)) => FunctionContainer::Inherent { self_ty },
+                    (Some(trait_ty), Some(self_ty)) => FunctionContainer::TraitImpl {
+                        trait_path: compact_syntax_text(trait_ty.syntax().text().to_string()),
+                        self_ty,
+                    },
+                });
+            }
+            let trait_item = ast::Trait::cast(node)?;
+            Some(match trait_item.name() {
+                Some(name) => FunctionContainer::Trait {
+                    trait_name: name.text().to_string(),
+                },
+                None => FunctionContainer::Unknown,
+            })
+        })
+        .unwrap_or(FunctionContainer::Free);
+    let has_self_param = function
+        .param_list()
+        .is_some_and(|params| params.self_param().is_some());
+    FunctionItemFact {
+        container,
+        has_self_param,
+        has_body: function.body().is_some(),
+    }
 }
 
 /// The item a type-path call `T::name(` would find this `fn` in (#4558).
@@ -681,10 +799,8 @@ fn has_test_attribute(function: &ast::Fn) -> bool {
 /// normalizer cannot drift: nested `all(test, ...)` conjunctions, whitespace
 /// and multi-line spellings, and bounded `cfg_attr` forms classify
 /// identically on both sides.
-fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
-    function
-        .syntax()
-        .ancestors()
+pub(super) fn is_cfg_test_module_member(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    node.ancestors()
         .filter_map(ast::Module::cast)
         .any(|module| module_attributes_require_test(&module))
 }
@@ -1431,16 +1547,23 @@ fn extract_parser_oracles(
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "assert_matches"
+            | "matches"
+            | "prop_assert"
+            | "prop_assert_eq"
+            | "prop_assert_ne"
     ) || name.ends_with("snapshot")
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
-    matches!(
-        macro_name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
-    ) || macro_name.starts_with("insta::assert")
-        || macro_name.contains("snapshot")
+    let compact = macro_name.replace([' ', '\t', '\n'], "");
+    let leaf = compact.rsplit("::").next().unwrap_or(compact.as_str());
+    is_assertion_macro_leaf(leaf)
+        || compact.starts_with("insta::assert")
+        || compact.contains("snapshot")
 }
 
 pub(crate) struct LineIndex {
@@ -1474,7 +1597,7 @@ impl LineIndex {
     }
 }
 
-fn text_size_to_usize(offset: TextSize) -> usize {
+pub(super) fn text_size_to_usize(offset: TextSize) -> usize {
     let value: u32 = offset.into();
     value as usize
 }
@@ -1485,7 +1608,7 @@ pub(crate) fn slice_text(text: &str, start: TextSize, end: TextSize) -> String {
     text.get(start..end).unwrap_or("").to_string()
 }
 
-fn slice_macro_call_text(text: &str, start: TextSize, end: TextSize) -> String {
+pub(super) fn slice_macro_call_text(text: &str, start: TextSize, end: TextSize) -> String {
     let start = text_size_to_usize(start);
     let mut end = text_size_to_usize(end);
     let bytes = text.as_bytes();

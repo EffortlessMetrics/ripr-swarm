@@ -4,48 +4,6 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
-
-## CI comes after candidate readiness
-
-Use draft PRs for development and checkpoints. Commit and push coherent work
-without waiting for full CI. Before requesting merge qualification, finish the
-implementation, focused tests, applicable formatting/lint/type/build checks,
-source and oracle review, and the evidence packet on local or owned compute.
-Run the smallest meaningful proof first; longer owned-compute runs are fine.
-Do not use repeated expensive CI runs as the development/debugging loop.
-
-Once that preparation is complete, mark the PR ready for review. The native
-`ready_for_review` transition is the explicit request for final merge
-qualification; no extra label or auto-merge toggle is needed. Automatic PR jobs
-are server-side gated while draft, including routers, planners, summaries and
-opt-in lanes. Main, scheduled and explicit manual workflows retain their own
-triggers. An explicitly requested `@droid` action is not automatic PR CI.
-
-Readiness for CI is distinct from `REVIEW_READY` for merge: the latter still
-requires actual current required proof and substantive published-head review.
-Enable normal protected auto-merge only after those conditions are satisfied;
-do not enable it just to obtain the proof it requires. A skipped draft check is
-not proof. Preserve every required gate, failure and trust boundary.
-
-If qualification finds a defect, return the PR to draft for local repair and
-review, then request qualification again. A push while still ready refreshes
-current-head proof as a safety net, not an invitation to iterate in CI. Retarget
-a base through draft, re-evaluate the integration basis, and mark ready again.
-Record head SHA and the evaluated base/merge tree; old-head or changed-tree
-results never establish current integration proof. Unrelated main movement does
-not by itself require rerunning unaffected focused evidence.
-
-Use the minimum required qualification for the reviewed subject. Opt-in labels
-expand proof only on ready PRs. Do not duplicate the same draft/ready matrix or
-rerun it when merely enabling auto-merge. If local tools are unavailable, name
-the missing proof, complete all possible source/static review first, and request
-one deliberate final qualification; never claim an unexecuted local pass.
-
-The infrastructure target is zero GitHub-hosted execution on the self-hosted
-path, with hosted execution only for a real fallback. This lifecycle gate does
-not claim to finish that routing migration: the current ready-path hosted
-router/detection/result jobs remain visible infrastructure debt. Do not deploy
-new routing, lower gates or bypass protected merge to disguise it.
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
@@ -369,6 +327,72 @@ and single-platform CI was the root cause enabling both.
   only by a native-Windows audit, so native-Windows verification of new
   product behavior remains an author and audit responsibility.
 
+- **Subject identity (#5043).** Observations and failure reasons are keyed by
+  Cargo target kind, source path, exact executable basename (including its
+  Cargo hash), and test name. Both samples execute the same compiled workspace;
+  a changed hash cannot borrow a pass or manufacture a repeated failure. Cargo
+  text does not expose integration-target package IDs, so the report does not
+  invent them. Artifact directories, validated Windows separators and the
+  `.exe` suffix are presentation; raw Cargo headers remain visible beside the
+  normalized target identity. Doctests use their explicit `Doc-tests` name as
+  a distinct target kind, without inferred package ownership.
+- **Owning-target evidence.** Each release-seam control declares its Cargo
+  target kind, source and executable stem as well as its exact test name. The
+  selector must identify one exact artifact across both logs. Zero or multiple
+  candidate artifacts, including hash drift across samples, cannot satisfy a
+  required control. A control failure stays advisory; an absent or ambiguous
+  owner is refused. Name-only legacy logs, malformed target headers, duplicate
+  target transitions (including doctests), duplicate observations and orphan
+  test rows are `incomplete_evidence` with actionable provenance reasons.
+  Recollect both complete logs from one build rather than mixing histories.
+  The summary still counts observed subjects rather than failure-section echoes.
+- **Completion evidence (#5107).** Every owning harness needs an announcement
+  and a well-formed completion. The completion's verdict and passed, failed,
+  ignored and measured counts must agree with the observed rows and announced
+  subjects. Filtered-out counts do not represent executed subjects. Malformed,
+  contradictory or orphan completions are `incomplete_evidence`; a captured
+  zero exit status cannot override observed test failures. Measured benchmark
+  rows are outside this lane's supported Cargo-test text and remain incomplete
+  evidence. Valid empty harnesses, ignored rows, filtered runs and multiple
+  doctest batches retain their existing semantics.
+- **Unavailable samples.** Cross-run verdicts require two usable runs. A
+  missing log/status or incomplete evidence is never translated into ordinary
+  test absence to produce `masked_unknown`. Observed counts, target provenance
+  and bounded failure reasons remain available even when no verdict can be
+  derived. Genuine subject absence in a usable run still produces
+  `masked_unknown`, and the existing compile/harness-failure distinction and
+  advisory failing-test policy remain unchanged.
+- **Diagnostic presentation.** Provenance errors, reached targets and raw
+  headers each show at most 20 entries per run. Each verdict category shows at
+  most 20 subjects; the failure-reason section shows at most 20 distinct
+  subjects, each with its reasons from up to two runs. Omitted entries and
+  complete totals are stated exactly. Every displayed log-derived identity,
+  provenance error, header and reason retains at most 240 Unicode scalar
+  values, followed by an explicit `… [truncated]` marker when shortened. These
+  are section-entry and scalar limits, not a whole-report byte budget. Parsing
+  retains all identities, errors and raw headers; display excerpts never become
+  identity keys or merge subjects. These limits do not change evidence refusal,
+  observed totals or verdicts. Full original text remains in the logs.
+
+- **Console provenance limit.** This is a bounded parser for the lane's Cargo
+  text, not universal authentication of test origin. Target completion expires
+  ownership; a later headerless harness cannot inherit it. Announced counts
+  must agree with observed rows. The retained native log's well-formed empty
+  child harness supplies no subjects and does not end its parent. Nonempty
+  nested harnesses have unproven attribution and are refused. Ordinary captured
+  failure stdout remains reason text; complete header/result-shaped content in
+  an unterminated captured block is ambiguous and refused. Doctests may have
+  multiple announced batches beneath their explicit header. Reliable origin
+  for arbitrary interleaved or deliberately forged console output would need
+  structured producer evidence, which this change neither adds nor claims.
+
+The production-command corpus in `xtask/tests/windows_advisory_identity.rs`
+checks completion/exit consistency, unavailable samples, colliding names,
+cross-target pass/failure substitution, independent
+failure reasons, same-source executables, hash/path boundaries, owning-control
+absence/ambiguity, ANSI logs and doctest transitions. These synthetic text
+controls qualify the parser; they do not claim native Windows test execution.
+
 Promotion to required is gated on #2430 and on stability across repeated runs on
 hardware that reproduces the failures — the hosted runner does not reproduce the
 parallel-load class in #2419 at all, so green runs there prove nothing about it.
@@ -500,19 +524,13 @@ fork or otherwise untrusted PR:
 Label events are not an implicit full-gate refresh:
 
 ```text
-draft PR event (including labels and synchronize):
-  allocate no automatic PR jobs; a skipped check is not qualification
+opened / reopened / synchronize / push to main / workflow_dispatch:
+  launch the required Rust or docs gate (unchanged)
 
-ready PR opened / reopened / synchronize / ready_for_review:
-  launch the required Rust or docs gate for the current subject
-
-push to main / workflow_dispatch:
-  retain the existing explicit route
-
-ready PR labeled full-ci:
+labeled full-ci:
   launch the required gate with advisory reports and success artifacts
 
-ready PR labeled windows-ci, coverage, release-check, or any other non-full-ci label:
+labeled windows-ci, coverage, release-check, or any other non-full-ci label:
   do not launch rust-gates; post Ripr Rust Small Ignored Label Event;
   leave the previous exact-head Ripr Rust Small Result in place
 
@@ -523,7 +541,7 @@ unlabeled (including windows-ci or full-ci removal):
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
 Removing that label does not imply Windows proof and must not spend a required
 Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
-the next ready-state opened/synchronize/reopened/ready_for_review proof observes the current labels.
+the next opened/synchronize/reopened proof observes the current labels.
 `cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
 distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
 replace a pending synchronize proof. An ignored labeled run is cheap, does not

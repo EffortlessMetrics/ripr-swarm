@@ -30,7 +30,21 @@ pub(crate) mod repair_card;
 /// entry (#4667: card-first bounded agent handoff; canonical packet stays
 /// behind the explicit `ripr agent packet` route).
 pub(crate) mod repair_card_handoff;
+/// Measurement and ratification producer for the RepairCard default budget
+/// (#4669; RIPR-SPEC-0196): synthetic wire-size measurement and governed
+/// real-opportunity accounting that back the versioned decision receipt.
+pub mod repair_card_usability;
 pub(crate) mod ripr_plus;
+
+/// Shared final qualification boundary for legacy RIPR+ receipt composition.
+/// Exposure summaries and gap ledgers preserve useful observed counts, but
+/// cannot establish complete test-quality evidence bound to the current candidate.
+/// The compatibility xtask uses this same boundary before writing a receipt.
+pub fn qualify_legacy_ripr_plus_receipt(
+    receipt: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    ripr_plus::qualify_legacy_receipt(receipt)
+}
 mod selector;
 pub(crate) mod temp_diff;
 pub(crate) mod verification_execution;
@@ -61,7 +75,9 @@ pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::check_with_progress;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
+#[cfg(test)]
 pub(crate) use check::check_workspace_worktree_with_origins;
+pub(crate) use check::check_workspace_worktree_with_sources_and_open_rust_paths;
 pub(crate) use check::is_managed_perl_producer;
 pub use check::{
     check_workspace_repo_with_config, check_workspace_with_config,

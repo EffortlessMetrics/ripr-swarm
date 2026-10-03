@@ -25,23 +25,9 @@ Identify the actual shell, host/target platform, repository remote, root, worktr
 
 One writer owns the candidate worktree at a time. A delegated writer receives the claim, input identity, write boundary, non-goals, proof and handback; the root does not edit concurrently. Reviewers read committed objects or create their own detached inspection worktree. Preserve pre-existing changes and never move another writer's HEAD.
 
+Before allocating a worktree, starting a build, or freezing an executable, apply the [bounded storage closeout](../../../docs/PR_AUTOMATION.md#bounded-local-storage-and-proof-retention) procedure. The existing root/task owns each exact resource, its peak-growth budget, required witnesses and planned disposition before generation. Include frozen copies and restoration staging in the budget; a Cargo build budget alone does not cover them. Release or recoverably archive no-longer-needed outputs from completed candidates before admitting the next batch. This is root-owned admission using existing tooling, not a new registry or an automatic cleanup claim.
+
 Bind background commands to retained task/session handles, candidate identities and logs. A process-name filter, quiet interval or stale report does not establish failure or orphaned work. Read the native exit and terminal report, not stderr noise or a success-looking line alone. Serialize Cargo operations that share a worktree, target lock or memory bottleneck. Do not kill unrelated processes. The parent goal may advance another ready claim on a separate worker/worktree while this candidate waits.
-
-# Late qualification boundary
-
-Publish development checkpoints as draft. Complete implementation, focused
-local/owned-compute proof, applicable format/lint/type/build checks, source/oracle
-review and the evidence packet before marking ready. `ready_for_review` is the
-native request for final CI, not `REVIEW_READY` or permission to merge. Missing
-remote evidence may still be `REVIEW_INCOMPLETE` at this transition when source
-review is complete and its remaining proof gaps are named. `REVIEW_READY` and
-current required proof remain mandatory before auto-merge/protected merge.
-
-Return to draft for repair or base retarget, refresh affected proof/review, then
-mark ready again. Ready-state pushes refresh the exact current subject only as
-a safety net. Do not repeatedly use CI to shape the candidate, trigger duplicate
-draft/ready qualification, or run CI again merely when enabling auto-merge.
-Commits/pushes remain useful checkpoints. See the root's CI readiness policy.
 
 # Procedure
 
@@ -68,7 +54,7 @@ Commits/pushes remain useful checkpoints. See the root's CI readiness policy.
 10. Repair accepted findings in the same candidate. Commit coherent changes without another routine permission pause so verification can bind to a real Git object.
 11. Run `check-fast` on the committed candidate and compare its selector report and ran/skipped categories with the independently resolved path set. Reconcile a changed basis or run base-aware gates directly. Unexpected zero, omitted categories or selector failure is `INSTRUMENT_FAILURE`, not pass.
 12. Run `precommit`, focused tests and the relevant changed-surface checks. Keep proof proportional: full local runs are for named failures or explicit qualification, not automatic duplication of the entire hosted matrix before publishing.
-13. Hand the committed candidate to `review-pr`. Missing hosted evidence normally yields `REVIEW_INCOMPLETE`; enter `finish-pr` to publish as draft, finish preparation, and request late qualification, then return to exact published-head review before merge.
+13. Hand the committed candidate to `review-pr`. Missing hosted evidence normally yields `REVIEW_INCOMPLETE`; enter `finish-pr` to publish and obtain that evidence, then return to exact published-head review before merge.
 14. On `REPAIR_REQUIRED`, repair the same candidate and refresh affected proof/review dimensions. Before resolving an integration conflict, check whether upstream already delivered the claim; preserve only a genuine unique residual.
 
 # Currentness and delivery
@@ -81,7 +67,7 @@ Local commits and test runs are useful unpublished candidate evidence, not lande
 
 Choose reversible in-scope implementations from evidence. Routine commit/push/PR/review repair/protected merge is already inside an authorized delivery goal. Ask only at an actual scope, destructive-action, exposure, settings, release-authorization or non-derivable product boundary. Do not create rival candidates, reservation files, overlap maps or sibling monitoring.
 
-After a durable merge/closure handoff, remove only lane-created worktrees, branches and temporary residue. Preserve retained proof and unrelated work.
+After a durable merge/closure handoff, apply the [bounded storage closeout](../../../docs/PR_AUTOMATION.md#bounded-local-storage-and-proof-retention) procedure to lane-created worktrees, branches and temporary residue. Return each exact resource as `released`, `retained with reason`, or `awaiting owner verification` before removal. Releasing ownership alone is not deletion authority. Preserve retained and unknown resources, required proof and unrelated work.
 
 # Valid exits
 

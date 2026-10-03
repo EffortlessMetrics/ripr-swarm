@@ -16,7 +16,9 @@ status = "active"
 #   surface         ci | editor | docs | fixtures | rust | repo | brand | config | security
 #   classification  production | test | tooling | generated | config | docs | fixture | metadata
 #   reason          one-line justification (matches the existing txt reason)
-#   covered_by      list of commands or checks that exercise this surface
+#   covered_by      commands/checks applicable on every host
+#   covered_by_unix (optional) non-empty cargo test selectors for Unix hosts only
+#   covered_by_windows (optional) non-empty cargo test selectors for Windows hosts only
 #   expires         (optional) date this entry must be re-justified
 #   retired         (optional) true if the entry is allowed to be unused
 #
@@ -394,8 +396,8 @@ kind = "judged_panel_metadata"
 owner = "ripr/evidence-quality"
 surface = "repo"
 classification = "metadata"
-reason = "Selected Rust behavior-panel denominator, including rolling production-quiet observation and the #4795 calibration scorecard; null labels and not_run remain non-results."
-covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check", "cargo test -p xtask --locked --offline rust_judged_panel::rolling_observation", "cargo test -p xtask --locked --offline rust_judged_panel::calibration"]
+reason = "Selected Rust behavior-panel denominator, including rolling production-quiet observation, the #4795 calibration scorecard, and the #4796 feedback ledger; null labels and not_run calibration remain non-results."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check", "cargo test -p xtask --locked --offline rust_judged_panel::rolling_observation", "cargo test -p xtask --locked --offline rust_judged_panel::calibration", "cargo test -p xtask --locked --offline rust_analysis_feedback"]
 
 [[allow]]
 glob = "metrics/rust-judged-behavior-panel/subjects/**"
@@ -424,6 +426,33 @@ surface = "repo"
 classification = "metadata"
 reason = "Governed receipt-backed Rust repair-trust corpus input; empty or incomplete input remains limited."
 covered_by = ["cargo xtask rust-repair-trust-report", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/repair-card-usability/*.json"
+kind = "repair_card_usability_evidence"
+owner = "ripr/repair-card"
+surface = "repo"
+classification = "metadata"
+reason = "Committed RepairCard synthetic usability expectations and versioned budget-ratification decision receipt (RIPR-SPEC-0196); real-attempt ratification stays pending on the governed #1702/#1579 corpus, and drifted bounds or receipts without limitations fail closed."
+covered_by = ["cargo xtask repair-card-usability-report", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/blind-journey-contract/*.json"
+kind = "blind_journey_contract_evidence"
+owner = "test-infra"
+surface = "repo"
+classification = "metadata"
+reason = "Committed blind-journey contract decision receipt (RIPR-SPEC-0200, #4603); ratification stays scoped to the synthetic fixture corpus, drifted schema versions or receipts without limitations fail closed, and synthetic success claims no candidate qualification."
+covered_by = ["cargo xtask blind-journey-contract", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/blind-journey-execute/*.json"
+kind = "blind_journey_execute_evidence"
+owner = "test-infra"
+surface = "repo"
+classification = "metadata"
+reason = "Committed blind-journey executor decision receipt (RIPR-SPEC-0205, #4604); ratification stays scoped to the scripted fixture corpus, drifted schema versions or receipts without limitations fail closed, and synthetic success claims no installed usefulness or candidate qualification."
+covered_by = ["cargo xtask blind-journey-execute", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "policy/*.toml"
@@ -651,6 +680,10 @@ classification = "tooling"
 reason = "Stdlib Python 3.11+ packet consumer for agent environments that have a qualified native ripr payload but no Cargo/rustc or execution-kernel network; packet staging and oracles stay in Rust/xtask (#4713)."
 covered_by = [
     "cargo test -p xtask --locked --offline portable_consumer",
+]
+# Native check/pilot journey is cfg(unix). Common packet digest/source controls
+# remain required on Windows; the Python runtime/classifier tests are Unix-only.
+covered_by_unix = [
     "cargo test -p ripr --locked --offline --test portable_consumer_packet",
 ]
 
