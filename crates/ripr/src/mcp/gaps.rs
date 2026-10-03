@@ -9,6 +9,7 @@
 
 use crate::domain::Finding;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v1";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
@@ -31,6 +32,13 @@ pub(crate) struct GapItem {
     /// binding and links, which are injected at serve time).
     evidence_core: Value,
     pub(crate) evidence_bytes: usize,
+    /// Producer candidate-actionability captured at projection time; the
+    /// shared budget maps it to eligibility so MCP never invents its own.
+    candidate_actionable: bool,
+    /// Deterministic digest of `evidence_core`, bound into the snapshot
+    /// identity so an evidence change yields a new snapshot id instead of
+    /// serving altered bytes under the old identity.
+    pub(crate) evidence_sha256: String,
 }
 
 impl GapItem {
@@ -59,6 +67,7 @@ impl GapItem {
 
         let evidence_core = gap_evidence_core(finding, &canonical_id)?;
         let evidence_bytes = serialized_bytes(&evidence_core)?;
+        let evidence_sha256 = evidence_sha256(&evidence_core)?;
         Ok(Self {
             canonical_id,
             finding_id: finding.id.clone(),
@@ -67,6 +76,8 @@ impl GapItem {
             list_summary_bytes,
             evidence_core,
             evidence_bytes,
+            candidate_actionable: finding.is_candidate_actionable(),
+            evidence_sha256,
         })
     }
 
@@ -124,17 +135,17 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
                 "oracle": test.oracle,
                 "oracle_kind": test.oracle_kind.as_str(),
                 "oracle_strength": test.oracle_strength.as_str(),
-                "relation_reason": test.relation_reason.map(|reason| reason.as_str().to_string()),
+                "relation_reason": test.relation_reason.map(|reason| reason.as_str()),
                 "relation_confidence": test.relation_confidence.map(|confidence| confidence.as_str()),
             })
         })
         .collect::<Vec<_>>();
-    let source_currentness = serde_json::to_value(&finding.source_currentness)
+    let source_currentness = serde_json::to_value(finding.source_currentness)
         .map_err(|error| format!("serialize source currentness: {error}"))?;
     let static_limitation = finding
         .static_limit_kind
         .as_ref()
-        .map(|kind| serde_json::to_value(kind))
+        .map(serde_json::to_value)
         .transpose()
         .map_err(|error| format!("serialize static limitation: {error}"))?;
     let canonical_gap = finding
@@ -191,10 +202,11 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
 }
 
 /// Budget items for the shared [`crate::lsp::diagnostic_budget`] authority.
-/// MCP does not invent eligibility or ranking: every canonical item is
-/// eligible, and the selection key uses the same unset (128) ranks the LSP
-/// delivery bridge uses, so the budget's evidence-owned order (selection
-/// key, then canonical id, then document) is the only ordering applied.
+/// Eligibility is the producer's candidate-actionability predicate captured
+/// at projection time; MCP does not invent its own filter or ranking. The
+/// selection key uses the same unset (128) ranks the LSP delivery bridge
+/// uses, so the budget's evidence-owned order (selection key, then canonical
+/// id, then document) is the only ordering applied.
 pub(crate) fn budget_items(
     items: &[GapItem],
 ) -> Vec<crate::lsp::diagnostic_budget::DiagnosticBudgetItem> {
@@ -210,7 +222,11 @@ pub(crate) fn budget_items(
             inline_detail_bytes: item
                 .evidence_bytes
                 .saturating_sub(item.list_summary_bytes()),
-            eligibility: DiagnosticBudgetEligibility::Actionable,
+            eligibility: if item.candidate_actionable {
+                DiagnosticBudgetEligibility::Actionable
+            } else {
+                DiagnosticBudgetEligibility::ProfileFiltered
+            },
             selection_key: DiagnosticSelectionKey {
                 repair_route_rank: 128,
                 causal_rank: 128,
@@ -234,9 +250,32 @@ pub(crate) fn snapshot_resource_id(uri: &str) -> Option<&str> {
 }
 
 fn serialized_bytes(value: &Value) -> Result<usize, String> {
-    serde_json::to_vec(value)
-        .map(|bytes| bytes.len())
-        .map_err(|error| format!("serialize gap item: {error}"))
+    struct LengthWriter(usize);
+
+    impl std::io::Write for LengthWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0 += buffer.len();
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = LengthWriter(0);
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|error| format!("serialize gap item: {error}"))?;
+    Ok(writer.0)
+}
+
+/// Deterministic digest of the complete evidence document. Snapshot identity
+/// binds this so a same-outcome refresh that changes evidence text produces a
+/// new snapshot id instead of serving altered bytes under the old identity.
+fn evidence_sha256(value: &Value) -> Result<String, String> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| format!("serialize evidence digest input: {error}"))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 #[cfg(test)]
@@ -348,6 +387,31 @@ mod tests {
                 "without a canonical gap the finding id must be the item identity: {}",
                 item.canonical_id
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn eligibility_follows_the_producer_actionability_predicate() -> Result<(), String> {
+        use crate::lsp::diagnostic_budget::DiagnosticBudgetEligibility;
+        let actionable = budget_items(&[GapItem::from_finding(&finding()?)?]);
+        let Some(actionable_item) = actionable.first() else {
+            return Err("budget items must not be empty".to_string());
+        };
+        if actionable_item.eligibility != DiagnosticBudgetEligibility::Actionable {
+            return Err("candidate-current findings must stay actionable".to_string());
+        }
+        let mut base_deleted = finding()?;
+        base_deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let filtered = budget_items(&[GapItem::from_finding(&base_deleted)?]);
+        let Some(filtered_item) = filtered.first() else {
+            return Err("budget items must not be empty".to_string());
+        };
+        if filtered_item.eligibility != DiagnosticBudgetEligibility::ProfileFiltered {
+            return Err(
+                "non-candidate-current findings must map to the producer's filtered state"
+                    .to_string(),
+            );
         }
         Ok(())
     }

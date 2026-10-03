@@ -76,8 +76,10 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
   diff against the default branch, draft mode, built-in defaults), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
-  completed snapshot identity, last-known-good state, freshness as of the last
-  refresh, the committed snapshot's typed `AnalysisOutcome`, and profile and
+  completed snapshot identity, last-known-good state, freshness relative to
+  the last completed refresh (`current_at_last_refresh`, or
+  `stale_after_failed_attempt` once a later attempt fails),
+  the committed snapshot's typed `AnalysisOutcome`, and profile and
   support facts. Complete-zero and incomplete-zero outcomes stay distinct
   through the typed outcome; a partial outcome keeps its typed limitations;
 - the transport, tool, resource, resource-template, and byte bounds under
@@ -87,9 +89,10 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 the same shared check authority as `ripr check` and the language server, then
 commits the completed snapshot into the session. The call blocks until the
 attempt reaches a terminal state and reports it: `completed` with the new
-snapshot identity (a `snapshot:sha256:` digest over the typed outcome and the
-canonical item identities — equivalent roots at equivalent inputs share one
-portable identity, while the concrete root evidence stays a separate
+snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
+canonical item identities, and each item's evidence digest — equivalent
+roots at equivalent inputs share one portable identity, while the concrete
+root evidence stays a separate
 host-local hash), `failed` with a typed failure code and bounded detail (the
 last-known-good snapshot is kept), `in_flight`, or `workspace_unavailable`.
 An attempt runs to a terminal state; cancelling the MCP request never rolls
@@ -102,7 +105,10 @@ detected-not-loaded: refresh runs with built-in defaults.
 serialized bytes, every omitted identity with its reason, the
 snapshot/profile/budget identity and selection basis, and one small summary
 per selected item. Selection is the shared CLI/LSP diagnostic-budget
-authority over the snapshot's canonical items; the adapter never re-ranks,
+authority over the snapshot's canonical items; eligibility is the producer's
+candidate-actionability predicate captured at projection time, so
+non-actionable items appear as disclosed profile-filtered omissions. The
+adapter never re-ranks,
 never truncates silently, and infers no business risk. Overflow is disclosed
 with reasons and the continuation route (`ripr_get_gap`). Pass `snapshot_id`
 to bind the read to a specific snapshot: a mismatched identity fails closed
@@ -175,8 +181,11 @@ Syntax-invalid JSON is ignored; well-formed messages with invalid typed
 shapes receive Invalid Request and the transport can read the next frame.
 Unknown request IDs are omitted in SDK error responses; readable IDs remain
 correlated. Messages are capped at 256 KiB and responses, including their
-delimiter, at 128 KiB; a tool or resource document that cannot fit fails
-closed with `result_too_large` before the wire cap is reached. If even a
+delimiter, at 128 KiB; the bound is enforced on the final serialized
+envelope — the document is measured again after the tool or resource wrapper
+adds its text and structured-content representations — so an over-bound
+response fails closed with `result_too_large` before the wire cap is
+reached. If even a
 correlated fallback cannot fit its readable ID, the service terminates with
 the bounded stderr reason `MCP output limit`, without substituting an ID.
 Partial reads and writes retain their state across cancellation. EOF closes

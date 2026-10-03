@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub(crate) const SESSION_SCHEMA_VERSION: &str = "ripr-mcp-session-v1";
 pub(crate) const REFRESH_SCHEMA_VERSION: &str = "ripr-mcp-refresh-v1";
@@ -234,7 +235,15 @@ fn snapshot_identity(outcome: &AnalysisOutcome, items: &[GapItem]) -> Result<Str
         .iter()
         .map(|item| item.canonical_id.as_str())
         .collect::<Vec<_>>();
-    let payload = json!({ "outcome_digest": outcome_digest, "items": item_ids });
+    let evidence_digests = items
+        .iter()
+        .map(|item| item.evidence_sha256.as_str())
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "outcome_digest": outcome_digest,
+        "items": item_ids,
+        "evidence": evidence_digests,
+    });
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
     Ok(format!("snapshot:sha256:{}", sha256_hex(&bytes)))
@@ -252,14 +261,18 @@ fn evidence_identity(items: &[GapItem]) -> Result<String, String> {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut hex = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        hex.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
-        hex.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Freshness is relative to the last completed snapshot. A later failed
+/// attempt leaves the retained snapshot unverified for that attempt: it is
+/// never labeled current at a refresh that produced no snapshot.
+fn freshness_state(session: &WorkspaceSession) -> &'static str {
+    match (&session.last_good, &session.last_failure) {
+        (Some(_), Some(_)) => "stale_after_failed_attempt",
+        (Some(_), None) => "current_at_last_refresh",
+        (None, _) => "none",
     }
-    hex
 }
 
 /// Mutable session state. `in_flight` marks a running attempt; `last_good`
@@ -321,12 +334,11 @@ impl WorkspaceSession {
         let selection = &snapshot.selection;
         let selected_ids = selection
             .selected_ids()
-            .map(str::to_string)
-            .collect::<std::collections::BTreeSet<_>>();
+            .collect::<std::collections::BTreeSet<&str>>();
         let items = snapshot
             .items
             .iter()
-            .filter(|item| selected_ids.contains(&item.canonical_id))
+            .filter(|item| selected_ids.contains(item.canonical_id.as_str()))
             .map(|item| item.list_summary.clone())
             .collect::<Vec<_>>();
         let document = json!({
@@ -485,8 +497,8 @@ impl WorkspaceSession {
             "last_known_good": last_known_good,
             "last_failure": last_failure,
             "freshness": {
-                "state": if self.last_good.is_some() { "current_at_last_refresh" } else { "none" },
-                "note": "the server does not watch the worktree; the snapshot is current as of its completed ripr_refresh, so refresh again after edits",
+                "state": freshness_state(self),
+                "note": "the server does not watch the worktree; the snapshot is current as of its last completed ripr_refresh, a later failed attempt leaves it unverified for that attempt, so refresh again after edits",
             },
             "analysis_outcome": analysis_outcome,
             "profile": profile.document(),
@@ -495,6 +507,52 @@ impl WorkspaceSession {
                 "project-local ripr.toml stays detected-not-loaded; refresh runs with built-in defaults",
             ],
         })
+    }
+}
+
+/// Guard that clears [`WorkspaceSession::in_flight`] on every terminal path.
+/// rmcp awaits a handler future to completion on request cancellation, but
+/// transport teardown can still drop the task while the analysis worker
+/// runs; without the guard a dropped handler would leave `in_flight` set
+/// and fail every later refresh closed with `analysis_in_flight`.
+pub(crate) struct InFlightAttempt {
+    session: Arc<Mutex<WorkspaceSession>>,
+    committed: bool,
+}
+
+impl InFlightAttempt {
+    pub(crate) fn new(session: Arc<Mutex<WorkspaceSession>>) -> Self {
+        Self {
+            session,
+            committed: false,
+        }
+    }
+
+    /// The handler committed the attempt outcome itself; `Drop` becomes a
+    /// no-op and the normal path owns the state transition.
+    pub(crate) fn disarm(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for InFlightAttempt {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        if let Ok(mut session) = self.session.try_lock() {
+            session.in_flight = false;
+            return;
+        }
+        // The lock is momentarily held by a concurrent projection; reset on
+        // the runtime instead of leaving the session stuck in flight.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let session = self.session.clone();
+            let _reset = runtime.spawn(async move {
+                let mut session = session.lock().await;
+                session.in_flight = false;
+            });
+        }
     }
 }
 
@@ -607,19 +665,33 @@ fn omitted_reason_as_str(reason: OmittedDiagnosticReason) -> &'static str {
 /// Fail closed when even one bounded document cannot fit the wire cap: an
 /// over-cap response would otherwise terminate the transport.
 fn bounded_document(document: Value) -> Result<Value, AttemptFailure> {
-    let bytes = serde_json::to_vec(&document).map_err(|error| {
+    struct LengthWriter(usize);
+
+    impl std::io::Write for LengthWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0 += buffer.len();
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = LengthWriter(0);
+    serde_json::to_writer(&mut writer, &document).map_err(|error| {
         AttemptFailure::new(
             CODE_ANALYSIS_FAILED,
             format!("serialize document: {error}"),
             "retry with ripr_refresh",
         )
     })?;
-    if bytes.len() > super::MAX_RESPONSE_BYTES {
+    if writer.0 > super::MAX_RESPONSE_BYTES {
         return Err(AttemptFailure::new(
             CODE_RESULT_TOO_LARGE,
             format!(
                 "document is {} bytes; the MCP response bound is {}",
-                bytes.len(),
+                writer.0,
                 super::MAX_RESPONSE_BYTES
             ),
             "read narrower evidence (one item through ripr_get_gap) instead of widening the response",

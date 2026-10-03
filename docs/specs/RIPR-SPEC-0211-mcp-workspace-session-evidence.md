@@ -26,6 +26,7 @@ Support-tier impact:
 - None. The MCP adapter runs the same read-only static analysis the CLI and
   LSP run in-process; it adds no language support claim. Preview-language
   findings keep their existing support posture through the shared producer.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
@@ -56,7 +57,10 @@ official SDK transport:
   (workspace diff against the default branch, draft mode, built-in
   defaults), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
-  last-known-good, freshness as of the last refresh, the committed
+  last-known-good, freshness relative to the last completed refresh
+  (`current_at_last_refresh`, or `stale_after_failed_attempt` once a later
+  attempt fails, leaving the retained snapshot unverified for that attempt),
+  the committed
   snapshot's typed `AnalysisOutcome`, and profile/support facts. No
   evidence detail is returned.
 - `ripr_refresh` runs one bounded static analysis through the shared
@@ -70,15 +74,20 @@ official SDK transport:
   typed failures and never become snapshots; `partial_with_limitations`
   commits with its typed limitations so complete-zero and incomplete-zero
   remain distinct.
-- The snapshot identity is `snapshot:sha256:` over the typed outcome digest
-  and the sorted canonical item identities: equivalent roots at equivalent
-  inputs share one portable identity, while the concrete root evidence
-  stays the separate host-local root hash.
+- The snapshot identity is `snapshot:sha256:` over the typed outcome digest,
+  the sorted canonical item identities, and each item's evidence digest:
+  equivalent roots at equivalent inputs share one portable identity, while
+  the concrete root evidence stays the separate host-local root hash. An
+  evidence change therefore yields a new snapshot identity instead of
+  serving altered bytes under the old one.
 - `ripr_list_gaps` serves the snapshot's stored shared-budget selection
   (`lsp::diagnostic_budget` with its default budget): total/eligible/
   selected/omitted counts, selected and complete serialized bytes, every
   omitted identity with its reason, the snapshot/profile/budget identity
-  and selection basis, and one small summary per selected item. The
+  and selection basis, and one small summary per selected item. Eligibility
+  is the producer's candidate-actionability predicate captured at
+  projection time, so non-actionable items surface as disclosed
+  profile-filtered omissions rather than MCP inventing its own filter. The
   adapter never re-runs ranking, never truncates silently, and infers no
   business risk. Overflow is disclosed with reasons and the
   `ripr_get_gap` continuation route.

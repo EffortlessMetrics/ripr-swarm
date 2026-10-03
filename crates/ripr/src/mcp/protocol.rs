@@ -552,7 +552,11 @@ fn status_output_schema() -> Value {
                         "properties": {
                             "state": {
                                 "type": "string",
-                                "enum": ["current_at_last_refresh", "none"]
+                                "enum": [
+                                    "current_at_last_refresh",
+                                    "stale_after_failed_attempt",
+                                    "none"
+                                ]
                             },
                             "note": { "type": "string" }
                         },

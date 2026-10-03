@@ -89,6 +89,7 @@ impl McpServer {
             }
             session.in_flight = true;
         }
+        let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
             workspace::run_check(&root, root_identity.as_deref())
         });
@@ -103,6 +104,7 @@ impl McpServer {
         let document = {
             let mut session = session.lock().await;
             session.in_flight = false;
+            attempt.disarm();
             match outcome {
                 Ok(snapshot) => {
                     session.last_failure = None;
@@ -116,11 +118,11 @@ impl McpServer {
             }
             workspace::refresh_document(&session)
         };
-        let result = protocol::tool_result(document)
-            .map_err(|_error| ErrorData::internal_error("serialize refresh result", None))?;
-        let mut result: CallToolResult = typed(result)?;
-        result.result_type = Some(ResultType::COMPLETE);
-        Ok(result.into())
+        self.bounded_tool_result(
+            document,
+            workspace::REFRESH_SCHEMA_VERSION,
+            "serialize refresh result",
+        )
     }
 
     async fn list_gaps_tool(
@@ -131,13 +133,11 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let session = self.session.lock().await;
         match session.list_gaps(requested.as_deref()) {
-            Ok(document) => {
-                let result = protocol::tool_result(document)
-                    .map_err(|_error| ErrorData::internal_error("serialize gap list", None))?;
-                let mut result: CallToolResult = typed(result)?;
-                result.result_type = Some(ResultType::COMPLETE);
-                Ok(result.into())
-            }
+            Ok(document) => self.bounded_tool_result(
+                document,
+                gaps::GAP_LIST_SCHEMA_VERSION,
+                "serialize gap list",
+            ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_LIST_SCHEMA_VERSION),
         }
     }
@@ -151,13 +151,11 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let session = self.session.lock().await;
         match session.get_gap(&gap_id, requested.as_deref()) {
-            Ok(document) => {
-                let result = protocol::tool_result(document)
-                    .map_err(|_error| ErrorData::internal_error("serialize gap evidence", None))?;
-                let mut result: CallToolResult = typed(result)?;
-                result.result_type = Some(ResultType::COMPLETE);
-                Ok(result.into())
-            }
+            Ok(document) => self.bounded_tool_result(
+                document,
+                gaps::GAP_SCHEMA_VERSION,
+                "serialize gap evidence",
+            ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_SCHEMA_VERSION),
         }
     }
@@ -170,6 +168,37 @@ impl McpServer {
         let result = protocol::tool_failure(&failure, schema_version)
             .map_err(|_error| ErrorData::internal_error("serialize typed failure", None))?;
         let mut result: CallToolResult = typed(result)?;
+        result.result_type = Some(ResultType::COMPLETE);
+        Ok(result.into())
+    }
+
+    /// Wrap a document in the tool envelope and fail closed when the final
+    /// serialized response exceeds the advertised bound: the envelope carries
+    /// the document twice (text and structured content), so a document that
+    /// fits the raw cap can still overflow the wire response.
+    fn bounded_tool_result(
+        &self,
+        document: Value,
+        failure_version: &'static str,
+        serialize_context: &'static str,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let envelope = protocol::tool_result(document)
+            .map_err(|_error| ErrorData::internal_error(serialize_context, None))?;
+        let bytes = serde_json::to_vec(&envelope)
+            .map_err(|_error| ErrorData::internal_error(serialize_context, None))?;
+        if bytes.len() > super::MAX_RESPONSE_BYTES {
+            let failure = workspace::AttemptFailure::new(
+                workspace::CODE_RESULT_TOO_LARGE,
+                format!(
+                    "tool response is {} bytes; the MCP response bound is {}",
+                    bytes.len(),
+                    super::MAX_RESPONSE_BYTES
+                ),
+                "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+            );
+            return self.typed_failure(failure, failure_version);
+        }
+        let mut result: CallToolResult = typed(envelope)?;
         result.result_type = Some(ResultType::COMPLETE);
         Ok(result.into())
     }
@@ -381,7 +410,22 @@ impl McpServer {
     ) -> Result<ReadResourceResponse, ErrorData> {
         let text = serde_json::to_string_pretty(&document)
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
-        let result: ReadResourceResult = typed(json_envelope(uri, text))?;
+        let envelope = json_envelope(uri, text);
+        let bytes = serde_json::to_vec(&envelope)
+            .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
+        if bytes.len() > super::MAX_RESPONSE_BYTES {
+            let failure = workspace::AttemptFailure::new(
+                workspace::CODE_RESULT_TOO_LARGE,
+                format!(
+                    "resource response is {} bytes; the MCP response bound is {}",
+                    bytes.len(),
+                    super::MAX_RESPONSE_BYTES
+                ),
+                "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+            );
+            return Err(resource_failure("bounded", &failure, None));
+        }
+        let result: ReadResourceResult = typed(envelope)?;
         Ok(ReadResourceResult::new(result.contents)
             .with_ttl_ms(0)
             .with_cache_scope(CacheScope::Private)
