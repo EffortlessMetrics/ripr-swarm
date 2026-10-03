@@ -8,44 +8,59 @@ use std::fs;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
+const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
+    "on:",
+    "  pull_request:",
+    "    types: [ready_for_review]",
+    "  push:",
+    "    branches: [main, master]",
+    "  workflow_dispatch:",
+];
+const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
 
+/// Read the candidate workflow from the workspace root used by repository checks.
 fn workflow_source() -> String {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::env::current_dir().expect("read workspace root");
     fs::read_to_string(root.join(WORKFLOW)).expect("read routed Rust workflow")
 }
 
-fn event_block(source: &str) -> &str {
-    source
+/// Return the exact event declaration lines, excluding comments and blank lines.
+fn event_declarations(source: &str) -> Vec<&str> {
+    let events = source
         .split_once("\npermissions:\n")
         .map(|(events, _)| events)
-        .expect("workflow keeps permissions after event declarations")
-}
+        .expect("workflow keeps permissions after event declarations");
 
-fn pull_request_types(events: &str) -> &str {
     events
         .lines()
-        .find(|line| line.trim_start().starts_with("types: ["))
-        .map(str::trim)
-        .expect("pull_request keeps an explicit action allowlist")
+        .skip_while(|line| *line != "on:")
+        .filter_map(|line| {
+            let line = line.trim_end();
+            if line.is_empty() || line.trim_start().starts_with('#') {
+                None
+            } else {
+                Some(line)
+            }
+        })
+        .collect()
 }
 
-fn assert_ready_only_pull_request(events: &str) {
-    assert_eq!(
-        pull_request_types(events),
-        "types: [ready_for_review]",
-        "protected PR qualification must be requested only by ready_for_review"
-    );
+/// Read the direct static name emitted by the required result job.
+fn terminal_context(source: &str) -> Option<&str> {
+    let (_, result) = source.split_once("\n  result:\n")?;
+    result.lines().next()?.trim().strip_prefix("name: ")
 }
 
 #[test]
 fn required_pr_context_is_withheld_until_ready() {
     let source = workflow_source();
-    let events = event_block(&source);
 
-    assert_ready_only_pull_request(events);
-    assert!(events.contains("push:\n    branches: [main, master]"));
-    assert!(events.contains("workflow_dispatch:"));
-    assert!(source.contains("  result:\n    name: Ripr Rust Small Result"));
+    assert_eq!(
+        event_declarations(&source),
+        EXPECTED_EVENT_DECLARATIONS,
+        "protected workflow must expose only Ready PR, main push, and manual authorities",
+    );
+    assert_eq!(terminal_context(&source), Some(REQUIRED_CONTEXT));
     assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
     assert!(!source.contains("github.event.pull_request.draft"));
 }
@@ -58,9 +73,11 @@ fn contract_rejects_draft_or_mutation_triggers() {
         "types: [ready_for_review, synchronize]",
     );
     assert_ne!(changed, source, "trigger mutation must engage");
-
-    let result = std::panic::catch_unwind(|| assert_ready_only_pull_request(event_block(&changed)));
-    assert!(result.is_err(), "synchronize must violate the protected event law");
+    assert_ne!(
+        event_declarations(&changed),
+        EXPECTED_EVENT_DECLARATIONS,
+        "synchronize must violate the protected event law",
+    );
 }
 
 #[test]
@@ -71,5 +88,9 @@ fn contract_rejects_a_noncanonical_terminal_context() {
         "  result:\n    name: Ripr Rust Small Draft Result",
     );
     assert_ne!(changed, source, "result-name mutation must engage");
-    assert!(!changed.contains("  result:\n    name: Ripr Rust Small Result"));
+    assert_ne!(
+        terminal_context(&changed),
+        Some(REQUIRED_CONTEXT),
+        "a renamed result must violate the required-context contract",
+    );
 }
