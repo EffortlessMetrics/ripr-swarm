@@ -380,3 +380,30 @@ fn file_view_equality_compares_complete_metadata_and_local_membership() -> Resul
     assert_ne!(first.files(), second.files());
     Ok(())
 }
+
+#[test]
+fn unresolved_property_macros_survive_file_view_wire_and_owned_round_trip() -> Result<(), String> {
+    let path = PathBuf::from("tests/property.rs");
+    let facts = RaRustSyntaxAdapter.summarize_file(
+        &path,
+        "macro_rules! proptest { ($($t:tt)*) => {} }\nproptest! { #[test] fn phantom() { assert_eq!(gate(10), true); } }\n",
+    )?;
+    assert_eq!(facts.unresolved_property_macros.len(), 1);
+    assert!(facts.tests.is_empty());
+    let mut index = RustIndex::default();
+    index.insert_file(path.clone(), facts.clone(), true);
+    let view = index.files().get(&path).ok_or("missing property file")?;
+    assert_eq!(
+        view.unresolved_property_macros,
+        facts.unresolved_property_macros
+    );
+    assert_eq!(
+        serde_json::to_value(view).map_err(|e| e.to_string())?,
+        serde_json::to_value(&facts).map_err(|e| e.to_string())?
+    );
+    assert_eq!(index.owned_file(&path).as_ref(), Some(&facts));
+    let wire = serde_json::to_value(&index).map_err(|e| e.to_string())?;
+    let decoded: RustIndex = serde_json::from_value(wire).map_err(|e| e.to_string())?;
+    assert_eq!(decoded.owned_file(&path).as_ref(), Some(&facts));
+    Ok(())
+}

@@ -19,6 +19,7 @@ tests = [
   "crates/ripr/src/analysis/facts/index_tests.rs::flat_slot_identity_survives_reordering_compaction_and_repeated_membership",
   "crates/ripr/src/analysis/facts/index_tests.rs::fact_view_equality_compares_values_and_order_across_storage_layouts",
   "crates/ripr/src/analysis/facts/index_tests.rs::file_view_equality_compares_complete_metadata_and_local_membership",
+  "crates/ripr/src/analysis/facts/index_tests.rs::unresolved_property_macros_survive_file_view_wire_and_owned_round_trip",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_test_total_retains_six_eight_nine_matches_without_changing_packed_prefix",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::related_test_total_uses_existing_post_dedup_oracle_row_unit",
   "crates/ripr/src/output/json/mod.rs::tests::finding_matched_total_preserves_legacy_serde_and_retained_count_floor",
