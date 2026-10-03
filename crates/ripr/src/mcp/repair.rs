@@ -520,7 +520,7 @@ impl WorkspaceSession {
     ) -> Option<&str> {
         self.repairs.values().find_map(|transaction| {
             (transaction.snapshot_id == snapshot_id && transaction.canonical_id == canonical_id)
-                .then(|| transaction.attempt_id.as_str())
+                .then_some(transaction.attempt_id.as_str())
         })
     }
 
@@ -627,7 +627,7 @@ impl WorkspaceSession {
                 "oracle_kind": fix_site.oracle_kind,
                 "established_by": "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path",
             },
-            "allowed_edit_surface": [fix_site_file(&item)],
+            "allowed_edit_surface": [fix_site_file(item)],
             "must_not_change": [
                 crate::output::agent_seam_packets::EDIT_CAGE_PRODUCTION_STATEMENT,
                 crate::output::agent_seam_packets::EDIT_CAGE_TERMINALITY_WARNING,

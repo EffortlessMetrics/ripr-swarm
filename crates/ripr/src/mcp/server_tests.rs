@@ -310,18 +310,15 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
     ] {
         let arguments: Option<serde_json::Map<String, Value>> =
             serde_json::from_value(arguments).map_err(|error| error.to_string())?;
-        let rejected = match (
-            server.prepare_repair_tool(arguments.clone()).await,
-            server.get_repair_attempt_tool(arguments.clone()).await,
-            server.get_receipt_status_tool(arguments).await,
-        ) {
+        let rejected = matches!(
+            (
+                server.prepare_repair_tool(arguments.clone()).await,
+                server.get_repair_attempt_tool(arguments.clone()).await,
+                server.get_receipt_status_tool(arguments).await,
+            ),
             (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error))
-                if error.code == rmcp::model::ErrorCode::INVALID_PARAMS =>
-            {
-                true
-            }
-            _ => false,
-        };
+                if error.code == rmcp::model::ErrorCode::INVALID_PARAMS
+        );
         if !rejected {
             return Err(format!("{call} with invalid params"));
         }

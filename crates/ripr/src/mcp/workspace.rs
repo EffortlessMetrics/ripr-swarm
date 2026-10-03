@@ -414,17 +414,15 @@ impl WorkspaceSession {
         // without one the link stays the explicit null the projection sets.
         if let Some(attempt_id) =
             self.live_repair_attempt(&snapshot.snapshot_id, &item.canonical_id)
-        {
-            if let Some(links) = document
+            && let Some(links) = document
                 .pointer_mut("/item/links")
                 .and_then(Value::as_object_mut)
-            {
-                links.insert(
-                    "repair_attempt".to_string(),
-                    Value::from(format!("ripr://repair-attempt/{attempt_id}")),
-                );
-                links.remove("repair_attempt_note");
-            }
+        {
+            links.insert(
+                "repair_attempt".to_string(),
+                Value::from(format!("ripr://repair-attempt/{attempt_id}")),
+            );
+            links.remove("repair_attempt_note");
         }
         bounded_document(document)
     }
