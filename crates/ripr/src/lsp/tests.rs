@@ -18009,7 +18009,7 @@ async fn run_wire_refresh_collecting_stage_progress(
 
     let mut creates = Vec::new();
     let mut progress = Vec::new();
-    tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_mins(1), async {
         loop {
             let message = read_lsp_message(&mut client_read).await?;
             if message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
