@@ -156,6 +156,15 @@ pub(crate) enum NoAuthority {
 
 impl WorkspaceStatus {
     pub fn resolve(explicit_root: Option<PathBuf>) -> Self {
+        Self::resolve_with_root(explicit_root).0
+    }
+
+    /// Resolve the status and retain the validated canonical root path for
+    /// in-process consumers that must operate from the same root (the MCP
+    /// refresh path runs the shared check authority from it). The path is
+    /// process-local state only: the serialized status document keeps the
+    /// hashed identity and never carries an absolute path.
+    pub(crate) fn resolve_with_root(explicit_root: Option<PathBuf>) -> (Self, Option<PathBuf>) {
         let resolved = resolve_root(explicit_root);
         let workspace_state = if resolved.root.state == RootState::Validated {
             WorkspaceState::Ready
@@ -187,7 +196,8 @@ impl WorkspaceStatus {
                 "or claim runtime correctness."
             ),
             limitations: limitations(resolved.project_config_state),
-        }
+        };
+        (status, resolved.canonical_root)
     }
 }
 
@@ -211,6 +221,10 @@ fn limitations(project_config_state: ProjectConfigState) -> Vec<&'static str> {
 struct ResolvedRoot {
     root: RootStatus,
     project_config_state: ProjectConfigState,
+    /// The validated canonical root path, retained process-locally for
+    /// in-process consumers (MCP refresh). Always `None` for an unavailable
+    /// root and never part of the serialized status document.
+    canonical_root: Option<PathBuf>,
 }
 
 fn resolve_root(explicit_root: Option<PathBuf>) -> ResolvedRoot {
@@ -286,6 +300,7 @@ fn validate_root(root: PathBuf, source: RootSource) -> ResolvedRoot {
             error_code: None,
         },
         project_config_state,
+        canonical_root: Some(canonical),
     }
 }
 
@@ -303,6 +318,7 @@ fn unavailable_root_with_source(source: RootSource, error_code: RootErrorCode) -
             error_code: Some(error_code),
         },
         project_config_state: ProjectConfigState::Unavailable,
+        canonical_root: None,
     }
 }
 
