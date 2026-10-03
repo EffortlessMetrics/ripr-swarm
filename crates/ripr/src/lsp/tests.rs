@@ -78,6 +78,8 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{LspService, Server};
 
+mod consumed_source_tests;
+
 /// Render a fixture path the way the LSP surface renders paths.
 ///
 /// The server normalizes every emitted path to forward slashes on all
@@ -938,6 +940,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         flow_sinks: Vec::new(),
         activation: ActivationEvidence::default(),
         stop_reasons: Vec::new(),
+        related_tests_matched_total: None,
         related_tests: vec![RelatedTest {
             name: "test_discounts".to_string(),
             file: std::path::PathBuf::from("tests/lib.rs"),
@@ -988,6 +991,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
 
     let snapshot = AnalysisSnapshot {
         root: std::path::PathBuf::from(root),
+        rust_consumed_sources: Default::default(),
         input_identity: None,
         base: None,
         mode: crate::app::Mode::Draft,
@@ -1000,6 +1004,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -4505,6 +4510,335 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
         "file:///workspace/tests/pricing.rs"
     );
     assert_eq!(commands[9].2[0]["line"], 12);
+    Ok(())
+}
+
+/// #4668: the editor workspace is not a git repository in this fixture, so
+/// the RepairCard action must fail closed to omission like every other
+/// producer-gated handoff, keeping the legacy action list byte-identical.
+#[test]
+fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), String> {
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if commands
+        .iter()
+        .any(|(title, _, _)| title == "Agent handoff: copy repair card")
+    {
+        return Err(
+            "the repair card action must fail closed when the head cannot be resolved".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// #4668: inside a real repository the seam actions carry the same
+/// RepairCardV1 the CLI `ripr agent card` handoff assembles — canonical
+/// identity, live-head snapshot binding, the ratified detail budget, and the
+/// fail-closed route gate all ride on the wire unchanged.
+#[test]
+fn seam_code_actions_include_the_assembled_repair_card_in_a_git_workspace() -> Result<(), String> {
+    let root = unique_lsp_test_root("repair-card-action")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    let Some((_, command, arguments)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Agent handoff: copy repair card")
+    else {
+        return Err(format!(
+            "repair card action missing; commands: {:?}",
+            commands
+                .iter()
+                .map(|(title, _, _)| title)
+                .collect::<Vec<_>>()
+        ));
+    };
+    if command.as_str() != COPY_CONTEXT_COMMAND {
+        return Err(format!(
+            "repair card must ride the advertised copy command, got {command}"
+        ));
+    }
+    let Some(target) = arguments.first() else {
+        return Err("repair card action carries no target".to_string());
+    };
+    if target["label"] != serde_json::json!("repair_card") {
+        return Err(format!("unexpected repair card label: {target:?}"));
+    }
+    if target["seam_id"] != serde_json::json!(seam.seam.id().as_str()) {
+        return Err(format!("repair card seam identity drifted: {target:?}"));
+    }
+    let Some(packet) = target["packet"].as_str() else {
+        return Err("repair card target carries no wire card".to_string());
+    };
+    let wire: crate::domain::RepairCardV1 = serde_json::from_str(packet)
+        .map_err(|error| format!("repair card wire shape drifted: {error}"))?;
+    if wire.schema_version != crate::domain::REPAIR_CARD_SCHEMA_VERSION {
+        return Err("repair card schema version drifted".to_string());
+    }
+    if wire.subject.seam_id != seam.seam.id().as_str() {
+        return Err("repair card subject does not name the seam".to_string());
+    }
+    let head_output = lsp_scope_git_output(root.path(), &["rev-parse", "HEAD"])?;
+    let head = String::from_utf8_lossy(&head_output.stdout)
+        .trim()
+        .to_string();
+    if wire.snapshot.repository_head != head {
+        return Err(
+            "repair card must bind the live repository head like the CLI producer".to_string(),
+        );
+    }
+    if wire.detail_references.len() != 9 {
+        return Err(format!(
+            "expected nine detail references, got {}",
+            wire.detail_references.len()
+        ));
+    }
+    // No finding names this seam in the fixture snapshot, so the shared
+    // instruction authority projects unavailable and the route gate stays
+    // closed: the wire card must not present a next action.
+    if wire.instruction.state != crate::domain::FixInstructionState::Unavailable {
+        return Err("missing witness must project an unavailable instruction".to_string());
+    }
+    if wire.next_action.is_some() {
+        return Err("a closed route gate must not surface a next action".to_string());
+    }
+    if wire.detail_summary.selected_bytes > crate::domain::DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES
+        || wire.detail_references.len() > crate::domain::DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS
+    {
+        return Err("the projected card exceeded the ratified default budget".to_string());
+    }
+    Ok(())
+}
+
+/// #4668 review follow-up: a finding that names the seam's canonical gap
+/// binds the witness through the same owner-match authority the CLI card
+/// uses, so the editor wire card carries the finding identity, the
+/// witness-derived instruction, and the `ripr explain` detail route — and
+/// the next-action gate stays coupled to the shared route-exposition flip
+/// instead of the editor re-deciding it.
+#[test]
+fn seam_repair_card_binds_a_finding_witness_in_a_git_workspace() -> Result<(), String> {
+    let root = unique_lsp_test_root("repair-card-witness")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let seam = sample_classified_seam();
+    let gap = crate::analysis::canonical_gap::canonical_gap_identity(&seam)
+        .ok_or_else(|| "sample seam must own a canonical gap identity".to_string())?;
+    let diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut finding = sample_finding();
+    finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+        id: gap.id.clone(),
+        language: "rust".to_string(),
+        file: "src/pricing.rs".to_string(),
+        owner: seam.seam.owner().to_string(),
+        behavior_kind: seam.seam.kind().as_str().to_string(),
+        probe_kind: "predicate".to_string(),
+        normalized_discriminator: gap.missing_discriminator.clone(),
+    });
+    finding.related_tests = vec![crate::domain::RelatedTest {
+        name: "below_threshold_has_no_discount".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        oracle: Some("assert_eq!(discounted_total(100, 100), 90)".to_string()),
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
+        relation_confidence: Some(crate::domain::RelationConfidence::High),
+    }];
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        vec![finding.clone()],
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    let Some((_, _, arguments)) = commands
+        .iter()
+        .find(|(title, _, _)| title == "Agent handoff: copy repair card")
+    else {
+        return Err("repair card action missing for a witness-bearing seam".to_string());
+    };
+    let Some(target) = arguments.first() else {
+        return Err("repair card action carries no target".to_string());
+    };
+    let Some(packet) = target["packet"].as_str() else {
+        return Err("repair card target carries no wire card".to_string());
+    };
+    let wire: crate::domain::RepairCardV1 = serde_json::from_str(packet)
+        .map_err(|error| format!("repair card wire shape drifted: {error}"))?;
+    if wire.subject.finding_id.as_deref() != Some(finding.id.as_str()) {
+        return Err("the witness-bound card must name the finding identity".to_string());
+    }
+    if !wire.instruction.has_fix_site {
+        return Err("the witness fix site must bind on the editor card".to_string());
+    }
+    let explain_route = format!("ripr explain {}", finding.id);
+    let fix_instruction_current = wire.detail_references.iter().any(|reference| {
+        reference.family == crate::domain::RepairCardDetailFamily::FixInstruction
+            && reference.state == crate::domain::RepairCardDetailState::Current
+            && reference.route.as_deref() == Some(explain_route.as_str())
+    });
+    if !fix_instruction_current {
+        return Err("the witness detail family must ride as a current explain route".to_string());
+    }
+    // The next-action gate is the shared flip's job, not the editor's: its
+    // presence must equal the route-exposition decision over the typed card.
+    let route_open = crate::domain::repair_card_route_exposable(
+        wire.instruction.state,
+        wire.readiness.repair_ready,
+    );
+    if wire.next_action.is_some() != route_open {
+        return Err("the editor card must not re-decide the next-action gate".to_string());
+    }
+    Ok(())
+}
+
+/// #4668: a seam diagnostic the current snapshot no longer carries suppresses
+/// the repair card action with the rest of the seam surface — a stale card
+/// route is never offered as current.
+#[test]
+fn repair_card_action_suppressed_for_stale_seam_diagnostic() -> Result<(), String> {
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    // The snapshot publishes no diagnostics for the URI, so the cited seam
+    // diagnostic is stale against it.
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+    if commands
+        .iter()
+        .any(|(title, _, _)| title == "Agent handoff: copy repair card")
+    {
+        return Err("a stale seam diagnostic must suppress the repair card action".to_string());
+    }
+    Ok(())
+}
+
+/// #4668: the seam hover projects a bounded repair-card summary — identity,
+/// instruction state, next-action presence, and detail availability — while
+/// the complete card rides behind the copy action.
+#[test]
+fn seam_hover_projects_bounded_repair_card_section_in_a_git_workspace() -> Result<(), String> {
+    let root = unique_lsp_test_root("repair-card-hover")?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    std::fs::write(root.path().join("fixture.txt"), "fixture\n")
+        .map_err(|error| format!("write fixture file failed: {error}"))?;
+    run_lsp_scope_git(root.path(), &["add", "."])?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    let seam = sample_classified_seam();
+    let diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
+        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri,
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.classified_seams = vec![seam.clone()];
+    let markdown =
+        match classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot)).contents {
+            HoverContents::Markup(markup) => markup.value,
+            other => return Err(format!("expected markdown hover, got {other:?}")),
+        };
+    for needle in [
+        "## Repair card",
+        "Instruction: `unavailable`",
+        "Next action: none (no producer-owned route)",
+        "3 current · 0 stale · 6 unavailable · 0 other of 9 families",
+    ] {
+        if !markdown.contains(needle) {
+            return Err(format!("missing {needle:?} in seam hover:\n{markdown}"));
+        }
+    }
+    Ok(())
+}
+
+/// #4668: without a resolvable producer fact the hover section fails closed
+/// to omission instead of weakening the card it describes.
+#[test]
+fn seam_hover_omits_repair_card_section_outside_a_git_workspace() -> Result<(), String> {
+    let markdown = seam_hover_markdown_for(&sample_classified_seam())?;
+    if markdown.contains("## Repair card") {
+        return Err(
+            "the repair card section must fail closed when the head cannot be resolved".to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -10596,6 +10930,195 @@ fn workspace_folder_transitions_rejected_event_warns_a_generic_client() -> Resul
     })
 }
 
+/// Initialize with one folder and return the `window/showMessage` texts the
+/// server sent before its initialize response (#4532).
+async fn initialize_show_messages(
+    client: &mut WorkspaceFolderTransitionsClient,
+    folders: serde_json::Value,
+    capabilities: serde_json::Value,
+) -> Result<Vec<String>, String> {
+    let id = client.request_id();
+    write_lsp_message(
+        &mut client.writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "workspaceFolders": folders,
+                "initializationOptions": { "checkMode": "instant" },
+                "capabilities": capabilities
+            }
+        }),
+    )
+    .await?;
+    let mut shown = Vec::new();
+    loop {
+        let message = read_lsp_message(&mut client.reader).await?;
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+            return Ok(shown);
+        }
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("window/showMessage") {
+            shown.push(
+                message["params"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_repo_config_at_initialize_is_shown_to_a_generic_client_only() -> Result<(), String> {
+    // #4532: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so the paused analysis must reach it on the
+    // standard channel. The VS Code integration renders the status itself.
+    run_workspace_folder_transitions_exchange("config failure disclosure did not complete", async {
+        let root = unique_lsp_test_root("config-failure-shown")?;
+        std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+        std::fs::write(
+            root.path().join("ripr.toml"),
+            "[analysis]\nmode = \"turbo\"\n",
+        )
+        .map_err(|err| format!("write ripr.toml failed: {err}"))?;
+        let uri = file_uri_for_path(root.path())?;
+        let folders = serde_json::json!([workspace_folder_json(&uri)]);
+
+        let mut generic = WorkspaceFolderTransitionsClient::spawn();
+        let shown =
+            initialize_show_messages(&mut generic, folders.clone(), serde_json::json!({})).await?;
+        generic.finish().await?;
+        if !shown.iter().any(|text| {
+            text.starts_with("ripr config load failed; analysis is paused")
+                && text.contains("analysis.mode `turbo`")
+        }) {
+            return Err(format!(
+                "a generic client must be shown the config failure: {shown:?}"
+            ));
+        }
+
+        let mut integrated = WorkspaceFolderTransitionsClient::spawn();
+        let shown = initialize_show_messages(
+            &mut integrated,
+            folders,
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+        )
+        .await?;
+        integrated.finish().await?;
+        if shown.iter().any(|text| text.contains("config load failed")) {
+            return Err(format!(
+                "the riprEditor integration renders the failure from its status: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Send one watched-file change for `ripr.toml`, then a `shutdown` request,
+/// and return the `window/showMessage` texts that arrived before the
+/// shutdown response. Notifications are handled in order, so the change's
+/// disclosure lands before the response.
+async fn reload_show_messages_then_shutdown(
+    client: &mut WorkspaceFolderTransitionsClient,
+    config_uri: &str,
+) -> Result<Vec<String>, String> {
+    write_lsp_message(
+        &mut client.writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "workspace/didChangeWatchedFiles",
+            "params": {"changes": [{"uri": config_uri, "type": 2}]}
+        }),
+    )
+    .await?;
+    let id = client.request_id();
+    write_lsp_message(
+        &mut client.writer,
+        serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "shutdown", "params": null}),
+    )
+    .await?;
+    let mut shown = Vec::new();
+    loop {
+        let message = read_lsp_message(&mut client.reader).await?;
+        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+            return Ok(shown);
+        }
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("window/showMessage") {
+            shown.push(
+                message["params"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+        }
+    }
+}
+
+#[test]
+fn a_reload_that_breaks_ripr_toml_is_shown_once_without_source_text() -> Result<(), String> {
+    // #4532 review: the reload path shows the failure to a generic client
+    // once per distinct error, and the notice carries the source-free
+    // summary, never the TOML parser's excerpt of the file.
+    run_workspace_folder_transitions_exchange("config reload disclosure did not complete", async {
+        let root = unique_lsp_test_root("config-reload-shown")?;
+        std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+        let uri = file_uri_for_path(root.path())?;
+        let config_uri = file_uri_for_path(&root.path().join("ripr.toml"))?;
+        let mut client = WorkspaceFolderTransitionsClient::spawn();
+        let shown = initialize_show_messages(
+            &mut client,
+            serde_json::json!([workspace_folder_json(&uri)]),
+            serde_json::json!({}),
+        )
+        .await?;
+        if !shown.is_empty() {
+            return Err(format!("a missing config must not warn: {shown:?}"));
+        }
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        std::fs::write(root.path().join("ripr.toml"), "secret_marker = [\n")
+            .map_err(|err| format!("write ripr.toml failed: {err}"))?;
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": config_uri.as_str(), "type": 2}]}
+            }),
+        )
+        .await?;
+        let first = read_lsp_request(&mut client.reader, "window/showMessage").await?;
+        let text = first["params"]["message"].as_str().unwrap_or_default();
+        if !text.starts_with("ripr config load failed; analysis is paused:")
+            || !text.contains("invalid ripr.toml")
+            || text.contains("secret_marker")
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the reload notice must be the one-line source-free summary: {first}"
+            ));
+        }
+        let repeated = reload_show_messages_then_shutdown(&mut client, config_uri.as_str()).await?;
+        if !repeated.is_empty() {
+            return Err(format!(
+                "an unchanged error must not be shown again: {repeated:?}"
+            ));
+        }
+        write_lsp_message(
+            &mut client.writer,
+            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+        )
+        .await
+    })
+}
+
 #[test]
 fn workspace_folder_transitions_duplicate_and_contradictory_events_rejected_typed()
 -> Result<(), String> {
@@ -12073,6 +12596,7 @@ fn sample_analysis_snapshot(
     );
     AnalysisSnapshot {
         root,
+        rust_consumed_sources: Default::default(),
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -12085,6 +12609,7 @@ fn sample_analysis_snapshot(
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -12569,7 +13094,20 @@ fn normalize_lsp_action_argument(
     // machine-independent while still pinning the bound shape.
     let mut normalized = serde_json::Map::new();
     for (key, value) in object {
-        if key == "uri"
+        // RIPR-SPEC-0198: the repair-card packet binds the enclosing
+        // checkout's live HEAD plus workspace-absolute redirect targets,
+        // which a committed fixture cannot pin. The wire shape, head
+        // binding, budget, and family detail references are pinned by the
+        // dedicated repair-card tests, so the golden only records the
+        // placeholder for the copied packet.
+        if key == "packet"
+            && object.get("label").and_then(|label| label.as_str()) == Some("repair_card")
+        {
+            normalized.insert(
+                key.clone(),
+                serde_json::json!("<repair-card-wire-pinned-by-dedicated-tests>"),
+            );
+        } else if key == "uri"
             && let Some(uri) = value.as_str()
             && uri.starts_with("file://")
         {
@@ -12824,6 +13362,7 @@ pub(super) fn sample_finding() -> Finding {
         flow_sinks: Vec::new(),
         activation: crate::domain::ActivationEvidence::default(),
         stop_reasons: Vec::new(),
+        related_tests_matched_total: None,
         related_tests: Vec::new(),
         recommended_next_step: Some("Add an exact boundary assertion.".to_string()),
         language: None,
@@ -17315,10 +17854,38 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
             .iter()
             .filter_map(|message| message["params"]["value"]["kind"].as_str())
             .collect();
-        if kinds != vec!["begin", "end"] {
+        // #4811: producer stage reports now sit between begin and end. The
+        // terminal contract is begin -> ordered stage reports -> exactly
+        // one end; a failed run must never emit completed.
+        if kinds.first().copied() != Some("begin") || kinds.last().copied() != Some("end") {
             return Err(format!(
-                "failed refresh must begin then end exactly once: {progress:?}"
+                "failed refresh must begin, report stages, then end exactly once: {progress:?}"
             ));
+        }
+        if kinds.iter().filter(|kind| **kind == "end").count() != 1 {
+            return Err(format!(
+                "failed refresh must end exactly once: {progress:?}"
+            ));
+        }
+        if kinds
+            .iter()
+            .any(|kind| !matches!(*kind, "begin" | "report" | "end"))
+        {
+            return Err(format!(
+                "only begin/report/end records are allowed: {progress:?}"
+            ));
+        }
+        let reports: Vec<&str> = progress
+            .iter()
+            .filter(|message| message["params"]["value"]["kind"] == "report")
+            .filter_map(|message| message["params"]["value"]["message"].as_str())
+            .collect();
+        for report in &reports {
+            if report.contains("complete") {
+                return Err(format!(
+                    "a failed run must never report a completed stage: {progress:?}"
+                ));
+            }
         }
         let begin = &progress[0]["params"];
         if begin["token"].as_str() != Some(token.as_str())
@@ -17336,14 +17903,20 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
                 "begin must announce the analyzing phase: {begin_message}"
             ));
         }
-        if !begin["value"]["percentage"].is_null()
-            || !progress[1]["params"]["value"]["percentage"].is_null()
-        {
-            return Err(format!(
-                "no fabricated percentages may be emitted: {progress:?}"
-            ));
+        for message in &progress {
+            if message["params"]["token"].as_str() != Some(token.as_str()) {
+                return Err(format!("progress drifted to another token: {progress:?}"));
+            }
+            if !message["params"]["value"]["percentage"].is_null() {
+                return Err(format!(
+                    "no fabricated percentages may be emitted: {progress:?}"
+                ));
+            }
         }
-        let end = &progress[1]["params"];
+        let Some(end_message) = progress.last() else {
+            return Err("progress journey must not be empty".to_string());
+        };
+        let end = &end_message["params"];
         let end_message = end["value"]["message"]
             .as_str()
             .ok_or_else(|| "end carried no terminal message".to_string())?;
@@ -17376,6 +17949,218 @@ fn work_done_progress_capability_absent_refresh_emits_no_traffic() -> Result<(),
             ));
         }
         drop(root);
+        Ok(())
+    })
+}
+
+/// Drive one real refresh over the wire against a healthy fixture
+/// workspace, answering `window/workDoneProgress/create`, and collect every
+/// `$/progress` notification. The exact measured-journey identity (fixture,
+/// transport, server build) is the built test binary driven through the
+/// in-process duplex server, mirroring the framed LSP journeys.
+async fn run_wire_refresh_collecting_stage_progress(
+    root: &Path,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut client_read, mut client_write) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.to_path_buf();
+    let (service, socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+
+    let root_uri = file_uri_for_path(root)?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "rootUri": root_uri.as_str(),
+                "initializationOptions": {
+                    "baseRef": "HEAD",
+                    "checkMode": "instant",
+                    "diagnosticProfile": "full"
+                },
+                "capabilities": {
+                    "window": {"workDoneProgress": true}
+                }
+            }
+        }),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 1).await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+    )
+    .await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "workspace/executeCommand",
+            "params": {"command": REFRESH_COMMAND, "arguments": []}
+        }),
+    )
+    .await?;
+
+    let mut creates = Vec::new();
+    let mut progress = Vec::new();
+    tokio::time::timeout(Duration::from_mins(1), async {
+        loop {
+            let message = read_lsp_message(&mut client_read).await?;
+            if message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
+                && message.get("method").is_none()
+            {
+                return Ok::<(), String>(());
+            }
+            match message.get("method").and_then(serde_json::Value::as_str) {
+                Some("window/workDoneProgress/create") => {
+                    let id = message
+                        .get("id")
+                        .cloned()
+                        .ok_or_else(|| "create request carried no id".to_string())?;
+                    creates.push(message.clone());
+                    write_lsp_message(
+                        &mut client_write,
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+                    )
+                    .await?;
+                }
+                Some("$/progress") => progress.push(message.clone()),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .map_err(|_elapsed| {
+        format!("refresh timed out; creates={creates:?} progress={progress:?}")
+    })??;
+
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null}),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 3).await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+    )
+    .await?;
+    tokio::time::timeout(Duration::from_secs(10), server_task)
+        .await
+        .map_err(|_elapsed| "server did not stop after exit".to_string())?
+        .map_err(|err| format!("server task failed: {err}"))?;
+    Ok((creates, progress))
+}
+
+#[test]
+fn work_done_progress_stage_reports_through_real_refresh_journey() -> Result<(), String> {
+    // #4811 measured journey: one real long-running-shaped refresh over the
+    // wire demonstrates bounded visible stage activity (begin -> ordered
+    // stage reports -> exactly one end) with honest denominators (no
+    // percentages) and no path or source leakage.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("progress-stage-journey")?;
+        let (creates, progress) = run_wire_refresh_collecting_stage_progress(temp.path()).await?;
+
+        if creates.len() != 1 {
+            return Err(format!(
+                "accepted refresh must create exactly one progress token: {creates:?}"
+            ));
+        }
+        let token = creates[0]["params"]["token"]
+            .as_str()
+            .ok_or_else(|| "create request carried no token".to_string())?
+            .to_string();
+        if !token.starts_with("ripr-analysis-") {
+            return Err(format!("unexpected progress token: {token}"));
+        }
+        if progress.is_empty() {
+            return Err("capable client received no $/progress traffic".to_string());
+        }
+        for message in &progress {
+            if message["params"]["token"].as_str() != Some(token.as_str()) {
+                return Err(format!("progress drifted to another token: {progress:?}"));
+            }
+            if !message["params"]["value"]["percentage"].is_null() {
+                return Err(format!(
+                    "no fabricated percentages may be emitted: {progress:?}"
+                ));
+            }
+        }
+
+        let kinds: Vec<&str> = progress
+            .iter()
+            .filter_map(|message| message["params"]["value"]["kind"].as_str())
+            .collect();
+        if kinds.first().copied().unwrap_or("") != "begin" {
+            return Err(format!("journey must open with begin: {progress:?}"));
+        }
+        if kinds.last().copied().unwrap_or("") != "end" {
+            return Err(format!("journey must close with end: {progress:?}"));
+        }
+        let ends = kinds.iter().filter(|kind| **kind == "end").count();
+        if ends != 1 {
+            return Err(format!("exactly one terminal end is required: {progress:?}"));
+        }
+        // Bounded visible activity: begin + at most three stage reports +
+        // the publishing boundary + end. No heartbeat flood exists: the
+        // producer vocabulary is closed and consecutive duplicates collapse.
+        if progress.len() > 6 {
+            return Err(format!(
+                "progress records exceeded the declared ceiling: {progress:?}"
+            ));
+        }
+
+        let messages: Vec<&str> = progress
+            .iter()
+            .filter(|message| message["params"]["value"]["kind"] == "report")
+            .filter_map(|message| message["params"]["value"]["message"].as_str())
+            .collect();
+        for stage_message in ["loading input", "building output"] {
+            if !messages.iter().any(|message| message.contains(stage_message)) {
+                return Err(format!(
+                    "stage report {stage_message:?} missing from the journey: {progress:?}"
+                ));
+            }
+        }
+        for message in messages {
+            if message.contains(temp.path().to_string_lossy().as_ref())
+                || message.contains('/')
+                || message.contains('\\')
+                || message.contains('%')
+            {
+                return Err(format!(
+                    "stage report leaked a path or percentage: {message}"
+                ));
+            }
+        }
+
+        let Some(last) = progress.last() else {
+            return Err("progress journey must not be empty".to_string());
+        };
+        let end_message = last["params"]["value"]["message"]
+            .as_str()
+            .ok_or_else(|| "end carried no terminal message".to_string())?;
+        let success_family = [
+            "analysis complete",
+            "analysis completed with limited evidence",
+        ];
+        if !success_family.iter().any(|phrase| end_message.contains(phrase)) {
+            return Err(format!(
+                "healthy fixture journey must end successfully or disclosed-limited, never failed/cancelled: {end_message}"
+            ));
+        }
         Ok(())
     })
 }
@@ -17427,7 +18212,10 @@ fn quarantine_finding(id: &str, file: &str) -> Finding {
     finding
 }
 
-fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDiagnostics {
+fn quarantine_workspace_diagnostics(
+    fixture: &QuarantineFixture,
+    source_a: &str,
+) -> WorkspaceDiagnostics {
     // `headline_eligible` is the producer-owned eligibility signal the
     // delivery budget reads (#1973); without it the stored selection omits
     // the diagnostics and pull/push serve an empty set.
@@ -17454,8 +18242,15 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         1,
         &LspAnalysisConfig::default(),
     );
+    // This synthetic snapshot explicitly names the bytes it purports to have
+    // consumed. Preparation must never mint that claim from a later disk read.
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
+    rust_consumed_sources.record(Path::new("src/a.rs"), Some(source_a.as_bytes()));
+    rust_consumed_sources.record(Path::new("src/b.rs"), Some(QUARANTINE_TEXT_B.as_bytes()));
     let snapshot = AnalysisSnapshot {
         root: fixture.root.clone(),
+        rust_consumed_sources,
         input_identity: Some(input_identity),
         base: Some("origin/main".to_string()),
         mode: Mode::Draft,
@@ -17468,6 +18263,7 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
         partial_scope: None,
@@ -17492,9 +18288,10 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
 fn commit_quarantine_snapshot(
     backend: &Backend,
     fixture: &QuarantineFixture,
+    source_a: &str,
 ) -> Result<(), String> {
     backend
-        .refresh_plan(quarantine_workspace_diagnostics(fixture))
+        .refresh_plan(quarantine_workspace_diagnostics(fixture, source_a))
         .ok_or_else(|| "expected committed snapshot".to_string())?;
     Ok(())
 }
@@ -17604,7 +18401,7 @@ async fn dirty_document_withdraws_line_local_diagnostics_and_discloses() -> Resu
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Clean documents are served on pull.
     let served = pull_document_json(backend, &fixture.uri_a, None).await?;
@@ -17739,7 +18536,7 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -17848,7 +18645,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     backend
         .did_change(quarantine_change_params(
             &fixture.uri_a,
@@ -17881,7 +18678,7 @@ async fn save_with_changed_content_lifts_quarantine_and_resumes_refresh() -> Res
 
     // The refresh commits: the analyzed saved content catches up with the
     // buffer and the quarantine lifts.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -17943,7 +18740,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // A rejected incremental change (position past the line end) disowns the
     // retained buffer and enters the fail-closed quarantine.
@@ -18005,7 +18802,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
     {
         return Err("saved identity must stay the persisted bytes".to_string());
     }
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18033,7 +18830,7 @@ async fn save_with_unchanged_content_dedups_and_keeps_lifted_quarantine() -> Res
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     // Record the initial save so the dedup path has a recorded digest.
     backend
         .did_save(quarantine_save_params(&fixture.uri_a, QUARANTINE_TEXT_A))
@@ -18152,7 +18949,7 @@ async fn repeated_open_change_save_cycles_keep_identities_consistent() -> Result
         }
 
         // The refresh analyzes the new saved content and the quarantine lifts.
-        commit_quarantine_snapshot(backend, &fixture)?;
+        commit_quarantine_snapshot(backend, &fixture, &dirty_text)?;
         let state = backend
             .document_state_for_test(&fixture.uri_a)
             .ok_or_else(|| "expected document state".to_string())?;
@@ -18200,7 +18997,7 @@ async fn unsaved_buffer_text_never_enters_snapshot_or_status_payloads() -> Resul
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     const UNSAVED: &str = "fn a() -> bool { UNSAVED_BUFFER_MARKER }";
     backend
@@ -18291,7 +19088,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     backend
         .did_open(quarantine_open_params(&fixture.uri_b, QUARANTINE_TEXT_B))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
 
     // Save new content; the document is quarantined until the new saved
     // content is analyzed. The fixture mirrors the persisted bytes.
@@ -18308,7 +19105,10 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     // superseded: it never becomes latest_analysis. Document identities
     // must not advance with it.
     let transaction = backend
-        .prepare_refresh_transaction(quarantine_workspace_diagnostics(&fixture))
+        .prepare_refresh_transaction(quarantine_workspace_diagnostics(
+            &fixture,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
         .ok_or_else(|| "expected prepared transaction".to_string())?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
@@ -18340,7 +19140,7 @@ async fn superseded_transaction_leaves_document_state_unadvanced() -> Result<(),
     drop(transaction);
 
     // When a transaction does commit, identities advance with it.
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18364,7 +19164,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     backend
         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
         .await;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18379,7 +19179,7 @@ async fn externally_changed_disk_content_does_not_falsely_clear_quarantine() -> 
     // old-content buffer must not be marked clean against them.
     std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
         .map_err(|err| format!("external rewrite failed: {err}"))?;
-    commit_quarantine_snapshot(backend, &fixture)?;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A_DIRTY)?;
     let state = backend
         .document_state_for_test(&fixture.uri_a)
         .ok_or_else(|| "expected document state".to_string())?;
@@ -18434,6 +19234,7 @@ where
     let mut notifications = Vec::new();
     let mut log_seen = false;
     let mut status_seen = false;
+    let mut observed_run_statuses = std::collections::BTreeSet::new();
     tokio::time::timeout(Duration::from_mins(1), async {
         while !(log_seen && status_seen) {
             let message = read_lsp_message(reader).await?;
@@ -18459,7 +19260,11 @@ where
                     notifications.push(message);
                 }
                 Some("ripr/analysisStatus") => {
-                    if message["params"]["run_status"].as_str() == Some(expected_run_status) {
+                    let run_status = message["params"]["run_status"]
+                        .as_str()
+                        .unwrap_or("<missing>");
+                    observed_run_statuses.insert(run_status.to_string());
+                    if run_status == expected_run_status {
                         status_seen = true;
                     }
                     notifications.push(message);
@@ -18473,7 +19278,7 @@ where
     .await
     .map_err(|_elapsed| {
         format!(
-            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen})"
+            "timed out waiting for refresh completion log and run_status {expected_run_status:?} (log_seen={log_seen}, status_seen={status_seen}, observed_run_statuses={observed_run_statuses:?})"
         )
     })??;
     Ok(notifications)
@@ -19713,7 +20518,7 @@ fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(),
             message.get("method").and_then(serde_json::Value::as_str) == Some("$/progress")
                 && message["params"]["value"]["kind"].as_str() == Some("end")
                 && message["params"]["value"]["message"].as_str()
-                    == Some("analysis limited (run status: limited)")
+                    == Some("analysis completed with limited evidence")
         });
         if !progress_end_limited {
             return Err(format!(

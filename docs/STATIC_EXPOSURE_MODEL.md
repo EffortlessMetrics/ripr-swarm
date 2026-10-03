@@ -205,6 +205,34 @@ or import alias) or the changed sink (the attribute, field, or value the change
 touches). A strong-but-orthogonal oracle downgrades to `weakly_exposed` with a
 typed reason and routes a repair, rather than being silently called covered.
 
+For Rust diff findings, `return_value`, `error_path` and `predicate` evidence from a bare
+`assert_eq!`, execution and macro binding must be statically established before
+matching, observation or oracle strength can credit that assertion
+(RIPR-SPEC-0197). Family-specific error/boundary meaning and owner-return pins
+remain separate decisions; a valid operand cannot establish its own execution. Refused deferred,
+conditional, uncollected or ambiguous assertion contexts are not weak protection: if no
+other oracle remains, Observe and Discriminate are `no` and the class is
+`reachable_unrevealed`. That means no statically established oracle, not proof
+of runtime unreachability. Related-test provenance remains visible without an
+oracle strength. The headline confidence is the existing advisory stage score,
+not a calibrated probability or measured protection percentage.
+Test-build availability uses the shared cfg predicate authority and existing
+module provenance; unknown feature/target gates and raw attribute spellings remain
+non-confirming. Raw heads are refused in this private query; cached source-role
+classification is unchanged. Filtering
+an assertion cannot make a surviving unrelated oracle the test's sole assertion
+for a singleton heuristic. Predicate boundary pairing consumes the same admitted
+assertion decision, so an ignored boundary equality cannot borrow an admitted
+far-input oracle to restore exposure. Repository test-grip has its own authority;
+this bounded diff-classifier change does not claim execution parity there.
+
+For Rust error paths, error observation and changed-reader/variant matching use
+the known assertion macros' operands, not diagnostic formatting arguments (#4748). Neither an
+error word in a message nor an error-valued formatting expression establishes an
+error discriminator. Canonical oracle extraction applies the same boundary so a
+diagnostic cannot manufacture a trusted error kind before reveal analysis.
+The complete assertion remains visible in the report for inspection.
+
 ### Identity beats token overlap
 
 A changed owner or sink may share *words* with unrelated tests; that overlap is

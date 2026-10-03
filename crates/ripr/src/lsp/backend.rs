@@ -21,6 +21,7 @@ use super::payload_bounds::{
     check_list_actionable_items_params, check_previous_result_ids,
 };
 use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
+use super::progress_stages::{STAGE_DRAIN_BUDGET, StageReportBridge, drain_stage_reports};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScheduler,
     RefreshScope,
@@ -178,7 +179,21 @@ pub(super) struct Backend {
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
+    #[cfg(test)]
+    consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
     pub(super) progress: Arc<AnalysisProgressTracker>,
+}
+
+#[cfg(test)]
+type ConsumedSourceBarrierChannels = (
+    tokio::sync::oneshot::Receiver<(u64, AnalysisSnapshot)>,
+    tokio::sync::oneshot::Sender<()>,
+);
+
+#[cfg(test)]
+struct ConsumedSourceBarrier {
+    reached: tokio::sync::oneshot::Sender<(u64, AnalysisSnapshot)>,
+    release: tokio::sync::oneshot::Receiver<()>,
 }
 
 /// Registration id of the root-anchored diagnostics-input watchers (#4896).
@@ -268,6 +283,8 @@ impl Backend {
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            consumed_source_barrier: Mutex::new(None),
             progress: Arc::new(AnalysisProgressTracker::new(client.clone())),
             client,
         }
@@ -435,6 +452,10 @@ impl Backend {
         self.log_refresh_started(request).await;
         let root = request.root.clone();
         let config = request.config.clone();
+        // Snapshot only admitted open paths before the blocking analysis.
+        // The Rust adapter still discovers and reads the saved bytes itself;
+        // a later document change cannot add paths to this invocation.
+        let open_rust_index_paths = self.open_rust_index_paths_for_root(&root);
         let defer_seam_inventory = request.scope.defer_seam_inventory();
         let cancellation = request.cancellation.clone();
         let execution_gate = self.refresh_scheduler.execution_gate();
@@ -451,6 +472,19 @@ impl Backend {
             tokio::time::sleep(deadline).await;
             deadline_token.cancel(AnalysisAbortKind::DeadlineExceeded);
         }));
+        // #4811: bridge the producer-owned stage boundaries onto this
+        // attempt's work-done token while the blocking analysis runs. The
+        // sink side only queues events; a drain task on the async runtime
+        // forwards them as bounded `$/progress` reports. Best-effort: the
+        // bridge can never change the analysis result, and the drain budget
+        // bounds how long a stalled client may delay result handling.
+        let stage_bridge = Arc::new(StageReportBridge::new());
+        let stage_drain = {
+            let bridge = Arc::clone(&stage_bridge);
+            let tracker = Arc::clone(&self.progress);
+            tokio::spawn(async move { drain_stage_reports(&bridge, &tracker, generation).await })
+        };
+        let bridge_for_blocking = Arc::clone(&stage_bridge);
         let diagnostics_result = tokio::task::spawn_blocking(move || {
             let _execution = match execution_gate.lock() {
                 Ok(guard) => guard,
@@ -464,10 +498,29 @@ impl Backend {
                 &config,
                 defer_seam_inventory,
                 &cancellation,
+                &open_rust_index_paths,
+                Some(bridge_for_blocking.as_ref() as &dyn crate::app::AnalysisProgressSink),
             )
         })
         .await;
         drop(deadline_timer);
+        // The producer has returned: finish the bridge and let the drain
+        // task forward everything queued. The drain is bounded: a stalled
+        // client may delay, never block, diagnostics handling or the next
+        // refresh. Stage reports always precede the outcome-derived end
+        // emitted by the refresh loop after this request resolves.
+        stage_bridge.finish();
+        let _ = stage_drain.await;
+        // Defensive final forward under the same budget (the tracker
+        // suppresses consecutive duplicates, so a double forward is a
+        // no-op). Only runs when the drain task could not cover the queue.
+        let progress = &self.progress;
+        let _ = tokio::time::timeout(STAGE_DRAIN_BUDGET, async {
+            while let Some(event) = stage_bridge.pop() {
+                progress.report_stage(generation, event.stage).await;
+            }
+        })
+        .await;
         let diagnostics = match diagnostics_result {
             Ok(Ok(mut diagnostics)) => {
                 diagnostics.snapshot.input_identity = Some(request.input_identity.clone());
@@ -537,6 +590,9 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         }
+        #[cfg(test)]
+        self.wait_consumed_source_barrier(generation, &diagnostics.snapshot)
+            .await;
         let summary = RefreshLogSummary::from_snapshot(generation, &diagnostics.snapshot)
             .with_enabled_languages(&enabled_languages);
         let Some(transaction) = self.prepare_refresh_transaction(diagnostics) else {
@@ -803,6 +859,18 @@ impl Backend {
         RefreshAttemptOutcome::Published
     }
 
+    fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
+        let Ok(documents) = self.documents.lock() else {
+            return Default::default();
+        };
+        documents
+            .documents
+            .keys()
+            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
     pub(super) async fn report_refresh_failure_after(
         &self,
         request: &RefreshRequest,
@@ -857,6 +925,41 @@ impl Backend {
         self.set_workspace_root_authority(WorkspaceRootAuthority::selected(root));
     }
 
+    #[cfg(test)]
+    pub(super) fn install_consumed_source_barrier_for_test(
+        &self,
+        config: LspAnalysisConfig,
+    ) -> Result<ConsumedSourceBarrierChannels, String> {
+        self.set_analysis_config(config);
+        let (reached, witness) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut slot = self
+            .consumed_source_barrier
+            .lock()
+            .map_err(|_poisoned_barrier| "consumed-source barrier lock poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("consumed-source barrier already installed".to_string());
+        }
+        *slot = Some(ConsumedSourceBarrier {
+            reached,
+            release: released,
+        });
+        Ok((witness, release))
+    }
+
+    #[cfg(test)]
+    async fn wait_consumed_source_barrier(&self, generation: u64, snapshot: &AnalysisSnapshot) {
+        let barrier = self
+            .consumed_source_barrier
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(barrier) = barrier {
+            let _ = barrier.reached.send((generation, snapshot.clone()));
+            let _ = barrier.release.await;
+        }
+    }
+
     pub(super) fn prepare_refresh_transaction(
         &self,
         diagnostics: WorkspaceDiagnostics,
@@ -869,6 +972,7 @@ impl Backend {
             snapshot.refresh.snapshot_id = Some("snapshot:legacy".to_string());
         }
         bind_seam_evidence_identity(&mut snapshot, &mut batches);
+        snapshot.prepare_diagnostic_uri_index();
         let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
             return None;
         };
@@ -882,17 +986,14 @@ impl Backend {
             snapshot.delivery_selection = Some(compute_delivery_selection(&snapshot));
         }
         let plan = diagnostic_refresh_plan(&last_diagnostics, batches);
-        // Saved-workspace authority (#1970): compute the analyzed
-        // saved-content identity this transaction will record — from the
-        // persisted bytes the analysis read, not the didSave-tracked digest —
-        // without mutating the document store. The store only advances when
-        // the snapshot commits; publication filters against this pending
-        // identity so a just-saved document is re-served and a document whose
-        // buffer diverges from the freshly analyzed bytes is withdrawn.
+        // Rust uses the raw-byte commitments carried by the completed producer,
+        // never a reread after analysis. Other languages retain their existing
+        // saved-content identity behavior. State advances only at commit.
         let Ok(documents) = self.documents.lock() else {
             return None;
         };
-        let (pending_analyzed, pending_entered) = documents.pending_analyzed_digests();
+        let (pending_analyzed, pending_entered) =
+            documents.pending_analyzed_digests(&snapshot.root, &snapshot.rust_consumed_sources);
         drop(documents);
         debug_assert!(snapshot.is_consistent());
         Some(RefreshTransaction {
@@ -920,6 +1021,9 @@ impl Backend {
         pending_entered: &[Uri],
     ) -> Option<super::state::QuarantineEdges> {
         snapshot.input_identity.as_ref()?;
+        if !snapshot.diagnostic_uri_index_is_current() {
+            snapshot.prepare_diagnostic_uri_index();
+        }
         // Final authority guard: a committed snapshot always carries its
         // delivery selection (#1973). The refresh-transaction prepare step
         // already computed it on the real path; this fills snapshots that
@@ -1427,7 +1531,9 @@ impl Backend {
                 if health_is_for_request && health.run_status() == "full" {
                     AnalysisProgressEnd::Complete
                 } else {
-                    AnalysisProgressEnd::Limited(health.run_status().to_string())
+                    // #5003: the disclosed run status stays machine-only on
+                    // `ripr/analysisStatus`; the progress end carries no tag.
+                    AnalysisProgressEnd::Limited
                 }
             }
             RefreshAttemptOutcome::Failed => {
@@ -1679,11 +1785,20 @@ impl Backend {
     /// window is recorded on the backend instead of being dropped silently,
     /// and the committed failure is re-disclosed by the next status
     /// publication.
-    async fn deliver_initialize_failure_disclosures(&self, warning: String) {
+    ///
+    /// `shown` is the `window/showMessage` warning for clients without the
+    /// `riprEditor` integration (#4532): they render neither the log nor
+    /// `ripr/analysisStatus`, so without it analysis stops with nothing on
+    /// screen saying why. The client profile is not stored yet at
+    /// initialize, so the caller decides from the negotiated profile.
+    async fn deliver_initialize_failure_disclosures(&self, warning: String, shown: Option<String>) {
         self.initialize_failure_disclosure_omitted
             .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
             self.client.log_message(MessageType::WARNING, warning).await;
+            if let Some(shown) = shown {
+                self.client.show_message(MessageType::WARNING, shown).await;
+            }
             self.publish_analysis_status().await;
         })
         .await;
@@ -2241,9 +2356,36 @@ impl Backend {
                     RefreshReason::ConfigReload.as_str(),
                 )
                 .await;
+                // #4532: a reload that breaks ripr.toml pauses analysis; say
+                // so where the user looks, once per distinct error, not on
+                // every save that leaves the same error in place.
+                let repeated = self
+                    .configuration_failure()
+                    .is_some_and(|failure| failure.message == bounded_failure_message(&error));
+                let warning = format!("ripr config load failed; analysis is paused: {error}");
+                let shown = config_failure_notice(&error);
                 self.set_configuration_failure(error);
                 self.publish_analysis_status().await;
+                if !repeated {
+                    self.disclose_configuration_reload_failure(warning, shown)
+                        .await;
+                }
             }
+        }
+    }
+
+    /// Log a config reload failure and, for clients without the `riprEditor`
+    /// integration, show it (#4532). The VS Code extension renders the
+    /// failure from `ripr/analysisStatus`.
+    async fn disclose_configuration_reload_failure(&self, warning: String, shown: String) {
+        self.client.log_message(MessageType::WARNING, warning).await;
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if generic_client {
+            self.client.show_message(MessageType::WARNING, shown).await;
         }
     }
 
@@ -2871,8 +3013,17 @@ impl Backend {
         if self.document_quarantine(uri).is_some() {
             return None;
         }
-        if let Ok(snapshot) = self.latest_analysis.lock()
-            && let Some(snapshot) = snapshot.as_ref()
+        // Clone the snapshot Arc and release the lock before rendering: the
+        // seam hover assembles the repair card (#4668), which resolves the
+        // live repository head and the attempt inventory — blocking I/O
+        // that must not hold the snapshot mutex against refresh commits
+        // and concurrent hovers.
+        let snapshot = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(Arc::clone));
+        if let Some(snapshot) = snapshot
             && let Some(diagnostics) = snapshot.diagnostics_for_uri(uri)
         {
             // Walk every diagnostic that covers the cursor, not just
@@ -2890,8 +3041,8 @@ impl Backend {
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
-                        classified_seam_hover_response(seam, diagnostic, Some(snapshot)),
-                        snapshot,
+                        classified_seam_hover_response(seam, diagnostic, Some(&snapshot)),
+                        &snapshot,
                     ));
                 }
             }
@@ -2904,7 +3055,7 @@ impl Backend {
                 if is_gap_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
                         diagnostic_hover_response(diagnostic),
-                        snapshot,
+                        &snapshot,
                     ));
                 }
             }
@@ -2912,14 +3063,14 @@ impl Backend {
                 if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
                         finding_hover_response(finding, diagnostic),
-                        snapshot,
+                        &snapshot,
                     ));
                 }
             }
             if let Some(diagnostic) = overlapping.first() {
                 return Some(hover_with_snapshot_status(
                     diagnostic_hover_response(diagnostic),
-                    snapshot,
+                    &snapshot,
                 ));
             }
         }
@@ -3854,6 +4005,16 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
     )
 }
 
+/// The on-screen config failure notice (#4532): the source-free summary, not
+/// the parser's source excerpt, which stays in the local log
+/// (RIPR-SPEC-0007).
+fn config_failure_notice(error: &str) -> String {
+    format!(
+        "ripr config load failed; analysis is paused: {}",
+        crate::config::config_error_summary(error)
+    )
+}
+
 fn bounded_failure_message(message: &str) -> String {
     // Single-source bounding/redaction for LSP client-visible error text
     // (#1997): the implementation lives in the component-outcome module so
@@ -4431,8 +4592,13 @@ impl LanguageServer for Backend {
             // client await, so a wedged or undriven peer can delay only the
             // bounded disclosure window, never the failure itself.
             let warning = format!("ripr config load failed; analysis is paused: {error}");
+            let shown = config_failure_notice(&error);
             self.set_configuration_failure(error);
-            self.deliver_initialize_failure_disclosures(warning).await;
+            self.deliver_initialize_failure_disclosures(
+                warning,
+                profile.ripr_editor.is_none().then_some(shown),
+            )
+            .await;
         }
         // The profile store lands after the root application and config
         // failure handling because applying a workspace-root authority
@@ -4459,6 +4625,10 @@ impl LanguageServer for Backend {
             );
             self.deliver_initialize_failure_disclosures(
                 "ripr client feature profile could not be stored; analysis is paused".to_string(),
+                profile.ripr_editor.is_none().then(|| {
+                    "ripr client feature profile could not be stored; analysis is paused"
+                        .to_string()
+                }),
             )
             .await;
         }
@@ -6808,6 +6978,7 @@ mod top_limitation_selection_tests {
     ) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("C:").join("repo"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -6820,6 +6991,7 @@ mod top_limitation_selection_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope,
@@ -6875,6 +7047,7 @@ mod top_limitation_selection_tests {
         let snapshot = snapshot_for_outcome(incomplete_outcome(0)?, None);
         let snapshot = AnalysisSnapshot {
             root: repo_root.clone(),
+            rust_consumed_sources: Default::default(),
             ..snapshot
         };
         let health = AnalysisHealth {
@@ -9337,6 +9510,7 @@ mod delivery_selection_parity_tests {
             .collect();
         let snapshot = AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: Some(
                 crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
                     PathBuf::from("/workspace"),
@@ -9355,6 +9529,7 @@ mod delivery_selection_parity_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,
@@ -10272,6 +10447,7 @@ mod list_actionable_items_tests {
     fn snapshot_with_selection(selection: Option<DiagnosticDeliverySelection>) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -10287,6 +10463,7 @@ mod list_actionable_items_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
             partial_scope: None,

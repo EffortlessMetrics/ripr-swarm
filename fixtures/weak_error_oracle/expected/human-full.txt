@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/weak_error_oracle/input
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) shown
+Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
@@ -30,7 +30,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: Result::Err(AuthError::RevokedToken) (line 7)
   - related test tests/errors.rs:4 empty_token_is_rejected uses weak broad error oracle: assert!(authenticate("").is_err());
-  - observed function argument value token = "" at line 5
+  - source function argument value token = "" at line 5
 
 Weakness
   - No exact error variant discriminator was detected
@@ -65,7 +65,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: Result::Err(AuthError::RevokedToken) (line 7)
   - related test tests/errors.rs:4 empty_token_is_rejected uses weak broad error oracle: assert!(authenticate("").is_err());
-  - observed function argument value token = "" at line 5
+  - source function argument value token = "" at line 5
 
 Weakness
   - No strong discriminator was detected

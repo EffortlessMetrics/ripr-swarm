@@ -1,6 +1,8 @@
 mod annotations;
 mod back_sync;
 mod badges;
+mod blind_journey;
+mod blind_journey_execute;
 mod bun;
 mod candidate_control;
 mod ci_budget;
@@ -21,6 +23,7 @@ mod metrics;
 mod module_health;
 mod mutation;
 mod operator;
+mod orchestration;
 mod perl_migration;
 mod pr;
 mod pr_causal_delta;
@@ -84,6 +87,12 @@ pub(crate) use badges::{
     badge_artifacts, badge_basis, check_badge_diff_policy, check_badge_endpoints,
     repo_badge_artifacts, ripr_plus, update_badge_endpoints,
 };
+pub(crate) use blind_journey::{
+    assess_blind_journey_fixture_corpus, blind_journey_contract_report,
+};
+pub(crate) use blind_journey_execute::{
+    assess_blind_journey_execute_corpus, blind_journey_execute_report,
+};
 pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use ci_budget::ci_budget;
 pub(crate) use dogfood::dogfood;
@@ -119,6 +128,9 @@ pub(crate) use mutation::{
     parse_mutation_outcomes_json, read_mutation_input_json,
 };
 pub(crate) use operator::operator_cockpit_report;
+pub(crate) use orchestration::{
+    assess_orchestration_fixture_corpus, orchestration_scorecard_report,
+};
 pub(crate) use pr::{critic, gh_pr_status, pr_summary, pr_triage_report};
 pub(crate) use pr_evidence::ripr_pr;
 pub(crate) use pr_evidence_summary::ripr_pr_summary;

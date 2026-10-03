@@ -3,6 +3,40 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-02: property macro spelling is not execution provenance (#4789)
+
+The #4835 overlay indexed token-tree functions as tests and accepted
+`prop_assert*` names as strong oracles. Exact native CLI controls subsequently
+reported `exposed` for a no-op property assertion whose test passed both correct
+and wrong owner behavior, and for no-op property blocks that collected zero
+tests. Indexing-only goldens did not discriminate these failures.
+
+The corrective quarantine restores opaque parser authority. Property blocks
+retain only source-level macro/identifier mentions to name the existing macro-reach
+limitation; these are not function, test, call or oracle evidence. Calls
+appearing only inside property assertions remain unresolved too; an independent
+ordinary call or helper path keeps its own evidence. Parser-failure fallback
+cannot synthesize tests from opaque token trees, and known unrelated packages
+cannot use a shared identifier to suppress a real gap. No broad macro resolver
+or role migration is introduced. The old blank overlay is removed, including its allocation and second parse on files
+with no property macros. Framework execution and static support remain separate
+claims; a syntax-only fixture cannot establish the former.
+
+## 2026-10-02: Assertion diagnostics are not error observers (#4748)
+
+`assert_eq!(rdr.len(), 10, "read error")` observes a successful length, not
+an error path. Exclude every formatting operand, including non-string arguments,
+before typing an assertion or confirming a changed reader/error variant. A
+quote-stripper alone still credits identifiers passed as diagnostic arguments;
+a reveal-only filter still trusts an error kind manufactured during extraction.
+
+Keep the argument boundary in `analysis/extract/oracles/arguments.rs`, shared
+by classification, bound-error recognition and ErrorPath matching. Preserve the
+original oracle text for rendering. The `error_path_diagnostic_*` fixtures pin
+absent, neutral, raw, escaped, formatted and typed-diagnostic controls in the
+RIPR-SPEC-0108 honesty corpus. Genuine typed and guarded Result oracles retain
+their producer-owned evidence; this is not general Rust name/dataflow resolution.
+
 ## 2026-09-29: Absent worktree files are not `no_static_path` (#4586)
 
 Rust discovery walks the disk. A changed file that is in the diff but not
@@ -126,6 +160,30 @@ git-root probe on that failure path must name PATH/`--diff` ahead of the
 default-base text. An explicit `--base` still falls through to `run_git_diff`,
 which already passes the named missing-git error through.
 
+## 2026-09-29: Shared-witness adapters must not promote candidate reach (#4790)
+
+`analysis::witness` projects existing `Finding` and `ClassifiedSeam` facts. It
+does not recompute stage meaning. Two traps showed up while writing the
+parity corpus:
+
+- A producer `reach=yes` backed only by `weak_token_substring` (or other
+  candidate relations) must keep those identities in `candidate_facts`. Copying
+  them into established reach is a false promotion even if the producer class
+  stays unchanged.
+- Inherent `diff_only_subject_set` versus `workspace_complete` is the normal
+  cross-path pairing. Treating that pair as an explaining scope difference
+  collapses exact-vs-broad, sibling-field, and missing-observer contradictions
+  into `explained_scope_difference`. Only partial index, stale/wrong input,
+  preview language, and named cross-language limits explain a difference.
+- Scope tokens cannot explain an owner, family, discriminator, or sink
+  mismatch. A partial-index witness paired with the wrong identity is a
+  `contradiction`, not an explained scope difference.
+- Stage `source_identities` belong in the digest. Clearing one without
+  rewriting the digest must make the row `not_comparable`.
+
+Pin both with the #4790 corpus. Later slices (#4792–#4794) migrate authority;
+they must not delete these controls.
+
 ## 2026-09-29: Default output-dir create failures must name the relocate flag (#4774)
 
 `ripr pilot` and `ripr first-pr` create `target/ripr/pilot` and
@@ -138,6 +196,14 @@ or `--out-dir PATH` only for `PermissionDenied` / `ReadOnlyFilesystem`. A path
 that is already a file is a different failure and must not grow that hint.
 Both commands share `output::file_write::create_output_dir`; do not special-case
 one command's prefix or flag in the other.
+## 2026-09-29: `proptest!` / `quickcheck!` bodies are token trees (#4789)
+
+The outer Rust grammar retains macro bodies as opaque token trees. An overlay
+can recover source-shaped functions and assertions, but cannot establish that
+these items are emitted or executed. The initial #4835 overlay promoted that
+syntax into test/oracle evidence; the 2026-10-02 quarantine above supersedes
+that authority after no-op and zero-test controls disproved it. Property macro
+support requires independently established provenance before promotion.
 
 ## 2026-09-16: Parallel-build test flakes are shared-state mechanisms (#3742)
 

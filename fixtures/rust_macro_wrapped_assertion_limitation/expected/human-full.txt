@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_macro_wrapped_assertion_limitation/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) shown
+Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
@@ -30,8 +30,8 @@ Evidence
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: a - b (line 3)
   - related test tests/it.rs:8 test_inner_with_custom_assertion_macro uses none unknown oracle
-  - observed function argument value a = 10 at line 9
-  - observed function argument value b = 3 at line 9
+  - source function argument value a = 10 at line 9
+  - source function argument value b = 3 at line 9
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect
@@ -84,8 +84,8 @@ Evidence
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: a - b (line 3)
   - related test tests/it.rs:8 test_inner_with_custom_assertion_macro uses none unknown oracle
-  - observed function argument value a = 10 at line 9
-  - observed function argument value b = 3 at line 9
+  - source function argument value a = 10 at line 9
+  - source function argument value b = 3 at line 9
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect

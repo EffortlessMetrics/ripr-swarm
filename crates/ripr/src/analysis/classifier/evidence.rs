@@ -1,11 +1,12 @@
 use crate::analysis::classify::{
-    OwnerReturnPin, ProbeContext, PropagationWitnessV1, activation_evidence_with_value_facts,
-    classify, confidence_score, contains_as_whole_word, current_path_witness,
-    has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
-    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_evidence_with_expression, same_test_pairing_missing_summary,
+    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
+    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
+    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    same_test_pairing_missing_summary,
 };
-use crate::analysis::facts::FunctionSummary;
+use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -22,6 +23,7 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) propagation_witness: Option<PropagationWitnessDiagnostic>,
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) related_tests: Vec<RelatedTest>,
+    pub(in crate::analysis) related_tests_matched_total: usize,
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
     pub(in crate::analysis) propagate: StageEvidence,
@@ -81,6 +83,14 @@ impl ClassifiedProbeEvidence {
         // run-scoped per-file memo on the context.
         // #4478: the owner-side half of the owner-return pin, established
         // once per probe; `None` keeps every assertion on the token rule.
+        let fallback_pin_syntax = OwnerPinSyntax::default();
+        let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
+        // Every diff-classifier consumer of a covered equality uses this same
+        // decision. Keep the original TestSummary and assertion cardinality;
+        // filtering a clone would manufacture singleton matching fallbacks.
+        let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
+            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
+        };
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
@@ -89,7 +99,7 @@ impl ClassifiedProbeEvidence {
             .owner_fn
             .map(owner_local_binding_names)
             .unwrap_or_default();
-        let (observe, discriminate, related_tests) = reveal_evidence_with_expression(
+        let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
             context.probe,
             reveal_expression,
             &context.related_tests,
@@ -130,14 +140,27 @@ impl ClassifiedProbeEvidence {
                     })
                 })
             },
-            &|test, assertion| {
-                owner_return_pin.as_ref().is_some_and(|pin| {
-                    pin.admits(test, assertion, context.index, &|file, name| {
-                        context.index.files.get(file).is_some_and(|facts| {
-                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
-                        })
+            &ReturnOracleAdmission {
+                owner_return_pin: &|test, assertion| {
+                    owner_return_pin.as_ref().is_some_and(|pin| {
+                        pin.admits(
+                            test,
+                            assertion,
+                            context.index,
+                            &|file, name| {
+                                context.index.files.get(file).is_some_and(|facts| {
+                                    context.test_file_imports_foreign_callee_name(
+                                        file,
+                                        &facts.source,
+                                        name,
+                                    )
+                                })
+                            },
+                            pin_syntax,
+                        )
                     })
-                })
+                },
+                assertion_admitted: &assertion_admitted,
             },
         );
 
@@ -158,6 +181,7 @@ impl ClassifiedProbeEvidence {
                 context.owner_fn,
                 &test_summaries,
                 &activation,
+                &assertion_admitted,
             ) {
             StageEvidence::new(
                 StageState::Weak,
@@ -221,6 +245,7 @@ impl ClassifiedProbeEvidence {
             propagation_witness,
             activation,
             related_tests,
+            related_tests_matched_total: matched_total,
             reach,
             infect,
             propagate,

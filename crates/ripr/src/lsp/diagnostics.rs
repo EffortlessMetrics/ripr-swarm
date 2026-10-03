@@ -16,7 +16,7 @@ use crate::analysis::inventory_classified_seams_at_with_config;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
-use crate::app::check_workspace_worktree_with_origins;
+use crate::app::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
 use crate::config::{ConfigSeverity, LspDiagnosticProfile, SeverityConfig};
 #[cfg(test)]
 use crate::domain::RelatedTest;
@@ -756,44 +756,84 @@ pub(super) fn workspace_diagnostics_with_config(
     config: &LspAnalysisConfig,
     defer_seam_inventory: bool,
 ) -> Result<WorkspaceDiagnostics, String> {
+    workspace_diagnostics_with_config_and_open_rust_paths(
+        root,
+        config,
+        defer_seam_inventory,
+        &Default::default(),
+    )
+}
+
+pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
+    root: &Path,
+    config: &LspAnalysisConfig,
+    defer_seam_inventory: bool,
+    open_rust_index_paths: &std::collections::BTreeSet<std::path::PathBuf>,
+) -> Result<WorkspaceDiagnostics, String> {
+    workspace_diagnostics_with_config_and_open_rust_paths_and_progress(
+        root,
+        config,
+        defer_seam_inventory,
+        open_rust_index_paths,
+        None,
+    )
+}
+
+/// Progress-sink-bearing variant of
+/// [`workspace_diagnostics_with_config_and_open_rust_paths`]. The LSP
+/// work-done bridge (#4811) observes the same producer-owned stage
+/// boundaries through this path; the sink is advisory and cannot change
+/// the diagnostics result.
+pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress(
+    root: &Path,
+    config: &LspAnalysisConfig,
+    defer_seam_inventory: bool,
+    open_rust_index_paths: &std::collections::BTreeSet<std::path::PathBuf>,
+    progress_sink: Option<&dyn crate::app::AnalysisProgressSink>,
+) -> Result<WorkspaceDiagnostics, String> {
     let input = config.check_input(root);
     // Saved-workspace authority (#3183): editor refreshes analyze the live
     // tracked working tree, including staged and unstaged bytes that the
     // client has persisted, through the same canonical path as
     // `ripr check --worktree`. Document quarantine remains the independent
     // authority that prevents unsaved buffers from being served as current.
-    let (output, origins) = match check_workspace_worktree_with_origins(input, config.repo_config())
-    {
-        Ok(pair) => pair,
-        // #2303: a git invocation that exceeded the configured cooperative
-        // deadline commits a limited snapshot (zero findings, one typed
-        // failed `diff` outcome) instead of dropping the refresh with no
-        // snapshot. ONLY the named timeout error converts; every other
-        // analysis failure keeps the pre-#2303 no-snapshot path.
-        Err(err) if crate::git::is_git_invocation_timeout(&err) => {
-            return Ok(git_timeout_limited_diagnostics(
-                root,
-                config,
-                defer_seam_inventory,
-                err,
-            ));
-        }
-        // #2299: a diff that exceeds the fail-closed scope guard commits a
-        // limited snapshot carrying ONE workspace-scoped warning diagnostic
-        // (plus the typed failed `diff` outcome) instead of dropping the
-        // refresh with no snapshot, so the editor user sees the limitation
-        // in-surface. ONLY the named guard error converts; the CLI keeps the
-        // non-zero exit and unchanged error text.
-        Err(err) if crate::analysis::is_diff_scope_oversized(&err) => {
-            return Ok(oversized_diff_limited_diagnostics(
-                root,
-                config,
-                defer_seam_inventory,
-                err,
-            ));
-        }
-        Err(err) => return Err(format!("workspace analysis failed: {err}")),
-    };
+    let (output, origins, consumed_sources) =
+        match check_workspace_worktree_with_sources_open_rust_paths_and_progress(
+            input,
+            config.repo_config(),
+            open_rust_index_paths,
+            progress_sink,
+        ) {
+            Ok(pair) => pair,
+            // #2303: a git invocation that exceeded the configured cooperative
+            // deadline commits a limited snapshot (zero findings, one typed
+            // failed `diff` outcome) instead of dropping the refresh with no
+            // snapshot. ONLY the named timeout error converts; every other
+            // analysis failure keeps the pre-#2303 no-snapshot path.
+            Err(err) if crate::git::is_git_invocation_timeout(&err) => {
+                return Ok(git_timeout_limited_diagnostics(
+                    root,
+                    config,
+                    defer_seam_inventory,
+                    err,
+                ));
+            }
+            // #2299: a diff that exceeds the fail-closed scope guard commits a
+            // limited snapshot carrying ONE workspace-scoped warning diagnostic
+            // (plus the typed failed `diff` outcome) instead of dropping the
+            // refresh with no snapshot, so the editor user sees the limitation
+            // in-surface. ONLY the named guard error converts; the CLI keeps the
+            // non-zero exit and unchanged error text.
+            Err(err) if crate::analysis::is_diff_scope_oversized(&err) => {
+                return Ok(oversized_diff_limited_diagnostics(
+                    root,
+                    config,
+                    defer_seam_inventory,
+                    err,
+                ));
+            }
+            Err(err) => return Err(format!("workspace analysis failed: {err}")),
+        };
     let root = output.root;
     let base = output.base;
     let analysis_outcome = output.analysis_outcome;
@@ -1041,6 +1081,7 @@ pub(super) fn workspace_diagnostics_with_config(
         .collect();
     let snapshot = AnalysisSnapshot {
         root,
+        rust_consumed_sources: consumed_sources,
         input_identity: None,
         base,
         mode,
@@ -1053,6 +1094,7 @@ pub(super) fn workspace_diagnostics_with_config(
         gap_artifact_rejections: gap_artifact_report.rejections,
         harness_facts,
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
         partial_scope,
@@ -1110,16 +1152,25 @@ fn should_project_gap_records(
 }
 
 /// Run workspace diagnostics with a token installed for synchronous analysis
-/// checkpoints. The ordinary entry point remains token-free for CLI and test
-/// callers that are not owned by an LSP refresh.
+/// checkpoints and an optional producer progress sink for the work-done
+/// stage bridge (#4811). The ordinary entry point remains token-free for
+/// CLI and test callers that are not owned by an LSP refresh.
 pub(super) fn workspace_diagnostics_with_config_and_cancellation(
     root: &Path,
     config: &LspAnalysisConfig,
     defer_seam_inventory: bool,
     cancellation: &AnalysisCancellationToken,
+    open_rust_index_paths: &std::collections::BTreeSet<std::path::PathBuf>,
+    progress_sink: Option<&dyn crate::app::AnalysisProgressSink>,
 ) -> Result<WorkspaceDiagnostics, String> {
     crate::analysis::cancellation::with_token(cancellation, || {
-        workspace_diagnostics_with_config(root, config, defer_seam_inventory)
+        workspace_diagnostics_with_config_and_open_rust_paths_and_progress(
+            root,
+            config,
+            defer_seam_inventory,
+            open_rust_index_paths,
+            progress_sink,
+        )
     })
 }
 
@@ -1149,6 +1200,7 @@ fn git_timeout_limited_diagnostics(
     )];
     let snapshot = AnalysisSnapshot {
         root: root.to_path_buf(),
+        rust_consumed_sources: Default::default(),
         input_identity: None,
         base: config.base_ref.clone(),
         mode: config.mode.clone(),
@@ -1169,6 +1221,7 @@ fn git_timeout_limited_diagnostics(
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
         diagnostics_by_uri: BTreeMap::new(),
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
         partial_scope: None,
@@ -1250,6 +1303,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         .collect();
     let snapshot = AnalysisSnapshot {
         root: root.to_path_buf(),
+        rust_consumed_sources: Default::default(),
         input_identity: None,
         base: config.base_ref.clone(),
         mode: config.mode.clone(),
@@ -1270,6 +1324,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
         diagnostics_by_uri,
+        diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
         partial_scope: None,
@@ -1809,15 +1864,32 @@ fn repo_scope_and_wrapped_guard_errors_do_not_convert() -> Result<(), String> {
         "repo_scope_oversized: 900 indexed files exceed the repo guard",
         "workspace analysis failed: diff_scope_oversized: wrapped must not match",
         "adiff_scope_oversized: forged prefix must not match",
+        "diff_scope_oversizedness: unrelated failure",
+        "diff_scope_oversized_metadata: unrelated failure",
+        "diff_scope_oversized",
+        "diff_scope_oversized : invalid delimiter",
+        "diff_scope_oversized\n: invalid delimiter",
+        "diff_scope_oversized\r\n: invalid delimiter",
+        " diff_scope_oversized: not raw",
+        "\ndiff_scope_oversized: not raw",
+        "ripr: diff_scope_oversized: wrapped",
+        "git_invocation_timeout: a different guard",
+        "review_guidance_oversized: a different guard",
     ] {
         if crate::analysis::is_diff_scope_oversized(lookalike) {
             return Err(format!("non-guard error matched the guard: {lookalike}"));
         }
     }
-    if !crate::analysis::is_diff_scope_oversized(
+    for error in [
         "diff_scope_oversized: 900 indexed Rust files exceed the 800-file guard",
-    ) {
-        return Err("the named guard error must match the guard".to_string());
+        "diff_scope_oversized:	900 indexed files",
+        "diff_scope_oversized:\n900 indexed files",
+    ] {
+        if !crate::analysis::is_diff_scope_oversized(error) {
+            return Err(format!(
+                "the named guard error must match the guard: {error:?}"
+            ));
+        }
     }
     Ok(())
 }
@@ -3865,6 +3937,7 @@ mod diagnostic_policy_tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: Vec::new(),
             recommended_next_step: None,
             language: None,
@@ -4826,6 +4899,7 @@ mod lsp_next_step_parity_tests {
                 "typescript_oracle_confidence: high".to_string(),
                 "typescript_oracle_evidence_ref: tests/discount.test.ts:3".to_string(),
                 "missing_discriminator: amount == threshold".to_string(),
+                "typescript_boundary_parameters: parameter=amount;index=0;operand=threshold;operand_index=1".to_string(),
             ],
             missing: Vec::new(),
             flow_sinks: Vec::new(),
@@ -4838,6 +4912,7 @@ mod lsp_next_step_parity_tests {
                 }],
             },
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: "applyDiscount applies discount when amount meets threshold".to_string(),
                 file: PathBuf::from("tests/discount.test.ts"),
@@ -5021,6 +5096,7 @@ mod delivery_tests {
             .collect::<Result<BTreeMap<_, _>, _>>()?;
         Ok(AnalysisSnapshot {
             root: PathBuf::from(root),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("origin/main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -5033,6 +5109,7 @@ mod delivery_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,
@@ -5093,6 +5170,73 @@ mod delivery_tests {
         }
         if workspace_diagnostic_result_id(&first) == workspace_diagnostic_result_id(&second) {
             return Err("workspace result ID ignored the changed document".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_result_ids_ignore_refresh_clock_and_attempt_snapshot_handle() -> Result<(), String>
+    {
+        let mut first = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        first.refresh.generated_at = std::time::SystemTime::UNIX_EPOCH;
+        first.refresh.duration = Some(std::time::Duration::from_millis(1));
+        first.refresh.snapshot_id = None;
+        let mut second = first.clone();
+        second.refresh.generated_at = std::time::SystemTime::now();
+        second.refresh.duration = Some(std::time::Duration::from_secs(9));
+        second.refresh.snapshot_id = Some("attempt:refresh:9".to_string());
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<Uri>()
+            .map_err(|err| format!("parse URI failed: {err}"))?;
+        if document_diagnostic_result_id(&first, &uri)
+            != document_diagnostic_result_id(&second, &uri)
+        {
+            return Err(
+                "refresh clock or attempt snapshot_id entered the document result ID".to_string(),
+            );
+        }
+        if workspace_diagnostic_result_id(&first) != workspace_diagnostic_result_id(&second) {
+            return Err(
+                "refresh clock or attempt snapshot_id entered the workspace result ID".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_result_ids_change_for_message_only_and_profile_changes() -> Result<(), String> {
+        let first = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        let mut message_changed = diagnostic("same", 4);
+        message_changed.message = "diagnostic same but wording changed".to_string();
+        let second = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![message_changed])],
+        )?;
+        let mut profile_changed = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        profile_changed.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<Uri>()
+            .map_err(|err| format!("parse URI failed: {err}"))?;
+        if document_diagnostic_result_id(&first, &uri)
+            == document_diagnostic_result_id(&second, &uri)
+        {
+            return Err("message-only change must invalidate the document result ID".to_string());
+        }
+        if document_diagnostic_result_id(&first, &uri)
+            == document_diagnostic_result_id(&profile_changed, &uri)
+        {
+            return Err(
+                "diagnostic profile change must invalidate the document result ID".to_string(),
+            );
         }
         Ok(())
     }
