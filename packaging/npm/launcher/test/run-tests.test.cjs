@@ -11,15 +11,26 @@ const REQUIRED_PORTABLE_TESTS = Object.freeze([
 ]);
 const REQUIRED_POSIX_TESTS = Object.freeze([
   "forwards direct SIGTERM to native child exactly once and re-emits signal",
-  "observes terminal SIGINT without forwarding a duplicate to the native child",
+  "observes terminal SIGINT and SIGHUP without forwarding duplicates to the native child",
 ]);
 const requiredTests = process.platform === "win32"
   ? REQUIRED_PORTABLE_TESTS
   : [...REQUIRED_PORTABLE_TESTS, ...REQUIRED_POSIX_TESTS];
 
+const TEST_FILES = [
+  "exit-status.test.cjs",
+  "launcher.test.cjs",
+  "negative-paths.test.cjs",
+  "package-mode.test.cjs",
+];
+
 const result = spawnSync(
   process.execPath,
-  ["--test", "--test-reporter=tap", path.join(__dirname, "launcher.test.cjs")],
+  [
+    "--test",
+    "--test-reporter=tap",
+    ...TEST_FILES.map((name) => path.join(__dirname, name)),
+  ],
   {
     cwd: path.join(__dirname, ".."),
     env: process.env,
