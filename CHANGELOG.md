@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Changed
 
+- Python: a changed source path missing from the working tree now carries an
+  exact-path `changed_file_absent_from_worktree` limitation and checkout recovery.
+  It is excluded from analyzed-file counts and preview samples; available findings
+  remain visible and shared outcome/badge projections report incomplete analysis
+  instead of a complete green zero (#5110).
+
 - CLI: `ripr cache status --json --help` and `ripr cache clear --dry-run
   --help` now print the subcommand help and exit 0; help was previously
   recognized only as the sole argument, so any combined invocation failed

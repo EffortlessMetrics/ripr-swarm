@@ -779,7 +779,22 @@ fn run_pipeline_for_diff_text(
     // clean Rust-grade result for a TypeScript/JavaScript/Python change
     // (RIPR-SPEC-0082, #1111). Detection is pure path routing — it does not
     // require the adapter to be enabled.
-    let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files.iter().collect();
+    // Adapter admission has already withheld missing changed source. Use its
+    // typed result for the analyzed-file disclosure too, without another
+    // filesystem check in the pipeline or any renderer (#5110).
+    let absent_changed_paths = limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.kind == AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+        })
+        .filter_map(|limitation| limitation.path.as_deref())
+        .collect::<BTreeSet<_>>();
+    let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files
+        .iter()
+        .filter(|changed| {
+            !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
+        })
+        .collect();
     let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
     for advisory in &preview_advisories {
         if !advisory.enabled {
