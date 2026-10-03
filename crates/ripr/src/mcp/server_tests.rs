@@ -177,8 +177,9 @@ async fn prepare_repair_fails_closed_before_refresh() -> Result<(), String> {
 async fn repair_attempt_lookup_fails_closed_before_refresh() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
         .map_err(|error| error.to_string())?;
-    let arguments = serde_json::from_value(serde_json::json!({"attempt_id": "repair-attempt:absent"}))
-        .map_err(|error| error.to_string())?;
+    let arguments =
+        serde_json::from_value(serde_json::json!({"attempt_id": "repair-attempt:absent"}))
+            .map_err(|error| error.to_string())?;
     let response = server
         .get_repair_attempt_tool(arguments)
         .await

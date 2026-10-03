@@ -16,13 +16,11 @@
 //! misleading attempt.
 
 use super::gaps::GapItem;
-use super::workspace::{
-    AttemptFailure, WorkspaceSession, bounded_document, CODE_ITEM_NOT_FOUND,
-};
+use super::workspace::{AttemptFailure, CODE_ITEM_NOT_FOUND, WorkspaceSession, bounded_document};
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
-    find_manifest_artifact_by_role, find_terminal_artifact_by_role,
-    inventory_repair_attempts_from, load_attempt_terminal_receipt, repair_attempt_state_label,
+    find_manifest_artifact_by_role, find_terminal_artifact_by_role, inventory_repair_attempts_from,
+    load_attempt_terminal_receipt, repair_attempt_state_label,
 };
 use crate::output::receipt_lifecycle::receipt_lifecycle_state_from_receipt_value;
 use serde_json::{Value, json};
@@ -203,7 +201,8 @@ fn durable_command_routes(
         return (routes, limitations);
     };
     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-        limitations.push("the retained packet is not JSON; command routes stay unprojected".to_string());
+        limitations
+            .push("the retained packet is not JSON; command routes stay unprojected".to_string());
         return (routes, limitations);
     };
     let specs = value
@@ -319,12 +318,16 @@ fn durable_attempt_document(
 fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
     let (detail, recovery) = if root_present {
         (
-            format!("no repair attempt or receipt `{attempt_id}` exists in this session or in the durable store of this workspace root"),
+            format!(
+                "no repair attempt or receipt `{attempt_id}` exists in this session or in the durable store of this workspace root"
+            ),
             "prepare the item with ripr_prepare_repair, or list durable attempts with `ripr agent status` in the repository",
         )
     } else {
         (
-            format!("no repair attempt or receipt `{attempt_id}` exists in this session, and the workspace root is unavailable so the durable store cannot be read"),
+            format!(
+                "no repair attempt or receipt `{attempt_id}` exists in this session, and the workspace root is unavailable so the durable store cannot be read"
+            ),
             "restart the server with `ripr mcp --stdio --root <repository>` and retry",
         )
     };
@@ -350,21 +353,23 @@ fn load_durable_attempt(
             RepairAttemptInventoryEntry::Valid(manifest)
                 if manifest.repair_attempt_id.as_str() == attempt_id =>
             {
-                return Ok(*manifest)
+                return Ok(*manifest);
             }
             RepairAttemptInventoryEntry::Invalid { directory, .. } if directory == attempt_id => {
                 return Err(AttemptFailure::new(
                     CODE_ATTEMPT_INVALID,
                     format!("repair attempt `{attempt_id}` failed canonical validation"),
                     "run `ripr agent status` in the repository for the refusal detail",
-                ))
+                ));
             }
             _other => {}
         }
     }
     Err(AttemptFailure::new(
         CODE_ATTEMPT_NOT_FOUND,
-        format!("no repair attempt `{attempt_id}` exists in the durable store of this workspace root"),
+        format!(
+            "no repair attempt `{attempt_id}` exists in the durable store of this workspace root"
+        ),
         "list durable attempts with `ripr agent status` in the repository",
     ))
 }
@@ -434,49 +439,47 @@ fn durable_receipt_document(
             });
             ("invalid", receipt)
         }
-        RepairAttemptState::ReadyToFinish => {
-            match load_attempt_terminal_receipt(root, manifest) {
-                AttemptTerminalReceipt::NotRetained => {
-                    let receipt = json!({
-                        "status": "not_retained",
-                        "note": "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository",
-                    });
-                    ("verification_pending", receipt)
-                }
-                AttemptTerminalReceipt::Unavailable { path, reason } => {
-                    let receipt = json!({
-                        "status": "unavailable",
-                        "path": path,
-                        "reason": reason,
-                    });
-                    ("invalid", receipt)
-                }
-                AttemptTerminalReceipt::Issued { path, value } => {
-                    let lifecycle_state = receipt_lifecycle_state_from_receipt_value(&value);
-                    let status = receipt_status_from_lifecycle(&lifecycle_state);
-                    let binding = find_terminal_artifact_by_role(
-                        manifest,
-                        crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
-                    )
-                    .map(|artifact| {
-                        json!({
-                            "path": artifact.path,
-                            "sha256": artifact.sha256,
-                            "bytes": artifact.bytes,
-                        })
-                    })
-                    .unwrap_or(Value::Null);
-                    let receipt = json!({
-                        "status": "issued",
-                        "path": path,
-                        "binding": binding,
-                        "lifecycle_state": lifecycle_state,
-                        "document": value,
-                    });
-                    (status, receipt)
-                }
+        RepairAttemptState::ReadyToFinish => match load_attempt_terminal_receipt(root, manifest) {
+            AttemptTerminalReceipt::NotRetained => {
+                let receipt = json!({
+                    "status": "not_retained",
+                    "note": "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository",
+                });
+                ("verification_pending", receipt)
             }
-        }
+            AttemptTerminalReceipt::Unavailable { path, reason } => {
+                let receipt = json!({
+                    "status": "unavailable",
+                    "path": path,
+                    "reason": reason,
+                });
+                ("invalid", receipt)
+            }
+            AttemptTerminalReceipt::Issued { path, value } => {
+                let lifecycle_state = receipt_lifecycle_state_from_receipt_value(&value);
+                let status = receipt_status_from_lifecycle(&lifecycle_state);
+                let binding = find_terminal_artifact_by_role(
+                    manifest,
+                    crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
+                )
+                .map(|artifact| {
+                    json!({
+                        "path": artifact.path,
+                        "sha256": artifact.sha256,
+                        "bytes": artifact.bytes,
+                    })
+                })
+                .unwrap_or(Value::Null);
+                let receipt = json!({
+                    "status": "issued",
+                    "path": path,
+                    "binding": binding,
+                    "lifecycle_state": lifecycle_state,
+                    "document": value,
+                });
+                (status, receipt)
+            }
+        },
     };
     json!({
         "schema_version": RECEIPT_STATUS_SCHEMA_VERSION,
@@ -516,8 +519,7 @@ impl WorkspaceSession {
         canonical_id: &str,
     ) -> Option<&str> {
         self.repairs.values().find_map(|transaction| {
-            (transaction.snapshot_id == snapshot_id
-                && transaction.canonical_id == canonical_id)
+            (transaction.snapshot_id == snapshot_id && transaction.canonical_id == canonical_id)
                 .then(|| transaction.attempt_id.as_str())
         })
     }
@@ -672,7 +674,10 @@ impl WorkspaceSession {
         root_identity: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
         if let Some(transaction) = self.repairs.get(attempt_id) {
-            let current = self.last_good.as_ref().map(|snapshot| snapshot.snapshot_id.as_str());
+            let current = self
+                .last_good
+                .as_ref()
+                .map(|snapshot| snapshot.snapshot_id.as_str());
             if current != Some(transaction.snapshot_id.as_str()) {
                 return Err(AttemptFailure::new(
                     "superseded",
@@ -703,7 +708,10 @@ impl WorkspaceSession {
         root_identity: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
         if let Some(transaction) = self.repairs.get(receipt_id) {
-            let current = self.last_good.as_ref().map(|snapshot| snapshot.snapshot_id.as_str());
+            let current = self
+                .last_good
+                .as_ref()
+                .map(|snapshot| snapshot.snapshot_id.as_str());
             if current != Some(transaction.snapshot_id.as_str()) {
                 return Err(AttemptFailure::new(
                     "superseded",
@@ -807,7 +815,11 @@ mod tests {
         let first = session
             .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        if first.pointer("/repair_packet_ready").and_then(Value::as_bool) != Some(true) {
+        if first
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
             return Err(format!("the complete route must prepare a packet: {first}"));
         }
         let attempt_id = first
@@ -815,7 +827,9 @@ mod tests {
             .and_then(Value::as_str)
             .ok_or_else(|| "the prepared packet lost its attempt identity".to_string())?;
         if !attempt_id.starts_with("repair-attempt-") {
-            return Err(format!("attempt id drifted from the shared grammar: {attempt_id}"));
+            return Err(format!(
+                "attempt id drifted from the shared grammar: {attempt_id}"
+            ));
         }
         if first.pointer("/attempt/state").and_then(Value::as_str) != Some("awaiting_edit") {
             return Err("a fresh transaction must await the external edit".to_string());
@@ -850,8 +864,14 @@ mod tests {
         let document = session
             .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
             .map_err(|failure| failure.detail)?;
-        if document.pointer("/repair_packet_ready").and_then(Value::as_bool) != Some(false) {
-            return Err(format!("ineligible item must not prepare a packet: {document}"));
+        if document
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
+            return Err(format!(
+                "ineligible item must not prepare a packet: {document}"
+            ));
         }
         if document.pointer("/attempt") != Some(&Value::Null) {
             return Err("ineligible item must not create an attempt".to_string());
@@ -861,9 +881,7 @@ mod tests {
             .and_then(Value::as_str)
             != Some("missing_discriminator")
         {
-            return Err(format!(
-                "ineligibility lost its typed reason: {document}"
-            ));
+            return Err(format!("ineligibility lost its typed reason: {document}"));
         }
         if !session.repairs.is_empty() {
             return Err("no transaction may exist after an ineligible prepare".to_string());
@@ -995,14 +1013,18 @@ mod tests {
         let root = unique_test_dir("durable-missing")?;
         std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
         let session = WorkspaceSession::default();
-        match session.repair_attempt_document("repair-attempt-abcdef0123456789abcdef01", Some(&root), None) {
+        match session.repair_attempt_document(
+            "repair-attempt-abcdef0123456789abcdef01",
+            Some(&root),
+            None,
+        ) {
             Ok(value) => Err(format!("missing durable attempt must fail closed: {value}")),
             Err(failure) if failure.code == CODE_ATTEMPT_NOT_FOUND => Ok(()),
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
         }?;
         // A manifest that fails canonical validation reports attempt_invalid.
-        let attempt_dir = root
-            .join("target/ripr/repair-attempts/repair-attempt-abcdef0123456789abcdef02");
+        let attempt_dir =
+            root.join("target/ripr/repair-attempts/repair-attempt-abcdef0123456789abcdef02");
         std::fs::create_dir_all(&attempt_dir)
             .map_err(|error| format!("create attempt dir: {error}"))?;
         std::fs::write(attempt_dir.join("attempt.json"), "{not json")
@@ -1051,7 +1073,11 @@ mod tests {
             None,
         );
         let direct_doc = command_spec_document(&direct);
-        if direct_doc.pointer("/execution_mode").and_then(Value::as_str) != Some("direct") {
+        if direct_doc
+            .pointer("/execution_mode")
+            .and_then(Value::as_str)
+            != Some("direct")
+        {
             return Err(format!("direct mode drifted: {direct_doc}"));
         }
         if direct_doc.pointer("/directness").and_then(Value::as_str) != Some("direct") {
@@ -1064,8 +1090,7 @@ mod tests {
             "target/out.json",
         );
         let shell_doc = command_spec_document(&shell_required);
-        if shell_doc.pointer("/execution_mode").and_then(Value::as_str)
-            != Some("shell_required")
+        if shell_doc.pointer("/execution_mode").and_then(Value::as_str) != Some("shell_required")
             || shell_doc.pointer("/directness").and_then(Value::as_str)
                 != Some("visibly_non_direct")
         {
@@ -1078,7 +1103,10 @@ mod tests {
             ..shell_required.clone()
         };
         let manual_doc = command_spec_document(&manual);
-        if manual_doc.pointer("/execution_mode").and_then(Value::as_str) != Some("manual")
+        if manual_doc
+            .pointer("/execution_mode")
+            .and_then(Value::as_str)
+            != Some("manual")
             || manual_doc.pointer("/directness").and_then(Value::as_str)
                 != Some("visibly_non_direct")
         {
@@ -1127,7 +1155,9 @@ mod tests {
             .and_then(Value::as_array)
             .ok_or_else(|| "command spec lost its argv".to_string())?;
         if !args.iter().any(|arg| arg == "pricing crate") {
-            return Err(format!("structured argv lost the spaced argument: {document}"));
+            return Err(format!(
+                "structured argv lost the spaced argument: {document}"
+            ));
         }
         let display = document
             .pointer("/human_display")
@@ -1149,7 +1179,10 @@ mod tests {
             repair_attempt_resource_id("ripr://repair-attempt/repair-attempt-abc"),
             Some("repair-attempt-abc")
         );
-        assert_eq!(receipt_resource_id("ripr://receipt/repair-attempt-abc"), Some("repair-attempt-abc"));
+        assert_eq!(
+            receipt_resource_id("ripr://receipt/repair-attempt-abc"),
+            Some("repair-attempt-abc")
+        );
         for other in [
             "ripr://workspace/status",
             "ripr://repair-attempt/",

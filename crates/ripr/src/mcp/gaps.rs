@@ -111,12 +111,22 @@ impl RepairReadiness {
 
     pub(crate) fn reason(&self) -> &'static str {
         match self.ineligibility {
-            Some("not_candidate_actionable") => "the producer did not establish the changed source as candidate-current, so no repair target is actionable (#3281)",
-            Some("missing_discriminator") => "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator)",
-            Some("fix_site_not_established") => "no strong, high-confidence directly-related test establishes an exact fix site",
-            Some("fix_site_not_test_surface") => "the strongest established fix site is not a test surface; a production file is never the authored edit target",
+            Some("not_candidate_actionable") => {
+                "the producer did not establish the changed source as candidate-current, so no repair target is actionable (#3281)"
+            }
+            Some("missing_discriminator") => {
+                "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator)"
+            }
+            Some("fix_site_not_established") => {
+                "no strong, high-confidence directly-related test establishes an exact fix site"
+            }
+            Some("fix_site_not_test_surface") => {
+                "the strongest established fix site is not a test surface; a production file is never the authored edit target"
+            }
             Some(_other) => "the producer did not establish every repair-readiness fact",
-            None => "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site on a test surface",
+            None => {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site on a test surface"
+            }
         }
     }
 }

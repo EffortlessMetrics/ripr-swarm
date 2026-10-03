@@ -168,11 +168,7 @@ impl McpServer {
         let gap_id = required_string_argument(&arguments, "gap_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let mut session = self.session.lock().await;
-        match session.prepare_repair(
-            &gap_id,
-            requested.as_deref(),
-            self.root_identity.as_deref(),
-        ) {
+        match session.prepare_repair(&gap_id, requested.as_deref(), self.root_identity.as_deref()) {
             Ok(document) => self.bounded_tool_result(
                 document,
                 repair::REPAIR_PACKET_SCHEMA_VERSION,
@@ -199,9 +195,7 @@ impl McpServer {
                 repair::REPAIR_ATTEMPT_SCHEMA_VERSION,
                 "serialize repair attempt",
             ),
-            Err(failure) => {
-                self.typed_failure(failure, repair::REPAIR_ATTEMPT_SCHEMA_VERSION)
-            }
+            Err(failure) => self.typed_failure(failure, repair::REPAIR_ATTEMPT_SCHEMA_VERSION),
         }
     }
 
@@ -222,9 +216,7 @@ impl McpServer {
                 repair::RECEIPT_STATUS_SCHEMA_VERSION,
                 "serialize receipt status",
             ),
-            Err(failure) => {
-                self.typed_failure(failure, repair::RECEIPT_STATUS_SCHEMA_VERSION)
-            }
+            Err(failure) => self.typed_failure(failure, repair::RECEIPT_STATUS_SCHEMA_VERSION),
         }
     }
 
@@ -401,9 +393,7 @@ impl ServerHandler for McpServer {
             }
             protocol::LIST_GAPS_TOOL_NAME => self.list_gaps_tool(request.arguments).await,
             protocol::GET_GAP_TOOL_NAME => self.get_gap_tool(request.arguments).await,
-            protocol::PREPARE_REPAIR_TOOL_NAME => {
-                self.prepare_repair_tool(request.arguments).await
-            }
+            protocol::PREPARE_REPAIR_TOOL_NAME => self.prepare_repair_tool(request.arguments).await,
             protocol::GET_REPAIR_ATTEMPT_TOOL_NAME => {
                 self.get_repair_attempt_tool(request.arguments).await
             }
