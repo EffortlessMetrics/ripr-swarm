@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use super::*;
 
 mod controls;
+mod evidence_graph;
 mod retained_support;
 
 const TEST_ID: &str = "synthetic::expected_empty";
@@ -87,11 +88,39 @@ impl SyntheticEvidence {
         self.persist_pairing()
     }
 
+    fn input_inventory(&self, production: &str, test: &str) -> Result<Value, String> {
+        let manifest = self.file(
+            "manifest-model.toml",
+            b"[package]\nname = 'synthetic'\nversion = '0.0.0'\n",
+        )?;
+        Ok(json!([
+            {"path": self.key["production_source_path"], "kind": "file", "bytes": self.key["sources"][production]["bytes"], "sha256": self.key["sources"][production]["sha256"]},
+            {"path": self.key["test_source_path"], "kind": "file", "bytes": self.key["tests"][test]["bytes"], "sha256": self.key["tests"][test]["sha256"]},
+            {"path": self.key["package_manifest_path"], "kind": "file", "bytes": manifest["bytes"], "sha256": manifest["sha256"]},
+            {"path": "Cargo.lock", "kind": "file", "bytes": self.pairing["lock"]["bytes"], "sha256": self.pairing["lock"]["sha256"]}
+        ]))
+    }
+
     fn refresh_capture(&mut self, index: usize) -> Result<(), String> {
         let mut row = self.pairing["observations"][index].clone();
         if let Some(value) = row.as_object_mut() {
             let _ = value.remove("capture");
         }
+        let variant = text(&row, "variant")?;
+        let (_, production, test, _) = PAIRS
+            .iter()
+            .find(|(name, _, _, _)| *name == variant)
+            .ok_or("unknown synthetic native variant")?;
+        let inputs = self.input_inventory(production, test)?;
+        let inventory_bytes = serde_json::to_vec(&inputs).map_err(|error| error.to_string())?;
+        let inventory_before = self.file(
+            &format!("native-inputs-{index}-before.json"),
+            &inventory_bytes,
+        )?;
+        let inventory_after = self.file(
+            &format!("native-inputs-{index}-after.json"),
+            &inventory_bytes,
+        )?;
         let artifact = self.file(
             "artifact-model.bin",
             b"Synthetic executable byte model; never executed",
@@ -100,6 +129,7 @@ impl SyntheticEvidence {
         let verification = json!({"kind": "post_capture_frozen_executable_rehash", "observed_utc": "2000-01-01T00:00:00Z", "artifact": {"path": executable, "bytes": artifact["bytes"], "sha256": artifact["sha256"]}});
         let capture = json!({
             "kind": "retained_native_capture", "case_id": self.key["case_id"], "observation": row,
+            "full_workspace_inputs_before": inventory_before, "full_workspace_inputs_after": inventory_after,
             "compiler_artifact": {"reason": "compiler-artifact", "package_id": "path+file:///synthetic/workspace#synthetic@0.0.0", "manifest_path": "/synthetic/workspace/Cargo.toml", "target": {"kind": ["lib"], "name": "synthetic", "src_path": "/synthetic/workspace/src/lib.rs"}, "profile": {"test": true}, "executable": "/synthetic/build/library-test"},
             "artifact": {"compiled_path": "/synthetic/build/library-test", "bytes": artifact["bytes"], "sha256": artifact["sha256"], "retained": {"path": executable, "bytes": artifact["bytes"], "sha256": artifact["sha256"]}, "custody": {"status": "external", "locator": "synthetic external task evidence; absent here"}},
             "retained_verification": self.file(&format!("verification-{index}.json"), &serde_json::to_vec(&verification).map_err(|error| error.to_string())?)?,
@@ -118,8 +148,9 @@ impl SyntheticEvidence {
         };
         fixture.key = json!({
             "case_id": "synthetic-oracle-contract", "claim": "Synthetic independent contract model",
+            "production_source_path": "src/production.rs",
             "test_id": TEST_ID, "package": "synthetic", "package_version": "0.0.0", "library_target": "synthetic", "test_source_path": "src/lib.rs", "package_manifest_path": "Cargo.toml", "library_source_path": "src/lib.rs",
-            "basis": [{"url": "https://example.invalid/synthetic-contract", "artifact": fixture.file("basis.txt", b"Synthetic independent expected behavior")?}],
+            "basis": [{"kind": "source_document", "url": "https://example.invalid/synthetic-contract", "artifact": fixture.file("basis.txt", b"Synthetic independent expected behavior")?}],
             "sources": {"fixed": fixture.file("fixed.rs", b"fn boundary() -> bool { true }")?, "broken": fixture.file("broken.rs", b"fn boundary() -> bool { false }")?},
             "tests": {"corrected": fixture.file("corrected.rs", CORRECTED.as_bytes())?, "original": fixture.file("original.rs", ORIGINAL.as_bytes())?, "weak": fixture.file("weak.rs", WEAK.as_bytes())?},
             "boundary_assertions": [

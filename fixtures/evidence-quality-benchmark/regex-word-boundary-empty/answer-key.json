@@ -15,7 +15,8 @@
         "path": "regex-word-boundary-empty/basis/upstream-issue-859.json",
         "bytes": 1429,
         "sha256": "18cc3fc2bfe0e0a47653fd201484966ffbe4a7618ef68a463ea57d21734ec6df"
-      }
+      },
+      "kind": "source_document"
     },
     {
       "url": "https://github.com/rust-lang/regex/commit/88a2a62d861d189faae539990f63cb9cf195bd8c",
@@ -23,7 +24,8 @@
         "path": "regex-word-boundary-empty/basis/upstream-fixed-commit.json",
         "bytes": 8086,
         "sha256": "c0cbd405fac29d27978cc7f1923db870f878f0eda6392b9617bd4c29c6d37893"
-      }
+      },
+      "kind": "source_document"
     },
     {
       "url": "https://github.com/rust-lang/regex/issues/859",
@@ -31,7 +33,14 @@
         "path": "regex-word-boundary-empty/basis/independent-matcher-capture.json",
         "bytes": 10962,
         "sha256": "9bca8c0bd60fcdb98f3ca80a61fad617926bbcc08d104f7cd8431d46cace7356"
-      }
+      },
+      "kind": "separate_matcher_semantic_witness",
+      "native_test_variant": "corrected",
+      "package": "regex",
+      "package_version": "1.5.5",
+      "library_target": "regex",
+      "package_manifest_path": "Cargo.toml",
+      "library_source_path": "src/lib.rs"
     }
   ],
   "sources": {
@@ -76,5 +85,6 @@
   "failure_lines": {
     "broken_corrected": 3154,
     "fixed_original": 3160
-  }
+  },
+  "production_source_path": "regex-syntax/src/hir/mod.rs"
 }

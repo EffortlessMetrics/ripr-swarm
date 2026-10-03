@@ -50,8 +50,9 @@ fences. `verification/` contains explicitly dated later rehashes of retained
 frozen executables. These are not separately retained contemporaneous
 measurements of the mutable compiler path.
 
-The ten actual executables remain in external task evidence. Ordinary fixture
-validation checks the retained compact records and review identities; it must
+The historical capture declares external retention of ten executables.
+Ordinary fixture validation does not establish their current availability. It
+checks the retained compact records and review identities; it must
 report external executable custody as NOT_REVERIFIED. It does not rerun tests,
 inspect unavailable executable bytes, authenticate the producer or infer domain
 semantics. Current independent review of the retained bytes is a separate fact.
@@ -138,3 +139,31 @@ complete internal selection. Absence means not reported. The setter-omission
 counterfactual differs from the historical argument change, so no
 deletion-specific false-exposure claim follows. Semantic validity, historical native
 discrimination and this static observation remain separate axes.
+
+## Required local evidence graph
+
+The reviewed key distinguishes the changed production path from the library
+entry point and assigns explicit source-document/matcher kinds to its basis.
+The matcher has its own regex 1.5.5 compiler subject. Its declared corrected
+native test variant binds workspace inputs, not execution of the HIR test by
+standalone matcher programs.
+
+All six native before/after inventory pairs are required dependencies. Their
+complete 249-row footprint must equal the original parent inventory plus the
+generated lock and two declared full-file substitutions. The matcher programs,
+outputs and four input inventories are also required local dependencies; their
+recorded package, argv, exit and value/output identities are checked. No Rust
+source inference or new execution substitutes for the independent judgment.
+
+The finite graph contains 120 unique referenced files. Four static narrative
+and correction-history attachments receive outer byte/JSON-object checks;
+their historical paths and superseded claims are not current runtime authority.
+README, the three license copies, three auxiliary patches and the curated
+historical review note remain required documentary/package contents, pinned by
+preservation tests. They cannot replace the full source/test assets, native
+captures or current reviewed-subject records.
+
+Custody totals count the six primary native test observations per accepted
+view. Matcher executables and linked libraries are separately external and
+NOT_REVERIFIED. No current external-file availability or byte rehash follows
+from fixture acceptance.

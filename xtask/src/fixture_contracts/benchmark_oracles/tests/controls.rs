@@ -28,11 +28,7 @@ impl StaticModel {
         let mut runs = Vec::new();
         let mut observations = Vec::new();
         for (variant, native_index) in [("corrected", 0), ("original", 4), ("weak", 2)] {
-            let inputs = json!([
-                {"path": "src/production.rs", "bytes": evidence.key["sources"]["fixed"]["bytes"], "sha256": evidence.key["sources"]["fixed"]["sha256"]},
-                {"path": "src/lib.rs", "bytes": evidence.key["tests"][variant]["bytes"], "sha256": evidence.key["tests"][variant]["sha256"]},
-                {"path": "Cargo.lock", "bytes": evidence.pairing["lock"]["bytes"], "sha256": evidence.pairing["lock"]["sha256"]}
-            ]);
+            let inputs = evidence.input_inventory("fixed", variant)?;
             let inventory = evidence.file(
                 &format!("static-{variant}-inputs.json"),
                 &serde_json::to_vec(&inputs).map_err(|error| error.to_string())?,
@@ -450,6 +446,33 @@ fn benchmark_semantic_controls_real_corpus_identity_and_disclosure() -> Result<(
         .ok_or_else(|| "corpus has no parent".to_string())?;
     let key = retained_json(root, &controls[0]["semantic_oracle"]["answer_key"])?;
     let pairing = retained_json(root, &controls[0]["semantic_oracle"]["native_pairing"])?;
+    assert_eq!(key["production_source_path"], "regex-syntax/src/hir/mod.rs");
+    assert_eq!(key["basis"][0]["kind"], "source_document");
+    assert_eq!(key["basis"][1]["kind"], "source_document");
+    for (field, expected) in [
+        ("kind", "separate_matcher_semantic_witness"),
+        ("native_test_variant", "corrected"),
+        ("package", "regex"),
+        ("package_version", "1.5.5"),
+        ("library_target", "regex"),
+        ("package_manifest_path", "Cargo.toml"),
+        ("library_source_path", "src/lib.rs"),
+    ] {
+        assert_eq!(key["basis"][2][field], expected, "reviewed matcher {field}");
+    }
+    // Documentary/package preservation does not grant runtime semantic authority.
+    for descriptor in [
+        json!({"path": "regex-word-boundary-empty/LICENSE-APACHE", "bytes": 10847, "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"}),
+        json!({"path": "regex-word-boundary-empty/LICENSE-MIT", "bytes": 1071, "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"}),
+        json!({"path": "regex-word-boundary-empty/LICENSE-UNICODE", "bytes": 2847, "sha256": "74db5baf44a41b1000312c673544b3374e4198af5605c7f9080a402cec42cfa3"}),
+        json!({"path": "regex-word-boundary-empty/README.md", "bytes": 10293, "sha256": "141017c9f8e602432e88d19dd8e4601b699b49768f89f808f787c413fa745630"}),
+        json!({"path": "regex-word-boundary-empty/patches/corrected-test.patch", "bytes": 1313, "sha256": "44c33c77f0edc41ebfc5e7a4824ae0c44a99df27ab65b054b40aa19d298c4eba"}),
+        json!({"path": "regex-word-boundary-empty/patches/remove-word-boundary-assertions.patch", "bytes": 422, "sha256": "bd70932756c4ed2eb686a06884f2ad1383a3a2624935ddd80b6f26465db3a5f2"}),
+        json!({"path": "regex-word-boundary-empty/patches/upstream-full.patch", "bytes": 4543, "sha256": "200029a68acec06196eb51702ea448571a7cd0d9f0ec48287a9acb06d73ae927"}),
+        json!({"path": "regex-word-boundary-empty/reviews/native-evidence.md", "bytes": 6642, "sha256": "ff22efa72e6bfe2f95644b10f87e349020e7c16b822b6b37c286558e4b88a759"}),
+    ] {
+        verify_file(root, &descriptor)?;
+    }
     let retained_support = [
         (
             "/original_workspace/archives/parent",

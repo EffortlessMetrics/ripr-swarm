@@ -1,6 +1,6 @@
 {
   "case_id": "regex-word-boundary-empty",
-  "answer_key_sha256": "b6e3d1e019eb6d2f1b77b555a25e5ebc8f63211895b2827ba6316aba2951f90d",
+  "answer_key_sha256": "7596cfac9cb66705d52767990973a17c572186f71f20fafc14fe850f7f4f1d49",
   "lock": {
     "path": "regex-word-boundary-empty/generated-Cargo.lock",
     "bytes": 12299,

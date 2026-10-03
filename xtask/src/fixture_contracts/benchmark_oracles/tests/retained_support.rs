@@ -36,6 +36,28 @@ fn support_fixture() -> Result<SyntheticEvidence, String> {
                 fixture.file(&format!("support/{group}/{name}"), payload)?;
         }
     }
+    for (side, production, test) in [
+        ("parent", "broken", "original"),
+        ("fixed", "fixed", "corrected"),
+    ] {
+        let mut parent = fixture.input_inventory(production, test)?;
+        let rows = parent
+            .as_array_mut()
+            .ok_or("missing synthetic parent inventory")?;
+        rows.retain(|row| row["path"] != "Cargo.lock");
+        for row in rows {
+            let kind = row
+                .as_object_mut()
+                .ok_or("missing synthetic parent row")?
+                .remove("kind")
+                .ok_or("missing synthetic input kind")?;
+            row["type"] = kind;
+        }
+        fixture.pairing["original_workspace"]["inventories"][side] = fixture.file(
+            &format!("support/inventories/{side}"),
+            &serde_json::to_vec(&parent).map_err(|error| error.to_string())?,
+        )?;
+    }
     for field in RECEIPTS {
         fixture.pairing[*field] = fixture.file(&format!("support/{field}.json"), b"{}")?;
     }
