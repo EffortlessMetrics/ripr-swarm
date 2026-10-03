@@ -27,7 +27,16 @@ pub(super) fn verify_file(root: &Path, entry: &Value) -> Result<(), String> {
         .as_str()
         .filter(|path| local_path(path))
         .ok_or_else(|| "upstream evidence needs a contained relative file path".to_string())?;
-    let bytes = fs::read(root.join(path)).map_err(|error| format!("{path}: {error}"))?;
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| format!("resolve evidence root {}: {error}", root.display()))?;
+    let candidate = fs::canonicalize(root.join(path))
+        .map_err(|error| format!("resolve evidence file {path}: {error}"))?;
+    if !candidate.starts_with(&canonical_root) {
+        return Err(format!(
+            "upstream evidence path escapes fixture root: {path}"
+        ));
+    }
+    let bytes = fs::read(&candidate).map_err(|error| format!("{path}: {error}"))?;
     let actual = format!("{:x}", Sha256::digest(&bytes));
     if entry["sha256"].as_str() != Some(actual.as_str()) {
         return Err(format!("upstream evidence digest mismatch: {path}"));

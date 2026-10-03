@@ -130,7 +130,11 @@ compiler-selected path. The record must match the capture's frozen artifact.
 
 Artifact custody is explicit. `local` custody requires a contained retained
 file whose actual bytes match the captured executable; missing/corrupt local
-bytes reject without an external fallback. `external` custody carries a
+bytes reject without an external fallback. The canonical file path must stay
+within the canonical fixture root. In-root file/parent links, root aliases and
+root relocation remain valid; outside file/parent links reject even when their
+bytes match. This is containment for a stable fixture snapshot; resistance to
+concurrent filesystem replacement is outside this contract. `external` custody carries a
 nonblank task-evidence locator and no local file claim. Routine fixture checks
 validate compact capture/review identities and disclose external executable
 bytes as **NOT_REVERIFIED**. They neither require large executables in Git nor
