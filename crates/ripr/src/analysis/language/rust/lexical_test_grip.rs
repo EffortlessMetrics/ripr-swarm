@@ -323,6 +323,7 @@ mod tests {
             diff_file: None,
             mode: AnalysisMode::Draft,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -435,6 +436,7 @@ mod tests {
             probe_shapes: Vec::new(),
             used_lexical_fallback: true,
             module_declarations: Vec::new(),
+            unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
             source: source.to_string(),
         }
@@ -473,6 +475,7 @@ mod tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: related_file
                 .map(|file| RelatedTest {
                     name: "p".to_string(),

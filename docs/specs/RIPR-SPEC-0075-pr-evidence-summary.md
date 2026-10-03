@@ -79,6 +79,12 @@ when no baseline is available.
 
 ### Input artifacts
 
+In the human Local Reproduction Commands section, selected verification context
+applies only to the final verification command appended by the producer.
+Earlier repair-start and reproduction-check entries retain their roles even
+when their text equals the verification command (#5118). Raw command JSON is
+unchanged; legacy packets without command context retain ordinary command forms.
+
 | Artifact | Field sourced |
 | --- | --- |
 | `target/ripr/reports/diff-report.json` | `run_status`, `changed_surfaces`, `local_reproduction_commands` base/head |
@@ -206,6 +212,7 @@ none. The Markdown panel keeps the two apart under `## Limitations` and
 | `receipt_status.verify_failed_receipts` | u64 or `"not_available"` | attempt-ledger `attempts[].verify_result` ∈ `{"fail","failed","error"}` | `"not_available"` when `swarm-attempt-ledger.json` is absent (honest-absent rule). Integer count when present. `0` is honest because a failed entry would have been counted (PR7 of #1123, RIPR-SPEC-0057). |
 | `top_repair` | object or null | start-here `selected` when `state == "top_gap"` | null when no actionable gap. |
 | `top_repair.repair_command` | string or absent | start-here `selected.repair_command` | Present only when start-here carried it (review-card selection, #3906); copied unchanged, never derived. |
+| `top_repair.command_context` | object or absent | start-here `selected.command_context` | Advisory selected-root shell forms carried unchanged; human repair and reproduction projections consume them without changing raw command JSON. |
 | `top_repair_state` | string or absent | start-here `selected.state` | Present only when `top_repair` is null. |
 | `top_limitation` | object or absent | first entry in `limitations[]` | Omitted when limitations are empty or `"not_available"`. |
 | `local_reproduction_commands` | string[] | start-here repair_command (first, when present) + diff-report base/head + start-here verify_command | Always present; at least two commands. |

@@ -13,8 +13,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod advisory_write_safety;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+#[path = "cli_smoke/check_artifact_stdin.rs"]
+mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(feature = "lang-python")]
+#[path = "cli_smoke/implicit_git_root.rs"]
+mod implicit_git_root;
+#[cfg(feature = "lang-python")]
+#[path = "cli_smoke/python_source_admission.rs"]
+mod python_source_admission;
+#[path = "cli_smoke/related_test_count.rs"]
+mod related_test_count;
 
 // All plain fixture-setup git invocations below route through the shared
 // hardened helper (deadline + one idempotent retry + commit reconcile,
@@ -3123,9 +3134,6 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert!(stdout.contains(
         "Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
     ));
-    assert!(stdout.contains("Verify after the test edit: `cargo xtask fixtures boundary_gap`"));
-    assert!(stdout.contains("Receipt after verify: `ripr receipt write --gap "));
-    assert!(stdout.contains("Receipt path: `target/ripr/receipts/"));
     assert!(stdout.contains("Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."));
 
     let json_path = reports.join("start-here.json");
@@ -3163,12 +3171,77 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
             .pointer("/preflight/checks")
             .is_some_and(|value| value.is_array())
     );
-    assert_eq!(
-        json_pointer_str(&report, "/commands/verify")?,
-        "cargo xtask fixtures boundary_gap"
-    );
-
     let markdown = std::fs::read_to_string(&md_path)?;
+    let verify = "cargo xtask fixtures boundary_gap";
+    let receipt_path =
+        "target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json";
+    let receipt = format!(
+        "ripr receipt write --gap gap:rust:pricing:discount:threshold-boundary --verify-command '{verify}' --status not_run --out {receipt_path}"
+    );
+    let cwd = json_pointer_str(&report, "/selected/command_context/cwd")?;
+    assert_eq!(
+        Path::new(cwd).canonicalize()?,
+        workspace_root().canonicalize()?
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/selected/command_context/authority")?,
+        "advisory_display_only"
+    );
+    for (step, raw, label) in [
+        ("verify", verify, "Verify after the test edit"),
+        ("receipt", receipt.as_str(), "Receipt after verify"),
+    ] {
+        // Raw command identity, including the nested receipt verification and
+        // supplied status, must not acquire the human display's CWD wrapper.
+        assert_eq!(
+            json_pointer_str(&report, &format!("/commands/{step}"))?,
+            raw
+        );
+        assert_eq!(
+            json_pointer_str(&report, &format!("/selected/{step}_command"))?,
+            raw
+        );
+        let context = &report["selected"]["command_context"][step];
+        let bash = json_pointer_str(context, "/bash")?;
+        // Inspect the complete wrapper and decode its root independently of
+        // production rendering. Literal Bash/exit/CWD controls live in the
+        // owning first_pr tests; this is the real CLI's projection contract.
+        let root_token = bash
+            .strip_prefix("(cd -P -- ")
+            .and_then(|rest| rest.strip_suffix(&format!(" && {raw})")))
+            .ok_or_else(|| format!("invalid rooted {step} command: {bash}"))?;
+        assert_eq!(decode_shell_token(root_token).as_deref(), Some(cwd));
+        let line = format!("{label}: `{bash}`");
+        assert!(stdout.lines().any(|actual| actual == line), "{stdout}");
+        assert!(markdown.lines().any(|actual| actual == line), "{markdown}");
+        assert!(
+            markdown.lines().any(|actual| actual == format!("- {line}")),
+            "{markdown}"
+        );
+        assert_eq!(context.get("powershell"), Some(&serde_json::Value::Null));
+        let recovery = json_pointer_str(context, "/recovery")?;
+        assert!(recovery.contains("native exit-status semantics"));
+        assert!(recovery.contains("run it from the selected repository"));
+        let unavailable = format!("{label} (PowerShell) unavailable: {recovery}");
+        assert!(stdout.lines().any(|actual| actual == unavailable));
+        assert!(markdown.lines().any(|actual| actual == unavailable));
+    }
+    assert_eq!(
+        json_pointer_str(&report, "/selected/receipt_command_source")?,
+        "first_pr.default_receipt_write_command"
+    );
+    assert_eq!(
+        json_pointer_str(&report, "/selected/receipt_path")?,
+        receipt_path
+    );
+    assert_eq!(
+        report.pointer("/selected/receipt_state"),
+        Some(&serde_json::Value::Null)
+    );
+    assert!(stdout.contains(&format!("Receipt path: `{receipt_path}`")));
+    assert!(markdown.contains(&format!("- Receipt path: `{receipt_path}`")));
+    assert!(stdout.contains("Receipt status: the command records `--status not_run` as printed"));
+    assert!(markdown.contains("Receipt status: the command records `--status not_run` as printed"));
     assert!(markdown.contains("# RIPR First PR Start Here"));
     assert!(markdown.contains("Status: advisory"));
     assert!(markdown.contains("## Preflight"));
@@ -3179,8 +3252,6 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
         )
     );
     assert!(markdown.contains("- Missing discriminator: Equality-boundary assertion"));
-    assert!(markdown.contains("- Receipt after verify: `ripr receipt write --gap "));
-    assert!(markdown.contains("- Receipt path: `target/ripr/receipts/"));
     assert!(markdown.contains("Pass/fail authority remains with explicit gate-decision artifacts"));
     let check_output = run_ripr_in_workspace(&[
         "start-here",
@@ -7134,7 +7205,14 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
     }
 
+    struct ReceiptScratch(PathBuf);
+    impl Drop for ReceiptScratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
     let root = unbuilt_repair_fixture("agent-receipt-attempt-selection")?;
+    let _root_cleanup = ReceiptScratch(root.clone());
 
     // Attempt A: prepared, then failed by a committed production-only edit.
     // The gap stays open (no test was added), so a fresh attempt for the same
@@ -7296,6 +7374,179 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         attempt_b.as_str(),
         "{receipt}"
     );
+    // The installed journeys use authored synthetic seam identities. This
+    // control projects their committed command grammar onto this genuine Rust
+    // repair attempt; it does not execute the three installed-language fixtures.
+    let corpus: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        workspace_root().join("fixtures/blind_journey_execute/corpus.json"),
+    )?)?;
+    let scenarios = corpus["scenarios"].as_array().ok_or("corpus scenarios")?;
+    let launch = unique_temp_workspace("installed-receipt-command-launch");
+    let _launch_cleanup = ReceiptScratch(launch.clone());
+    std::fs::create_dir_all(&launch)?;
+    let out = root.join("target/ripr/reports/agent-receipt.json");
+    let mut positive_rows = 0usize;
+    for (language, authored_seam) in [
+        ("rust", "seam-tier-boundary-equality"),
+        ("python", "seam-discount-boundary-equality"),
+        ("typescript", "seam-pricing-threshold-equality"),
+    ] {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(workspace_root().join(format!(
+                "fixtures/blind_journey_installed_{language}/manifest.json"
+            )))?)?;
+        assert_eq!(manifest["journey"]["eligible_items"][0], authored_seam);
+        let template = manifest["journey"]["printed_command_templates"]["agent_receipt"]
+            .as_str()
+            .ok_or("receipt template")?;
+        let tokens: Vec<&str> = template.split_whitespace().collect();
+        let prefix = tokens
+            .get(..3)
+            .ok_or_else(|| format!("{language} receipt template has fewer than three tokens"))?;
+        assert_eq!(prefix, &["ripr", "agent", "receipt"], "{language}");
+        let seam_position = tokens
+            .iter()
+            .position(|token| *token == "--seam-id")
+            .ok_or("template seam flag")?;
+        assert_eq!(
+            tokens.get(seam_position + 1),
+            Some(&authored_seam),
+            "{language} receipt template seam value",
+        );
+        let mut language_rows = 0usize;
+        for row in scenarios.iter().filter(|row| {
+            row["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with(&format!("installed_{language}_")))
+                && row["expected"]["terminal"] == "passed_blind_journey"
+        }) {
+            let actions = row["journey"]["actions"]
+                .as_array()
+                .ok_or("journey actions")?;
+            let commands: Vec<&str> = actions
+                .iter()
+                .filter_map(|action| {
+                    action["input_bytes"]
+                        .as_str()
+                        .filter(|input| input.starts_with("argv:ripr agent receipt "))
+                })
+                .collect();
+            assert_eq!(commands.len(), 1, "{}", row["id"]);
+            let (authored_root, tail) = commands[0]
+                .strip_prefix("argv:ripr agent receipt --root '")
+                .ok_or("literal receipt root")?
+                .split_once("' --attempt ")
+                .ok_or("literal receipt attempt")?;
+            let (authored_attempt, _) = tail.split_once(' ').ok_or("attempt value")?;
+            let expected = format!(
+                "argv:{}",
+                template
+                    .replace("<selected-root>", &format!("'{authored_root}'"))
+                    .replace("<repair-attempt-id>", authored_attempt)
+            );
+            assert_eq!(commands[0], expected, "{}", row["id"]);
+            language_rows += 1;
+        }
+        assert_eq!(language_rows, 3, "{language} positive rows");
+        positive_rows += language_rows;
+        // Tokenize before substituting paths: no shell, help shortcut, or
+        // scripted executor stands in for the actual public CLI below.
+        let args: Vec<String> = tokens[1..]
+            .iter()
+            .map(|token| match *token {
+                "<selected-root>" => root.display().to_string(),
+                "<repair-attempt-id>" => attempt_b.clone(),
+                value if value == authored_seam => BOUNDARY_GAP_SEAM_ID.to_string(),
+                value => value.to_string(),
+            })
+            .collect();
+        let invoke = |args: &[String]| {
+            let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+            spawn_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&launch),
+                &borrowed,
+                &[],
+                None,
+                Some(&[]),
+            )
+        };
+        let accepted = invoke(&args)?;
+        assert_success(&accepted);
+        // --out deliberately writes the JSON file instead of printing JSON.
+        assert!(accepted.stdout.is_empty(), "{language} --out stdout");
+        let bound: serde_json::Value = serde_json::from_slice(&std::fs::read(&out)?)?;
+        assert_eq!(bound["status"], "advisory");
+        assert_eq!(
+            bound["provenance"]["verify_artifact"]["sha256"]
+                .as_str()
+                .ok_or("bound verify digest")?,
+            receipt["provenance"]["verify_artifact"]["sha256"]
+                .as_str()
+                .ok_or("control verify digest")?,
+        );
+        assert_eq!(bound["repair_attempt"]["attempt_id"], attempt_b);
+        assert_eq!(bound["seam"]["seam_id"], BOUNDARY_GAP_SEAM_ID);
+        assert_eq!(
+            bound["provenance"]["repo_root"]
+                .as_str()
+                .ok_or("bound receipt root")?,
+            receipt["provenance"]["repo_root"]
+                .as_str()
+                .ok_or("control receipt root")?,
+        );
+        assert!(
+            !launch
+                .join("target/ripr/reports/agent-receipt.json")
+                .exists()
+        );
+        std::fs::remove_file(&out)?;
+        for (omitted, diagnostic) in [
+            ("all", "agent receipt requires --verify-json <path>"),
+            (
+                "--verify-json",
+                "agent receipt requires --verify-json <path>",
+            ),
+            ("--seam-id", "agent receipt requires --seam-id"),
+            (
+                "--json",
+                "agent receipt requires --json (the supported output for this subcommand)",
+            ),
+        ] {
+            let mut incomplete = Vec::new();
+            let mut index = 0usize;
+            while index < args.len() {
+                let token = args[index].as_str();
+                let remove = token == omitted
+                    || (omitted == "all"
+                        && matches!(token, "--verify-json" | "--seam-id" | "--json"));
+                if remove {
+                    index += if token == "--json" { 1 } else { 2 };
+                } else {
+                    incomplete.push(args[index].clone());
+                    index += 1;
+                }
+            }
+            let refused = invoke(&incomplete)?;
+            assert_failure(&refused);
+            assert!(
+                String::from_utf8_lossy(&refused.stderr).contains(diagnostic),
+                "{language} {omitted}: {}",
+                String::from_utf8_lossy(&refused.stderr)
+            );
+            assert!(
+                !out.exists(),
+                "{language} {omitted} must not write a receipt"
+            );
+            assert!(
+                !launch
+                    .join("target/ripr/reports/agent-receipt.json")
+                    .exists()
+            );
+        }
+    }
+    assert_eq!(positive_rows, 9);
+    std::fs::remove_dir_all(launch)?;
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -7425,6 +7676,12 @@ fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::
     ]);
     assert_failure(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("canonical repo-exposure artifact"));
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("legacy or unknown producer"));
+    assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
+    assert!(diagnostic.contains("recovered.repo-exposure.json"));
+    assert!(diagnostic.contains("Replace this input"));
+    assert!(!diagnostic.contains("missing field"));
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
