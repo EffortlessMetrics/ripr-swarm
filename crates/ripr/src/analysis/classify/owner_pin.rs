@@ -46,7 +46,8 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
-    OwnerPinAssertions, owner_pin_assertions, trusted_macro_binding_ambiguities,
+    OwnerPinAssertions, empty_macro_binding_ambiguities, local_empty_macro_names,
+    owner_pin_assertions, trusted_macro_binding_ambiguities,
 };
 use crate::domain::{Probe, ProbeFamily};
 use std::cell::RefCell;
@@ -69,6 +70,7 @@ pub(in crate::analysis) struct OwnerReturnPin {
 pub(in crate::analysis) struct OwnerPinSyntax {
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
 }
 
 impl OwnerPinSyntax {
@@ -116,6 +118,26 @@ impl OwnerPinSyntax {
         if facts.role_provenance.earliest_unresolved_reason.is_some() {
             return false;
         }
+        let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
+        let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
+            let names = local_empty_macro_names(&facts.source);
+            if names.is_empty() {
+                return BTreeSet::new();
+            }
+            index
+                .files
+                .iter()
+                .flat_map(|(path, file)| {
+                    empty_macro_binding_ambiguities(
+                        &file.source,
+                        &index.package_names,
+                        &names,
+                        path == &test.file,
+                    )
+                })
+                .collect()
+        });
+        let ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
@@ -145,7 +167,7 @@ impl OwnerPinSyntax {
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
                 (assertion.line, &assertion.text),
-                ambiguous,
+                &ambiguous,
             )
     }
 }

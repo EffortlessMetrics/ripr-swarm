@@ -291,6 +291,18 @@ executes. Admission precedes matching, observation and oracle-strength selection
 for all three named families; refusal preserves the original assertion count so
 an unrelated Unknown helper cannot gain singleton credit.
 
+An independent ordinary equality also remains eligible after a uniquely bound,
+local empty macro. The syntax witness recognizes only one unannotated
+`macro_rules!` declaration with the sole catch-all `($($name:tt)*) => {}` rule,
+declared before the invocation in the same or an enclosing lexical module.
+The existing workspace binding authority rejects competing definitions,
+imports and opaque binding-producing calls. This is not a property-macro name
+allowlist or a macro evaluator: other matchers, nonempty/returning expansions,
+qualified, imported, shadowed and ambiguous bindings remain unsupported.
+Discarded argument tokens supply no oracle or execution evidence. The same
+closure, CFG, collection and statement-prefix requirements still govern the
+independent equality. Calls after an assertion receive no new prefix exception.
+
 Fourteen family fixtures pair direct and invoked-closure positives with uncalled,
 false-branch, macro-shadowed and no-assertion controls. Each family also has an
 unconditional owner call before an uncalled assertion: real reach alone cannot
@@ -449,6 +461,10 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle` (six mixed cases), and
   `owner_pin_refused_rows_do_not_crowd_out_admitted_oracles` (eight related tests),
   and `owner_pin_review_admission_controls` (six public-API review regressions).
+  `local_empty_macro_preserves_independent_equality_execution` compares static
+  admission with compiled correct/wrong subjects for local empty, returning,
+  imported, ambiguous, shadowed and disabled declarations. The property
+  quarantine integration retains its named/direct/helper mixed positives.
   The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
 - Fixtures: `fixtures/owner_return_pin_trait_method`,
   `fixtures/owner_return_pin_identity_traps`; re-blessed

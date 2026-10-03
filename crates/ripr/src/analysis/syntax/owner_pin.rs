@@ -64,6 +64,32 @@ pub(crate) fn trusted_macro_binding_ambiguities(
     packages: &BTreeSet<String>,
     trusted: &[&str],
 ) -> BTreeSet<String> {
+    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new())
+}
+
+/// Apply the same binding/import/opaque-expansion authority to candidate empty
+/// macros. Only the declaring file may exempt its exact local declaration.
+pub(crate) fn empty_macro_binding_ambiguities(
+    source: &str,
+    packages: &BTreeSet<String>,
+    names: &BTreeSet<String>,
+    declaring_file: bool,
+) -> BTreeSet<String> {
+    let trusted: Vec<_> = names.iter().map(String::as_str).collect();
+    let allowed = if declaring_file {
+        names.clone()
+    } else {
+        BTreeSet::new()
+    };
+    macro_binding_ambiguities(source, packages, &trusted, &allowed)
+}
+
+fn macro_binding_ambiguities(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    allowed_empty: &BTreeSet<String>,
+) -> BTreeSet<String> {
     let mut ambiguous = BTreeSet::new();
     if !source.contains("macro")
         && !source.contains("use")
@@ -83,7 +109,9 @@ pub(crate) fn trusted_macro_binding_ambiguities(
         if let Some(name) = definition {
             let name = name.text().to_string();
             let name = name.trim_start_matches("r#");
-            if trusted.contains(&name) {
+            let admitted_declaration = allowed_empty.contains(name)
+                && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
+            if trusted.contains(&name) && !admitted_declaration {
                 ambiguous.insert(name.to_string());
             }
         }
@@ -157,12 +185,93 @@ pub(crate) fn trusted_macro_binding_ambiguities(
     ambiguous
 }
 
+/// This recognizes one bounded syntax form, not a macro evaluator: a sole
+/// `($($name:tt)*) => {}` rule consumes any invocation and emits no tokens.
+/// Other matchers, arms, attributes and nonempty transcribers stay opaque.
+fn empty_catch_all(item: &ast::MacroRules) -> bool {
+    if item.attrs().next().is_some() {
+        return false;
+    }
+    let Some(tree) = item.token_tree() else {
+        return false;
+    };
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let mut text: Vec<_> = tokens.iter().map(|token| token.text()).collect();
+    if text.len() == 16 && text.get(14) == Some(&";") {
+        text.remove(14);
+    }
+    text.len() == 15
+        && tokens
+            .get(5)
+            .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT)
+        && text[..5] == ["{", "(", "$", "(", "$"]
+        && text[6..] == [":", "tt", ")", "*", ")", "=>", "{", "}", "}"]
+}
+
+fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut candidates = BTreeMap::new();
+    for node in root.descendants() {
+        let rule = ast::MacroRules::cast(node.clone());
+        let name = rule
+            .as_ref()
+            .and_then(|item| item.name())
+            .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()));
+        let Some(name) = name else {
+            continue;
+        };
+        let name = name.text().to_string();
+        *counts.entry(name.clone()).or_default() += 1;
+        if !name.starts_with("r#")
+            && let Some(rule) = rule
+            && empty_catch_all(&rule)
+            && rule.syntax().parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            })
+        {
+            candidates.insert(name, rule);
+        }
+    }
+    candidates.retain(|name, _| counts.get(name) == Some(&1));
+    candidates
+}
+
+pub(crate) fn local_empty_macro_names(source: &str) -> BTreeSet<String> {
+    parse_clean_source_file(source)
+        .map(|parse| {
+            local_empty_macros(parse.tree().syntax())
+                .into_keys()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::MacroRules>) -> bool {
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let Some(definition) = empty.get(&path.syntax().text().to_string()) else {
+        return false;
+    };
+    let Some(scope) = definition.syntax().parent() else {
+        return false;
+    };
+    definition.syntax().text_range().end() <= call.syntax().text_range().start()
+        && call.syntax().ancestors().any(|ancestor| ancestor == scope)
+}
+
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
         return result;
     };
     let lines = LineIndex::new(source);
+    let empty_macros = local_empty_macros(parse.tree().syntax());
     for module in parse
         .tree()
         .syntax()
@@ -205,7 +314,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         );
         *identities.entry(key.clone()).or_default() += 1;
         if function.async_token().is_some()
-            || has_escape(body.syntax(), trusted)
+            || has_escape(body.syntax(), trusted, &empty_macros)
             || !supported_item_context(function.syntax())
             || function
                 .attrs()
@@ -316,9 +425,18 @@ fn supported_item_context(item: &SyntaxNode) -> bool {
     source_file
 }
 
-fn has_escape(body: &SyntaxNode, trusted: &[&str]) -> bool {
+fn has_escape(
+    body: &SyntaxNode,
+    trusted: &[&str],
+    empty: &BTreeMap<String, ast::MacroRules>,
+) -> bool {
     body.descendants().any(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            // Discarded arguments are not executed. Cross-file/import/shadow
+            // ambiguity is checked by the shared binding authority at admission.
+            if resolves_empty_local(&call, empty) {
+                return false;
+            }
             if call
                 .path()
                 .is_none_or(|path| !is_trusted_macro(&path.syntax().text().to_string(), trusted))
