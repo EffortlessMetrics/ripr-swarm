@@ -685,11 +685,15 @@ impl WorkspaceSession {
         // never be served as live again, so evict them (one bounded packet
         // each, up to 128 KiB) and keep only an attempt_id → snapshot_id
         // tombstone that preserves the typed `superseded` failure.
-        let evicted = self
-            .repairs
-            .extract_if(|_, existing| existing.snapshot_id != snapshot_id)
-            .map(|(id, existing)| (id, existing.snapshot_id))
-            .collect::<Vec<_>>();
+        let mut evicted = Vec::new();
+        self.repairs.retain(|id, existing| {
+            if existing.snapshot_id != snapshot_id {
+                evicted.push((id.clone(), existing.snapshot_id.clone()));
+                false
+            } else {
+                true
+            }
+        });
         self.repairs.insert(attempt_id, transaction);
         for (id, old_snapshot) in evicted {
             self.superseded_attempts.insert(id, old_snapshot);
@@ -1172,12 +1176,16 @@ mod tests {
         session.in_flight = true;
         match session.repair_attempt_document(&attempt_id, None, Some("root:sha256:a")) {
             Ok(value) => Err(format!("in-flight attempt read must fail closed: {value}")),
-            Err(failure) if failure.code == crate::mcp::workspace::CODE_ANALYSIS_IN_FLIGHT => {}
+            Err(failure) if failure.code == crate::mcp::workspace::CODE_ANALYSIS_IN_FLIGHT => {
+                Ok(())
+            }
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
         }?;
         match session.receipt_status_document(&attempt_id, None, Some("root:sha256:a")) {
             Ok(value) => Err(format!("in-flight receipt read must fail closed: {value}")),
-            Err(failure) if failure.code == crate::mcp::workspace::CODE_ANALYSIS_IN_FLIGHT => {}
+            Err(failure) if failure.code == crate::mcp::workspace::CODE_ANALYSIS_IN_FLIGHT => {
+                Ok(())
+            }
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
         }?;
         Ok(())
@@ -1218,12 +1226,12 @@ mod tests {
         }
         match session.repair_attempt_document(&first_id, None, Some("root:sha256:a")) {
             Ok(value) => Err(format!("evicted attempt must stay superseded: {value}")),
-            Err(failure) if failure.code == "superseded" => {}
+            Err(failure) if failure.code == "superseded" => Ok(()),
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
         }?;
         match session.receipt_status_document(&first_id, None, Some("root:sha256:a")) {
             Ok(value) => Err(format!("evicted receipt must stay superseded: {value}")),
-            Err(failure) if failure.code == "superseded" => {}
+            Err(failure) if failure.code == "superseded" => Ok(()),
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
         }?;
         // The live transaction still reads normally.
