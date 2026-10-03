@@ -49,9 +49,10 @@ testable parity contract.
    The bridge is best-effort: queueing, draining, or transport failure
    cannot change the analysis result, the snapshot, or the lifecycle end.
    The drain is bounded by `STAGE_DRAIN_BUDGET`: a stalled client may delay
-   result handling and the next refresh by at most that budget, never block
-   them; missed stage reports are progress-only, and the outcome-derived
-   end still reports the terminal disposition.
+   result handling and the next refresh by at most twice that budget (the
+   drain task plus the defensive final forward), never block them; missed
+   stage reports are progress-only, and the outcome-derived end still
+   reports the terminal disposition.
 2. `loading_input`, `analyzing`, and `building_output` each map to exactly
    one client-appropriate bounded report
    (`loading input` / `analyzing workspace` / `building output`) on the

@@ -114,10 +114,11 @@ impl AnalysisProgressSink for StageReportBridge {
 
 /// Budget for forwarding advisory stage reports once the producer finished.
 /// A stalled client may delay, never block, result handling and the next
-/// refresh: stage reports are progress-only, and the outcome-derived end
-/// (emitted after this request resolves) still reports the terminal
-/// disposition on the same bounded transport the legacy begin/end traffic
-/// already uses.
+/// refresh: the drain task and the backend's defensive final forward each
+/// apply this bound, so the worst-case added delay is twice this budget.
+/// Stage reports are progress-only, and the outcome-derived end (emitted
+/// after this request resolves) still reports the terminal disposition on
+/// the same bounded transport the legacy begin/end traffic already uses.
 pub(super) const STAGE_DRAIN_BUDGET: Duration = Duration::from_secs(5);
 
 /// Forward every queued stage report to the tracker's accepted generation,
