@@ -21,12 +21,10 @@ const REPAIR_PACKET_NOT_READY_REASON: &str = "repair transactions are owned by a
 pub(crate) struct GapItem {
     pub(crate) canonical_id: String,
     pub(crate) finding_id: String,
-    pub(crate) class: String,
-    pub(crate) language: Option<String>,
     pub(crate) file: String,
-    pub(crate) line: usize,
     /// Small deterministic document used by `ripr_list_gaps`; its serialized
-    /// byte length is the item's budget payload bytes.
+    /// byte length is the item's budget payload bytes. Class, language, and
+    /// line live here (and in the evidence core), not as duplicated fields.
     pub(crate) list_summary: Value,
     list_summary_bytes: usize,
     /// Complete bounded evidence document (without the per-request snapshot
@@ -64,10 +62,7 @@ impl GapItem {
         Ok(Self {
             canonical_id,
             finding_id: finding.id.clone(),
-            class,
-            language,
             file,
-            line,
             list_summary,
             list_summary_bytes,
             evidence_core,
@@ -325,13 +320,15 @@ mod tests {
                 item = (item.canonical_id.clone(), item.finding_id.clone())
             ));
         }
-        if item.class != "weakly_exposed" {
-            return Err(format!("unexpected class wire token: {}", item.class));
+        if item.list_summary.pointer("/class").and_then(Value::as_str) != Some("weakly_exposed") {
+            return Err(format!("unexpected class wire token: {}", item.list_summary));
         }
-        if item.file != "src/lib.rs" || item.line != 12 {
+        if item.file != "src/lib.rs"
+            || item.list_summary.pointer("/line").and_then(Value::as_u64) != Some(12)
+        {
             return Err(format!(
                 "location projection drifted: {}:{}",
-                item.file, item.line
+                item.file, item.list_summary
             ));
         }
         Ok(())

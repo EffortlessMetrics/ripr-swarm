@@ -845,7 +845,7 @@ mod tests {
             (
                 "/tools/1/description",
                 REFRESH_TOOL_NAME,
-                [
+                &[
                     "shared check authority",
                     "never edits source, executes verification or mutation commands",
                     "cancelled or superseded attempt is never committed",
@@ -856,7 +856,7 @@ mod tests {
             (
                 "/tools/2/description",
                 LIST_GAPS_TOOL_NAME,
-                [
+                &[
                     "deterministic bounded working set",
                     "never truncates silently",
                     "no business risk",
@@ -869,7 +869,7 @@ mod tests {
             (
                 "/tools/3/description",
                 GET_GAP_TOOL_NAME,
-                [
+                &[
                     "complete bounded evidence",
                     "repair_packet_ready = false",
                     "never authorizes an edit",

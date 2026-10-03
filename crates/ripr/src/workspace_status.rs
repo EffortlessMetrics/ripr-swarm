@@ -155,10 +155,6 @@ pub(crate) enum NoAuthority {
 }
 
 impl WorkspaceStatus {
-    pub fn resolve(explicit_root: Option<PathBuf>) -> Self {
-        Self::resolve_with_root(explicit_root).0
-    }
-
     /// Resolve the status and retain the validated canonical root path for
     /// in-process consumers that must operate from the same root (the MCP
     /// refresh path runs the shared check authority from it). The path is
@@ -410,7 +406,7 @@ mod tests {
         std::fs::write(root.join("ripr.toml"), "mode = \"draft\"\n")
             .map_err(|error| error.to_string())?;
 
-        let status = WorkspaceStatus::resolve(Some(root.clone()));
+        let status = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
         let encoded = serde_json::to_string(&status).map_err(|error| error.to_string())?;
         let canonical = root
             .canonicalize()
@@ -456,7 +452,7 @@ mod tests {
         std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"p\"\n")
             .map_err(|error| error.to_string())?;
 
-        let without = WorkspaceStatus::resolve(Some(root.clone()));
+        let without = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
         if without.configuration.project_config_state != ProjectConfigState::BuiltInDefaultsOnly {
             return Err("a root without ripr.toml must use built-in defaults".to_string());
         }
@@ -469,7 +465,7 @@ mod tests {
 
         std::fs::write(root.join("ripr.toml"), "mode = \"draft\"\n")
             .map_err(|error| error.to_string())?;
-        let with = WorkspaceStatus::resolve(Some(root.clone()));
+        let with = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
         if with.configuration.project_config_state != ProjectConfigState::DetectedNotLoaded
             || !with.limitations.contains(&DETECTED)
         {
@@ -480,7 +476,7 @@ mod tests {
         }
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
 
-        let missing = WorkspaceStatus::resolve(Some(root));
+        let missing = WorkspaceStatus::resolve_with_root(Some(root)).0;
         if missing.workspace_state != WorkspaceState::Unavailable
             || missing.limitations.contains(&DETECTED)
         {
@@ -495,7 +491,7 @@ mod tests {
     #[test]
     fn invalid_explicit_root_fails_closed_without_path_disclosure() -> Result<(), String> {
         let root = temporary_root("missing");
-        let status = WorkspaceStatus::resolve(Some(root.clone()));
+        let status = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
         let encoded = serde_json::to_string(&status).map_err(|error| error.to_string())?;
 
         if status.workspace_state != WorkspaceState::Unavailable {
@@ -516,7 +512,7 @@ mod tests {
         let root = temporary_root("git-only");
         std::fs::create_dir_all(root.join(".git")).map_err(|error| error.to_string())?;
 
-        let status = WorkspaceStatus::resolve(Some(root.clone()));
+        let status = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
 
         if status.workspace_state != WorkspaceState::Ready {
             return Err("a .git-only repository must not be rejected as unmarked".to_string());
@@ -543,7 +539,7 @@ mod tests {
         std::fs::write(root.join(".git"), "gitdir: /elsewhere\n")
             .map_err(|error| error.to_string())?;
 
-        let status = WorkspaceStatus::resolve(Some(root.clone()));
+        let status = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
 
         if status.workspace_state != WorkspaceState::Ready {
             return Err("a gitfile-only repository must not be rejected as unmarked".to_string());
@@ -565,7 +561,7 @@ mod tests {
         std::fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = []\n")
             .map_err(|error| error.to_string())?;
 
-        let status = WorkspaceStatus::resolve(Some(root.clone()));
+        let status = WorkspaceStatus::resolve_with_root(Some(root.clone())).0;
 
         if status.workspace_state != WorkspaceState::Ready {
             return Err("a .git plus project-file root must stay ready".to_string());

@@ -135,7 +135,8 @@ async fn actual_sdk_held_stdout_preserves_serial_request_admission() -> Result<(
         admitted: admitted.clone(),
     };
     let server =
-        McpServer::new(WorkspaceStatus::resolve(None)).map_err(|error| error.to_string())?;
+        McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+            .map_err(|error| error.to_string())?;
     let service_task = tokio::spawn(async move {
         let service = server
             .serve(transport)

@@ -14,7 +14,7 @@ async fn empty_or_syntax_invalid_eof_before_initialize_is_normal() -> Result<(),
         serve(
             input,
             Vec::<u8>::new(),
-            WorkspaceStatus::resolve(None),
+            WorkspaceStatus::resolve_with_root(None).0,
             None,
         )
         .await?;
