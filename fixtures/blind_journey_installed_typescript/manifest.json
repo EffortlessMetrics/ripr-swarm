@@ -1,6 +1,6 @@
 {
  "schema_version": "blind_journey_installed_typescript_fixture.v1",
- "spec": "RIPR-SPEC-0209",
+ "spec": "RIPR-SPEC-0210",
  "issues": ["#4519", "#4508", "#4600", "#3797", "#4510", "#4604", "#4603"],
  "fixture": {
   "name": "installed-typescript-threshold-boundary",

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0209: Installed TypeScript journey fixture
+# RIPR-SPEC-0210: Installed TypeScript journey fixture
 
 Status: proposed
 

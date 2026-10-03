@@ -1,6 +1,6 @@
 # Installed TypeScript Journey Fixture
 
-Spec: RIPR-SPEC-0209
+Spec: RIPR-SPEC-0210
 
 ## Given
 
