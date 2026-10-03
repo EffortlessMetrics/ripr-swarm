@@ -128,7 +128,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let Some(selector) = selector else {
         return Err(super::missing_selector_error(
             "missing --at or --finding selector",
-            &app::finding_navigation_with_worktree(&input, None, false, worktree).list_command(),
+            &app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree)
+                .list_command(),
         ));
     };
     if !explicit_max_tests {
@@ -155,7 +156,12 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
             app::collect_context_with_config_and_worktree(
-                input, &selector, max_tests, &config, worktree,
+                input,
+                &selector,
+                max_tests,
+                &config,
+                worktree,
+                explicit.mode,
             )?
         }
     };

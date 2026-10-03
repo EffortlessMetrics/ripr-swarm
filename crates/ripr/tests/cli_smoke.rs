@@ -17035,6 +17035,61 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
             ));
         }
     }
+    // An explicit `--mode draft` overriding a config mode must survive into
+    // context's navigation: the explain witness and the selector-less listing
+    // both keep it, or they would replay under the config's mode.
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+        .map_err(|err| format!("write ripr.toml: {err}"))?;
+    let draft_context = run_command(
+        bin,
+        Some(&decoy),
+        &[
+            "context",
+            "--root",
+            &root_str,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--mode",
+            "draft",
+            "--at",
+            &finding_id,
+        ],
+    )
+    .map_err(|err| format!("run draft context: {err}"))?;
+    assert_success(&draft_context);
+    let draft_packet: serde_json::Value = serde_json::from_slice(&draft_context.stdout)
+        .map_err(|err| format!("parse draft context JSON: {err}"))?;
+    let draft_explain = draft_packet
+        .pointer("/witness/explain_command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !draft_explain.contains("--mode draft") {
+        return Err(format!(
+            "context must keep an explicit --mode draft in its explain command: {draft_packet}"
+        ));
+    }
+    let draft_missing = run_command(
+        bin,
+        Some(&decoy),
+        &[
+            "context",
+            "--root",
+            &root_str,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--mode",
+            "draft",
+        ],
+    )
+    .map_err(|err| format!("run selector-less draft context: {err}"))?;
+    if !String::from_utf8_lossy(&draft_missing.stderr).contains("--worktree --mode draft") {
+        return Err(format!(
+            "selector-less context must keep --mode draft in its listing:\n{}",
+            String::from_utf8_lossy(&draft_missing.stderr)
+        ));
+    }
     ignore_remove_dir_all(&decoy);
 
     let conflict = run_ripr(&[

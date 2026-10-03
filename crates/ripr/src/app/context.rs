@@ -37,7 +37,14 @@ pub fn collect_context_with_config(
     max_related_tests: usize,
     config: &RiprConfig,
 ) -> Result<String, String> {
-    collect_context_with_config_and_worktree(input, selector, max_related_tests, config, false)
+    collect_context_with_config_and_worktree(
+        input,
+        selector,
+        max_related_tests,
+        config,
+        false,
+        false,
+    )
 }
 
 /// [`collect_context_with_config`] over the working tree when `worktree` is
@@ -49,12 +56,13 @@ pub(crate) fn collect_context_with_config_and_worktree(
     max_related_tests: usize,
     config: &RiprConfig,
     worktree: bool,
+    mode_explicit: bool,
 ) -> Result<String, String> {
     let input = CheckInput {
         format: OutputFormat::Json,
         ..input
     };
-    let navigation = super::finding_navigation_with_worktree(&input, None, false, worktree);
+    let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
     let output = if worktree {
         super::check_workspace_worktree_with_config(input, config)?
     } else {
