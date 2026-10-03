@@ -764,9 +764,8 @@ impl CatFileBatch {
         let read = self.stdout.read_exact(&mut newline, deadline);
         read.map_err(|error| self.classify_read_error(error))?;
         if newline[0] != b'\n' {
-            let message =
-                "malformed git cat-file --batch stream: blob not terminated by a newline"
-                    .to_string();
+            let message = "malformed git cat-file --batch stream: blob not terminated by a newline"
+                .to_string();
             return Err(self.abort("malformed stream", message));
         }
         Ok(())
