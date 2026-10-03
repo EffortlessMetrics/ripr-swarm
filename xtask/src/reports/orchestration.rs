@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::orchestration_attempt::{
-    ORCHESTRATION_CLAIM_BOUNDARY, AttemptDispositionV1, AttemptStrategyV1,
+    AttemptDispositionV1, AttemptStrategyV1, ORCHESTRATION_CLAIM_BOUNDARY,
     OrchestrationFixtureCorpusV1, OrchestrationRowAssessmentV1, assess_orchestration_attempt,
     load_orchestration_fixture_corpus, missing_orchestration_required_scenarios,
     orchestration_portable_identity,
@@ -105,7 +105,9 @@ pub(crate) fn orchestration_corpus_identity(
         identities.push(orchestration_portable_identity(attempt)?);
     }
     identities.sort();
-    Ok(crate::blind_journey::sha256_hex(identities.join("\n").as_bytes()))
+    Ok(crate::blind_journey::sha256_hex(
+        identities.join("\n").as_bytes(),
+    ))
 }
 
 /// Deduplicate assessed rows by `observation_key`: one work item observed
@@ -390,7 +392,9 @@ pub(crate) fn orchestration_scorecard_report(args: &[String]) -> Result<(), Stri
         }
     };
     if !failures.is_empty() {
-        return Err(format!("orchestration fixture corpus drifted: {failures:?}"));
+        return Err(format!(
+            "orchestration fixture corpus drifted: {failures:?}"
+        ));
     }
     let json_body = orchestration_scorecard_json(&scorecard)?;
     crate::write_report("orchestration-scorecard.json", &json_body)?;
@@ -468,12 +472,11 @@ mod tests {
     use super::*;
     use crate::orchestration_attempt::{
         AttemptComparisonV1, ORCHESTRATION_ATTEMPT_SCHEMA_VERSION, OrchestrationAttemptV1,
-        OrchestrationBoundaryStatusV1, OrchestrationChangedPathV1,
-        OrchestrationClaimRefV1, OrchestrationClaimStateV1, OrchestrationCleanupV1,
-        OrchestrationClientRefV1, OrchestrationCommandDenominatorV1,
-        OrchestrationEvidenceRefV1, OrchestrationOverflowRefV1, OrchestrationRoleV1,
-        OrchestrationVerificationV1, OrchestrationWorkRefV1, load_orchestration_corpus,
-        orchestration_row_digest,
+        OrchestrationBoundaryStatusV1, OrchestrationChangedPathV1, OrchestrationClaimRefV1,
+        OrchestrationClaimStateV1, OrchestrationCleanupV1, OrchestrationClientRefV1,
+        OrchestrationCommandDenominatorV1, OrchestrationEvidenceRefV1, OrchestrationOverflowRefV1,
+        OrchestrationRoleV1, OrchestrationVerificationV1, OrchestrationWorkRefV1,
+        load_orchestration_corpus, orchestration_row_digest,
     };
 
     fn hex64(fill: char) -> String {
@@ -578,17 +581,13 @@ mod tests {
 
     #[test]
     fn empty_corpus_reports_no_success_rate() -> Result<(), String> {
-        let corpus = load_orchestration_corpus(
-            r#"{"schema_version":"orchestration_corpus.v1","rows":[]}"#,
-        )?;
+        let corpus =
+            load_orchestration_corpus(r#"{"schema_version":"orchestration_corpus.v1","rows":[]}"#)?;
         if !corpus.rows.is_empty() {
             return Err("the empty corpus fixture must parse to zero rows".to_string());
         }
-        let scorecard = build_orchestration_scorecard(
-            &[],
-            "empty".to_string(),
-            "fixtures/empty.json",
-        );
+        let scorecard =
+            build_orchestration_scorecard(&[], "empty".to_string(), "fixtures/empty.json");
         if scorecard.real_attempts != 0 || scorecard.completed != 0 {
             return Err("an empty corpus must keep zero real attempts".to_string());
         }
@@ -599,7 +598,11 @@ mod tests {
         if !markdown.contains("not measured") {
             return Err("the honest empty report must say the rate is not measured".to_string());
         }
-        if !scorecard.strategy_totals.iter().all(|totals| totals.attempts == 0) {
+        if !scorecard
+            .strategy_totals
+            .iter()
+            .all(|totals| totals.attempts == 0)
+        {
             return Err("every strategy row must stay visible with zero attempts".to_string());
         }
         Ok(())
@@ -613,7 +616,9 @@ mod tests {
             "synthetic".to_string(),
             "fixtures/synthetic.json",
         );
-        if scorecard.real_attempts != 0 || scorecard.completion_rate.state != OrchestrationRateStateV1::NotMeasured {
+        if scorecard.real_attempts != 0
+            || scorecard.completion_rate.state != OrchestrationRateStateV1::NotMeasured
+        {
             return Err(format!(
                 "synthetic rows leaked into real denominators: real_attempts={} rate={:?}",
                 scorecard.real_attempts, scorecard.completion_rate
@@ -710,15 +715,16 @@ mod tests {
     #[test]
     fn rejected_rows_stay_visible_without_denominators() -> Result<(), String> {
         let mut row = sample_attempt("attempt-over-budget", "observation-over-budget", false)?;
-        row.result.bytes =
-            crate::orchestration_attempt::ORCHESTRATION_RESULT_BYTE_BUDGET + 1;
+        row.result.bytes = crate::orchestration_attempt::ORCHESTRATION_RESULT_BYTE_BUDGET + 1;
         row.row_digest = orchestration_row_digest(&row)?;
         let scorecard = build_orchestration_scorecard(
             &[assessed(row)],
             "rejected".to_string(),
             "fixtures/rejected.json",
         );
-        if scorecard.real_attempts != 0 || scorecard.completion_rate.state != OrchestrationRateStateV1::NotMeasured {
+        if scorecard.real_attempts != 0
+            || scorecard.completion_rate.state != OrchestrationRateStateV1::NotMeasured
+        {
             return Err("a rejected row must not enter real denominators".to_string());
         }
         if scorecard.rejected_rows.is_empty() {
@@ -771,7 +777,9 @@ mod tests {
         }
         let markdown = orchestration_scorecard_markdown(&scorecard);
         if !markdown.contains("attempt-projection") || !markdown.contains("SingleAgent") {
-            return Err("the Markdown projection must name the attempt and the strategy".to_string());
+            return Err(
+                "the Markdown projection must name the attempt and the strategy".to_string(),
+            );
         }
         Ok(())
     }

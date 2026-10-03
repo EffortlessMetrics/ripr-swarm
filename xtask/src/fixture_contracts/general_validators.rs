@@ -1861,10 +1861,14 @@ fn validate_orchestration_attempt_receipts_fixture_corpus_at(
             "orchestration attempt receipts corpus is missing required scenario {id}"
         ));
     }
-    let (_scorecard, failures) =
-        crate::reports::assess_orchestration_fixture_corpus(&corpus, "fixtures/orchestration_attempt_receipts/corpus.json");
+    let (_scorecard, failures) = crate::reports::assess_orchestration_fixture_corpus(
+        &corpus,
+        "fixtures/orchestration_attempt_receipts/corpus.json",
+    );
     for failure in &failures {
-        violations.push(format!("orchestration attempt receipts corpus drifted: {failure}"));
+        violations.push(format!(
+            "orchestration attempt receipts corpus drifted: {failure}"
+        ));
     }
     Ok(())
 }

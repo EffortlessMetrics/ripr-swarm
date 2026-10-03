@@ -397,8 +397,7 @@ struct OrchestrationAttemptPortableInput<'a> {
 }
 
 fn canonical_json<T: Serialize>(value: &T) -> Result<String, String> {
-    serde_json::to_string(value)
-        .map_err(|error| format!("canonical serialization failed: {error}"))
+    serde_json::to_string(value).map_err(|error| format!("canonical serialization failed: {error}"))
 }
 
 fn claim_digest_inputs(row: &OrchestrationAttemptV1) -> Vec<OrchestrationClaimDigestInput<'_>> {
@@ -620,7 +619,9 @@ pub(crate) fn assess_orchestration_attempt(
                 return base(
                     false,
                     None,
-                    vec![format!("overflow evidence {index} is malformed: zero bytes")],
+                    vec![format!(
+                        "overflow evidence {index} is malformed: zero bytes"
+                    )],
                 );
             }
         }
@@ -661,9 +662,13 @@ pub(crate) fn assess_orchestration_attempt(
 
     // The verified_fact law is universal: no claim state may assert a fact
     // without a matching independent receipt, whatever the claimed disposition.
-    let verified_fact_receipted = row.independent_verification.as_ref().is_some_and(
-        |verification| verification.independent_receipt && verification.comparison == AttemptComparisonV1::Matched,
-    );
+    let verified_fact_receipted =
+        row.independent_verification
+            .as_ref()
+            .is_some_and(|verification| {
+                verification.independent_receipt
+                    && verification.comparison == AttemptComparisonV1::Matched
+            });
     if !verified_fact_receipted {
         for claim in &row.claims {
             if claim.state == OrchestrationClaimStateV1::VerifiedFact {
@@ -970,7 +975,10 @@ mod tests {
         let row = stamped_sample()?;
         let assessment = assess_orchestration_attempt(&row);
         if !assessment.counted {
-            return Err(format!("valid row was not counted: {:?}", assessment.reasons));
+            return Err(format!(
+                "valid row was not counted: {:?}",
+                assessment.reasons
+            ));
         }
         if assessment.disposition != Some(AttemptDispositionV1::Completed) {
             return Err(format!(
@@ -1075,8 +1083,8 @@ mod tests {
     }
 
     #[test]
-    fn builder_claim_cannot_become_verified_fact_without_independent_receipt(
-    ) -> Result<(), String> {
+    fn builder_claim_cannot_become_verified_fact_without_independent_receipt() -> Result<(), String>
+    {
         let mut row = stamped_sample()?;
         row.claims[0].state = OrchestrationClaimStateV1::VerifiedFact;
         let verification = row
@@ -1142,7 +1150,8 @@ mod tests {
         row.row_digest = orchestration_row_digest(&row)?;
         let assessment = assess_orchestration_attempt(&row);
         if assessment.disposition != Some(AttemptDispositionV1::Contradicted)
-            || !reason_contains(&assessment, "contradiction") {
+            || !reason_contains(&assessment, "contradiction")
+        {
             return Err(format!(
                 "an unresolved contradiction must force contradicted, got {:?} reasons={:?}",
                 assessment.disposition, assessment.reasons
@@ -1162,7 +1171,8 @@ mod tests {
         row.row_digest = orchestration_row_digest(&row)?;
         let assessment = assess_orchestration_attempt(&row);
         if assessment.disposition != Some(AttemptDispositionV1::Stale)
-            || !reason_contains(&assessment, "stale") {
+            || !reason_contains(&assessment, "stale")
+        {
             return Err(format!(
                 "a stale verification binding must force stale, got {:?} reasons={:?}",
                 assessment.disposition, assessment.reasons
@@ -1179,7 +1189,8 @@ mod tests {
         row.row_digest = orchestration_row_digest(&row)?;
         let assessment = assess_orchestration_attempt(&row);
         if assessment.disposition != Some(AttemptDispositionV1::VerificationFailed)
-            || !reason_contains(&assessment, "rejected claim") {
+            || !reason_contains(&assessment, "rejected claim")
+        {
             return Err(format!(
                 "a rejected builder claim must block completion, got {:?} reasons={:?}",
                 assessment.disposition, assessment.reasons
@@ -1191,11 +1202,14 @@ mod tests {
     #[test]
     fn cleanup_residue_downgrades_completed_to_partial() -> Result<(), String> {
         let mut row = stamped_sample()?;
-        row.cleanup.residue.push("target/debug/leftover".to_string());
+        row.cleanup
+            .residue
+            .push("target/debug/leftover".to_string());
         row.row_digest = orchestration_row_digest(&row)?;
         let assessment = assess_orchestration_attempt(&row);
         if assessment.disposition != Some(AttemptDispositionV1::Partial)
-            || !reason_contains(&assessment, "residue") {
+            || !reason_contains(&assessment, "residue")
+        {
             return Err(format!(
                 "cleanup residue must downgrade completed to partial, got {:?} reasons={:?}",
                 assessment.disposition, assessment.reasons
@@ -1303,7 +1317,8 @@ mod tests {
 
     #[test]
     fn missing_required_scenarios_are_reported() -> Result<(), String> {
-        let missing = missing_orchestration_required_scenarios(["single_agent_preferred_narrow_task"]);
+        let missing =
+            missing_orchestration_required_scenarios(["single_agent_preferred_narrow_task"]);
         if missing.len() != REQUIRED_ORCHESTRATION_SCENARIO_IDS.len() - 1 {
             return Err(format!(
                 "expected every other scenario to be reported missing, got {missing:?}"
@@ -1311,7 +1326,9 @@ mod tests {
         }
         let none = missing_orchestration_required_scenarios(REQUIRED_ORCHESTRATION_SCENARIO_IDS);
         if !none.is_empty() {
-            return Err(format!("a complete id set must report nothing missing, got {none:?}"));
+            return Err(format!(
+                "a complete id set must report nothing missing, got {none:?}"
+            ));
         }
         Ok(())
     }
