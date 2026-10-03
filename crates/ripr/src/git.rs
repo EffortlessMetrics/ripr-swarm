@@ -35,6 +35,10 @@ const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 /// a committed limited snapshot instead of a dropped refresh.
 pub(crate) const GIT_INVOCATION_TIMEOUT_PREFIX: &str = "git_invocation_timeout";
 
+const GIT_TIMEOUT_REPAIR_GUIDANCE: &str = " Repair route: raise or disable the git deadline (0 disables it) — \
+     --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the \
+     gitTimeoutMs initialization option for editor sessions — then re-run.";
+
 /// Cause and repair when the git program itself is missing (#4735).
 ///
 /// Shared by the git spawn authority, `ripr check`, and the doctor `tool_git`
@@ -346,7 +350,7 @@ pub(crate) fn probe_work_tree_root(root: &Path) -> Result<WorkTreeRootProbe, Str
     ) {
         Ok(output) => output,
         Err(error) if is_git_not_found_on_path(&error) => return Ok(WorkTreeRootProbe::Unverified),
-        Err(error) => return Err(error),
+        Err(error) => return Err(work_tree_root_probe_error(error)),
     };
     if !output.status.success() {
         return if output.status.code().is_some() {
@@ -358,6 +362,19 @@ pub(crate) fn probe_work_tree_root(root: &Path) -> Result<WorkTreeRootProbe, Str
         };
     }
     Ok(classify_work_tree_root_stdout(&output.stdout))
+}
+
+fn work_tree_root_probe_error(error: String) -> String {
+    // This probe has a fixed deadline. Its check/cache callers name their own
+    // explicit-root escape hatches; configurable diff-load advice cannot help.
+    // Match the raw timeout tag and exact suffix so cleanup failures (which
+    // may quote a suppressed timeout) and arbitrary path bytes remain intact.
+    if is_git_invocation_timeout(&error)
+        && let Some(cause) = error.strip_suffix(GIT_TIMEOUT_REPAIR_GUIDANCE)
+    {
+        return cause.to_string();
+    }
+    error
 }
 
 fn classify_work_tree_root_stdout(stdout: &[u8]) -> WorkTreeRootProbe {
@@ -1138,9 +1155,7 @@ impl ChildWait {
 fn git_invocation_timeout_message(describe: &str, timeout_ms: u128) -> String {
     format!(
         "{GIT_INVOCATION_TIMEOUT_PREFIX}: {describe} exceeded the {timeout_ms}ms deadline \
-         (process terminated). Repair route: raise or disable the git deadline (0 disables \
-         it) — --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the \
-         gitTimeoutMs initialization option for editor sessions — then re-run."
+         (process terminated).{GIT_TIMEOUT_REPAIR_GUIDANCE}"
     )
 }
 
@@ -1280,6 +1295,26 @@ mod tests {
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
     use serial_test::serial;
+
+    #[test]
+    fn work_tree_root_timeout_omits_inapplicable_deadline_guidance() {
+        let shared = git_invocation_timeout_message("git root probe in /fixture", 5_000);
+        let projected = work_tree_root_probe_error(shared.clone());
+        assert!(is_git_invocation_timeout(&projected));
+        assert!(projected.contains("exceeded the 5000ms deadline (process terminated)"));
+        for ineffective in ["--git-timeout", "RIPR_GIT_TIMEOUT", "gitTimeoutMs"] {
+            assert!(shared.contains(ineffective));
+            assert!(!projected.contains(ineffective), "{projected}");
+        }
+        for preserved in [
+            "analysis_cancelled: superseded root probe".to_string(),
+            "git output exceeded the 8192 byte limit".to_string(),
+            "failed to run git: Permission denied".to_string(),
+            format!("timeout did not complete tree cleanup (suppressed wait outcome: {shared})"),
+        ] {
+            assert_eq!(work_tree_root_probe_error(preserved.clone()), preserved);
+        }
+    }
 
     #[test]
     fn work_tree_root_probe_preserves_exact_prefix_bytes() {

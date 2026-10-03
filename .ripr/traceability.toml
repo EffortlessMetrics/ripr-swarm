@@ -806,6 +806,8 @@ tests = [
   "crates/ripr/src/cli/commands/check.rs::tests::project_root_recognizes_a_linked_worktree_git_file",
   "crates/ripr/src/cli/commands/check.rs::tests::project_root_keeps_exact_git_path_bytes",
   "crates/ripr/src/git.rs::tests::work_tree_root_probe_preserves_exact_prefix_bytes",
+  "crates/ripr/src/git.rs::tests::work_tree_root_timeout_omits_inapplicable_deadline_guidance",
+  "crates/ripr/tests/cli_smoke/implicit_git_root.rs::fixed_root_probe_timeout_names_only_effective_consumer_recovery",
   "crates/ripr/src/config.rs::tests::generated_init_config_is_conservative_and_parseable",
   "crates/ripr/src/config.rs::tests::generated_init_config_matches_checked_in_example",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_skips_default_excluded_directories",

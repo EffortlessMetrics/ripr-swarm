@@ -205,3 +205,48 @@ fn git_launch_failure_stops_root_discovery_with_consumer_recovery() -> TestResul
     fs::remove_dir_all(sandbox)?;
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn fixed_root_probe_timeout_names_only_effective_consumer_recovery() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (sandbox, project) = python_fixture("implicit-git-fixed-timeout")?;
+    run_git(&project, &["init", "-b", "main"])?;
+    let programs = sandbox.join("programs");
+    fs::create_dir(&programs)?;
+    let shim = programs.join("git");
+    fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")?;
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))?;
+    let path =
+        std::env::join_paths([programs.as_path(), Path::new("/bin"), Path::new("/usr/bin")])?;
+    let path = path.to_str().ok_or("fixture PATH is not UTF-8")?;
+    let env = [
+        ("PATH", path),
+        ("RIPR_CACHE_DIR", ""),
+        ("RIPR_GIT_TIMEOUT", "0"),
+    ];
+    for (args, recovery) in [
+        (
+            vec!["check", "--diff", "change.diff", "--git-timeout", "0"],
+            "pass --root PATH",
+        ),
+        (vec!["cache", "status", "--json"], "set RIPR_CACHE_DIR"),
+    ] {
+        let output = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &project, &args, &env)?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("git_invocation_timeout:"), "{stderr}");
+        assert!(
+            stderr.contains("5000ms deadline (process terminated)"),
+            "{stderr}"
+        );
+        assert!(stderr.contains(recovery), "{stderr}");
+        for ineffective in ["--git-timeout", "RIPR_GIT_TIMEOUT", "gitTimeoutMs"] {
+            assert!(!stderr.contains(ineffective), "{stderr}");
+        }
+    }
+    fs::remove_dir_all(sandbox)?;
+    Ok(())
+}
