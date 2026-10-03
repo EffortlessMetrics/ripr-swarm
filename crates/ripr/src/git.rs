@@ -313,6 +313,69 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     command
 }
 
+/// What Git established about a directory that contains a `.git` entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkTreeRootProbe {
+    Root,
+    InsideWorkTree,
+    /// Git could not certify the marker. It still bounds an ancestor walk,
+    /// but must never be promoted to a verified Git top level.
+    Unverified,
+}
+
+/// Verify a candidate root using the shared bounded process authority.
+///
+/// An empty prefix identifies the work-tree root without decoding or trimming
+/// its path. A nonempty prefix proves Git found an enclosing repository, as
+/// happens when it ignores an inert nested `.git` directory. Refusals and
+/// missing Git remain unverified barriers: neither may widen root discovery.
+pub(crate) fn probe_work_tree_root(root: &Path) -> Result<WorkTreeRootProbe, String> {
+    let args = ["rev-parse", "--is-inside-work-tree", "--show-prefix"];
+    let mut command = git_command(root, &args);
+    // A hook or wrapper's repository selectors do not certify this directory.
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR");
+    let describe = format!("git root probe in {}", root.display());
+    let output = match collect_output_with_deadline_and_limit(
+        command,
+        Duration::from_secs(5),
+        8 * 1024,
+        &describe,
+    ) {
+        Ok(output) => output,
+        Err(error) if is_git_not_found_on_path(&error) => return Ok(WorkTreeRootProbe::Unverified),
+        Err(error) => return Err(error),
+    };
+    if !output.status.success() {
+        return if output.status.code().is_some() {
+            // Includes invalid gitfiles and Git's dubious-ownership refusal.
+            // Without a positive answer, do not cross the candidate marker.
+            Ok(WorkTreeRootProbe::Unverified)
+        } else {
+            Err(format!("{describe} terminated without an exit code"))
+        };
+    }
+    Ok(classify_work_tree_root_stdout(&output.stdout))
+}
+
+fn classify_work_tree_root_stdout(stdout: &[u8]) -> WorkTreeRootProbe {
+    let prefix = stdout
+        .strip_prefix(b"true\n")
+        .and_then(|rest| rest.strip_suffix(b"\n"))
+        .or_else(|| {
+            stdout
+                .strip_prefix(b"true\r\n")
+                .and_then(|rest| rest.strip_suffix(b"\r\n"))
+        });
+    match prefix {
+        Some([]) => WorkTreeRootProbe::Root,
+        Some(_) => WorkTreeRootProbe::InsideWorkTree,
+        None => WorkTreeRootProbe::Unverified,
+    }
+}
+
 /// [`run_git_output_with_deadline`] with extra environment variables set on
 /// the child, for probes that must scope repository discovery (for example
 /// `GIT_CEILING_DIRECTORIES`).
@@ -1217,6 +1280,40 @@ mod tests {
         AnalysisAbortKind, AnalysisCancellationToken, is_cancellation_error, with_token,
     };
     use serial_test::serial;
+
+    #[test]
+    fn work_tree_root_probe_preserves_exact_prefix_bytes() {
+        for (stdout, expected) in [
+            (b"true\n\n".as_slice(), WorkTreeRootProbe::Root),
+            (b"true\r\n\r\n".as_slice(), WorkTreeRootProbe::Root),
+            (
+                b"true\nsrc/\n".as_slice(),
+                WorkTreeRootProbe::InsideWorkTree,
+            ),
+            (
+                b"true\n \n/\n".as_slice(),
+                WorkTreeRootProbe::InsideWorkTree,
+            ),
+            (
+                b"true\n\xff/\n".as_slice(),
+                WorkTreeRootProbe::InsideWorkTree,
+            ),
+            (
+                b"true\r\nsrc/\r\n".as_slice(),
+                WorkTreeRootProbe::InsideWorkTree,
+            ),
+            (b"true\n".as_slice(), WorkTreeRootProbe::Unverified),
+            (b"false\n\n".as_slice(), WorkTreeRootProbe::Unverified),
+            (b"unexpected\n\n".as_slice(), WorkTreeRootProbe::Unverified),
+            (b"".as_slice(), WorkTreeRootProbe::Unverified),
+        ] {
+            assert_eq!(
+                classify_work_tree_root_stdout(stdout),
+                expected,
+                "{stdout:?}"
+            );
+        }
+    }
 
     #[test]
     fn dubious_ownership_names_the_safe_directory_repair() -> Result<(), String> {

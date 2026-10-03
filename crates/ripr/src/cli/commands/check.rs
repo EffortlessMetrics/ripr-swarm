@@ -14,6 +14,7 @@ use crate::cli::parse::{
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::git::WorkTreeRootProbe;
 use crate::output;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -85,13 +86,28 @@ pub(super) fn resolve_workspace_root(start: &Path) -> Result<Option<PathBuf>, St
         if manifest_declares_workspace(&ancestor.join("Cargo.toml")) {
             return Ok(Some(ancestor.to_path_buf()));
         }
-        // A git top level bounds the walk: a workspace in an enclosing
-        // repository never claims a nested, independent repository.
-        if ancestor.join(".git").exists() {
-            break;
+        // Verified roots and unverified markers bound the walk: an enclosing
+        // workspace must not claim a repository Git cannot inspect either.
+        match implicit_git_boundary(ancestor)? {
+            Some(WorkTreeRootProbe::Root | WorkTreeRootProbe::Unverified) => break,
+            Some(WorkTreeRootProbe::InsideWorkTree) | None => {}
         }
     }
     Ok(None)
+}
+
+fn implicit_git_boundary(dir: &Path) -> Result<Option<WorkTreeRootProbe>, String> {
+    if !dir.join(".git").exists() {
+        return Ok(None);
+    }
+    crate::git::probe_work_tree_root(dir)
+        .map(Some)
+        .map_err(|error| {
+            format!(
+                "{error}; cannot verify implicit Git root at {}; pass --root PATH to select the analysis root explicitly",
+                dir.display()
+            )
+        })
 }
 
 fn manifest_declares_workspace(manifest: &Path) -> bool {
@@ -131,13 +147,14 @@ impl ImplicitRootReason {
 /// A `[workspace]` manifest anywhere above wins. Otherwise the nearest
 /// ancestor holding a `Cargo.toml`, a JavaScript or Python workspace
 /// declaration (`pnpm-workspace.yaml`, a `package.json` with `workspaces`,
-/// a `pyproject.toml` with `[tool.uv.workspace]`), or a `.git` entry is the
+/// a `pyproject.toml` with `[tool.uv.workspace]`), or a verified Git top level is the
 /// root. So a run from `repo/src` of a single-crate repo analyzes the crate
 /// instead of silently scoping the diff to `src/` and reporting a clean,
 /// complete result (#4610), and a run from one package of a pnpm/npm/yarn/bun
 /// or uv monorepo analyzes the workspace, where sibling-package tests are
 /// visible (#4553). The walk stops at the git top level so a stray manifest
-/// outside the repository is never adopted.
+/// outside the repository is never adopted. An unverified `.git` entry bounds
+/// traversal without becoming a root; absent a local manifest, retain `start`.
 pub(super) fn resolve_project_root(
     start: &Path,
 ) -> Result<Option<(PathBuf, ImplicitRootReason)>, String> {
@@ -157,11 +174,15 @@ pub(super) fn resolve_project_root(
         if let Some(reason) = non_cargo_workspace_marker(ancestor) {
             return Ok(Some((ancestor.to_path_buf(), reason)));
         }
-        if ancestor.join(".git").exists() {
-            return Ok(Some((
-                ancestor.to_path_buf(),
-                ImplicitRootReason::GitTopLevel,
-            )));
+        match implicit_git_boundary(ancestor)? {
+            Some(WorkTreeRootProbe::Root) => {
+                return Ok(Some((
+                    ancestor.to_path_buf(),
+                    ImplicitRootReason::GitTopLevel,
+                )));
+            }
+            Some(WorkTreeRootProbe::Unverified) => break,
+            Some(WorkTreeRootProbe::InsideWorkTree) | None => {}
         }
     }
     Ok(None)
