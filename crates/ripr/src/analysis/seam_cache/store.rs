@@ -213,8 +213,6 @@ fn largest_fitting_end(
         )? {
             best = mid;
             low = mid.saturating_add(1);
-        } else if mid <= start.saturating_add(1) {
-            break;
         } else {
             high = mid.saturating_sub(1);
         }
@@ -364,11 +362,13 @@ fn remove_replaced_generation_files(
 }
 
 fn publication_id() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    format!("{}-{nanos}", std::process::id())
+    format!("{}-{nanos}-{seq}", std::process::id())
 }
 
 fn stream_checksummed_cache_file<T: Serialize>(
@@ -1094,6 +1094,29 @@ mod tests {
         }
         round_trip(&cache, &key, &first)?;
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn publication_ids_stay_unique_across_concurrent_calls() -> Result<(), String> {
+        let handles: Vec<_> = (0..32)
+            .map(|_| std::thread::spawn(publication_id))
+            .collect();
+        let mut ids = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let id = handle
+                .join()
+                .map_err(|_| "publication_id thread did not finish".to_string())?;
+            ids.push(id);
+        }
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        if unique.len() != ids.len() {
+            return Err(format!(
+                "same-process concurrent publication ids collided: {ids:?}"
+            ));
+        }
         Ok(())
     }
 }
