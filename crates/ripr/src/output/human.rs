@@ -141,10 +141,12 @@ pub(crate) fn render_full_with_config_and_navigation(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
+    let mut findings_rendered = 0usize;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
+        findings_rendered += 1;
         out.push_str(&render_finding_with_config(finding, config));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
@@ -152,6 +154,17 @@ pub(crate) fn render_full_with_config_and_navigation(
             out.push_str(&format!("  {}\n", navigation.context_command(&finding.id)));
         }
         out.push('\n');
+    }
+    // #4924: when policy suppresses every finding, no block (and no id)
+    // printed above, so the per-finding commands never rendered. Keep a
+    // route to the same run's ids without pointing at ids that are absent.
+    if findings_rendered == 0
+        && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+    {
+        out.push_str(&format!(
+            "Drill in: every finding in this run is suppressed by policy, so none printed above. List this run's finding ids with:\n  {}\n\n",
+            navigation.list_command()
+        ));
     }
     render_all_no_path_disclosure(&mut out, output);
     // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
@@ -2815,6 +2828,88 @@ mod tests {
             rendered.matches("Drill in:").count(),
             2,
             "one drill-in block per finding; got:\n{rendered}"
+        );
+    }
+
+    /// A `--worktree` full-form output whose findings are `suppressed`.
+    fn worktree_full_with_suppressed(suppressed: &[&str]) -> String {
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let mut first = sample_finding();
+        first.id = "first".to_string();
+        first.probe.location.line = 7;
+        let mut second = sample_finding();
+        second.id = "second".to_string();
+        second.probe.location.line = 8;
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 2,
+                findings: 2,
+                ..Summary::default()
+            },
+            findings: vec![first, second],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: Some(CheckSuppressionOutcome {
+                policy_path: "policy/ripr-suppressions.toml".to_string(),
+                suppressed: suppressed
+                    .iter()
+                    .map(|id| SuppressedCheckFinding {
+                        finding_id: (*id).to_string(),
+                        selector: "src/**".to_string(),
+                    })
+                    .collect(),
+                warnings: Vec::new(),
+            }),
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+        super::render_full_with_config_and_navigation(
+            &output,
+            &crate::config::RiprConfig::default(),
+            Some(&worktree_drill_in()),
+        )
+    }
+
+    /// #4924 review: when policy suppresses every finding, no block prints,
+    /// so the per-finding commands never render. The full form still names
+    /// the same run's scoped listing and does not point at absent ids.
+    #[test]
+    fn worktree_full_lists_ids_when_every_finding_is_suppressed() {
+        let rendered = worktree_full_with_suppressed(&["first", "second"]);
+        assert!(
+            rendered.contains(
+                "Drill in: every finding in this run is suppressed by policy, so none printed above. List this run's finding ids with:\n  ripr check --root repo --base HEAD --worktree --json\n"
+            ),
+            "a fully suppressed worktree run must keep a scoped listing route; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("  id: ") && !rendered.contains("ripr explain"),
+            "no finding block or per-finding command prints under full suppression; got:\n{rendered}"
+        );
+    }
+
+    /// The listing fallback is for full suppression only: one unsuppressed
+    /// finding keeps its own block and drill-in commands instead.
+    #[test]
+    fn worktree_full_partial_suppression_keeps_per_finding_drill_in() {
+        let rendered = worktree_full_with_suppressed(&["first"]);
+        assert!(
+            rendered.contains("  id: second\n")
+                && rendered.contains("  ripr explain --root repo --base HEAD --worktree second\n"),
+            "the unsuppressed finding keeps its drill-in; got:\n{rendered}"
+        );
+        assert_eq!(rendered.matches("Drill in:").count(), 1, "{rendered}");
+        assert!(
+            !rendered.contains("suppressed by policy, so none printed above"),
+            "partial suppression must not print the all-suppressed fallback; got:\n{rendered}"
         );
     }
 
