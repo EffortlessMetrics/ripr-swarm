@@ -601,7 +601,7 @@ pub(crate) fn capture_bytes_in_dir_with_timeout(
 
 /// Bounded binary input/output for Git's batch protocol. The existing process
 /// owner retains child/descendant custody while stdin is written concurrently.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn capture_bytes_in_dir_with_input_timeout(
     program: &Path,
     args: &[String],
