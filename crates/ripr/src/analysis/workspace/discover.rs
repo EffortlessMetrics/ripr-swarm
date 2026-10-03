@@ -62,7 +62,7 @@ pub(crate) fn limitations_for_absent_changed_files(
             .with_path(&display)?
             .with_affected_items(1)?
             .with_detail(
-                "changed file is absent or not a discoverable regular source file in the working tree (sparse checkout, local delete, or symlink); probes for this file were withheld",
+                "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
             )
         })
         .collect()
