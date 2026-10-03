@@ -18,7 +18,6 @@
 //! transport failure cannot change the analysis result.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -123,6 +122,7 @@ mod tests {
     use crate::lsp::input_identity::LspAnalysisInputIdentity;
     use std::io::{self, Write};
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
     use tower_lsp_server::{LanguageServer, LspService};
