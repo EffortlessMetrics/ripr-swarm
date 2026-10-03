@@ -6,7 +6,7 @@ mod native;
 use super::{AcceptedEvidence, Evidence, LiveHeadSnapshot, digest, input::read_owned, require_hex};
 use native::{NativeDecision, read_native};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 const MAX_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
@@ -114,7 +114,34 @@ pub(crate) struct HandoffReceipt {
     excluded_subjects: Vec<ExcludedSubjects>,
     proof_inputs: Vec<Evidence>,
     rows: Vec<QualifiedRow>,
+    // Original admitted bytes, never reconstructed JSON or checkout substitutes.
+    #[serde(serialize_with = "serialize_bytes_hex")]
+    manifest_bytes: Vec<u8>,
+    #[serde(serialize_with = "serialize_bytes_hex")]
+    qualification_bundle_bytes: Vec<u8>,
+    packet_inputs: Vec<RetainedPacket>,
     claim: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedPacket {
+    path: String,
+    sha256: String,
+    #[serde(serialize_with = "serialize_bytes_hex")]
+    bytes: Vec<u8>,
+}
+
+fn serialize_bytes_hex<S: serde::Serializer>(
+    bytes: &[u8],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use std::fmt::Write;
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").map_err(serde::ser::Error::custom)?;
+    }
+    serializer.serialize_str(&encoded)
 }
 
 pub(crate) struct AdmittedHandoff {
@@ -284,13 +311,38 @@ fn admit_with(
         .qualification_bundle
         .to_str()
         .ok_or_else(|| "qualification bundle path must be UTF-8".to_string())?;
-    let bytes = read_owned(manifest.root(), bundle_path, MAX_BUNDLE_BYTES)?;
-    if digest(&bytes) != accepted.qualification_bundle_sha256 {
+    let manifest_path = manifest
+        .artifact_path
+        .to_str()
+        .ok_or_else(|| "manifest path must be UTF-8".to_string())?;
+    let manifest_bytes = manifest
+        .raw
+        .get(manifest_path)
+        .ok_or_else(|| "admitted manifest lost original bytes".to_string())?
+        .clone();
+    let mut packets = manifest
+        .raw
+        .iter()
+        .filter(|(path, _)| path.as_str() != manifest_path)
+        .map(|(path, bytes)| (path.clone(), bytes.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let retained_size = manifest.raw.values().try_fold(0_u64, |size, bytes| {
+        size.checked_add(bytes.len() as u64)
+            .ok_or_else(|| "handoff retained-byte budget overflow".to_string())
+    })?;
+    let remaining = MAX_BUNDLE_BYTES
+        .checked_sub(retained_size)
+        .ok_or_else(|| "handoff exceeds 64 MiB aggregate retained-byte budget".to_string())?;
+    if bundle_path == manifest_path || packets.contains_key(bundle_path) {
+        return Err("qualification bundle overlaps admitted manifest evidence".to_string());
+    }
+    let qualification_bundle_bytes = read_owned(manifest.root(), bundle_path, remaining)?;
+    if digest(&qualification_bundle_bytes) != accepted.qualification_bundle_sha256 {
         return Err(
             "qualification bundle differs from native #2769 accepted raw digest".to_string(),
         );
     }
-    let bundle: QualificationBundle = serde_json::from_slice(&bytes)
+    let bundle: QualificationBundle = serde_json::from_slice(&qualification_bundle_bytes)
         .map_err(|error| format!("parse complete qualification bundle: {error}"))?;
     if bundle.schema_version != 1
         || bundle.kind != "ripr_complete_qualification_bundle"
@@ -315,7 +367,7 @@ fn admit_with(
     if required_rows(&actual_rows)? != expected_rows {
         return Err("complete qualification bundle omits or changes required rows".to_string());
     }
-    let mut remaining = MAX_BUNDLE_BYTES - bytes.len() as u64;
+    let mut remaining = remaining - qualification_bundle_bytes.len() as u64;
     let mut paths = BTreeSet::from([bundle_path.to_string()]);
     for row in &bundle.rows {
         if row.status != "passed"
@@ -331,24 +383,38 @@ fn admit_with(
             ));
         }
         super::validate_evidence(&row.packet, row.owner_issue)?;
+        if row.packet.path == manifest_path {
+            return Err("qualification packet overlaps admitted manifest".to_string());
+        }
         if !paths.insert(row.packet.path.clone()) {
             return Err("qualification bundle repeats a packet path".to_string());
         }
-        let bytes = read_owned(manifest.root(), &row.packet.path, remaining)?;
-        remaining -= bytes.len() as u64;
+        let bytes = match packets.get(&row.packet.path) {
+            Some(bytes) => bytes.clone(),
+            None => {
+                let bytes = read_owned(manifest.root(), &row.packet.path, remaining)?;
+                remaining -= bytes.len() as u64;
+                bytes
+            }
+        };
         if digest(&bytes) != row.packet.sha256 {
             return Err(format!("qualification packet changed: {}", row.id));
         }
+        packets.insert(row.packet.path.clone(), bytes);
     }
     manifest.revalidate()?;
     Ok(AdmittedHandoff {
         receipt: HandoffReceipt {
-            schema: "ripr.source_handoff_acceptance.v1".to_string(), subject: expected,
+            schema: "ripr.source_handoff_acceptance.v2".to_string(), subject: expected,
             selection, selected_claims, qualification,
             qualification_bundle_sha256: accepted.qualification_bundle_sha256,
             required_execution_owners: selected.required_execution_owners,
             excluded_subjects: selected.excluded_subjects,
             proof_inputs: selected.proof_inputs, rows: bundle.rows,
+            manifest_bytes, qualification_bundle_bytes,
+            packet_inputs: packets.into_iter().map(|(path, bytes)| RetainedPacket {
+                sha256: digest(&bytes), path, bytes,
+            }).collect(),
             claim: "Native GitHub owner/member/collaborator decisions and exact retained bytes observed; trusted operator semantic judgment, not signatures, atomic provenance, source-join approval or publication authority".to_string(),
         },
         manifest, input: input.clone(),

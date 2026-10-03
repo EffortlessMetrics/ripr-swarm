@@ -163,6 +163,140 @@ fn native_handoff_accepts_independently_selected_applicable_subset() -> Result<(
 }
 
 #[test]
+fn native_handoff_retains_original_raw_inputs_for_downstream_replay() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let admitted = fixture.admit()?;
+    let receipt = &admitted.receipt;
+    assert_eq!(receipt.schema, "ripr.source_handoff_acceptance.v2");
+    let wire = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
+    for (field, bytes) in [
+        ("manifest_bytes", &receipt.manifest_bytes),
+        (
+            "qualification_bundle_bytes",
+            &receipt.qualification_bundle_bytes,
+        ),
+    ] {
+        let encoded = wire[field]
+            .as_str()
+            .ok_or_else(|| format!("{field} is not a hex string"))?;
+        assert_eq!(encoded.len(), 2 * bytes.len());
+        assert_eq!(
+            encoded,
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+    }
+    assert_eq!(
+        receipt.manifest_bytes,
+        std::fs::read(fixture.manifest.root.join("manifest.json"))
+            .map_err(|error| error.to_string())?
+    );
+    assert_eq!(
+        digest(&receipt.manifest_bytes),
+        receipt.subject.manifest_sha256
+    );
+    assert_eq!(
+        receipt.qualification_bundle_bytes,
+        std::fs::read(fixture.manifest.root.join("qualification.json"))
+            .map_err(|error| error.to_string())?
+    );
+    assert_eq!(
+        digest(&receipt.qualification_bundle_bytes),
+        receipt.qualification_bundle_sha256
+    );
+    let bundle: Value = serde_json::from_slice(&receipt.qualification_bundle_bytes)
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        bundle["rows"],
+        serde_json::to_value(&receipt.rows).map_err(|error| error.to_string())?
+    );
+    let expected_paths = admitted
+        .manifest
+        .raw
+        .keys()
+        .filter(|path| path.as_str() != "manifest.json")
+        .cloned()
+        .chain(receipt.rows.iter().map(|row| row.packet.path.clone()))
+        .collect::<BTreeSet<_>>();
+    assert!(!expected_paths.is_empty());
+    assert_eq!(
+        receipt
+            .packet_inputs
+            .iter()
+            .map(|packet| packet.path.clone())
+            .collect::<BTreeSet<_>>(),
+        expected_paths
+    );
+    for packet in &receipt.packet_inputs {
+        assert_eq!(
+            packet.bytes,
+            std::fs::read(fixture.manifest.root.join(&packet.path))
+                .map_err(|error| error.to_string())?
+        );
+        assert_eq!(digest(&packet.bytes), packet.sha256);
+    }
+    for packet in wire["packet_inputs"]
+        .as_array()
+        .ok_or_else(|| "wire packets missing".to_string())?
+    {
+        assert!(packet["bytes"].is_string());
+    }
+    // Removing one retained packet cannot satisfy the original packet denominator.
+    let mut omitted = receipt.packet_inputs.clone();
+    let _removed = omitted
+        .pop()
+        .ok_or_else(|| "no retained inputs exercised".to_string())?;
+    assert_ne!(
+        omitted
+            .iter()
+            .map(|packet| packet.path.clone())
+            .collect::<BTreeSet<_>>(),
+        expected_paths
+    );
+    let mut changed = receipt.packet_inputs.clone();
+    let packet = changed
+        .first_mut()
+        .ok_or_else(|| "no retained packet exercised".to_string())?;
+    packet.bytes.push(b'!');
+    assert_ne!(digest(&packet.bytes), packet.sha256);
+    let retained_size = receipt.manifest_bytes.len()
+        + receipt.qualification_bundle_bytes.len()
+        + receipt
+            .packet_inputs
+            .iter()
+            .map(|packet| packet.bytes.len())
+            .sum::<usize>();
+    assert!(retained_size <= MAX_BUNDLE_BYTES as usize);
+    Ok(())
+}
+
+#[test]
+fn native_handoff_revalidation_refuses_changed_retained_row_bytes() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let admitted = fixture.admit()?;
+    std::fs::write(
+        fixture.manifest.root.join("result-4508.json"),
+        "changed after admission",
+    )
+    .map_err(|error| error.to_string())?;
+    let result = admitted.revalidate_with("0.11.0", |reference, owner| {
+        let response = fixture
+            .native
+            .get(reference)
+            .ok_or_else(|| "missing fixture response".to_string())?;
+        native::decode_native(
+            reference,
+            owner,
+            &serde_json::to_vec(response).map_err(|error| error.to_string())?,
+        )
+    });
+    assert!(result.is_err_and(|error| error.contains("packet changed")));
+    Ok(())
+}
+
+#[test]
 fn native_handoff_refuses_absent_decisions_and_generic_successful_ci() -> Result<(), String> {
     for owner in [1609, 2766, 2769] {
         let mut fixture = Fixture::new()?;
