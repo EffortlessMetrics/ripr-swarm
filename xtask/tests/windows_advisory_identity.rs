@@ -522,6 +522,28 @@ fn incomplete_or_duplicate_ignored_subjects_cannot_supply_completion() -> Result
 }
 
 #[test]
+fn rows_before_the_announcement_cannot_escape_completion_totals() -> Result<(), String> {
+    let clean = controls(None);
+    for result in ["ok", "FAILED", "ignored"] {
+        let log = clean.clone()
+            + &format!(
+                "Running tests/extra.rs (target/debug/deps/extra-1111111111111111.exe)\ntest unannounced ... {result}\nrunning 1 test\ntest announced ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+            );
+        verify(
+            log,
+            clean.clone(),
+            1,
+            &[
+                "incomplete_evidence",
+                "before its owning harness announcement",
+            ],
+            &["No test failed in either run.", "masked_unknown ("],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn identical_names_in_distinct_targets_count_twice() -> Result<(), String> {
     let log = controls(None) + &alpha("ok") + &beta("ok");
     verify(log.clone(), log, 0, &["observed 17 pass, 0 fail"], &[])
@@ -707,7 +729,7 @@ fn doctest_transition_cannot_borrow_a_unit_pass() -> Result<(), String> {
     let name = "src/lib.rs - example (line 1)";
     let first = controls(None)
         + &format!(
-            "Doc-tests ripr\ntest {name} ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n"
+            "Doc-tests ripr\nrunning 1 test\ntest {name} ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
         );
     let second = controls_adjusted(
         None,
@@ -725,9 +747,9 @@ fn doctest_transition_cannot_borrow_a_unit_pass() -> Result<(), String> {
 #[test]
 fn explicit_doctest_transitions_preserve_names_with_spaces() -> Result<(), String> {
     let first = controls(None)
-        + "Doc-tests ripr\ntest src/lib.rs - example (line 1) ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n";
+        + "Doc-tests ripr\nrunning 1 test\ntest src/lib.rs - example (line 1) ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
     let second = controls(None)
-        + "Doc-tests ripr\ntest src/lib.rs - example (line 1) ... ok\ntest result: ok. 1 passed; 0 failed\n";
+        + "Doc-tests ripr\nrunning 1 test\ntest src/lib.rs - example (line 1) ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
     verify(
         first,
         second,
@@ -741,7 +763,7 @@ fn explicit_doctest_transitions_preserve_names_with_spaces() -> Result<(), Strin
 }
 #[test]
 fn duplicate_doctest_transitions_are_unproven() -> Result<(), String> {
-    let doc = "Doc-tests ripr\ntest src/lib.rs - example (line 1) ... ok\ntest result: ok. 1 passed; 0 failed\n";
+    let doc = "Doc-tests ripr\nrunning 1 test\ntest src/lib.rs - example (line 1) ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
     let log = controls(None) + doc + doc;
     verify(
         log.clone(),
