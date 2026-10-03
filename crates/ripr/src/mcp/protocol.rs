@@ -841,7 +841,7 @@ mod tests {
     #[test]
     fn tool_descriptions_state_positive_contracts_and_bounds() -> Result<(), String> {
         let tools = tools_list_result();
-        let descriptions = [
+        let descriptions: [(&str, &str, &[&str]); 3] = [
             (
                 "/tools/1/description",
                 REFRESH_TOOL_NAME,

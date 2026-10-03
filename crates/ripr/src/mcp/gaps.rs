@@ -288,6 +288,7 @@ mod tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
+            related_tests_matched_total: Some(1),
             related_tests: vec![RelatedTest {
                 name: "checkout_totals".to_string(),
                 file: std::path::PathBuf::from("tests/checkout.rs"),
@@ -321,7 +322,10 @@ mod tests {
             ));
         }
         if item.list_summary.pointer("/class").and_then(Value::as_str) != Some("weakly_exposed") {
-            return Err(format!("unexpected class wire token: {}", item.list_summary));
+            return Err(format!(
+                "unexpected class wire token: {}",
+                item.list_summary
+            ));
         }
         if item.file != "src/lib.rs"
             || item.list_summary.pointer("/line").and_then(Value::as_u64) != Some(12)

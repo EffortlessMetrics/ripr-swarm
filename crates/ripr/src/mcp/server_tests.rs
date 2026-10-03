@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), String> {
-    let server =
-        McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None).map_err(|error| error.to_string())?;
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
     let config = server.get_info();
     let instructions = config
         .instructions
@@ -40,8 +40,8 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
 
 #[test]
 fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), String> {
-    let server =
-        McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None).map_err(|error| error.to_string())?;
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
     let templates =
         serde_json::to_value(&server.resource_templates).map_err(|error| error.to_string())?;
     let templates = templates
@@ -69,8 +69,8 @@ fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), Strin
 
 #[tokio::test]
 async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result<(), String> {
-    let server =
-        McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None).map_err(|error| error.to_string())?;
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
     let response = server
         .list_gaps_tool(None)
         .await
@@ -105,8 +105,8 @@ async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result
 
 #[tokio::test]
 async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), String> {
-    let server =
-        McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None).map_err(|error| error.to_string())?;
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
     for arguments in [
         serde_json::json!({}),
         serde_json::json!({"gap_id": ""}),
