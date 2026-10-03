@@ -202,15 +202,17 @@ fn empty_catch_all(item: &ast::MacroRules) -> bool {
         .filter(|token| !token.kind().is_trivia())
         .collect();
     let mut text: Vec<_> = tokens.iter().map(|token| token.text()).collect();
-    if text.len() == 16 && text.get(14) == Some(&";") {
-        text.remove(14);
+    if text.len() == 17 && text.get(15) == Some(&";") {
+        text.remove(15);
     }
-    text.len() == 15
+    // Token-tree parsing retains `=` and `>` as separate punctuation tokens;
+    // unlike expression grammar it does not combine them into FAT_ARROW.
+    text.len() == 16
         && tokens
             .get(5)
             .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT)
         && text[..5] == ["{", "(", "$", "(", "$"]
-        && text[6..] == [":", "tt", ")", "*", ")", "=>", "{", "}", "}"]
+        && text[6..] == [":", "tt", ")", "*", ")", "=", ">", "{", "}", "}"]
 }
 
 fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
