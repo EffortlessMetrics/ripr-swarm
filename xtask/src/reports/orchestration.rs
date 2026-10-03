@@ -131,8 +131,17 @@ pub(crate) fn deduplicate_assessed_rows(
     let mut counted = Vec::new();
     let mut rejected = Vec::new();
     for (_key, group) in groups {
+        // Observations of one attempt must agree on everything that defines
+        // the attempt: portable identity, counted flag and disposition. A
+        // digest-corrupted duplicate therefore conflicts instead of hiding
+        // behind input order, and the whole group stays visible as rejected.
         let identity = group[0].portable_identity.clone();
-        let conflicting = group.iter().any(|row| row.portable_identity != identity);
+        let reference = group[0];
+        let conflicting = group.iter().any(|row| {
+            row.portable_identity != identity
+                || row.counted != reference.counted
+                || row.disposition != reference.disposition
+        });
         if conflicting {
             for row in group {
                 rejected.push(OrchestrationRejectedRowV1 {
@@ -780,6 +789,33 @@ mod tests {
             return Err(
                 "the Markdown projection must name the attempt and the strategy".to_string(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_corrupted_duplicate_conflicts_in_either_input_order() -> Result<(), String> {
+        let valid = sample_attempt("attempt-digest-dup", "observation-digest-dup", false)?;
+        let mut corrupted = sample_attempt("attempt-digest-dup", "observation-digest-dup", false)?;
+        corrupted.row_digest = String::new();
+        let build = |rows: Vec<OrchestrationRowAssessmentV1>| {
+            build_orchestration_scorecard(&rows, "digest-dup".to_string(), "fixtures/digest.json")
+        };
+        let forward = build(vec![assessed(valid.clone()), assessed(corrupted.clone())]);
+        let backward = build(vec![assessed(corrupted), assessed(valid)]);
+        let left = serde_json::to_string(&forward).map_err(|error| error.to_string())?;
+        let right = serde_json::to_string(&backward).map_err(|error| error.to_string())?;
+        if left != right {
+            return Err(
+                "reordered valid-plus-corrupted duplicates must give one scorecard".to_string(),
+            );
+        }
+        if forward.real_attempts != 0 || forward.rejected_rows.len() != 2 {
+            return Err(format!(
+                "a digest-corrupted duplicate must reject the whole group and stay visible, got real={} rejected={}",
+                forward.real_attempts,
+                forward.rejected_rows.len()
+            ));
         }
         Ok(())
     }

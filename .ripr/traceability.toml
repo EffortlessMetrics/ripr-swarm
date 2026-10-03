@@ -11600,6 +11600,12 @@ tests = [
   "xtask/src/orchestration_attempt.rs::tests::synthetic_flag_does_not_change_row_assessment",
   "xtask/src/orchestration_attempt.rs::tests::fixture_corpus_loader_rejects_duplicates_and_drifted_schemas",
   "xtask/src/orchestration_attempt.rs::tests::missing_required_scenarios_are_reported",
+  "xtask/src/orchestration_attempt.rs::tests::blank_result_identity_rejects_the_row",
+  "xtask/src/orchestration_attempt.rs::tests::blank_synthesis_identity_rejects_the_row",
+  "xtask/src/orchestration_attempt.rs::tests::blank_claim_id_rejects_the_row",
+  "xtask/src/orchestration_attempt.rs::tests::non_matched_comparison_blocks_completed",
+  "xtask/src/orchestration_attempt.rs::tests::forbidden_path_survives_a_failed_verification_command",
+  "xtask/src/orchestration_attempt.rs::tests::contradiction_survives_a_stale_verification_binding",
   "xtask/src/reports/orchestration.rs::tests::empty_corpus_reports_no_success_rate",
   "xtask/src/reports/orchestration.rs::tests::synthetic_rows_never_enter_real_denominators",
   "xtask/src/reports/orchestration.rs::tests::real_completed_row_enters_the_completion_rate",
@@ -11610,6 +11616,7 @@ tests = [
   "xtask/src/reports/orchestration.rs::tests::equivalent_roots_preserve_the_portable_corpus_digest",
   "xtask/src/reports/orchestration.rs::tests::json_and_markdown_derive_from_one_dto_deterministically",
   "xtask/src/reports/orchestration.rs::tests::parse_captured_accepts_at_most_one_path",
+  "xtask/src/reports/orchestration.rs::tests::digest_corrupted_duplicate_conflicts_in_either_input_order",
 ]
 fixtures = [
   "fixtures/orchestration_attempt_receipts",

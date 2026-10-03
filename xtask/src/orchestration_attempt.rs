@@ -103,6 +103,16 @@ pub(crate) enum AttemptComparisonV1 {
     Incomparable,
 }
 
+/// Stable snake_case label used in human-facing reason text.
+pub(crate) fn comparison_label(comparison: AttemptComparisonV1) -> &'static str {
+    match comparison {
+        AttemptComparisonV1::Matched => "matched",
+        AttemptComparisonV1::NearMatched => "near_matched",
+        AttemptComparisonV1::NonComparative => "non_comparative",
+        AttemptComparisonV1::Incomparable => "incomparable",
+    }
+}
+
 /// One role in the orchestration cast. Roles observe; the scorecard decides
 /// counting, so one work item seen through several roles stays one attempt.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -582,6 +592,31 @@ pub(crate) fn assess_orchestration_attempt(
     if row.observation_key.trim().is_empty() {
         missing.push("observation_key");
     }
+    if row.packet.identity.trim().is_empty() {
+        missing.push("packet.identity");
+    }
+    if row.result.identity.trim().is_empty() {
+        missing.push("result.identity");
+    }
+    if row
+        .synthesis
+        .as_ref()
+        .is_some_and(|evidence| evidence.identity.trim().is_empty())
+    {
+        missing.push("synthesis.identity");
+    }
+    if row.independent_verification.as_ref().is_some_and(|verification| {
+        verification.verification_id.trim().is_empty()
+    }) {
+        missing.push("independent_verification.verification_id");
+    }
+    if row
+        .claims
+        .iter()
+        .any(|claim| claim.claim_id.trim().is_empty())
+    {
+        missing.push("claims.claim_id");
+    }
     if !missing.is_empty() {
         return base(
             false,
@@ -615,6 +650,13 @@ pub(crate) fn assess_orchestration_attempt(
     }
     for (index, overflow) in row.overflow.iter().enumerate() {
         if let Some(evidence) = &overflow.evidence {
+            if evidence.identity.trim().is_empty() {
+                return base(
+                    false,
+                    None,
+                    vec![format!("overflow evidence {index} lacks an exact identity")],
+                );
+            }
             if evidence.bytes == 0 {
                 return base(
                     false,
@@ -676,7 +718,9 @@ pub(crate) fn assess_orchestration_attempt(
                     "verified_fact claim `{}` lacks a matching independent receipt",
                     claim.claim_id
                 ));
-                disposition = AttemptDispositionV1::VerificationFailed;
+                if disposition == AttemptDispositionV1::Completed {
+                    disposition = AttemptDispositionV1::VerificationFailed;
+                }
             }
         }
     }
@@ -694,21 +738,37 @@ pub(crate) fn assess_orchestration_attempt(
                 }
             }
             (Some(verification), current) => {
+                // The first established downgrade wins: a boundary violation
+                // or contradiction recorded above is never overwritten by a
+                // later verification signal, so combined failures keep their
+                // strongest disposition regardless of check order.
                 let mut next = current;
+                let downgrade = |next: &mut AttemptDispositionV1, to: AttemptDispositionV1| {
+                    if *next == AttemptDispositionV1::Completed {
+                        *next = to;
+                    }
+                };
+                if verification.comparison != AttemptComparisonV1::Matched {
+                    reasons.push(format!(
+                        "verification comparison `{}` is not matched",
+                        comparison_label(verification.comparison)
+                    ));
+                    downgrade(&mut next, AttemptDispositionV1::VerificationFailed);
+                }
                 if verification.commands.is_empty() {
                     reasons.push("no command denominators recorded for verification".to_string());
-                    next = AttemptDispositionV1::VerificationFailed;
+                    downgrade(&mut next, AttemptDispositionV1::VerificationFailed);
                 }
                 for command in &verification.commands {
                     if !command.passed {
                         reasons.push(format!("verification command `{}` failed", command.command));
-                        next = AttemptDispositionV1::VerificationFailed;
+                        downgrade(&mut next, AttemptDispositionV1::VerificationFailed);
                     } else if command.subject_count == 0 {
                         reasons.push(format!(
                             "passing command `{}` has zero subjects and is not verification",
                             command.command
                         ));
-                        next = AttemptDispositionV1::VerificationFailed;
+                        downgrade(&mut next, AttemptDispositionV1::VerificationFailed);
                     }
                 }
                 if verification.bound_base != row.work.base
@@ -718,36 +778,37 @@ pub(crate) fn assess_orchestration_attempt(
                     reasons.push(
                         "verification binds a stale base, head or result identity".to_string(),
                     );
-                    next = AttemptDispositionV1::Stale;
+                    downgrade(&mut next, AttemptDispositionV1::Stale);
                 }
                 if !verification.independent_receipt {
                     reasons.push("verification is not independently receipted".to_string());
-                    next = AttemptDispositionV1::VerificationFailed;
+                    downgrade(&mut next, AttemptDispositionV1::VerificationFailed);
                 }
-                if next == AttemptDispositionV1::Completed {
-                    if row.synthesis.is_none() {
-                        reasons
-                            .push("completed disposition requires synthesis evidence".to_string());
-                        next = AttemptDispositionV1::Blocked;
-                    } else if row
-                        .overflow
-                        .iter()
-                        .any(|overflow| overflow.required && overflow.evidence.is_none())
-                    {
-                        reasons.push("required overflow is missing".to_string());
-                        next = AttemptDispositionV1::Blocked;
-                    } else if !row.rejected_claims.is_empty() {
-                        reasons.push(format!(
-                            "rejected claim {:?} blocks a completed disposition",
-                            row.rejected_claims
-                        ));
-                        next = AttemptDispositionV1::VerificationFailed;
-                    } else if !row.cleanup.cleaned || !row.cleanup.residue.is_empty() {
-                        reasons.push(
-                            "cleanup residue remains; completed downgraded to partial".to_string(),
-                        );
-                        next = AttemptDispositionV1::Partial;
-                    }
+                // Completion gating. Reasons record every blocking condition;
+                // the downgrade helper only moves a still-Completed row.
+                if row.synthesis.is_none() {
+                    reasons
+                        .push("completed disposition requires synthesis evidence".to_string());
+                    downgrade(&mut next, AttemptDispositionV1::Blocked);
+                } else if row
+                    .overflow
+                    .iter()
+                    .any(|overflow| overflow.required && overflow.evidence.is_none())
+                {
+                    reasons.push("required overflow is missing".to_string());
+                    downgrade(&mut next, AttemptDispositionV1::Blocked);
+                }
+                if !row.rejected_claims.is_empty() {
+                    reasons.push(format!(
+                        "rejected claim {:?} blocks a completed disposition",
+                        row.rejected_claims
+                    ));
+                    downgrade(&mut next, AttemptDispositionV1::VerificationFailed);
+                }
+                if !row.cleanup.cleaned || !row.cleanup.residue.is_empty() {
+                    reasons
+                        .push("cleanup residue remains; completed downgraded to partial".to_string());
+                    downgrade(&mut next, AttemptDispositionV1::Partial);
                 }
                 next
             }
@@ -1328,6 +1389,125 @@ mod tests {
         if !none.is_empty() {
             return Err(format!(
                 "a complete id set must report nothing missing, got {none:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn blank_result_identity_rejects_the_row() -> Result<(), String> {
+        let mut row = stamped_sample()?;
+        row.result.identity = String::new();
+        row.row_digest = orchestration_row_digest(&row)?;
+        let assessment = assess_orchestration_attempt(&row);
+        if assessment.counted || !reason_contains(&assessment, "result.identity") {
+            return Err(format!(
+                "a blank result identity must reject the row, got counted={} reasons={:?}",
+                assessment.counted, assessment.reasons
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn blank_synthesis_identity_rejects_the_row() -> Result<(), String> {
+        let mut row = stamped_sample()?;
+        row.synthesis = Some(OrchestrationEvidenceRefV1 {
+            identity: String::new(),
+            bytes: 512,
+        });
+        row.row_digest = orchestration_row_digest(&row)?;
+        let assessment = assess_orchestration_attempt(&row);
+        if assessment.counted || !reason_contains(&assessment, "synthesis.identity") {
+            return Err(format!(
+                "a blank synthesis identity must reject the row, got counted={} reasons={:?}",
+                assessment.counted, assessment.reasons
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn blank_claim_id_rejects_the_row() -> Result<(), String> {
+        let mut row = stamped_sample()?;
+        row.claims[0].claim_id = String::new();
+        row.row_digest = orchestration_row_digest(&row)?;
+        let assessment = assess_orchestration_attempt(&row);
+        if assessment.counted || !reason_contains(&assessment, "claims.claim_id") {
+            return Err(format!(
+                "a blank claim id must reject the row, got counted={} reasons={:?}",
+                assessment.counted, assessment.reasons
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_matched_comparison_blocks_completed() -> Result<(), String> {
+        let mut row = stamped_sample()?;
+        let verification = row
+            .independent_verification
+            .as_mut()
+            .ok_or_else(|| "sample verification missing".to_string())?;
+        verification.comparison = AttemptComparisonV1::NearMatched;
+        row.row_digest = orchestration_row_digest(&row)?;
+        let assessment = assess_orchestration_attempt(&row);
+        if assessment.disposition != Some(AttemptDispositionV1::VerificationFailed)
+            || !reason_contains(&assessment, "not matched")
+        {
+            return Err(format!(
+                "a non-matched comparison must block completion, got {:?} reasons={:?}",
+                assessment.disposition, assessment.reasons
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn forbidden_path_survives_a_failed_verification_command() -> Result<(), String> {
+        let mut row = stamped_sample()?;
+        row.changed_paths.push(OrchestrationChangedPathV1 {
+            path: "Cargo.lock".to_string(),
+            boundary_status: OrchestrationBoundaryStatusV1::ForbiddenPath,
+        });
+        let verification = row
+            .independent_verification
+            .as_mut()
+            .ok_or_else(|| "sample verification missing".to_string())?;
+        verification.commands[0].passed = false;
+        row.row_digest = orchestration_row_digest(&row)?;
+        let assessment = assess_orchestration_attempt(&row);
+        if assessment.disposition != Some(AttemptDispositionV1::BoundaryViolation)
+            || !reason_contains(&assessment, "forbidden path")
+            || !reason_contains(&assessment, "failed")
+        {
+            return Err(format!(
+                "the first downgrade must win, got {:?} reasons={:?}",
+                assessment.disposition, assessment.reasons
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn contradiction_survives_a_stale_verification_binding() -> Result<(), String> {
+        let mut row = stamped_sample()?;
+        row.contradictions
+            .push("adversary disputes the dependent result".to_string());
+        let verification = row
+            .independent_verification
+            .as_mut()
+            .ok_or_else(|| "sample verification missing".to_string())?;
+        verification.bound_base = "older-base-sha".to_string();
+        row.row_digest = orchestration_row_digest(&row)?;
+        let assessment = assess_orchestration_attempt(&row);
+        if assessment.disposition != Some(AttemptDispositionV1::Contradicted)
+            || !reason_contains(&assessment, "contradiction")
+            || !reason_contains(&assessment, "stale")
+        {
+            return Err(format!(
+                "a contradiction must not be overwritten by stale, got {:?} reasons={:?}",
+                assessment.disposition, assessment.reasons
             ));
         }
         Ok(())

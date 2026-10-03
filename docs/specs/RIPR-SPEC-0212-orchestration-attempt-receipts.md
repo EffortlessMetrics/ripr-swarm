@@ -68,14 +68,18 @@ The closed vocabulary:
   `incomparable`.
 
 Each real row retains at least repository/selected-work/portfolio/base/head
-identity, task family and accepted contract, Codex client and role
+identity, task family and accepted contract, agent client and role
 configuration, planned and actual waves, packet/result/synthesis/overflow
 identities and bytes, claims with worktree/edit cage/resources, command
 denominators, independent verification with its base/head/result binding,
 contradictions and rejected claims, changed paths and boundary status,
 PR/review/CI/merge state where applicable, cleanup and residue, limitations
 and non-claims, and a producer-recorded `row_digest` over the canonical
-retained surface. Volatile durations, PIDs, scratch roots and API request IDs
+retained surface. A blank required identity — attempt, work, task family,
+contract, client, observation key, evidence identity, verification id or
+claim id — rejects the row outright; evidence without an exact identity is
+malformed, never countable. Volatile durations, PIDs, scratch roots and API
+request IDs
 stay outside the contract entirely: they are host-local telemetry, never
 portable semantic identity. The one retained host-local spelling is each
 claim's `worktree_root`; it binds the row digest but never the portable
@@ -89,8 +93,10 @@ scorecard builder:
   but counted separately; they never enter real-use denominators.
 - One work item observed through several roles remains one attempt: rows
   deduplicate by `observation_key`, the representative is the smallest
-  attempt id, and observations that disagree on portable identity reject
-  each other so a malformed duplicate cannot launder into a second attempt.
+  attempt id, and observations that disagree on portable identity, counted
+  flag or disposition reject each other — in either input order — so a
+  malformed duplicate cannot launder into a second attempt or hide a
+  digest-rejected row.
 - Blocked, contradicted, stale, malformed, over-budget, verification-failed
   and single-agent-preferred rows remain visible: counted rows carry their
   disposition and rejected rows stay listed with their exact reasons.
@@ -104,11 +110,14 @@ scorecard builder:
 - A claimed `completed` disposition is deterministically downgraded — never
   upgraded — when the evidence does not support it: forbidden-path changes
   force `boundary_violation`, unresolved contradictions force `contradicted`,
-  missing independent verification blocks, failed or zero-subject
-  verification forces `verification_failed`, stale verification bindings
-  force `stale`, missing synthesis or missing required overflow blocks,
-  rejected claims force `verification_failed`, and cleanup residue downgrades
-  to `partial`.
+  missing independent verification blocks, a non-`matched` comparison, failed
+  or zero-subject verification, or non-independent receipts force
+  `verification_failed`, stale verification bindings force `stale`, missing
+  synthesis or missing required overflow blocks, rejected claims force
+  `verification_failed`, and cleanup residue downgrades to `partial`. The
+  first established downgrade wins: once a row is `boundary_violation` or
+  `contradicted`, no later verification signal rewrites it, and every
+  blocking condition is retained in the row reasons.
 
 The scorecard's `corpus_identity` binds the sorted portable identities of
 every row, so reordered inputs and equivalent roots preserve it while any
@@ -158,6 +167,10 @@ support.
   unresolved contradiction it downgrades to `contradicted`; and with a
   rejected builder claim it downgrades to `verification_failed` — each with
   the exact reason retained.
+- The same row with its verification comparison set to `near_matched`
+  downgrades to `verification_failed`; a forbidden path combined with a
+  failed verification command keeps `boundary_violation` with both reasons
+  retained, because the first established downgrade wins.
 - Two byte-identical observations of one attempt project as one attempt with
   two observations; two rows differing only in worktree root spelling share
   one portable identity.
