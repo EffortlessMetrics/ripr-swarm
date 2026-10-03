@@ -2168,8 +2168,7 @@ fn installed_rust_scenario_binding_violations(manifest: &Value, corpus: &Value) 
         .and_then(Value::as_str)
     else {
         violations.push(
-            "blind journey installed rust manifest is missing the base snapshot commit"
-                .to_string(),
+            "blind journey installed rust manifest is missing the base snapshot commit".to_string(),
         );
         return violations;
     };
