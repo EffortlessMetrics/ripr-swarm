@@ -21,6 +21,7 @@ use super::payload_bounds::{
     check_list_actionable_items_params, check_previous_result_ids,
 };
 use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
+use super::progress_stages::{STAGE_DRAIN_BUDGET, StageReportBridge, drain_stage_reports};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScheduler,
     RefreshScope,
@@ -178,7 +179,21 @@ pub(super) struct Backend {
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
+    #[cfg(test)]
+    consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
     pub(super) progress: Arc<AnalysisProgressTracker>,
+}
+
+#[cfg(test)]
+type ConsumedSourceBarrierChannels = (
+    tokio::sync::oneshot::Receiver<(u64, AnalysisSnapshot)>,
+    tokio::sync::oneshot::Sender<()>,
+);
+
+#[cfg(test)]
+struct ConsumedSourceBarrier {
+    reached: tokio::sync::oneshot::Sender<(u64, AnalysisSnapshot)>,
+    release: tokio::sync::oneshot::Receiver<()>,
 }
 
 /// Registration id of the root-anchored diagnostics-input watchers (#4896).
@@ -268,6 +283,8 @@ impl Backend {
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            consumed_source_barrier: Mutex::new(None),
             progress: Arc::new(AnalysisProgressTracker::new(client.clone())),
             client,
         }
@@ -435,6 +452,10 @@ impl Backend {
         self.log_refresh_started(request).await;
         let root = request.root.clone();
         let config = request.config.clone();
+        // Snapshot only admitted open paths before the blocking analysis.
+        // The Rust adapter still discovers and reads the saved bytes itself;
+        // a later document change cannot add paths to this invocation.
+        let open_rust_index_paths = self.open_rust_index_paths_for_root(&root);
         let defer_seam_inventory = request.scope.defer_seam_inventory();
         let cancellation = request.cancellation.clone();
         let execution_gate = self.refresh_scheduler.execution_gate();
@@ -451,6 +472,19 @@ impl Backend {
             tokio::time::sleep(deadline).await;
             deadline_token.cancel(AnalysisAbortKind::DeadlineExceeded);
         }));
+        // #4811: bridge the producer-owned stage boundaries onto this
+        // attempt's work-done token while the blocking analysis runs. The
+        // sink side only queues events; a drain task on the async runtime
+        // forwards them as bounded `$/progress` reports. Best-effort: the
+        // bridge can never change the analysis result, and the drain budget
+        // bounds how long a stalled client may delay result handling.
+        let stage_bridge = Arc::new(StageReportBridge::new());
+        let stage_drain = {
+            let bridge = Arc::clone(&stage_bridge);
+            let tracker = Arc::clone(&self.progress);
+            tokio::spawn(async move { drain_stage_reports(&bridge, &tracker, generation).await })
+        };
+        let bridge_for_blocking = Arc::clone(&stage_bridge);
         let diagnostics_result = tokio::task::spawn_blocking(move || {
             let _execution = match execution_gate.lock() {
                 Ok(guard) => guard,
@@ -464,10 +498,29 @@ impl Backend {
                 &config,
                 defer_seam_inventory,
                 &cancellation,
+                &open_rust_index_paths,
+                Some(bridge_for_blocking.as_ref() as &dyn crate::app::AnalysisProgressSink),
             )
         })
         .await;
         drop(deadline_timer);
+        // The producer has returned: finish the bridge and let the drain
+        // task forward everything queued. The drain is bounded: a stalled
+        // client may delay, never block, diagnostics handling or the next
+        // refresh. Stage reports always precede the outcome-derived end
+        // emitted by the refresh loop after this request resolves.
+        stage_bridge.finish();
+        let _ = stage_drain.await;
+        // Defensive final forward under the same budget (the tracker
+        // suppresses consecutive duplicates, so a double forward is a
+        // no-op). Only runs when the drain task could not cover the queue.
+        let progress = &self.progress;
+        let _ = tokio::time::timeout(STAGE_DRAIN_BUDGET, async {
+            while let Some(event) = stage_bridge.pop() {
+                progress.report_stage(generation, event.stage).await;
+            }
+        })
+        .await;
         let diagnostics = match diagnostics_result {
             Ok(Ok(mut diagnostics)) => {
                 diagnostics.snapshot.input_identity = Some(request.input_identity.clone());
@@ -537,6 +590,9 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         }
+        #[cfg(test)]
+        self.wait_consumed_source_barrier(generation, &diagnostics.snapshot)
+            .await;
         let summary = RefreshLogSummary::from_snapshot(generation, &diagnostics.snapshot)
             .with_enabled_languages(&enabled_languages);
         let Some(transaction) = self.prepare_refresh_transaction(diagnostics) else {
@@ -803,6 +859,18 @@ impl Backend {
         RefreshAttemptOutcome::Published
     }
 
+    fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
+        let Ok(documents) = self.documents.lock() else {
+            return Default::default();
+        };
+        documents
+            .documents
+            .keys()
+            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
     pub(super) async fn report_refresh_failure_after(
         &self,
         request: &RefreshRequest,
@@ -857,6 +925,41 @@ impl Backend {
         self.set_workspace_root_authority(WorkspaceRootAuthority::selected(root));
     }
 
+    #[cfg(test)]
+    pub(super) fn install_consumed_source_barrier_for_test(
+        &self,
+        config: LspAnalysisConfig,
+    ) -> Result<ConsumedSourceBarrierChannels, String> {
+        self.set_analysis_config(config);
+        let (reached, witness) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut slot = self
+            .consumed_source_barrier
+            .lock()
+            .map_err(|_poisoned_barrier| "consumed-source barrier lock poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("consumed-source barrier already installed".to_string());
+        }
+        *slot = Some(ConsumedSourceBarrier {
+            reached,
+            release: released,
+        });
+        Ok((witness, release))
+    }
+
+    #[cfg(test)]
+    async fn wait_consumed_source_barrier(&self, generation: u64, snapshot: &AnalysisSnapshot) {
+        let barrier = self
+            .consumed_source_barrier
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(barrier) = barrier {
+            let _ = barrier.reached.send((generation, snapshot.clone()));
+            let _ = barrier.release.await;
+        }
+    }
+
     pub(super) fn prepare_refresh_transaction(
         &self,
         diagnostics: WorkspaceDiagnostics,
@@ -869,6 +972,7 @@ impl Backend {
             snapshot.refresh.snapshot_id = Some("snapshot:legacy".to_string());
         }
         bind_seam_evidence_identity(&mut snapshot, &mut batches);
+        snapshot.prepare_diagnostic_uri_index();
         let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
             return None;
         };
@@ -882,17 +986,14 @@ impl Backend {
             snapshot.delivery_selection = Some(compute_delivery_selection(&snapshot));
         }
         let plan = diagnostic_refresh_plan(&last_diagnostics, batches);
-        // Saved-workspace authority (#1970): compute the analyzed
-        // saved-content identity this transaction will record — from the
-        // persisted bytes the analysis read, not the didSave-tracked digest —
-        // without mutating the document store. The store only advances when
-        // the snapshot commits; publication filters against this pending
-        // identity so a just-saved document is re-served and a document whose
-        // buffer diverges from the freshly analyzed bytes is withdrawn.
+        // Rust uses the raw-byte commitments carried by the completed producer,
+        // never a reread after analysis. Other languages retain their existing
+        // saved-content identity behavior. State advances only at commit.
         let Ok(documents) = self.documents.lock() else {
             return None;
         };
-        let (pending_analyzed, pending_entered) = documents.pending_analyzed_digests();
+        let (pending_analyzed, pending_entered) =
+            documents.pending_analyzed_digests(&snapshot.root, &snapshot.rust_consumed_sources);
         drop(documents);
         debug_assert!(snapshot.is_consistent());
         Some(RefreshTransaction {
@@ -920,6 +1021,9 @@ impl Backend {
         pending_entered: &[Uri],
     ) -> Option<super::state::QuarantineEdges> {
         snapshot.input_identity.as_ref()?;
+        if !snapshot.diagnostic_uri_index_is_current() {
+            snapshot.prepare_diagnostic_uri_index();
+        }
         // Final authority guard: a committed snapshot always carries its
         // delivery selection (#1973). The refresh-transaction prepare step
         // already computed it on the real path; this fills snapshots that
@@ -6874,6 +6978,7 @@ mod top_limitation_selection_tests {
     ) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("C:").join("repo"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -6886,6 +6991,7 @@ mod top_limitation_selection_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope,
@@ -6941,6 +7047,7 @@ mod top_limitation_selection_tests {
         let snapshot = snapshot_for_outcome(incomplete_outcome(0)?, None);
         let snapshot = AnalysisSnapshot {
             root: repo_root.clone(),
+            rust_consumed_sources: Default::default(),
             ..snapshot
         };
         let health = AnalysisHealth {
@@ -9403,6 +9510,7 @@ mod delivery_selection_parity_tests {
             .collect();
         let snapshot = AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: Some(
                 crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
                     PathBuf::from("/workspace"),
@@ -9421,6 +9529,7 @@ mod delivery_selection_parity_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,
@@ -10338,6 +10447,7 @@ mod list_actionable_items_tests {
     fn snapshot_with_selection(selection: Option<DiagnosticDeliverySelection>) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -10353,6 +10463,7 @@ mod list_actionable_items_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
             partial_scope: None,
