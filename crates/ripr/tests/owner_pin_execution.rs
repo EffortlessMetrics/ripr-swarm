@@ -143,9 +143,13 @@ fn local_empty_macro_preserves_independent_equality_execution() -> Result<(), St
         std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
         // Establish the real test's value independently of conservative static
         // refusals for opaque, imported or ambiguous macro bindings.
+        // Keep compiled variants outside the analyzed project: runtime.rs at
+        // its root would add another macro definition and test to RustIndex.
+        let runtime_scratch = Scratch::create()?;
         for wrong in [false, true] {
-            let runtime_source = scratch.0.join("runtime.rs");
-            let runtime = scratch
+            let runtime_source = runtime_scratch.0.join("runtime.rs");
+            assert!(!runtime_source.starts_with(&scratch.0));
+            let runtime = runtime_scratch
                 .0
                 .join(format!("runtime{}", std::env::consts::EXE_SUFFIX));
             let subject = if wrong {
@@ -181,6 +185,27 @@ fn local_empty_macro_preserves_independent_equality_execution() -> Result<(), St
                 "{name}, wrong={wrong}"
             );
         }
+        let mut entries = std::fs::read_dir(&scratch.0)
+            .map_err(|error| error.to_string())?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        entries.sort();
+        assert_eq!(
+            entries,
+            ["Cargo.toml", "src"],
+            "{name}: bounded analyzed root"
+        );
+        let sources = std::fs::read_dir(scratch.0.join("src"))
+            .map_err(|error| error.to_string())?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            sources,
+            ["lib.rs"],
+            "{name}: exactly one analyzed Rust file"
+        );
         let report = check_workspace(CheckInput {
             root: scratch.0.clone(),
             diff_file: Some(fixture.join("diff.patch")),
@@ -194,6 +219,14 @@ fn local_empty_macro_preserves_independent_equality_execution() -> Result<(), St
                 .map_err(|error| error.to_string())?;
         let findings = json["findings"].as_array().ok_or("missing findings")?;
         assert_eq!(findings.len(), 1, "{name}: unique predicate");
+        let related = findings[0]["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?;
+        assert_eq!(related.len(), 1, "{name}: one indexed test");
+        assert_eq!(
+            related[0]["file"], "src/lib.rs",
+            "{name}: runtime source is not indexed"
+        );
         assert_eq!(findings[0]["probe"]["family"], "predicate", "{name}");
         assert_eq!(
             findings[0]["oracle_strength"],
