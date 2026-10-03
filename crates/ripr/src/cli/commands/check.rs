@@ -104,7 +104,7 @@ fn implicit_git_boundary(dir: &Path) -> Result<Option<WorkTreeRootProbe>, String
         .map(Some)
         .map_err(|error| {
             format!(
-                "{error}; cannot verify implicit Git root at {}; pass --root PATH to select the analysis root explicitly",
+                "{error}; cannot verify implicit Git root at {}",
                 dir.display()
             )
         })
@@ -216,7 +216,10 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
 }
 
 fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
-    let Some((root, reason)) = resolve_project_root(Path::new("."))? else {
+    let resolved = resolve_project_root(Path::new(".")).map_err(|error| {
+        format!("{error}; pass --root PATH to select the analysis root explicitly")
+    })?;
+    let Some((root, reason)) = resolved else {
         return Ok(());
     };
     let current = std::fs::canonicalize(".")

@@ -151,8 +151,9 @@ selected, including when analyzing a saved diff without Git installed.
 
 Root verification has a bounded deadline and captured output and ignores
 inherited Git repository selectors. Invocation failures other than missing Git
-must surface with explicit-root recovery rather than widen the walk. These
-rules change root selection only, not analysis classification or exit policy.
+must surface rather than widen the walk: `check` names the explicit `--root`
+recovery and `cache` names `RIPR_CACHE_DIR`. These rules change root selection
+only, not analysis classification or exit policy.
 
 ## Pilot Packet
 

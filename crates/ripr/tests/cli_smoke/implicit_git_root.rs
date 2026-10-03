@@ -170,3 +170,38 @@ fn gitless_saved_diff_does_not_cross_a_nested_repository_boundary() -> TestResul
     fs::remove_dir_all(sandbox)?;
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn git_launch_failure_stops_root_discovery_with_consumer_recovery() -> TestResult {
+    let (sandbox, project) = python_fixture("implicit-git-launch-failure")?;
+    run_git(&project, &["init", "-b", "main"])?;
+    fs::write(sandbox.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+    let programs = sandbox.join("programs");
+    fs::create_dir(&programs)?;
+    // A present, non-executable program is a launch failure, not missing Git.
+    fs::write(programs.join("git"), "not executable\n")?;
+    let path = programs.to_str().ok_or("fixture PATH is not UTF-8")?;
+    let env = [("PATH", path), ("RIPR_CACHE_DIR", "")];
+    for (args, recovery) in [
+        (
+            vec!["check", "--diff", "change.diff", "--format", "json"],
+            "pass --root PATH",
+        ),
+        (vec!["cache", "status", "--json"], "set RIPR_CACHE_DIR"),
+    ] {
+        let output = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &project, &args, &env)?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("cannot verify implicit Git root"),
+            "{stderr}"
+        );
+        assert!(stderr.contains(recovery), "{stderr}");
+        assert!(!stderr.contains("resolved workspace root to"), "{stderr}");
+    }
+    check(&project, true, &env)?;
+    fs::remove_dir_all(sandbox)?;
+    Ok(())
+}

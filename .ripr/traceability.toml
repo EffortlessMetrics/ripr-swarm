@@ -799,6 +799,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::invalid_ancestor_git_markers_preserve_python_and_cache_context",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::inherited_git_selectors_cannot_certify_an_inert_ancestor",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::gitless_saved_diff_does_not_cross_a_nested_repository_boundary",
+  "crates/ripr/tests/cli_smoke/implicit_git_root.rs::git_launch_failure_stops_root_discovery_with_consumer_recovery",
   "crates/ripr/src/cli/commands/check.rs::tests::project_root_does_not_promote_an_invalid_git_marker",
   "crates/ripr/src/cli/commands/check.rs::tests::project_root_does_not_cross_an_unverified_git_boundary",
   "crates/ripr/src/cli/commands/check.rs::tests::project_root_passes_an_inert_marker_inside_a_real_repository",
