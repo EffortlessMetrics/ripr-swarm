@@ -134,6 +134,127 @@ pub(crate) fn parser_oracles_for_function(
     Some(oracles)
 }
 
+/// Module scope of a file's functions, keyed by (fn-token line, name) as
+/// function and test facts record them.
+#[derive(Debug, Default)]
+pub(crate) struct ModuleItemScopes {
+    /// Every fn that is a direct item of the file or of an inline
+    /// `mod name { .. }`, mapped to the line span of its innermost inline
+    /// module (`None` at the file's top level). A fn nested in another fn's
+    /// body, or an associated fn, is absent: it is not visible module-wide.
+    pub(crate) item_fns: BTreeMap<(usize, String), Option<(usize, usize)>>,
+    /// Fns whose body holds a `use` item, which may shadow a module item.
+    pub(crate) fns_with_local_use: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn calls as a parsed single-segment free function
+    /// (`check(..)`), outside macro arguments, strings and comments.
+    pub(crate) direct_calls: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
+    /// Fns carrying a `cfg` or `cfg_attr` attribute anywhere in their
+    /// syntax (outer, inner `#![..]`, or on a statement), whitespace
+    /// ignored: such a fn may not be the one that compiles.
+    pub(crate) fns_with_cfg: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn binds inside itself: every identifier pattern
+    /// (parameters, `let`, `for`, `if let`, closure and match bindings)
+    /// and every named node in its body (`const`, `static`, nested `fn`,
+    /// tuple `struct`, enum variant, macro, and so on).
+    pub(crate) bound_names: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
+}
+
+/// The module scopes of `text`'s functions. `None` when the file does not
+/// parse cleanly, so a caller that needs module scope fails closed.
+pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
+    let parse = parse_clean_source_file(text)?;
+    let line_index = LineIndex::new(text);
+    let mut scopes = ModuleItemScopes::default();
+    for function in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+    {
+        let (Some(name), Some(fn_token)) = (function.name(), function.fn_token()) else {
+            continue;
+        };
+        let key = (
+            line_index.line(fn_token.text_range().start()),
+            name.text().to_string(),
+        );
+        if function
+            .syntax()
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attribute| {
+                let compact: String = attribute
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect();
+                compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
+            })
+        {
+            scopes.fns_with_cfg.insert(key.clone());
+        }
+        let bound = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| {
+                ast::AnyHasName::cast(node)
+                    .and_then(|named| named.name())
+                    .map(|name| name.text().to_string())
+            })
+            .collect();
+        scopes.bound_names.insert(key.clone(), bound);
+        if let Some(body) = function.body() {
+            if body
+                .syntax()
+                .descendants()
+                .any(|node| ast::Use::can_cast(node.kind()))
+            {
+                scopes.fns_with_local_use.insert(key.clone());
+            }
+            let called = body
+                .syntax()
+                .descendants()
+                .filter_map(ast::CallExpr::cast)
+                .filter_map(|call| match call.expr()? {
+                    ast::Expr::PathExpr(path) => {
+                        let path = path.path()?;
+                        if path.qualifier().is_some() {
+                            return None;
+                        }
+                        Some(path.segment()?.name_ref()?.text().to_string())
+                    }
+                    _ => None,
+                })
+                .collect();
+            scopes.direct_calls.insert(key.clone(), called);
+        }
+        let Some(parent) = function.syntax().parent() else {
+            continue;
+        };
+        let module = match parent.kind() {
+            ra_ap_syntax::SyntaxKind::SOURCE_FILE => None,
+            ra_ap_syntax::SyntaxKind::ITEM_LIST => {
+                match parent.parent().and_then(ast::Module::cast) {
+                    Some(module) => {
+                        let range = module.syntax().text_range();
+                        Some((
+                            line_index.line(range.start()),
+                            line_index.line_for_range_end(range.end()),
+                        ))
+                    }
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+        scopes.item_fns.insert(key, module);
+    }
+    Some(scopes)
+}
+
 pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
     let (_, arguments) = expression.split_once('!')?;
     let arguments = arguments.trim();
