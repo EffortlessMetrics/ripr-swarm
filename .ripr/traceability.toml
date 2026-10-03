@@ -11630,8 +11630,6 @@ code = [
 ]
 outputs = [
   "fixtures/orchestration_attempt_receipts/corpus.json",
-  "target/ripr/reports/orchestration-scorecard.json",
-  "target/ripr/reports/orchestration-scorecard.md",
 ]
 metrics = [
   "orchestration_fixture_scenarios",
