@@ -198,10 +198,37 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             format: OutputFormat::Json, include_unchanged_tests: true, ..CheckInput::default()
         })?;
         assert_eq!(report.findings.len(), 1, "{name}: one intended predicate");
-        if name != "mixed_helper" && name != "mixed_named_direct" { assert_eq!(report.findings[0].class == ExposureClass::Exposed, exposed, "{name}"); }
+        if name != "mixed_helper" && name != "mixed_named_direct" && name != "generic_direct" { assert_eq!(report.findings[0].class == ExposureClass::Exposed, exposed, "{name}"); }
         let json: serde_json::Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?).map_err(|error| error.to_string())?;
         let finding = &json["findings"][0];
         assert_eq!(finding["oracle_strength"], if exposed || name.starts_with("mixed_") { "strong" } else { "none" }, "{name}");
+        // Generic argument value transfer has an independent static limitation.
+        // This control proves retained call/oracle authority and runtime discrimination,
+        // rather than granting stronger boundary activation from opaque text.
+        if name == "generic_direct" {
+            assert_eq!(finding["ripr"]["reach"]["state"], "yes", "ordinary generic call retains reach: {finding}");
+            assert_eq!(finding["related_tests"].as_array().map(Vec::len), Some(1), "ordinary generic call retains its test: {finding}");
+            // Hold owner, generic call, diff and ordinary assertion fixed. Removing
+            // only the opaque invocation establishes the ordinary producer baseline.
+            let baseline_source = source.replace("prop_assert_eq!(discounted_total(100,100),90); ", "");
+            std::fs::write(root.join("src/lib.rs"), &baseline_source).map_err(|error| error.to_string())?;
+            let baseline = check_workspace(CheckInput {
+                root: root.clone(), diff_file: Some(root.join("diff.patch")), mode: Mode::Fast,
+                format: OutputFormat::Json, include_unchanged_tests: true, ..CheckInput::default()
+            })?;
+            std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+            assert_eq!(baseline.findings.len(), 1, "generic ordinary baseline");
+            assert_eq!(report.findings[0].class, baseline.findings[0].class, "opacity cannot change ordinary generic classification");
+            assert_eq!(report.findings[0].activation, baseline.findings[0].activation, "opacity cannot change ordinary generic activation support");
+            let baseline: serde_json::Value = serde_json::from_str(&render_check(&baseline, &OutputFormat::Json)?).map_err(|error| error.to_string())?;
+            let baseline = &baseline["findings"][0];
+            assert_eq!(baseline["oracle_strength"], "strong", "generic ordinary baseline: {baseline}");
+            assert_eq!(baseline["related_tests"].as_array().map(Vec::len), Some(1));
+            for stage in ["reach", "infect", "propagate"] {
+                assert_eq!(finding["ripr"][stage]["state"], baseline["ripr"][stage]["state"], "generic ordinary {stage} baseline: candidate={finding}; baseline={baseline}");
+            }
+            assert_eq!(finding["static_limit_kind"], baseline["static_limit_kind"], "generic ordinary support limit must survive");
+        }
         if name == "mixed_named_direct" {
             assert_eq!(finding["ripr"]["reach"]["state"], "yes", "qualified ordinary call survives the declaration name: {finding}");
             assert_eq!(finding["related_tests"].as_array().map(Vec::len), Some(1));
