@@ -190,7 +190,7 @@ snapshot and never another variant.
 | --- | --- |
 | `fixtures/blind_journey_installed_typescript/` | retained snapshot repository, digest-bound manifest, fixture SPEC |
 | `fixtures/blind_journey_execute/corpus.json` | sixteen scripted `installed_typescript_*` journey scenarios with committed executor expectations |
-| `metrics/blind-journey-execute/executor-receipt.json` | ratification receipt binding the 50-scenario corpus with fixture limitations |
+| `metrics/blind-journey-execute/executor-receipt.json` | ratification receipt binding the 61-scenario corpus with fixture limitations |
 | `xtask/src/blind_journey_execute.rs` | required-scenario coverage extended to the sixteen installed-TypeScript rows |
 | `xtask/src/fixture_contracts/general_validators.rs` | dedicated fixture validator with digest recomputation and corpus cross-reference |
 | `xtask/src/reports/fixtures.rs` | manifest-only fixture directory registration |
@@ -198,9 +198,9 @@ snapshot and never another variant.
 
 ## Metrics
 
-- `blind_journey_execute_scenarios` (50, including 16 installed-TypeScript
+- `blind_journey_execute_scenarios` (61, including 16 installed-TypeScript
   rows)
-- `blind_journey_execute_positive_scenarios` (9, including the three
+- `blind_journey_execute_positive_scenarios` (12, including the three
   installed-TypeScript positive rows)
 - installed-TypeScript row terminals by control (positive, not-run,
   verification-failure-visible, discoverability-failure,
