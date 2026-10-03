@@ -114,6 +114,62 @@ fn diff_index_file_limit() -> Result<usize, String> {
     diff_index_file_limit_from_env(std::env::var(DIFF_INDEX_FILE_LIMIT_ENV))
 }
 
+/// Admit only Git-tracked open paths. Discovery excludes symlinks and
+/// generated surfaces separately; a newly opened untracked file does not
+/// enter the index solely because it is open. Inherited mode selection may
+/// independently load an untracked source and capture its consumed bytes.
+fn tracked_open_rust_index_paths(
+    options: &AnalysisOptions,
+    discovered: &[PathBuf],
+    scope_limit: usize,
+) -> Result<BTreeSet<PathBuf>, String> {
+    let discovered = discovered.iter().collect::<BTreeSet<_>>();
+    let candidates = options
+        .open_rust_index_paths
+        .iter()
+        .filter(|path| discovered.contains(*path))
+        .filter_map(|path| path.to_str().map(|text| text.replace('\\', "/")))
+        .collect::<BTreeSet<_>>();
+    if candidates.len() > scope_limit {
+        return Err(format!(
+            "diff_scope_oversized: {} admitted open Rust files exceed the \
+             {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}) before tracking; \
+             reduce the open-file scope or raise the limit",
+            candidates.len()
+        ));
+    }
+    let candidates = candidates.into_iter().collect::<Vec<_>>();
+    let admitted = candidates.iter().cloned().collect::<BTreeSet<_>>();
+    let mut tracked = BTreeSet::new();
+    for chunk in candidates.chunks(128) {
+        cancellation::checkpoint()?;
+        let mut args = vec!["--literal-pathspecs", "ls-files", "-z", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        let output = crate::git::run_git_output_with_optional_deadline_and_limit(
+            &options.root,
+            &args,
+            options.git_timeout,
+            4 * 1024 * 1024,
+        )
+        .map_err(|error| format!("open Rust source tracking probe failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "open Rust source tracking probe exited with {}",
+                output.status
+            ));
+        }
+        tracked.extend(
+            output
+                .stdout
+                .split(|byte| *byte == 0)
+                .filter_map(|record| std::str::from_utf8(record).ok())
+                .filter(|record| admitted.contains(*record))
+                .map(PathBuf::from),
+        );
+    }
+    Ok(tracked)
+}
+
 fn diff_index_file_limit_from_env(
     value: Result<String, std::env::VarError>,
 ) -> Result<usize, String> {
@@ -741,6 +797,11 @@ fn owner_name_from_id(
     }
 }
 
+fn push_retained_finding(findings: &mut Vec<Finding>, finding: Finding) {
+    crate::analysis::witness::retain_finding_projection(&finding);
+    findings.push(finding);
+}
+
 /// Shared post-classify application of the extracted probe and oracle owners.
 /// `apply_rust_no_static_path_limit` stays at each pipeline because it is
 /// mixed reach/index work owned by later RA slices.
@@ -1263,7 +1324,7 @@ impl RustAdapter {
             } else {
                 (std::collections::BTreeSet::new(), Vec::new())
             };
-        let index_files = workspace::select_rust_files_for_mode_with_dependent_packages(
+        let mut index_files = workspace::select_rust_files_for_mode_with_dependent_packages(
             &analyzable_rust_files,
             &changed_rust_paths,
             options.mode,
@@ -1271,10 +1332,22 @@ impl RustAdapter {
             &dependent_package_roots,
             &manifest_dir_prefixes,
         );
+        // Open saved Rust documents are index-only inputs. They do not seed
+        // changed-file probes, package expansion, or findings. Admit only
+        // discovered, analyzable files, then apply the ordinary index budget.
+        let scope_limit = diff_index_file_limit()?;
+        if !options.open_rust_index_paths.is_empty() {
+            index_files.extend(tracked_open_rust_index_paths(
+                options,
+                &analyzable_rust_files,
+                scope_limit,
+            )?);
+            index_files.sort();
+            index_files.dedup();
+        }
         // Fail closed before the working-set build that can exhaust a
         // constrained runner's memory (#1023): a too-large index is a named
         // limited state with a repair route, not an analysis result.
-        let scope_limit = diff_index_file_limit()?;
         if index_files.len() > scope_limit {
             return Err(format!(
                 "diff_scope_oversized: {} indexed Rust files exceed the \
@@ -1288,6 +1361,8 @@ impl RustAdapter {
         // cache. This avoids re-parsing unchanged files with ra_ap_syntax on
         // every ripr check / LSP save (#1912). The cache is keyed on a
         // content hash; unchanged files hit the cache and skip the parse.
+        let mut rust_consumed_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
         let loaded_files = index_files
             .iter()
             .map(|file| {
@@ -1299,7 +1374,10 @@ impl RustAdapter {
                 // Committed-history diffs read HEAD content for dirty
                 // tracked files; a path with no content at HEAD is skipped.
                 crate::analysis::committed_source::read_source_bytes(&options.root, file)
-                    .map(|bytes| bytes.map(|bytes| (file.clone(), bytes)))
+                    .map(|bytes| {
+                        rust_consumed_sources.record(file, bytes.as_deref());
+                        bytes.map(|bytes| (file.clone(), bytes))
+                    })
                     .map_err(|err| {
                         format!(
                             "failed to read {}: {err}",
@@ -1314,6 +1392,10 @@ impl RustAdapter {
             &loaded_files,
             &options.test_harnesses,
         )?;
+        #[cfg(test)]
+        {
+            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
+        }
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -1510,7 +1592,7 @@ impl RustAdapter {
                     &index,
                     binding_relation.as_ref(),
                 );
-                findings.push(finding);
+                push_retained_finding(&mut findings, finding);
             }
         }
 
@@ -1572,6 +1654,7 @@ impl RustAdapter {
                 )?)
                 .collect(),
             rust_diagnostic_origins,
+            rust_consumed_sources,
         })
     }
 }
@@ -1861,12 +1944,15 @@ impl RustAdapter {
         // integration tests under `tests/` or `examples/`. Probe seeding
         // stays production-only so test bodies do not generate findings.
         // Use the content-addressed per-file fact cache (#1912).
+        let mut rust_consumed_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
         let loaded_rust_files = analyzable_rust_files
             .iter()
             .map(|file| {
                 let full = options.root.join(file);
                 let bytes = std::fs::read(&full)
                     .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
+                rust_consumed_sources.record(file, Some(&bytes));
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -1875,6 +1961,10 @@ impl RustAdapter {
             &loaded_rust_files,
             &options.test_harnesses,
         )?;
+        #[cfg(test)]
+        {
+            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
+        }
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -1936,7 +2026,7 @@ impl RustAdapter {
                     &property_macro_mentions,
                 );
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
-                findings.push(finding);
+                push_retained_finding(&mut findings, finding);
             }
         }
 
@@ -1960,6 +2050,7 @@ impl RustAdapter {
             skipped_files,
             partial_reason: None,
             rust_diagnostic_origins,
+            rust_consumed_sources,
         })
     }
 }
@@ -2062,6 +2153,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2340,6 +2432,7 @@ mod tests {
             diff_file: None,
             mode,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -2613,6 +2706,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2765,6 +2859,7 @@ mod tests {
                     diff_file: None,
                     mode: AnalysisMode::Ready,
                     resolved_subject_identity: None,
+                    open_rust_index_paths: Default::default(),
                     include_unchanged_tests: true,
                     resolve_tsconfig_paths: false,
                     perl_facts_path: None,
@@ -2878,6 +2973,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3053,6 +3149,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4120,6 +4217,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4606,6 +4704,7 @@ fn absent_delimiter_boundary_returns_head() {
             diff_file: None,
             mode: AnalysisMode::Ready,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -4715,6 +4814,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4804,6 +4904,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4884,6 +4985,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4950,6 +5052,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5005,6 +5108,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5537,6 +5641,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5622,6 +5727,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5758,6 +5864,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -5892,6 +5999,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -6004,6 +6112,7 @@ fn absent_delimiter_boundary_returns_head() {
                 diff_file: None,
                 mode: AnalysisMode::Ready,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
