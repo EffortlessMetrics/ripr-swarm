@@ -17852,10 +17852,38 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
             .iter()
             .filter_map(|message| message["params"]["value"]["kind"].as_str())
             .collect();
-        if kinds != vec!["begin", "end"] {
+        // #4811: producer stage reports now sit between begin and end. The
+        // terminal contract is begin -> ordered stage reports -> exactly
+        // one end; a failed run must never emit completed.
+        if kinds.first().copied() != Some("begin") || kinds.last().copied() != Some("end") {
             return Err(format!(
-                "failed refresh must begin then end exactly once: {progress:?}"
+                "failed refresh must begin, report stages, then end exactly once: {progress:?}"
             ));
+        }
+        if kinds.iter().filter(|kind| **kind == "end").count() != 1 {
+            return Err(format!(
+                "failed refresh must end exactly once: {progress:?}"
+            ));
+        }
+        if kinds
+            .iter()
+            .any(|kind| !matches!(*kind, "begin" | "report" | "end"))
+        {
+            return Err(format!(
+                "only begin/report/end records are allowed: {progress:?}"
+            ));
+        }
+        let reports: Vec<&str> = progress
+            .iter()
+            .filter(|message| message["params"]["value"]["kind"] == "report")
+            .filter_map(|message| message["params"]["value"]["message"].as_str())
+            .collect();
+        for report in &reports {
+            if report.contains("complete") {
+                return Err(format!(
+                    "a failed run must never report a completed stage: {progress:?}"
+                ));
+            }
         }
         let begin = &progress[0]["params"];
         if begin["token"].as_str() != Some(token.as_str())
@@ -17873,14 +17901,17 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
                 "begin must announce the analyzing phase: {begin_message}"
             ));
         }
-        if !begin["value"]["percentage"].is_null()
-            || !progress[1]["params"]["value"]["percentage"].is_null()
-        {
-            return Err(format!(
-                "no fabricated percentages may be emitted: {progress:?}"
-            ));
+        for message in &progress {
+            if !message["params"]["value"]["percentage"].is_null() {
+                return Err(format!(
+                    "no fabricated percentages may be emitted: {progress:?}"
+                ));
+            }
         }
-        let end = &progress[1]["params"];
+        let Some(end_message) = progress.last() else {
+            return Err("progress journey must not be empty".to_string());
+        };
+        let end = &end_message["params"];
         let end_message = end["value"]["message"]
             .as_str()
             .ok_or_else(|| "end carried no terminal message".to_string())?;
