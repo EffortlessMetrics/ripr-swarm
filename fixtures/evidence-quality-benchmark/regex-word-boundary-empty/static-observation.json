@@ -118,8 +118,8 @@
   "false_exposure": "NOT_ESTABLISHED",
   "subject_alignment": {
     "path": "regex-word-boundary-empty/static/subject-alignment-68770.json",
-    "bytes": 28739,
-    "sha256": "706c65e63db539083c300dd1500536cfe7155009e9871f4271f4e8bb813d4905"
+    "bytes": 28618,
+    "sha256": "c845db4a9f161dbaed1e7680e41a7af74d0041fcc16d712b4f71042f61788b16"
   },
   "corrected_summary": {
     "path": "regex-word-boundary-empty/static/corrected-result-summary-68770.json",
@@ -146,7 +146,7 @@
   "normative_static_expectation": false,
   "production_source_path": "regex-syntax/src/hir/mod.rs",
   "test_source_path": "regex-syntax/src/hir/translate.rs",
-  "transforms": "Raw reports, stderr, producer/execution receipts and input inventories are copied byte-for-byte. Summary fields derive from those retained artifacts. No command/root identity or static result is rewritten.",
+  "transforms": "Raw reports, stderr, producer/execution receipts and input inventories are copied byte-for-byte. Summary fields derive from those retained artifacts. No command/root identity or static result is rewritten. The curated subject-alignment summary omits only the obsolete native_target_release coordination field; its original remains in task evidence.",
   "diff": {
     "path": "regex-word-boundary-empty/patches/production.patch",
     "bytes": 1612,

@@ -15,7 +15,7 @@ impl StaticModel {
             json!({"path": "/synthetic/bin/ripr", "bytes": 7, "sha256": "c".repeat(64)});
         let compiler =
             json!({"executable": executable["path"], "target": {"name": "ripr", "kind": ["bin"]}});
-        let producer = json!({"head": "a".repeat(40), "tree": "d".repeat(40), "artifacts": {"ripr": {"compiler_artifact": compiler, "files": [{"path": executable["path"], "sha256": executable["sha256"], "metadata": {"size": executable["bytes"]}}]}}});
+        let producer = json!({"head": "a".repeat(40), "tree": "d".repeat(40), "artifacts": {"ripr": {"head": "a".repeat(40), "tree": "d".repeat(40), "compiler_artifact": compiler, "files": [{"path": executable["path"], "sha256": executable["sha256"], "metadata": {"size": executable["bytes"]}}]}}});
         let producer_file = evidence.file(
             "static-producer.json",
             &serde_json::to_vec(&producer).map_err(|error| error.to_string())?,
@@ -198,6 +198,69 @@ fn benchmark_semantic_controls_reject_stale_static_capture() -> Result<(), Strin
         }
         model.persist_static()?;
         assert!(!model.check().1.is_empty(), "accepted {mode}");
+    }
+    Ok(())
+}
+
+#[test]
+fn benchmark_semantic_controls_reject_wrong_selected_producer() -> Result<(), String> {
+    for mode in [
+        "artifact_head",
+        "artifact_tree",
+        "target_name",
+        "target_kind",
+    ] {
+        let mut model = StaticModel::new()?;
+        assert!(model.check().1.is_empty());
+        let mut producer = retained_json(&model.evidence.root, &model.capture["producer_receipt"])?;
+        let mut execution =
+            retained_json(&model.evidence.root, &model.capture["execution_receipt"])?;
+        match mode {
+            "artifact_head" => producer["artifacts"]["ripr"]["head"] = json!("f".repeat(40)),
+            "artifact_tree" => producer["artifacts"]["ripr"]["tree"] = json!("f".repeat(40)),
+            "target_name" => {
+                producer["artifacts"]["ripr"]["compiler_artifact"]["target"]["name"] =
+                    json!("xtask")
+            }
+            _ => {
+                producer["artifacts"]["ripr"]["compiler_artifact"]["target"]["kind"] =
+                    json!(["lib"])
+            }
+        }
+        // Refresh every enclosing descriptor and repeated identity. Only the
+        // selected artifact's own source or target identity remains wrong.
+        let descriptor = model.evidence.file(
+            "static-producer.json",
+            &serde_json::to_vec(&producer).map_err(|error| error.to_string())?,
+        )?;
+        model.capture["producer_receipt"] = descriptor.clone();
+        execution["compiler_artifact"] = producer["artifacts"]["ripr"]["compiler_artifact"].clone();
+        for field in ["identity_before", "identity_after"] {
+            execution[field]["producer_receipt"] = descriptor.clone();
+            for run in execution["observations"]
+                .as_array_mut()
+                .ok_or("missing observations")?
+            {
+                run[field]["producer_receipt"] = descriptor.clone();
+            }
+        }
+        model.capture["execution_receipt"] = model.evidence.file(
+            "static-execution.json",
+            &serde_json::to_vec(&execution).map_err(|error| error.to_string())?,
+        )?;
+        model.persist_static()?;
+        let violations = model.check().1;
+        assert_eq!(
+            violations.len(),
+            2,
+            "unexpected rejection count for {mode}: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .all(|message| message.ends_with("historical static producer identity differs")),
+            "wrong refusal for {mode}: {violations:?}"
+        );
     }
     Ok(())
 }

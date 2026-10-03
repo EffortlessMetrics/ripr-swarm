@@ -335,6 +335,5 @@
       "bytes": 61890,
       "sha256": "df74cfdab800aa61eafd9f057770393cff1d53c51ced40c416f4f998d44aeda1"
     }
-  },
-  "native_target_release": "ON_HOLD per coordinator while subject alignment is considered; no move/compression/removal"
+  }
 }

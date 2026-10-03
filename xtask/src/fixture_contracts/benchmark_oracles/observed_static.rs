@@ -37,6 +37,12 @@ pub(super) fn validate(
     let executable = &capture["executable"];
     if producer["head"] != capture["producer_head"]
         || producer["tree"] != capture["producer_tree"]
+        || producer["artifacts"]["ripr"]["head"] != capture["producer_head"]
+        || producer["artifacts"]["ripr"]["tree"] != capture["producer_tree"]
+        || producer["artifacts"]["ripr"]["compiler_artifact"]["target"]["name"].as_str()
+            != Some("ripr")
+        || producer["artifacts"]["ripr"]["compiler_artifact"]["target"]["kind"]
+            != serde_json::json!(["bin"])
         || execution["producer_head"] != capture["producer_head"]
         || execution["status"].as_str() != Some("THREE_COMMANDS_TERMINAL")
         || execution["compiler_artifact"] != producer["artifacts"]["ripr"]["compiler_artifact"]

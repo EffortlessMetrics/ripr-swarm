@@ -57,8 +57,9 @@ inspect unavailable executable bytes, authenticate the producer or infer domain
 semantics. Current independent review of the retained bytes is a separate fact.
 
 The proposal contains two alternate declarations for the same historical case:
-corrected/valid and original/invalid. They cannot become two simultaneous corpus
-rows with the same ID. Any later case-ID, claim, basis, source, test, capture or
+corrected/valid and original/invalid. They cannot become two simultaneous legacy
+`cases` rows with the same ID; the separate controls are unique by `(id, variant)`.
+Any later case-ID, claim, basis, source, test, capture or
 verdict change requires an updated exact reviewed-subject binding. No accepted
 review text may simply be carried forward to a changed subject.
 
