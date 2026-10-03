@@ -288,6 +288,12 @@ pub(crate) struct WorkspaceSession {
     /// drops it, and every transaction binds the snapshot identity it was
     /// prepared against.
     pub(crate) repairs: std::collections::BTreeMap<String, super::repair::RepairTransaction>,
+    /// Tombstones for session transactions evicted when a newer snapshot
+    /// supersedes them (`attempt_id` → the snapshot identity it was bound
+    /// to). Keeps the typed `superseded` failure reachable after the full
+    /// packet is pruned, without holding superseded packets in memory for
+    /// the lifetime of the session.
+    pub(crate) superseded_attempts: std::collections::BTreeMap<String, String>,
 }
 
 impl WorkspaceSession {
@@ -798,6 +804,7 @@ mod tests {
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
             repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
         })
     }
 
@@ -824,6 +831,7 @@ mod tests {
             last_good: Some(Arc::new(limited_snapshot)),
             last_failure: None,
             repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
         };
         let _ = complete.list_gaps(None).map_err(|failure| failure.detail)?;
         let incomplete_doc = incomplete

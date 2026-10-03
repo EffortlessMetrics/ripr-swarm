@@ -77,31 +77,42 @@ impl RepairReadiness {
                 ineligibility: Some("missing_discriminator"),
             };
         }
-        let fix_site = finding.related_tests.iter().find_map(|test| {
-            let strong_direct_grip = test.oracle_strength == crate::domain::OracleStrength::Strong
-                && test.relation_confidence == Some(crate::domain::RelationConfidence::High);
-            strong_direct_grip.then(|| RepairFixSite {
+        // The gate contract is "a strong, high-confidence directly-related
+        // test on a shared edit-cage test-surface path", so the path
+        // predicate joins the search: a qualifying test-surface candidate
+        // later in the list wins over a non-surface candidate earlier.
+        let candidates = finding
+            .related_tests
+            .iter()
+            .filter(|test| {
+                test.oracle_strength == crate::domain::OracleStrength::Strong
+                    && test.relation_confidence == Some(crate::domain::RelationConfidence::High)
+            })
+            .map(|test| RepairFixSite {
                 test_name: test.name.clone(),
                 file: crate::analysis::stable_path_text(&test.file),
                 line: test.line,
                 oracle: test.oracle.clone(),
                 oracle_kind: test.oracle_kind.as_str(),
             })
-        });
-        let Some(fix_site) = fix_site else {
+            .collect::<Vec<_>>();
+        let Some(first) = candidates.first().cloned() else {
             return Self {
                 ready: false,
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
             };
         };
-        if !crate::analysis::is_test_surface_path(&fix_site.file) {
+        let Some(fix_site) = candidates
+            .into_iter()
+            .find(|site| crate::analysis::is_test_surface_path(&site.file))
+        else {
             return Self {
                 ready: false,
-                fix_site: Some(fix_site),
+                fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
             };
-        }
+        };
         Self {
             ready: true,
             fix_site: Some(fix_site),

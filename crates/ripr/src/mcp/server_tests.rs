@@ -258,66 +258,80 @@ async fn receipt_status_fails_closed_before_refresh() -> Result<(), String> {
 async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), String> {
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
         .map_err(|error| error.to_string())?;
-    for (arguments, call) in [
+    for (tool, arguments, call) in [
         (
+            "prepare",
             serde_json::json!({}),
             "prepare_repair rejects a missing gap_id",
         ),
         (
+            "prepare",
             serde_json::json!({"gap_id": ""}),
             "prepare_repair rejects an empty gap_id",
         ),
         (
+            "prepare",
             serde_json::json!({"gap_id": 7}),
             "prepare_repair rejects a non-string gap_id",
         ),
         (
+            "prepare",
             serde_json::json!({"gap_id": "gap:x", "verbose": true}),
             "prepare_repair rejects unknown arguments",
         ),
         (
+            "attempt",
             serde_json::json!({}),
             "get_repair_attempt rejects a missing attempt_id",
         ),
         (
+            "attempt",
             serde_json::json!({"attempt_id": ""}),
             "get_repair_attempt rejects an empty attempt_id",
         ),
         (
+            "attempt",
             serde_json::json!({"attempt_id": 7}),
             "get_repair_attempt rejects a non-string attempt_id",
         ),
         (
+            "attempt",
             serde_json::json!({"attempt_id": "repair-attempt:x", "verbose": true}),
             "get_repair_attempt rejects unknown arguments",
         ),
         (
+            "receipt",
             serde_json::json!({}),
             "get_receipt_status rejects a missing receipt_id",
         ),
         (
+            "receipt",
             serde_json::json!({"receipt_id": ""}),
             "get_receipt_status rejects an empty receipt_id",
         ),
         (
+            "receipt",
             serde_json::json!({"receipt_id": 7}),
             "get_receipt_status rejects a non-string receipt_id",
         ),
         (
+            "receipt",
             serde_json::json!({"receipt_id": "receipt:x", "verbose": true}),
             "get_receipt_status rejects unknown arguments",
         ),
     ] {
         let arguments: Option<serde_json::Map<String, Value>> =
             serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        // Each case binds to the handler it names: rejection by a sibling
+        // handler must not satisfy the assertion.
+        let result = match tool {
+            "prepare" => server.prepare_repair_tool(arguments).await,
+            "attempt" => server.get_repair_attempt_tool(arguments).await,
+            _ => server.get_receipt_status_tool(arguments).await,
+        };
         let rejected = matches!(
-            (
-                server.prepare_repair_tool(arguments.clone()).await,
-                server.get_repair_attempt_tool(arguments.clone()).await,
-                server.get_receipt_status_tool(arguments).await,
-            ),
-            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error))
-                if error.code == rmcp::model::ErrorCode::INVALID_PARAMS
+            result,
+            Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS
         );
         if !rejected {
             return Err(format!("{call} with invalid params"));

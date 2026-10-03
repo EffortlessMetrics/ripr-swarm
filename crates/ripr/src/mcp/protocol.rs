@@ -974,7 +974,7 @@ fn repair_attempt_output_schema() -> Value {
                     "created_unix_ms": { "type": ["integer", "null"] },
                     "packet": { "type": ["object", "null"] },
                     "artifacts": { "type": "array" },
-                    "next_command": { "type": ["object", "null"] },
+                    "next_command": { "type": ["string", "object", "null"] },
                     "after": { "type": ["object", "null"] },
                     "terminal_receipt": { "type": ["string", "null"] },
                     "command_routes": { "type": "array" },

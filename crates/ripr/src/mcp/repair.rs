@@ -160,6 +160,23 @@ pub(crate) fn command_spec_document(spec: &crate::domain::CommandSpec) -> Value 
     document
 }
 
+/// Derive the wire status for one validated terminal receipt document. The
+/// producer's actual movement is read before the lossy presence lifecycle:
+/// a `regressed` movement must surface as `regressed`, never collapse into
+/// the shared fail-closed `receipt_missing` bucket and read as
+/// `after_pending` (review finding on #5155).
+fn terminal_receipt_status(value: &Value) -> &'static str {
+    let movement_regressed = value
+        .pointer("/provenance/movement")
+        .or(value.pointer("/static_movement/state"))
+        .and_then(Value::as_str)
+        .is_some_and(|movement| movement.trim().eq_ignore_ascii_case("regressed"));
+    if movement_regressed {
+        return "regressed";
+    }
+    receipt_status_from_lifecycle(&receipt_lifecycle_state_from_receipt_value(value))
+}
+
 /// Map the shared receipt-lifecycle vocabulary onto the receipt-status
 /// vocabulary this slice exposes. Unrecognized producer states stay
 /// non-claimed (`limited`), never an affirmative status.
@@ -456,8 +473,12 @@ fn durable_receipt_document(
                 ("invalid", receipt)
             }
             AttemptTerminalReceipt::Issued { path, value } => {
+                // The producer's actual movement is read before the lossy
+                // presence lifecycle: a `regressed` movement must surface as
+                // `regressed`, never collapse into the shared fail-closed
+                // `receipt_missing` bucket and read as `after_pending`.
                 let lifecycle_state = receipt_lifecycle_state_from_receipt_value(&value);
-                let status = receipt_status_from_lifecycle(&lifecycle_state);
+                let status = terminal_receipt_status(&value);
                 let binding = find_terminal_artifact_by_role(
                     manifest,
                     crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
@@ -660,7 +681,19 @@ impl WorkspaceSession {
             packet: packet.clone(),
             ..transaction
         };
+        // Bound the in-memory map: transactions bound to an older snapshot can
+        // never be served as live again, so evict them (one bounded packet
+        // each, up to 128 KiB) and keep only an attempt_id → snapshot_id
+        // tombstone that preserves the typed `superseded` failure.
+        let evicted = self
+            .repairs
+            .extract_if(|_, existing| existing.snapshot_id != snapshot_id)
+            .map(|(id, existing)| (id, existing.snapshot_id))
+            .collect::<Vec<_>>();
         self.repairs.insert(attempt_id, transaction);
+        for (id, old_snapshot) in evicted {
+            self.superseded_attempts.insert(id, old_snapshot);
+        }
         Ok(packet)
     }
 
@@ -673,6 +706,13 @@ impl WorkspaceSession {
         root: Option<&Path>,
         root_identity: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
+        if self.in_flight {
+            return Err(AttemptFailure::new(
+                super::workspace::CODE_ANALYSIS_IN_FLIGHT,
+                "an analysis attempt is running",
+                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+            ));
+        }
         if let Some(transaction) = self.repairs.get(attempt_id) {
             let current = self
                 .last_good
@@ -691,6 +731,20 @@ impl WorkspaceSession {
             }
             return bounded_document(session_attempt_document(transaction));
         }
+        if let Some(old_snapshot) = self.superseded_attempts.get(attempt_id) {
+            let current = self
+                .last_good
+                .as_ref()
+                .map(|snapshot| snapshot.snapshot_id.as_str());
+            return Err(AttemptFailure::new(
+                "superseded",
+                format!(
+                    "repair attempt `{attempt_id}` was prepared against snapshot `{old_snapshot}`, which is no longer the current completed snapshot"
+                ),
+                "re-read ripr_workspace_status for the current snapshot identity and prepare a fresh transaction"
+            )
+            .with_data(json!({ "current_snapshot_id": current })));
+        }
         let Some(root) = root else {
             return Err(unknown_attempt(attempt_id, false));
         };
@@ -707,6 +761,13 @@ impl WorkspaceSession {
         root: Option<&Path>,
         root_identity: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
+        if self.in_flight {
+            return Err(AttemptFailure::new(
+                super::workspace::CODE_ANALYSIS_IN_FLIGHT,
+                "an analysis attempt is running",
+                "poll ripr_workspace_status until attempt_state leaves in_flight, then retry",
+            ));
+        }
         if let Some(transaction) = self.repairs.get(receipt_id) {
             let current = self
                 .last_good
@@ -724,6 +785,20 @@ impl WorkspaceSession {
                 .with_data(json!({ "current_snapshot_id": current })));
             }
             return bounded_document(session_receipt_document(transaction));
+        }
+        if let Some(old_snapshot) = self.superseded_attempts.get(receipt_id) {
+            let current = self
+                .last_good
+                .as_ref()
+                .map(|snapshot| snapshot.snapshot_id.as_str());
+            return Err(AttemptFailure::new(
+                "superseded",
+                format!(
+                    "receipt `{receipt_id}` was bound to snapshot `{old_snapshot}`, which is no longer the current completed snapshot"
+                ),
+                "re-read ripr_workspace_status for the current snapshot identity"
+            )
+            .with_data(json!({ "current_snapshot_id": current })));
         }
         let Some(root) = root else {
             return Err(unknown_attempt(receipt_id, false));
@@ -798,6 +873,7 @@ mod tests {
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
             repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
         })
     }
 
@@ -1062,6 +1138,99 @@ mod tests {
                 "{normalized}"
             );
         }
+    }
+
+    #[test]
+    fn regressed_movement_survives_the_presence_lifecycle() {
+        // A real regressed receipt would collapse to receipt_missing through
+        // the shared fail-closed movement mapping; the wire must still say
+        // regressed (#5155 review).
+        let regressed = json!({
+            "provenance": { "movement": "regressed" },
+            "summary": { "receipt_state": "receipt_found" }
+        });
+        assert_eq!(terminal_receipt_status(&regressed), "regressed");
+        let regressed_alt = json!({ "static_movement": { "state": "regressed" } });
+        assert_eq!(terminal_receipt_status(&regressed_alt), "regressed");
+        let improved = json!({ "provenance": { "movement": "improved" } });
+        assert_eq!(terminal_receipt_status(&improved), "improved");
+        let absent = json!({ "provenance": { "movement": "" } });
+        assert_eq!(terminal_receipt_status(&absent), "after_pending");
+    }
+
+    #[test]
+    fn repair_reads_fail_closed_while_refresh_is_in_flight() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let packet = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let attempt_id = packet
+            .pointer("/attempt/attempt_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing attempt id".to_string())?
+            .to_string();
+        session.in_flight = true;
+        match session.repair_attempt_document(&attempt_id, None, Some("root:sha256:a")) {
+            Ok(value) => Err(format!("in-flight attempt read must fail closed: {value}")),
+            Err(failure) if failure.code == crate::mcp::workspace::CODE_ANALYSIS_IN_FLIGHT => {}
+            Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
+        }?;
+        match session.receipt_status_document(&attempt_id, None, Some("root:sha256:a")) {
+            Ok(value) => Err(format!("in-flight receipt read must fail closed: {value}")),
+            Err(failure) if failure.code == crate::mcp::workspace::CODE_ANALYSIS_IN_FLIGHT => {}
+            Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
+        }?;
+        Ok(())
+    }
+
+    #[test]
+    fn evicted_transactions_keep_the_superseded_typed_code() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let first = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let first_id = first
+            .pointer("/attempt/attempt_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing attempt id".to_string())?
+            .to_string();
+        // A refresh that changes the evidence supersedes the first binding;
+        // preparing against the new snapshot evicts the old packet.
+        let mut changed = super::super::gaps::test_finding()?;
+        changed
+            .evidence
+            .push("a later analysis pass adds one more evidence line".to_string());
+        let refreshed = session_with(&[changed], "root:sha256:a")?;
+        session.last_good = refreshed.last_good;
+        let second = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let second_id = second
+            .pointer("/attempt/attempt_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing attempt id".to_string())?
+            .to_string();
+        if second_id == first_id {
+            return Err("a new snapshot must bind a new attempt identity".to_string());
+        }
+        if session.repairs.contains_key(&first_id) {
+            return Err("the superseded packet must not stay retained in memory".to_string());
+        }
+        match session.repair_attempt_document(&first_id, None, Some("root:sha256:a")) {
+            Ok(value) => Err(format!("evicted attempt must stay superseded: {value}")),
+            Err(failure) if failure.code == "superseded" => {}
+            Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
+        }?;
+        match session.receipt_status_document(&first_id, None, Some("root:sha256:a")) {
+            Ok(value) => Err(format!("evicted receipt must stay superseded: {value}")),
+            Err(failure) if failure.code == "superseded" => {}
+            Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
+        }?;
+        // The live transaction still reads normally.
+        session
+            .repair_attempt_document(&second_id, None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        Ok(())
     }
 
     #[test]
