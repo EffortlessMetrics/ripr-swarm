@@ -250,10 +250,12 @@ fn call_follows_identifier(text: &str, start: usize, end: usize) -> bool {
     };
     // Reuse the call producer's generic-argument boundary. This lexical
     // subtraction grants no call fact or namespace authority of its own.
-    let Some(paren) = text[arguments..].find('(').map(|offset| arguments + offset) else {
-        return false;
-    };
-    super::calls::call_name_bounds_before_paren(text, paren) == Some((start, end))
+    // Function types can contain parentheses within the generic arguments.
+    // Accept only the parenthesis bound to this exact identifier by the
+    // existing call producer; later unrelated calls cannot defeat refusal.
+    text[arguments..].match_indices('(').any(|(offset, _)| {
+        super::calls::call_name_bounds_before_paren(text, arguments + offset) == Some((start, end))
+    })
 }
 
 /// Per-test refusal set. A genuine outside-span occurrence defeats refusal.
@@ -302,11 +304,26 @@ mod tests {
 
     #[test]
     fn ordinary_turbofish_calls_cancel_property_only_refusal() {
-        for call in ["owner::<u32>(2)", "super::owner::<Vec<u32>>(2)"] {
+        for call in [
+            "owner::<u32>(2)",
+            "super::owner::<Vec<u32>>(2)",
+            "owner::<for<'a> fn(&'a str)>(2)",
+        ] {
             let body = format!("prop_assert_eq!(owner(1),1); assert_eq!({call},2);");
             assert!(!property_only_call_names(&body).contains("owner"), "{call}");
         }
         assert!(property_only_call_names("prop_assert_eq!(owner::<u32>(1),1);").contains("owner"));
+        for outside in [
+            "owner::<Vec<u32>>::new()",
+            "owner::<u32>; other(2)",
+            "owner::for<'a>(2)",
+        ] {
+            let body = format!("prop_assert_eq!(owner(1),1); {outside};");
+            assert!(
+                property_only_call_names(&body).contains("owner"),
+                "{outside}"
+            );
+        }
     }
 
     #[test]

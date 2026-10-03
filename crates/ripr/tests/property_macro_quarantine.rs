@@ -155,7 +155,7 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
     let assertion = "assert_eq!(discounted_total(100, 100), 90);";
     for (name, tests, exposed, test_count, limit) in [
         ("ordinary", format!("#[test]\nfn boundary() {{ {assertion} }}\n"), true, 1, None),
-        ("generic_direct", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[test]\nfn boundary() { prop_assert_eq!(discounted_total(100,100),90); assert_eq!(discounted_total::<u32>(100,100),90); }\n".to_string(), true, 1, None),
+        ("generic_direct", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[test]\nfn boundary() { prop_assert_eq!(discounted_total(100,100),90); assert_eq!(discounted_total::<for<'a> fn(&'a str)>(100,100),90); }\n".to_string(), true, 1, None),
         ("discarded_ensure", "macro_rules! proptest { ($($args:tt)*) => {} }\n#[test]\nfn boundary() {\n let _ = discounted_total(100,100);\n proptest! { ensure!(discounted_total(100,100) == 90, \"discarded\"); }\n}\n".to_string(), false, 1, None),
         ("opaque_declaration", "macro_rules! proptest { ($($args:tt)*) => {} }\n#[test]\nfn boundary() { proptest! { fn discounted_total() {} } }\n".to_string(), false, 1, None),
         ("noop_named_test", "macro_rules! prop_assert_eq { ($($args:tt)*) => {} }\n#[cfg(test)] mod tests {\n#[test]\nfn discounted_total() { prop_assert_eq!(super::discounted_total(100,100),90); }\n}\n".to_string(), false, 1, Some("rust_macro_reach_unresolved")),
@@ -211,6 +211,8 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             // Hold owner, generic call, diff and ordinary assertion fixed. Removing
             // only the opaque invocation establishes the ordinary producer baseline.
             let baseline_source = source.replace("prop_assert_eq!(discounted_total(100,100),90); ", "");
+            assert_ne!(baseline_source, source, "baseline must remove the opaque invocation");
+            assert!(!baseline_source.contains("prop_assert_eq!("), "baseline must have no opaque invocation");
             std::fs::write(root.join("src/lib.rs"), &baseline_source).map_err(|error| error.to_string())?;
             let baseline = check_workspace(CheckInput {
                 root: root.clone(), diff_file: Some(root.join("diff.patch")), mode: Mode::Fast,
@@ -238,8 +240,24 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             assert!(finding["related_tests"].as_array().is_some_and(|tests| tests.iter().any(|test| test["relation_reason"] == "helper_owner_call")), "independent helper route: {finding}");
         }
         if name == "opaque_declaration" {
-            assert_eq!(finding["related_tests"].as_array().map(Vec::len), Some(0));
-            assert_eq!(finding["ripr"]["reach"]["state"], "unknown");
+            // File proximity remains a suggestion, never a direct call. Opaque
+            // expansion uncertainty must not become proof that tests are absent.
+            let related = finding["related_tests"].as_array().ok_or("missing related tests")?;
+            assert_eq!(related.len(), 1, "opaque declaration proximity: {finding}");
+            assert_eq!(related[0]["relation_reason"], "same_test_file", "opaque declaration cannot supply a direct call: {finding}");
+            assert_eq!(finding["ripr"]["reach"]["state"], "weak", "opaque declaration cannot supply positive reach: {finding}");
+            let baseline_source = source.replace("proptest! { fn discounted_total() {} }", "proptest! {}");
+            assert_ne!(baseline_source, source, "baseline must remove the opaque declaration");
+            std::fs::write(root.join("src/lib.rs"), &baseline_source).map_err(|error| error.to_string())?;
+            let baseline = check_workspace(CheckInput {
+                root: root.clone(), diff_file: Some(root.join("diff.patch")), mode: Mode::Fast,
+                format: OutputFormat::Json, include_unchanged_tests: true, ..CheckInput::default()
+            })?;
+            std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+            assert_eq!(baseline.findings.len(), 1, "empty opaque ordinary baseline");
+            assert_eq!(report.findings[0].class, baseline.findings[0].class, "opaque declaration cannot add classification authority");
+            assert_eq!(report.findings[0].related_tests, baseline.findings[0].related_tests, "opaque declaration cannot add a relation");
+            assert_eq!(report.findings[0].ripr.reach.state, baseline.findings[0].ripr.reach.state, "opaque declaration cannot add reach authority");
         }
         if limit == Some("rust_macro_reach_unresolved") {
             for stage in ["reach", "infect", "propagate"] {
