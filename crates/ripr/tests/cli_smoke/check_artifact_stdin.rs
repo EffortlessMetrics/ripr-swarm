@@ -7,8 +7,11 @@ use super::{
 use std::path::Path;
 use std::process::Output;
 
+#[cfg(feature = "lang-python")]
 const PYTHON_PATCH: &str = "--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,4 @@\n def discount(amount):\n-    if amount > 100:\n+    if amount >= 100:\n         return 10\n     return 0\n";
+#[cfg(feature = "lang-python")]
 const PYTHON_COMMENT: &str = "--- a/src/discount.py\n+++ b/src/discount.py\n@@ -1,4 +1,5 @@\n+# pricing documentation\n def discount(amount):\n     if amount >= 100:\n         return 10\n     return 0\n";
+#[cfg(feature = "lang-typescript")]
 const JAVASCRIPT_PATCH: &str = "--- a/src/discount.js\n+++ b/src/discount.js\n@@ -1,3 +1,3 @@\n export function discount(amount) {\n-  return amount > 100;\n+  return amount >= 100;\n }\n";
 
 fn run(root: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Output, String> {
@@ -170,7 +173,7 @@ fn exercise(root: &Path, patch: &str, unrelated: &str, selector: &str) -> Result
     // Only the exact '-' sentinel is stdin. An explicit path to a literal
     // file named '-' remains a supported named-file artifact source.
     write(root, "-", patch)?;
-    let literal_path = root.join("-").display().to_string();
+    let literal_path = "./-".to_string();
     let literal = run(
         root,
         &[
@@ -229,6 +232,7 @@ fn exercise(root: &Path, patch: &str, unrelated: &str, selector: &str) -> Result
     Ok(())
 }
 
+#[cfg(feature = "lang-python")]
 #[test]
 fn python_stdin_artifact_refusal_preserves_named_recovery() -> Result<(), String> {
     let root = unique_temp_workspace("python-stdin-artifact");
@@ -257,6 +261,7 @@ fn python_stdin_artifact_refusal_preserves_named_recovery() -> Result<(), String
     result
 }
 
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn javascript_stdin_artifact_refusal_preserves_named_recovery() -> Result<(), String> {
     let root = unique_temp_workspace("javascript-stdin-artifact");
