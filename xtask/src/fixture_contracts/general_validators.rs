@@ -1957,6 +1957,15 @@ fn installed_rust_git_identity_wellformed(value: Option<&Value>) -> bool {
 /// edit-cage invariants the scripted journeys rely on.
 fn installed_rust_manifest_violations(root: &Path, manifest: &Value) -> Vec<String> {
     let mut violations = Vec::new();
+    let fixture_root = match root.canonicalize() {
+        Ok(path) => path,
+        Err(error) => {
+            violations.push(format!(
+                "blind journey installed rust fixture root cannot be resolved: {error}"
+            ));
+            return violations;
+        }
+    };
     if json_string_field(manifest, "schema_version").as_deref()
         != Some(INSTALLED_RUST_FIXTURE_SCHEMA_VERSION)
     {
@@ -1976,6 +1985,23 @@ fn installed_rust_manifest_violations(root: &Path, manifest: &Value) -> Vec<Stri
         return violations;
     };
     for (name, snapshot) in snapshots {
+        let snapshot_dir = root.join("repository").join(name);
+        let confined_dir = match snapshot_dir.canonicalize() {
+            Ok(resolved) if resolved.starts_with(&fixture_root) => resolved,
+            Ok(_) => {
+                violations.push(format!(
+                    "blind journey installed rust snapshot `{name}` escapes the fixture root"
+                ));
+                continue;
+            }
+            Err(error) => {
+                violations.push(format!(
+                    "blind journey installed rust snapshot `{name}` directory cannot be \
+                     resolved: {error}"
+                ));
+                continue;
+            }
+        };
         if !installed_rust_git_identity_wellformed(snapshot.get("commit"))
             || !installed_rust_git_identity_wellformed(snapshot.get("tree"))
         {
@@ -1999,7 +2025,24 @@ fn installed_rust_manifest_violations(root: &Path, manifest: &Value) -> Vec<Stri
                 ));
                 continue;
             };
-            let path = root.join("repository").join(name).join(relative);
+            let path = confined_dir.join(relative);
+            let path = match path.canonicalize() {
+                Ok(resolved) if resolved.starts_with(&fixture_root) => resolved,
+                Ok(_) => {
+                    violations.push(format!(
+                        "blind journey installed rust snapshot `{name}` file `{relative}` escapes \
+                         the fixture root"
+                    ));
+                    continue;
+                }
+                Err(error) => {
+                    violations.push(format!(
+                        "blind journey installed rust snapshot `{name}` file `{relative}` cannot \
+                         be read: {error}"
+                    ));
+                    continue;
+                }
+            };
             let body = match std::fs::read(&path) {
                 Ok(body) => body,
                 Err(error) => {
@@ -2019,7 +2062,7 @@ fn installed_rust_manifest_violations(root: &Path, manifest: &Value) -> Vec<Stri
         }
         let mut on_disk = Vec::new();
         installed_rust_collect_snapshot_files(
-            &root.join("repository").join(name),
+            &confined_dir,
             Path::new(""),
             &mut on_disk,
             &mut violations,
@@ -2314,6 +2357,7 @@ mod installed_rust_fixture_tests {
             "ripr-installed-rust-fixture-test-{}",
             std::process::id()
         ));
+        let _ = std::fs::remove_dir_all(&temp);
         let snapshot = temp.join("repository").join("head");
         std::fs::create_dir_all(snapshot.join("src"))
             .map_err(|error| format!("create temp snapshot: {error}"))?;
@@ -2377,6 +2421,7 @@ mod installed_rust_fixture_tests {
             "ripr-installed-rust-extra-file-test-{}",
             std::process::id()
         ));
+        let _ = std::fs::remove_dir_all(&temp);
         let snapshot = temp.join("repository").join("head");
         std::fs::create_dir_all(snapshot.join("src"))
             .map_err(|error| format!("create temp snapshot: {error}"))?;
