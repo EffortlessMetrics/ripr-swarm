@@ -252,15 +252,157 @@ fn benchmark_semantic_controls_reject_wrong_selected_producer() -> Result<(), St
         let violations = model.check().1;
         assert_eq!(
             violations.len(),
-            2,
+            3,
             "unexpected rejection count for {mode}: {violations:?}"
         );
         assert!(
             violations
                 .iter()
-                .all(|message| message.ends_with("historical static producer identity differs")),
+                .filter(|message| message.ends_with("historical static producer identity differs"))
+                .count()
+                == 2,
             "wrong refusal for {mode}: {violations:?}"
         );
+        assert!(
+            violations
+                .iter()
+                .any(|message| message.contains("incomplete reviewed role pair"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn benchmark_semantic_controls_require_both_reviewed_roles() -> Result<(), String> {
+    for mode in [
+        "original_pair",
+        "omit_corrected",
+        "omit_original",
+        "duplicate_corrected",
+    ] {
+        let mut model = StaticModel::new()?;
+        assert!(model.check().1.is_empty());
+        match mode {
+            "omit_corrected" => {
+                let _ = model.controls.remove(0);
+            }
+            "omit_original" => {
+                let _ = model.controls.remove(1);
+            }
+            "duplicate_corrected" => model.controls[1] = model.controls[0].clone(),
+            _ => {}
+        }
+        let (disclosure, violations) = model.check();
+        let report = disclosure.items.join("\n");
+        if mode == "original_pair" {
+            assert!(violations.is_empty());
+            assert!(report.contains("historical_cases=1, valid=1, invalid=1, rejected=0"));
+            assert!(report.contains("complete_cases=1, incomplete_cases=0"));
+        } else {
+            assert!(
+                violations
+                    .iter()
+                    .any(|message| message.contains("incomplete reviewed role pair")),
+                "{mode}: {violations:?}"
+            );
+            assert!(report.contains("historical_cases=0"));
+            assert!(report.contains("complete_cases=0, incomplete_cases=1"));
+            assert!(report.contains(if mode == "omit_corrected" {
+                "valid=0, invalid=1"
+            } else {
+                "valid=1, invalid=0"
+            }));
+            if mode == "duplicate_corrected" {
+                assert!(
+                    violations.iter().any(
+                        |message| message.contains("duplicate historical case/variant control")
+                    )
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn benchmark_semantic_controls_reject_individually_valid_mismatched_subjects() -> Result<(), String>
+{
+    for mode in ["key_source", "native_pairing"] {
+        let mut model = StaticModel::new()?;
+        assert!(model.check().1.is_empty());
+        let mut alternate = model.controls[1].clone();
+        let mut key = model.evidence.key.clone();
+        let mut pairing = model.evidence.pairing.clone();
+        if mode == "key_source" {
+            // A separately retained source identity can have identical bytes.
+            // Re-review this alternate subject instead of leaving stale hashes.
+            let source = retained_text(&model.evidence.root, &key["sources"]["fixed"])?;
+            key["sources"]["fixed"] = model
+                .evidence
+                .file("alternate-fixed.rs", source.as_bytes())?;
+            alternate["semantic_oracle"]["answer_key"] = model.evidence.file(
+                "alternate-key.json",
+                &serde_json::to_vec(&key).map_err(|error| error.to_string())?,
+            )?;
+            pairing["answer_key_sha256"] =
+                alternate["semantic_oracle"]["answer_key"]["sha256"].clone();
+        } else {
+            let mut row = pairing["observations"][0].clone();
+            let mut capture = retained_json(&model.evidence.root, &row["capture"])?;
+            row["runner"]["version"] = json!("alternate synthetic capture version");
+            let mut observation = row.clone();
+            let _ = observation
+                .as_object_mut()
+                .ok_or("missing observation")?
+                .remove("capture");
+            capture["observation"] = observation;
+            row["capture"] = model.evidence.file(
+                "alternate-native-capture.json",
+                &serde_json::to_vec(&capture).map_err(|error| error.to_string())?,
+            )?;
+            pairing["observations"][0] = row;
+        }
+        alternate["semantic_oracle"]["native_pairing"] = model.evidence.file(
+            "alternate-pairing.json",
+            &serde_json::to_vec(&pairing).map_err(|error| error.to_string())?,
+        )?;
+        let mut review = retained_json(
+            &model.evidence.root,
+            &alternate["semantic_oracle"]["independent_review"],
+        )?;
+        for field in ["answer_key", "native_pairing"] {
+            review["reviewed_subject"][field] = alternate["semantic_oracle"][field].clone();
+        }
+        alternate["semantic_oracle"]["independent_review"] = model.evidence.file(
+            "alternate-review.json",
+            &serde_json::to_vec(&review).map_err(|error| error.to_string())?,
+        )?;
+        assert_eq!(
+            validate_declaration(&model.evidence.root, &alternate)?.0,
+            "invalid"
+        );
+        observed_static::validate(
+            &model.evidence.root,
+            &key,
+            &pairing,
+            &alternate["observed_static"],
+        )?;
+        model.controls[1] = alternate;
+        let (disclosure, violations) = model.check();
+        assert!(
+            violations
+                .iter()
+                .any(|message| message.contains("same-case controls disagree")),
+            "{mode}: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|message| message.contains("incomplete reviewed role pair"))
+        );
+        let report = disclosure.items.join("\n");
+        assert!(report.contains("historical_cases=0, valid=1, invalid=1, rejected=0"));
+        assert!(report.contains("complete_cases=0, incomplete_cases=1"));
     }
     Ok(())
 }
@@ -365,16 +507,47 @@ fn benchmark_semantic_controls_production_command_keeps_separate_counts() -> Res
         assert!(report.contains("Semantic review accepts only its exact answer-key/native-pairing subject; it does not accept the attached static analysis"));
         assert!(report.contains("NOT_REVERIFIED"));
         let path = root.join("fixtures/evidence-quality-benchmark/corpus.json");
-        let mut corpus = read_json(&path)?;
-        corpus["semantic_oracle_controls"][0]["semantic_oracle"] = Value::Null;
-        fs::write(
-            path,
-            serde_json::to_vec(&corpus).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        assert!(crate::fixture_contracts::check_fixture_contracts().is_err());
-        let report = fs::read_to_string(&report_path).map_err(|error| error.to_string())?;
-        assert!(report.contains("Historical semantic controls: views=2, historical_cases=1, valid=0, invalid=1, rejected=1"));
+        let original = read_json(&path)?;
+        for mode in [
+            "malformed",
+            "omit_corrected",
+            "omit_original",
+            "duplicate_corrected",
+        ] {
+            let mut corpus = original.clone();
+            match mode {
+                "omit_corrected" => {
+                    let _ = corpus["semantic_oracle_controls"]
+                        .as_array_mut()
+                        .ok_or("missing controls")?
+                        .remove(0);
+                }
+                "omit_original" => {
+                    let _ = corpus["semantic_oracle_controls"]
+                        .as_array_mut()
+                        .ok_or("missing controls")?
+                        .remove(1);
+                }
+                "duplicate_corrected" => {
+                    corpus["semantic_oracle_controls"][1] =
+                        corpus["semantic_oracle_controls"][0].clone()
+                }
+                _ => corpus["semantic_oracle_controls"][0]["semantic_oracle"] = Value::Null,
+            }
+            fs::write(
+                &path,
+                serde_json::to_vec(&corpus).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            assert!(
+                crate::fixture_contracts::check_fixture_contracts().is_err(),
+                "accepted {mode}"
+            );
+            let report = fs::read_to_string(&report_path).map_err(|error| error.to_string())?;
+            assert!(report.contains("historical_cases=0"));
+            assert!(report.contains("complete_cases=0, incomplete_cases=1"));
+            assert!(report.contains("incomplete reviewed role pair"));
+        }
         Ok(())
     })
 }

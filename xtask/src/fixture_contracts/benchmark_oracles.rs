@@ -124,6 +124,8 @@ pub(super) fn validate_case(root: &Path, case: &Value) -> Result<&'static str, S
     validate_declaration(root, case).map(|(status, _)| status)
 }
 
+const REVIEWED_ROLES: [(&str, &str); 2] = [("corrected", "valid"), ("original", "invalid")];
+
 fn validate_declaration(
     root: &Path,
     case: &Value,
@@ -132,16 +134,14 @@ fn validate_declaration(
         return Ok(("unreviewed", captures::Custody::default()));
     };
     let status = text(oracle, "status")?;
-    match status {
-        "unreviewed" => return Ok(("unreviewed", captures::Custody::default())),
-        "valid" | "invalid" => {}
-        _ => return Err(format!("unsupported semantic oracle status {status}")),
+    if status == "unreviewed" {
+        return Ok(("unreviewed", captures::Custody::default()));
     }
-    let expected_variant = if status == "valid" {
-        "corrected"
-    } else {
-        "original"
-    };
+    let (expected_variant, reviewed_status) = REVIEWED_ROLES
+        .iter()
+        .copied()
+        .find(|(_, reviewed_status)| *reviewed_status == status)
+        .ok_or_else(|| format!("unsupported semantic oracle status {status}"))?;
     if text(oracle, "variant")? != expected_variant {
         return Err("semantic oracle status contradicts its test variant".to_string());
     }
@@ -174,14 +174,7 @@ fn validate_declaration(
                 .to_string(),
         );
     }
-    Ok((
-        if status == "valid" {
-            "valid"
-        } else {
-            "invalid"
-        },
-        custody,
-    ))
+    Ok((reviewed_status, custody))
 }
 
 fn validate_answer_key(root: &Path, key: &Value) -> Result<(), String> {

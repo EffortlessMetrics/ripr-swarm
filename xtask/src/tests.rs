@@ -6259,7 +6259,7 @@ fn evidence_quality_benchmark_reports_contract_drift() {
     assert!(report.contains("is missing capability_scope object"));
     assert!(report.contains("is missing calibration_scope object"));
     assert!(report.contains("is missing audit_expectations object"));
-    assert!(report.contains("case bad is duplicated"));
+    assert!(report.contains("cases collection has duplicate id bad"));
     assert!(report.contains("unsupported evidence_class unknown"));
     assert!(report.contains("unsupported case_kind surprise"));
     assert!(report.contains("unsupported maturity_scope global"));

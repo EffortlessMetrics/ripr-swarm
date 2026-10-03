@@ -3236,6 +3236,8 @@ tests = [
   "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_conflicting_views",
   "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_stale_static_capture",
   "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_wrong_selected_producer",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_require_both_reviewed_roles",
+  "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_reject_individually_valid_mismatched_subjects",
   "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_real_corpus_identity_and_disclosure",
   "xtask/src/fixture_contracts/benchmark_oracles/tests/controls.rs::benchmark_semantic_controls_production_command_keeps_separate_counts",
   "xtask/src/main.rs",

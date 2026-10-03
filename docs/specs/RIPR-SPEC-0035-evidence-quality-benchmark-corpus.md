@@ -187,6 +187,12 @@ only the linked six-pair removal control. Control identity is `(id, variant)`.
 Duplicate views reject, and same-ID views must reference identical answer-key,
 native-pairing and historical static-capture descriptors. The semantic checker
 and exact independent-review subject binding are reused without a new runner.
+Every declared control case must retain both successfully reviewed roles.
+Omitting either view, substituting a duplicate role, or disagreeing on the
+shared subject rejects the case. Complete historical-case counts exclude these
+cases; individually reviewed row judgments remain visible alongside an explicit
+incomplete-case count. Absence of the whole optional collection retains the
+legacy behavior.
 
 The observed static capture is historical data, explicitly marked as having
 no normative static expectation. Its retained producer and execution receipts
