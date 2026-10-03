@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod advisory_write_safety;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
+#[path = "cli_smoke/check_artifact_stdin.rs"]
+mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
 
