@@ -503,6 +503,7 @@ mod tests {
             attempt_id: attempt_id.to_string(),
             work: OrchestrationWorkRefV1 {
                 repository: "https://example.invalid/operator/target".to_string(),
+                source: "source-sample".to_string(),
                 selected_work: "issue-sample".to_string(),
                 portfolio: "campaign-sample".to_string(),
                 base: "base-sha".to_string(),

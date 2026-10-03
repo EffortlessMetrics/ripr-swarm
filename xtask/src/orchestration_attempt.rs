@@ -146,13 +146,17 @@ pub(crate) enum OrchestrationBoundaryStatusV1 {
     ForbiddenPath,
 }
 
-/// Repository / selected-work / portfolio / base / head identity. This is the
-/// shared context identity later extensions (the issue-lifecycle family)
+/// Repository / source / selected-work / portfolio / base / head identity. The
+/// opaque `source` names where the selected work came from (issue, campaign
+/// directive, manual intake) and stays distinct from `selected_work`, so two
+/// attempts on identical work from different sources remain distinct. This is
+/// the shared context identity later extensions (the issue-lifecycle family)
 /// reference instead of restating.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OrchestrationWorkRefV1 {
     pub repository: String,
+    pub source: String,
     pub selected_work: String,
     pub portfolio: String,
     pub base: String,
@@ -565,6 +569,9 @@ pub(crate) fn assess_orchestration_attempt(
     if row.work.repository.trim().is_empty() {
         missing.push("work.repository");
     }
+    if row.work.source.trim().is_empty() {
+        missing.push("work.source");
+    }
     if row.work.selected_work.trim().is_empty() {
         missing.push("work.selected_work");
     }
@@ -930,6 +937,7 @@ mod tests {
             attempt_id: "attempt-sample".to_string(),
             work: OrchestrationWorkRefV1 {
                 repository: "https://example.invalid/operator/target".to_string(),
+                source: "source-sample".to_string(),
                 selected_work: "issue-sample".to_string(),
                 portfolio: "campaign-sample".to_string(),
                 base: "base-sha".to_string(),
@@ -1438,6 +1446,21 @@ mod tests {
         if assessment.counted || !reason_contains(&assessment, "claims.claim_id") {
             return Err(format!(
                 "a blank claim id must reject the row, got counted={} reasons={:?}",
+                assessment.counted, assessment.reasons
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn blank_source_identity_rejects_the_row() -> Result<(), String> {
+        let mut row = stamped_sample()?;
+        row.work.source = String::new();
+        row.row_digest = orchestration_row_digest(&row)?;
+        let assessment = assess_orchestration_attempt(&row);
+        if assessment.counted || !reason_contains(&assessment, "work.source") {
+            return Err(format!(
+                "a blank source identity must reject the row, got counted={} reasons={:?}",
                 assessment.counted, assessment.reasons
             ));
         }

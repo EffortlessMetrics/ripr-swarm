@@ -11627,6 +11627,7 @@ tests = [
   "xtask/src/orchestration_attempt.rs::tests::blank_result_identity_rejects_the_row",
   "xtask/src/orchestration_attempt.rs::tests::blank_synthesis_identity_rejects_the_row",
   "xtask/src/orchestration_attempt.rs::tests::blank_claim_id_rejects_the_row",
+  "xtask/src/orchestration_attempt.rs::tests::blank_source_identity_rejects_the_row",
   "xtask/src/orchestration_attempt.rs::tests::non_matched_comparison_blocks_completed",
   "xtask/src/orchestration_attempt.rs::tests::forbidden_path_survives_a_failed_verification_command",
   "xtask/src/orchestration_attempt.rs::tests::contradiction_survives_a_stale_verification_binding",

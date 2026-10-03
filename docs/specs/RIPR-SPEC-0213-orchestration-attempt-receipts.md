@@ -67,8 +67,10 @@ The closed vocabulary:
 - `AttemptComparisonV1`: `matched`, `near_matched`, `non_comparative`,
   `incomparable`.
 
-Each real row retains at least repository/selected-work/portfolio/base/head
-identity, task family and accepted contract, agent client and role
+Each real row retains at least repository/source/selected-work/portfolio/base/head
+identity — the opaque `source` names where the selected work came from and
+stays distinct from `selected_work`, so identical work from different sources
+remains distinct — task family and accepted contract, agent client and role
 configuration, planned and actual waves, packet/result/synthesis/overflow
 identities and bytes, claims with worktree/edit cage/resources, command
 denominators, independent verification with its base/head/result binding,

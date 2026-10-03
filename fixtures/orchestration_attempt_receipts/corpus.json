@@ -14,6 +14,7 @@
         "attempt_id": "attempt-single-agent",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -108,7 +109,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-single-agent",
-        "row_digest": "1acfc754d7c1cad26c16b9d1a83bae13523db738c871d8f75fd2b44e4c1ce0ff"
+        "row_digest": "fb84f9f43fde178941c9d04ebebbd98826fd4cea28b6c8769e6649f58ad812d6"
       }
     },
     {
@@ -124,6 +125,7 @@
         "attempt_id": "attempt-read-only-fanout",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -239,7 +241,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-read-only-fanout",
-        "row_digest": "8ad69e2d8f4829519020b91ca5e07e38c2539f497dbb7439a34a04137a84f5b6"
+        "row_digest": "14c00ffeaee930a1a401da02c7cf22d2f060a2d97ef7f226ad68e9ef869e44e0"
       }
     },
     {
@@ -257,6 +259,7 @@
         "attempt_id": "attempt-adversary-contradiction",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -362,7 +365,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-adversary-contradiction",
-        "row_digest": "fc6ea6d489a0415c0b23f108a57e0c25eef4326d172ca5595249b8e865b8746f"
+        "row_digest": "42151a9880ec55a159db17bdff25404bee231840509d751458aa1a1f475f82ee"
       }
     },
     {
@@ -380,6 +383,7 @@
         "attempt_id": "attempt-builder-rejected",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -485,7 +489,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-builder-rejected",
-        "row_digest": "3723f93d7b802514866bdaa21c63e0d4f83a3bbf92bd6c0961ec06e0c3986aa8"
+        "row_digest": "0ddc85ab2ccd389d931a44fbacc14b6fc3a39aa24f75e1972a4c3086f7647610"
       }
     },
     {
@@ -503,6 +507,7 @@
         "attempt_id": "attempt-parallel-conflict",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -624,7 +629,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-parallel-conflict",
-        "row_digest": "acf687136329df84b46a34d9a590351bf97bcb03c1a7bb08f9ade6b3f5276b11"
+        "row_digest": "971fa138a09229bd2d07aa6520e193110b57e08948a47e711ee7e11597c6514e"
       }
     },
     {
@@ -642,6 +647,7 @@
         "attempt_id": "attempt-stale-identity",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -735,7 +741,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-stale-identity",
-        "row_digest": "9bbdc745f9f1c5bcb8d60b700540b1815fedad8138a0b5ba406a0f7b4bc58e71"
+        "row_digest": "07b805d3a53ab34f8058a07973ebc636450393be8b2aa8593da0adbbe4f9101d"
       }
     },
     {
@@ -753,6 +759,7 @@
         "attempt_id": "attempt-forbidden-path",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -850,7 +857,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-forbidden-path",
-        "row_digest": "abc32baec8e9bdf01aef7e586d2991ca8bc463e6575684bf48f0171ff273467f"
+        "row_digest": "c4e40237ddf37aec107dedc48b2063dbed29f89a57f4df5b6aa4936eac98f1e9"
       }
     },
     {
@@ -868,6 +875,7 @@
         "attempt_id": "attempt-over-budget",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -961,7 +969,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-over-budget",
-        "row_digest": "8979cb365b524645f805933118bebaec0e26a35dbac29ac0203abd5e09ca2588"
+        "row_digest": "5024342ffe0ad98aedf8927d86c110162af6faae88d3b664ee27a9ef8daf5b58"
       }
     },
     {
@@ -977,6 +985,7 @@
         "attempt_id": "attempt-interrupted",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -1058,7 +1067,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-interrupted",
-        "row_digest": "388e93f8bab0c601e34ac7f05a5fbae281f1b6b1e8ed6e7bba6167bf0c2a673f"
+        "row_digest": "e706049f84f0c1df7b8cff788570253530008796770c53303a9d5e0448e79e48"
       }
     },
     {
@@ -1074,6 +1083,7 @@
         "attempt_id": "attempt-duplicate",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -1167,7 +1177,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-duplicate",
-        "row_digest": "62fbc122e45619fdab43494b37ab2db0db56207cd4aa8a11e981bb37cf86e355"
+        "row_digest": "40144806e95a584b7f3fdf53c626f423cf6a37a2d93df0fc2b177a9f2eaab719"
       }
     },
     {
@@ -1183,6 +1193,7 @@
         "attempt_id": "attempt-duplicate",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -1276,7 +1287,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-duplicate",
-        "row_digest": "62fbc122e45619fdab43494b37ab2db0db56207cd4aa8a11e981bb37cf86e355"
+        "row_digest": "40144806e95a584b7f3fdf53c626f423cf6a37a2d93df0fc2b177a9f2eaab719"
       }
     },
     {
@@ -1292,6 +1303,7 @@
         "attempt_id": "attempt-equivalent-root",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -1385,7 +1397,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-equivalent-root",
-        "row_digest": "d108a693ae017331aa26b575c6ed724e21b90ca1348872ce81dd98125a7a34ac"
+        "row_digest": "4e5f151c0d003cbc846179b6d08ad5c0fb55e883a0dcd5c05251e32e1d554a30"
       }
     },
     {
@@ -1401,6 +1413,7 @@
         "attempt_id": "attempt-equivalent-root",
         "work": {
           "repository": "https://example.invalid/operator/target",
+          "source": "source-sample",
           "selected_work": "issue-sample",
           "portfolio": "campaign-sample",
           "base": "base-sha",
@@ -1494,7 +1507,7 @@
         ],
         "synthetic": true,
         "observation_key": "observation-equivalent-root",
-        "row_digest": "2cb063218adf9c53f05919ddad506d69d319f8787823bfa57623eccab7f181f6"
+        "row_digest": "dc645f3199e6f739749d9e901f27f100e3c78794393199a76517fd15b344d0dc"
       }
     }
   ]
