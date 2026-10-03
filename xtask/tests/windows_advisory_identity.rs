@@ -495,6 +495,33 @@ fn completion_preserves_ignored_filtered_empty_and_doctest_batches() -> Result<(
 }
 
 #[test]
+fn incomplete_or_duplicate_ignored_subjects_cannot_supply_completion() -> Result<(), String> {
+    let clean = controls(None);
+    let header = "Running tests/extra.rs (target/debug/deps/extra-1111111111111111.exe)\n";
+    for tail in [
+        header.to_string(),
+        format!(
+            "{header}running 0 tests\ntest unknown ... unsupported\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        ),
+        format!(
+            "{header}running 2 tests\ntest duplicate ... ignored\ntest duplicate ... ignored\ntest result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        ),
+        format!(
+            "{header}running 2 tests\ntest duplicate ... ignored\ntest duplicate ... ok\ntest result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        ),
+    ] {
+        verify(
+            clean.clone() + &tail,
+            clean.clone(),
+            1,
+            &["incomplete_evidence", "provenance:"],
+            &["No test failed in either run."],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn identical_names_in_distinct_targets_count_twice() -> Result<(), String> {
     let log = controls(None) + &alpha("ok") + &beta("ok");
     verify(log.clone(), log, 0, &["observed 17 pass, 0 fail"], &[])
@@ -1041,7 +1068,7 @@ fn provenance_report_caps_legacy_rows_and_counts_omissions() -> Result<(), Strin
             20
         );
         assert!(report.contains(&format!(
-            "- {label}: 980 additional provenance errors omitted (1000 total)."
+            "- {label}: 982 additional provenance errors omitted (1002 total)."
         )));
     }
     assert!(!report.contains("orphan_20"));
@@ -1166,7 +1193,7 @@ fn provenance_report_caps_repeated_admitted_targets() -> Result<(), String> {
     );
     assert_eq!(
         report
-            .matches("979 additional provenance errors omitted (999 total).")
+            .matches("1979 additional provenance errors omitted (1999 total).")
             .count(),
         2
     );
