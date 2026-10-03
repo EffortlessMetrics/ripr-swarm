@@ -373,3 +373,7 @@ enabled adapter with a matching non-success `language_runs` entry carries
 - Promote to accepted when an external TypeScript repo exercises the default
   (no-config) disclosure path end-to-end and the silent empty-result gap is
   confirmed closed.
+
+Git-generated paths with filename whitespace retain their exact identity in
+missing-source limitations and preview admission. An available `leading.py`
+remains counted and sampled when the distinct ` leading.py` is missing.
