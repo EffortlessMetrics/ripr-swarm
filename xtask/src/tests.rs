@@ -7765,20 +7765,9 @@ fn release_server_helpers_match_workflow_arguments() -> Result<(), String> {
 }
 
 #[test]
-fn release_server_archive_prepares_package_before_format_validation() -> Result<(), String> {
-    with_temp_cwd("release-server-archive", |root| {
+fn release_server_archive_rejects_format_before_repository_bound_staging() -> Result<(), String> {
+    with_temp_cwd("release-server-archive-invalid-format", |_root| {
         let executable = if cfg!(windows) { "ripr.exe" } else { "ripr" };
-        write(
-            &root
-                .join("target")
-                .join("x86_64-unknown-linux-gnu")
-                .join("release")
-                .join(executable),
-            "binary",
-        );
-        write(&root.join("LICENSE-MIT"), "mit");
-        write(&root.join("LICENSE-APACHE"), "apache");
-
         let args = vec![
             "--version".to_string(),
             "v1.2.3".to_string(),
@@ -7794,17 +7783,6 @@ fn release_server_archive_prepares_package_before_format_validation() -> Result<
             return Err("unsupported archive format should fail".to_string());
         };
         assert!(err.contains("unsupported release server archive format"));
-        assert_eq!(
-            fs::read_to_string(root.join("package").join(executable))
-                .map_err(|err| format!("read packaged executable: {err}"))?,
-            "binary"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("package").join("README-server.txt"))
-                .map_err(|err| format!("read packaged README: {err}"))?,
-            super::release_server_readme("1.2.3")
-        );
-        assert!(root.join("dist").is_dir());
         Ok(())
     })
 }
@@ -9584,19 +9562,19 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             || candidate
                 .matches("git init \"${GITHUB_WORKSPACE}\"")
                 .count()
-                != 3
+                != 4
             || candidate
                 .matches("-c credential.helper= -c http.extraheader= fetch")
                 .count()
-                != 3
+                != 4
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
             || candidate
                 .matches("https://github.com/EffortlessMetrics/ripr-swarm.git")
                 .count()
-                != 4
+                != 5
         {
             return Err(
-                "candidate source must use three isolated unauthenticated git fetches".to_owned(),
+                "candidate source must use four isolated unauthenticated git fetches".to_owned(),
             );
         }
         if !candidate.contains("permissions:\n  contents: read")
@@ -9663,11 +9641,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if candidate
             .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
             .count()
-            != 3
+            != 5
             || candidate
                 .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
                 .count()
-                != 2
+                != 3
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
             || candidate.contains("gh api")
@@ -9712,7 +9690,13 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "ruleset_id",
             "--arg repository \"${REPOSITORY}\"",
             "release_assets_created: false",
-            "cargo build --locked -p ripr --release",
+            "archive_readback_verified = $true",
+            "(.archive_readback_verified == true) and",
+            "archive_readback_verified: true",
+            "RECEIPT_INSTRUMENT_REPOSITORY: ${{ job.workflow_repository }}",
+            "RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}",
+            "endswith(\" / \" + $suffix)",
+            "cargo xtask release-server-archive",
             "os: ubuntu-22.04\n",
             "os: ubuntu-22.04-arm\n",
             "GLIBC_FLOOR: \"2.34\"",
@@ -9803,8 +9787,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             workflow.replacen("curl --silent --show-error", "gh api", 1),
         ),
         (
-            "unlocked server build",
-            workflow.replacen("cargo build --locked -p ripr", "cargo build -p ripr", 1),
+            "bypassed delegated server builder",
+            workflow.replace(
+                "cargo xtask release-server-archive",
+                "cargo build --release -p ripr",
+            ),
         ),
         (
             "newer glibc runner",
@@ -9869,6 +9856,38 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         (
             "token credential",
             workflow.replacen("ruleset_mode", "GH_TOKEN", 1),
+        ),
+        (
+            "caller SHA receipt instrument",
+            workflow.replacen(
+                "RECEIPT_INSTRUMENT_SHA: ${{ job.workflow_sha }}",
+                "RECEIPT_INSTRUMENT_SHA: ${{ github.sha }}",
+                1,
+            ),
+        ),
+        (
+            "exact-only matrix job lookup",
+            workflow.replacen(
+                "select(.name == $suffix or (.name | endswith(\" / \" + $suffix)))",
+                "select(.name == $suffix)",
+                1,
+            ),
+        ),
+        (
+            "implicit archive readback",
+            workflow.replacen(
+                "archive_readback_verified: true",
+                "archive_shape_verified: true",
+                1,
+            ),
+        ),
+        (
+            "false archive readback identity",
+            workflow.replacen(
+                "archive_readback_verified = $true",
+                "archive_readback_verified = $false",
+                1,
+            ),
         ),
     ] {
         if validate(&broken).is_ok() {
@@ -9953,6 +9972,80 @@ fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating() -> Resu
     if run_predicate(&wrong_shape, "wrong-shape.json")? {
         return Err("workflow jq predicate accepted a malformed ruleset shape".to_string());
     }
+    Ok(())
+}
+
+#[test]
+fn server_archive_terminal_job_name_filter_accepts_direct_and_reusable_names() -> Result<(), String>
+{
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let workflow =
+        fs::read_to_string(repo_root.join(".github/workflows/server-archive-qualification.yml"))
+            .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
+    let marker = "jq -r --arg suffix \"build and qualify ${target}\" '";
+    let program_start = workflow
+        .find(marker)
+        .map(|offset| offset + marker.len())
+        .ok_or_else(|| "terminal job-name jq marker is missing".to_string())?;
+    let program_end = workflow[program_start..]
+        .find("' \"${response}\"")
+        .ok_or_else(|| "terminal job-name jq terminator is missing".to_string())?;
+    let program = workflow[program_start..program_start + program_end].trim();
+    if program.is_empty() {
+        return Err("terminal job-name jq program is empty".to_string());
+    }
+    if !program.contains(".name == $suffix") || !program.contains("endswith(\" / \" + $suffix)") {
+        return Err(
+            "terminal job-name jq program must accept direct and reusable caller names".to_string(),
+        );
+    }
+
+    let suffix = "build and qualify x86_64-unknown-linux-gnu";
+    let fixture_root = temp_dir("server-terminal-job-names");
+    let run = |names: &[&str]| -> Result<String, String> {
+        let jobs: Vec<Value> = names
+            .iter()
+            .map(|name| serde_json::json!({ "name": name, "conclusion": "success" }))
+            .collect();
+        let path = fixture_root.join(format!("jobs-{}.json", jobs.len()));
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({ "jobs": jobs }))
+                .map_err(|error| format!("serialize workflow-jobs fixture: {error}"))?,
+        )
+        .map_err(|error| format!("write workflow-jobs fixture: {error}"))?;
+        let path_text = path
+            .to_str()
+            .ok_or_else(|| "workflow-jobs fixture path was not UTF-8".to_string())?;
+        let _cwd_guard = super::acquire_test_cwd_read_guard();
+        let stdout =
+            crate::run_output("jq", &["-r", "--arg", "suffix", suffix, program, path_text])
+                .map_err(|error| format!("run terminal job-name jq filter: {error}"))?;
+        Ok(stdout.trim().to_string())
+    };
+
+    if run(&[suffix])? != "success" {
+        return Err(
+            "terminal job-name jq filter rejected the direct dispatch job name".to_string(),
+        );
+    }
+    let reusable = format!("rehearse / {suffix}");
+    if run(&[reusable.as_str()])? != "success" {
+        return Err(
+            "terminal job-name jq filter rejected the reusable-caller job name".to_string(),
+        );
+    }
+    if run(&["build and qualify"])? != "missing" {
+        return Err("terminal job-name jq filter matched an unrelated job name".to_string());
+    }
+    if run(&[suffix, reusable.as_str()])? != "duplicate" {
+        return Err(
+            "terminal job-name jq filter did not report a duplicated target job".to_string(),
+        );
+    }
+    ignore_remove_dir_all(&fixture_root);
     Ok(())
 }
 
@@ -29333,6 +29426,407 @@ covered_by_windows = ["cargo test -p xtask windows_control"]
         assert!(commands[0].command.ends_with(" common"));
         assert!(commands[1].command.ends_with(" unix_control"));
         assert!(commands[2].command.ends_with(" windows_control"));
+        Ok(())
+    })
+}
+
+fn file_policy_toml_coverage_fixture(field: &str, array: &str) -> String {
+    let common = if field == "covered_by" {
+        ""
+    } else {
+        "covered_by = [\"cargo xtask check-file-policy\"]\n"
+    };
+    format!(
+        "[[allow]]\nglob = \"policy/*.toml\"\nkind = \"policy\"\n\
+         owner = \"xtask\"\nsurface = \"policy\"\nclassification = \"config\"\n\
+         reason = \"TOML coverage control\"\n{common}{field} = {array}\n"
+    )
+}
+
+#[test]
+fn file_policy_allowlist_toml_comments_preserve_coverage_commands() -> Result<(), String> {
+    with_temp_cwd("file-policy-toml-comments", |root| {
+        let path = root.join("allowlist.toml");
+        let mut failures = Vec::new();
+        for (field, host) in [
+            ("covered_by", None),
+            ("covered_by_unix", Some(crate::FilePolicyHost::Unix)),
+            ("covered_by_windows", Some(crate::FilePolicyHost::Windows)),
+        ] {
+            let plain = r#"["cargo test -p xtask first", "cargo test -p xtask second"]"#;
+            let baseline: toml::Value =
+                toml::from_str(&file_policy_toml_coverage_fixture(field, plain))
+                    .map_err(|error| error.to_string())?;
+            for (case, array) in [
+                ("plain", plain),
+                (
+                    "multiline",
+                    "[\n  \"cargo test -p xtask first\",\n  \"cargo test -p xtask second\",\n]",
+                ),
+                (
+                    "trailing",
+                    "[\"cargo test -p xtask first\", \"cargo test -p xtask second\"] # host note",
+                ),
+                (
+                    "inter_item",
+                    "[\n  \"cargo test -p xtask first\",\n  # host note\n  \"cargo test -p xtask second\",\n]",
+                ),
+                (
+                    "item_line",
+                    "[\n  \"cargo test -p xtask first\", # first selector\n  \"cargo test -p xtask second\",\n]",
+                ),
+            ] {
+                let source = file_policy_toml_coverage_fixture(field, array);
+                let parsed: toml::Value =
+                    toml::from_str(&source).map_err(|error| error.to_string())?;
+                assert_eq!(
+                    parsed, baseline,
+                    "{field}/{case} must keep the same TOML value"
+                );
+                write(&path, &source);
+                match crate::read_file_policy_test_commands(&path.to_string_lossy()) {
+                    Ok(commands) => {
+                        let actual = commands
+                            .iter()
+                            .map(|command| (command.line, command.command.as_str(), command.host))
+                            .collect::<Vec<_>>();
+                        let expected = [
+                            (1, "cargo test -p xtask first", host),
+                            (1, "cargo test -p xtask second", host),
+                        ];
+                        if actual != expected {
+                            failures.push(format!("{field}/{case}: {actual:?}"));
+                        }
+                    }
+                    Err(error) => failures.push(format!("{field}/{case}: {error}")),
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_strings_preserve_decoded_selectors() -> Result<(), String> {
+    with_temp_cwd("file-policy-toml-strings", |root| {
+        let path = root.join("allowlist.toml");
+        let mut failures = Vec::new();
+        for (field, host) in [
+            ("covered_by", None),
+            ("covered_by_unix", Some(crate::FilePolicyHost::Unix)),
+            ("covered_by_windows", Some(crate::FilePolicyHost::Windows)),
+        ] {
+            for (case, value, expected) in [
+                (
+                    "hash",
+                    r#""cargo test hash#selector""#,
+                    "cargo test hash#selector",
+                ),
+                (
+                    "quote",
+                    r#""cargo test quote\"selector""#,
+                    "cargo test quote\"selector",
+                ),
+                (
+                    "backslash",
+                    r#""cargo test path\\selector""#,
+                    "cargo test path\\selector",
+                ),
+                (
+                    "unicode",
+                    r#""cargo test unicode\u005fselector""#,
+                    "cargo test unicode_selector",
+                ),
+                (
+                    "comma",
+                    r#""cargo test comma,selector""#,
+                    "cargo test comma,selector",
+                ),
+                (
+                    "literal",
+                    "'cargo test literal#selector'",
+                    "cargo test literal#selector",
+                ),
+            ] {
+                let source = file_policy_toml_coverage_fixture(field, &format!("[{value}]"));
+                let parsed: toml::Value =
+                    toml::from_str(&source).map_err(|error| error.to_string())?;
+                assert_eq!(
+                    parsed["allow"][0][field][0].as_str(),
+                    Some(expected),
+                    "{field}/{case} fixture must contain the expected decoded string"
+                );
+                write(&path, &source);
+                match crate::read_file_policy_test_commands(&path.to_string_lossy()) {
+                    Ok(commands)
+                        if commands.len() == 1
+                            && commands[0].line == 1
+                            && commands[0].host == host
+                            && commands[0].command == expected => {}
+                    other => failures.push(format!("{field}/{case}: {other:?}")),
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_spans_preserve_entry_order_and_lines() -> Result<(), String> {
+    with_temp_cwd("file-policy-toml-spans", |root| {
+        let path = root.join("allowlist.toml");
+        let source = r#"# [[allow]] is not an entry
+schema_version = "1.0"
+note = "[[allow]] is still not an entry"
+
+[[allow]]
+glob = "policy/*.toml"
+kind = "policy"
+owner = "xtask"
+surface = "policy"
+classification = "config"
+reason = "An example [[allow]] header is not a declaration"
+covered_by_windows = ["""cargo test first
+[[allow]]
+"""]
+covered_by_unix = ["cargo test unix_first"]
+covered_by = ["cargo test common_first"]
+
+# [[allow]] must not steal the following entry's attribution
+[[allow]] # the actual second entry
+glob = "docs/*.md"
+kind = "docs"
+owner = "xtask"
+surface = "docs"
+classification = "docs"
+reason = "The second governed entry"
+covered_by_windows = ["cargo test windows_second"] # keep this selector
+covered_by_unix = ["cargo test unix_second"]
+covered_by = ["cargo test common_second"]
+"#;
+        for (case, source, multiline_command) in [
+            ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
+            (
+                "crlf",
+                source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
+        ] {
+            // Preserve the selected TOML authority's newline bytes, rather
+            // than assuming it normalizes CRLF inside multiline strings.
+            let parsed: toml::Value = toml::from_str(&source).map_err(|error| error.to_string())?;
+            assert_eq!(parsed["allow"].as_array().map(Vec::len), Some(2));
+            assert_eq!(
+                parsed["allow"][0]["covered_by_windows"][0].as_str(),
+                Some(multiline_command),
+                "{case}: the fixture's exact decoded selector is independently checked"
+            );
+            write(&path, &source);
+            let entries = parse_file_policy_allowlist(&path.to_string_lossy())?;
+            assert_eq!(
+                entries.iter().map(|entry| entry.line).collect::<Vec<_>>(),
+                [5, 19],
+                "{case}"
+            );
+            let commands = crate::read_file_policy_test_commands(&path.to_string_lossy())?;
+            let actual = commands
+                .iter()
+                .map(|command| (command.line, command.command.as_str(), command.host))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                actual,
+                [
+                    (5, "cargo test common_first", None),
+                    (
+                        5,
+                        "cargo test unix_first",
+                        Some(crate::FilePolicyHost::Unix)
+                    ),
+                    (5, multiline_command, Some(crate::FilePolicyHost::Windows)),
+                    (19, "cargo test common_second", None),
+                    (
+                        19,
+                        "cargo test unix_second",
+                        Some(crate::FilePolicyHost::Unix)
+                    ),
+                    (
+                        19,
+                        "cargo test windows_second",
+                        Some(crate::FilePolicyHost::Windows)
+                    ),
+                ],
+                "{case}: command order and attribution must come from parsed entries"
+            );
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_keeps_legacy_fields_and_common_empty_array() -> Result<(), String> {
+    with_temp_cwd("file-policy-toml-legacy", |root| {
+        let path = root.join("allowlist.toml");
+        let source = format!(
+            "{}generated_by = \"cargo xtask fixtures\"\nexpires = 42\nretired = \"legacy metadata\"\n",
+            file_policy_toml_coverage_fixture("covered_by", "[]")
+        );
+        write(&path, &source);
+        let entries = parse_file_policy_allowlist(&path.to_string_lossy())?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].line, 1);
+        assert!(entries[0].covered_by.as_ref().is_some_and(Vec::is_empty));
+        assert_eq!(
+            entries[0].generated_by.as_deref(),
+            Some("cargo xtask fixtures")
+        );
+        assert!(crate::read_file_policy_test_commands(&path.to_string_lossy())?.is_empty());
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata() -> Result<(), String>
+{
+    with_temp_cwd("file-policy-toml-value-admission", |root| {
+        let path = root.join("allowlist.toml");
+        let entry = file_policy_toml_coverage_fixture("covered_by", "[]");
+        let mut failures = Vec::new();
+        for location in [
+            "expires",
+            "retired",
+            "root",
+            "expires_inline",
+            "retired_inline_array",
+            "root_inline",
+        ] {
+            for (value, accepted) in [
+                ("9223372036854775808", false),
+                ("1e9999", false),
+                ("42", true),
+                ("9223372036854775807", true),
+                ("-9223372036854775808", true),
+                ("1e300", true),
+            ] {
+                let declaration = match location {
+                    "expires" => format!("expires = {value}\n"),
+                    "retired" => format!("retired = {value}\n"),
+                    "root" => format!("metadata = {value}\n"),
+                    "expires_inline" => format!("expires = {{ outer = {{ value = {value} }} }}\n"),
+                    "retired_inline_array" => {
+                        format!("retired = {{ outer = [{{ value = {value} }}] }}\n")
+                    }
+                    _ => format!("metadata = {{ outer = {{ value = {value} }} }}\n"),
+                };
+                let root_metadata = location.starts_with("root");
+                let source = if root_metadata {
+                    format!("{declaration}{entry}")
+                } else {
+                    format!("{entry}{declaration}")
+                };
+                // DeTable retains numeric lexemes. The previous Value reader
+                // also enforced representable integers and finite exponents,
+                // including inside otherwise ignored metadata.
+                toml::de::DeTable::parse(&source).map_err(|error| {
+                    format!("{location}/{value}: invalid DeTable fixture: {error}")
+                })?;
+                assert_eq!(
+                    toml::from_str::<toml::Value>(&source).is_ok(),
+                    accepted,
+                    "{location}/{value}: bind this control to the existing Value authority"
+                );
+                write(&path, &source);
+                match parse_file_policy_allowlist(&path.to_string_lossy()) {
+                    Ok(entries)
+                        if accepted
+                            && entries.len() == 1
+                            && entries[0].line == if root_metadata { 2 } else { 1 }
+                            && entries[0].covered_by.as_ref().is_some_and(Vec::is_empty) => {}
+                    Err(error)
+                        if !accepted && error.contains("invalid non-Rust allowlist TOML") => {}
+                    actual => failures.push(format!("{location}/{value}: {actual:?}")),
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_keeps_governed_field_refusals() -> Result<(), String> {
+    with_temp_cwd("file-policy-toml-refusals", |root| {
+        let path = root.join("allowlist.toml");
+        let valid = file_policy_toml_coverage_fixture("covered_by", "[\"cargo test common\"]");
+        let mut cases = Vec::new();
+        for field in ["covered_by", "covered_by_unix", "covered_by_windows"] {
+            for invalid in [
+                "42",
+                "[42]",
+                "[\"cargo test selected\", 42]",
+                "[\"cargo test selected\",,]",
+                "{ selector = \"cargo test selected\" }",
+            ] {
+                cases.push((
+                    format!("{field}/{invalid}"),
+                    file_policy_toml_coverage_fixture(field, invalid),
+                ));
+            }
+            let declaration = file_policy_toml_coverage_fixture(field, "[\"cargo test selected\"]");
+            cases.push((
+                format!("duplicate/{field}"),
+                format!("{declaration}{field} = []\n"),
+            ));
+        }
+        for invalid in [
+            "covered_by_linux = [\"cargo test selected\"]",
+            "covered_by_Unix = [\"cargo test selected\"]",
+            "covered_by_unix = []",
+            "covered_by_windows = []",
+            "covered_by_unix = [\" \" ]",
+            "covered_by_windows = [\"cargo xtask check-file-policy\"]",
+            "mystery = \"unknown governed field\"",
+            "[allow.covered_by_unix]",
+            "[allow.covered_by_unknown]",
+            "[allow.expires]",
+            "[allow.retired]",
+            "[unknown_table]",
+            "[unknown.nested]",
+            "[[unknown.nested]]",
+        ] {
+            cases.push((invalid.to_string(), format!("{valid}{invalid}\n")));
+        }
+        cases.extend([
+            (
+                "missing common".to_string(),
+                valid.replace("covered_by = [\"cargo test common\"]\n", ""),
+            ),
+            (
+                "root coverage".to_string(),
+                format!("covered_by_windows = [\"cargo test selected\"]\n{valid}"),
+            ),
+            (
+                "missing reason".to_string(),
+                valid.replace("reason = \"TOML coverage control\"\n", ""),
+            ),
+            (
+                "non-string glob".to_string(),
+                valid.replace("glob = \"policy/*.toml\"", "glob = 42"),
+            ),
+        ]);
+        let mut failures = Vec::new();
+        for (case, source) in cases {
+            write(&path, &source);
+            if crate::read_file_policy_test_commands(&path.to_string_lossy()).is_ok() {
+                failures.push(case);
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "accepted invalid declarations: {}",
+            failures.join("\n")
+        );
         Ok(())
     })
 }
@@ -50656,15 +51150,27 @@ fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), S
 
 #[test]
 fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let jq_root = temp_dir("release-pin-ruleset-jq");
+    let result = release_pin_ruleset_contract(repo_root, &jq_root);
+    ignore_remove_dir_all(&jq_root);
+    result
+}
+
+fn release_pin_ruleset_contract(repo_root: &Path, jq_root: &Path) -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{AdmittedSource, QualificationInput};
+    use sha2::Digest;
     const REQUIRED_PATTERN: &str = "refs/tags/ripr-release-*";
     const SHORT_PATTERN: &str = "ripr-release-*";
-    const JQ_PREDICATE: &str = r#"(.target == "tag" and .enforcement == "active") and (.conditions.ref_name.include == [$tag]) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))"#;
+    const JQ_PREDICATE: &str = r#"(.target == "tag" and .enforcement == "active") and (.conditions.ref_name.include == [$tag]) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion")) and (.conditions.ref_name.exclude == []) and (.bypass_actors == [])"#;
 
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../fixtures/release_control/pin-ruleset.json"
-    ))
+    let fixture: Value = serde_json::from_slice(
+        &fs::read(repo_root.join("fixtures/release_control/pin-ruleset.json"))
+            .map_err(|error| format!("failed to read pin ruleset fixture: {error}"))?,
+    )
     .map_err(|error| format!("failed to parse pin ruleset fixture: {error}"))?;
-
     let accepts_required_pin = |ruleset: &Value| {
         ruleset.get("name").and_then(Value::as_str) == Some("release-transaction-pins")
             && ruleset.get("target").and_then(Value::as_str) == Some("tag")
@@ -50677,6 +51183,14 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
                         && include.first().and_then(Value::as_str) == Some(REQUIRED_PATTERN)
                 })
             && ruleset
+                .pointer("/conditions/ref_name/exclude")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            && ruleset
+                .get("bypass_actors")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            && ruleset
                 .get("rules")
                 .and_then(Value::as_array)
                 .is_some_and(|rules| {
@@ -50688,27 +51202,57 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
                         })
                 })
     };
-
+    let mut invalid = Vec::new();
+    for (name, patterns) in [
+        ("short", serde_json::json!([SHORT_PATTERN])),
+        (
+            "mixed",
+            serde_json::json!([REQUIRED_PATTERN, SHORT_PATTERN]),
+        ),
+        ("branch", serde_json::json!(["refs/heads/ripr-release-*"])),
+        (
+            "mismatched",
+            serde_json::json!(["refs/tags/another-release-*"]),
+        ),
+    ] {
+        let mut changed = fixture.clone();
+        changed["conditions"]["ref_name"]["include"] = patterns;
+        invalid.push((name, changed));
+    }
+    for (name, pointer, replacement) in [
+        (
+            "excluded",
+            "/conditions/ref_name/exclude",
+            serde_json::json!(["refs/tags/ripr-release-0.11.0-hidden"]),
+        ),
+        (
+            "bypass",
+            "/bypass_actors",
+            serde_json::json!([{"actor_id": 1, "actor_type": "RepositoryRole", "bypass_mode": "always"}]),
+        ),
+        (
+            "missing-exclusions",
+            "/conditions/ref_name/exclude",
+            Value::Null,
+        ),
+        ("missing-bypass", "/bypass_actors", Value::Null),
+    ] {
+        let mut changed = fixture.clone();
+        *changed
+            .pointer_mut(pointer)
+            .ok_or_else(|| format!("fixture lacks {pointer}"))? = replacement;
+        invalid.push((name, changed));
+    }
     if !accepts_required_pin(&fixture) {
         return Err("fully qualified tag ruleset fixture was rejected".to_string());
     }
-
-    let mut short = fixture.clone();
-    short["conditions"]["ref_name"]["include"] = serde_json::json!([SHORT_PATTERN]);
-    if accepts_required_pin(&short) {
-        return Err("unqualified tag pattern was accepted as a protected pin".to_string());
+    for (name, ruleset) in &invalid {
+        if accepts_required_pin(ruleset) {
+            return Err(format!(
+                "invalid {name} ruleset was accepted as a protected pin"
+            ));
+        }
     }
-
-    let mut mixed = fixture.clone();
-    mixed["conditions"]["ref_name"]["include"] =
-        serde_json::json!([REQUIRED_PATTERN, SHORT_PATTERN]);
-    if accepts_required_pin(&mixed) {
-        return Err("mixed qualified and unqualified patterns were accepted".to_string());
-    }
-
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
     let runbook = fs::read_to_string(repo_root.join("docs/RELEASE_TRANSACTION.md"))
         .map_err(|error| format!("failed to read release transaction runbook: {error}"))?;
     if !runbook.contains("--arg tag \"refs/tags/ripr-release-*\"")
@@ -50721,10 +51265,8 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
     {
         return Err("runbook does not carry the fully qualified ruleset pattern".to_string());
     }
-
-    let jq_root = temp_dir("release-pin-ruleset-jq");
     let run_jq_predicate = |ruleset: &Value, name: &str| -> Result<bool, String> {
-        let path = jq_root.join(name);
+        let path = jq_root.join(format!("{name}.json"));
         let input = serde_json::to_vec(ruleset)
             .map_err(|error| format!("failed to serialize jq predicate fixture: {error}"))?;
         fs::write(&path, input)
@@ -50740,46 +51282,44 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
             JQ_PREDICATE.to_string(),
             path_text.to_string(),
         ];
-        // The jq executable may be a Windows package-manager shim. Keep its
-        // inherited cwd stable while it is spawned: another test must not
-        // switch to and remove a temporary cwd in this window.
         let _cwd_guard = super::acquire_test_cwd_read_guard();
         command_success_owned("jq", &args)
     };
-
-    if !run_jq_predicate(&fixture, "full.json")? {
+    if !run_jq_predicate(&fixture, "full")? {
         return Err("documented jq predicate rejected the full fixture".to_string());
     }
-    if run_jq_predicate(&short, "short.json")? {
-        return Err("documented jq predicate accepted the short fixture".to_string());
+    for (name, ruleset) in &invalid {
+        if run_jq_predicate(ruleset, name)? {
+            return Err(format!(
+                "documented jq predicate accepted the {name} fixture"
+            ));
+        }
     }
-    if run_jq_predicate(&mixed, "mixed.json")? {
-        return Err("documented jq predicate accepted the mixed fixture".to_string());
-    }
-
-    let template: Value = serde_json::from_str(include_str!(
-        "../../docs/release-candidates/0.11.0-live-head-selection.json"
-    ))
-    .map_err(|error| format!("failed to parse live-head template: {error}"))?;
-    let remote_binding = template
-        .pointer("/pin_recipe/remote_binding")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "live-head template remote binding is missing".to_string())?;
-    if !remote_binding.contains(REQUIRED_PATTERN)
-        || remote_binding.contains("matches ripr-release-*")
+    let artifact = "docs/release-candidates/0.11.0-live-head-selection.json";
+    let template_bytes = fs::read(repo_root.join(artifact))
+        .map_err(|error| format!("failed to read live-head template: {error}"))?;
+    let template: Value = serde_json::from_slice(&template_bytes)
+        .map_err(|error| format!("failed to parse live-head template: {error}"))?;
+    if template.get("schema_version").and_then(Value::as_str) != Some("1.1")
+        || template.get("status").and_then(Value::as_str) != Some("active_selection_template")
+        || template.get("candidate") != Some(&Value::Null)
+        || template.get("pin") != Some(&Value::Null)
     {
-        return Err("live-head template does not carry the fully qualified pattern".to_string());
+        return Err("live-head schema-1.1 template must not carry a candidate pin".to_string());
     }
-    if template
-        .pointer("/pin_recipe/protected_candidate_tag_format")
-        .and_then(Value::as_str)
-        != Some(
-            "refs/tags/ripr-release-0.11.0-<SWARM_PARENT> (protected candidate tag; local verifier ref remains refs/ripr/release-0.11.0-<SWARM_PARENT>)",
-        )
-    {
-        return Err("candidate tag format drifted from the release contract".to_string());
+    let input = QualificationInput::new(
+        repo_root.to_path_buf(),
+        jq_root.join("unused-source"),
+        PathBuf::from(artifact),
+    )?
+    .with_approved_manifest_digest(format!("{:x}", sha2::Sha256::digest(&template_bytes)))?;
+    match AdmittedSource::admit(&input, "0.11.0") {
+        Err(error) if error.contains("not pinned_exact_head") => Ok(()),
+        Err(error) => Err(format!("wrong template admission refusal: {error}")),
+        Ok(_) => {
+            Err("correctly hashed selection template acquired candidate authority".to_string())
+        }
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

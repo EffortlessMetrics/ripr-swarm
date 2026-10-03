@@ -4487,6 +4487,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4539,6 +4540,7 @@ fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), Strin
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![changed("src/broken.ts")];
@@ -4571,6 +4573,7 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4642,6 +4645,7 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources() ->
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -4744,6 +4748,7 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_cts_sources() ->
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -4821,6 +4826,7 @@ fn analyze_diff_does_not_credit_related_test_from_a_different_modern_module() ->
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -4885,6 +4891,7 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
     let _ = std::fs::remove_dir_all(&root);
@@ -4926,6 +4933,110 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
             .contains("RIPR_TS_MAX_FILE_READ_BYTES"),
         "recovery must name the env knob: {}",
         capped.recovery.detail
+    );
+    Ok(())
+}
+
+/// #5022: a capped monorepo whose refused-file count exceeds the disclosure
+/// sample cap must emit a bounded limitation count — a stable-sorted sample
+/// of refused paths plus one summary entry carrying the true refused count —
+/// instead of one limitation per refused file (up to the 20,000-file
+/// discovery cap).
+#[test]
+fn analyze_diff_bounds_capped_read_disclosure_with_stable_sample_and_total() -> Result<(), String> {
+    let root = ts_unique_tempdir("bounded-read-sample")?;
+    let sample_cap = crate::analysis::language::read_limit_disclosure::MAX_READ_LIMIT_SAMPLE_PATHS;
+    let total = sample_cap + 4;
+    for index in 0..total {
+        ts_write_file(
+            &root.join(format!("src/pkg_{index:02}.ts")),
+            &format!("export const value{index} = {};\n", "x".repeat(200)),
+        )?;
+    }
+
+    let options = ts_analysis_options(root.clone());
+    let result = TypeScriptAdapter::analyze_diff_with_read_limits(
+        &options,
+        &[],
+        64,
+        DEFAULT_TS_MAX_WORKSPACE_READ_BYTES,
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let sample = result
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.path.is_some()
+                && matches!(
+                    &limitation.recovery.kind,
+                    AnalysisRecoveryKind::IncreaseConfiguredLimit
+                )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sample.len(),
+        sample_cap,
+        "per-file disclosure is bounded to the sample, got {:?}",
+        result
+            .limitations
+            .iter()
+            .map(|limitation| limitation.bounded_detail.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        sample.windows(2).all(|pair| pair[0].path <= pair[1].path),
+        "sample paths must be sorted so repeated runs are byte-stable"
+    );
+    assert!(
+        sample.iter().all(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("file_read_capped"))
+        }),
+        "sample entries keep the distinguishable refusal reason"
+    );
+    let summary = result
+        .limitations
+        .iter()
+        .find(|limitation| {
+            limitation.path.is_none()
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.starts_with("typescript_read_limit_sampled:"))
+        })
+        .ok_or_else(|| {
+            format!(
+                "expected one folded summary limitation, got {:?}",
+                result
+                    .limitations
+                    .iter()
+                    .map(|limitation| limitation.bounded_detail.clone())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    let refused_total =
+        u64::try_from(total).map_err(|err| format!("refused count overflows u64: {err}"))?;
+    assert_eq!(
+        summary.affected_items,
+        Some(refused_total),
+        "summary must carry the true refused count"
+    );
+    let detail = summary.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("not materialized in output"),
+        "summary must state why the full per-file list is absent: {detail}"
+    );
+    assert!(
+        summary
+            .recovery
+            .detail
+            .contains("RIPR_TS_MAX_FILE_READ_BYTES"),
+        "the recovery must name the env knob, got {}",
+        summary.recovery.detail
     );
     Ok(())
 }
@@ -4973,6 +5084,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let changed_line = crate::analysis::diff::ChangedLine {
         line: 2,
@@ -5073,6 +5185,7 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
     let _ = std::fs::remove_dir_all(&root);
@@ -5149,6 +5262,7 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
     let _ = std::fs::remove_dir_all(&root);
@@ -5194,6 +5308,7 @@ fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), St
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let result = adapter.analyze_repo(&options, &policy)?;
@@ -5240,6 +5355,7 @@ fn analyze_diff_dedups_colliding_probe_ids_for_identical_added_lines() -> Result
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -5325,6 +5441,7 @@ fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String>
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -10545,6 +10662,7 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -10641,6 +10759,7 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -10740,6 +10859,7 @@ fn mocha_no_lockfile_emits_runner_unresolved_limitation() -> Result<(), String> 
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -13533,6 +13653,7 @@ fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
         resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
     }
 }
 

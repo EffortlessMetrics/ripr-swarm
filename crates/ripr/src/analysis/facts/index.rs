@@ -146,6 +146,7 @@ pub struct FileData {
     pub probe_shapes: Vec<ProbeShapeFact>,
     pub used_lexical_fallback: bool,
     pub module_declarations: Vec<ModuleDeclarationFact>,
+    pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
     pub role_provenance: SourceRoleProvenance,
     pub source: String,
 }
@@ -304,7 +305,7 @@ impl Deref for FileFactsView<'_> {
 }
 impl serde::Serialize for FileFactsView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("FileFacts", 10)?;
+        let mut state = serializer.serialize_struct("FileFacts", 11)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &self.functions)?;
         state.serialize_field("tests", &self.tests)?;
@@ -314,6 +315,10 @@ impl serde::Serialize for FileFactsView<'_> {
         state.serialize_field("probe_shapes", &self.probe_shapes)?;
         state.serialize_field("used_lexical_fallback", &self.used_lexical_fallback)?;
         state.serialize_field("module_declarations", &self.module_declarations)?;
+        state.serialize_field(
+            "unresolved_property_macros",
+            &self.unresolved_property_macros,
+        )?;
         state.serialize_field("source", &self.source)?;
         state.end()
     }
@@ -437,6 +442,7 @@ impl RustIndex {
             probe_shapes,
             used_lexical_fallback,
             module_declarations,
+            unresolved_property_macros,
             role_provenance,
             source,
         } = facts;
@@ -473,6 +479,7 @@ impl RustIndex {
                     probe_shapes,
                     used_lexical_fallback,
                     module_declarations,
+                    unresolved_property_macros,
                     role_provenance,
                     source,
                 },
@@ -660,6 +667,7 @@ impl RustIndex {
             probe_shapes,
             used_lexical_fallback,
             module_declarations,
+            unresolved_property_macros,
             role_provenance,
             source,
         } = file.data().clone();
@@ -673,6 +681,7 @@ impl RustIndex {
             probe_shapes,
             used_lexical_fallback,
             module_declarations,
+            unresolved_property_macros,
             role_provenance,
             source,
         })
