@@ -74,7 +74,7 @@ build output admitted under the accepted `ignored_build_output` cage policy.
   and `target/notes.rs` stay forbidden in every positive row.
 - Do not let static movement, project verification, or receipt issuance
   imply one another; the evidence axes stay separate in every scenario.
-- Do not write "proven", "killed", "survived", "untested" or "adequate" in
-  this fixture; pinned static vocabulary only.
+- Keep the pinned static vocabulary only; this fixture records no dynamic or
+  mutation-testing verdicts and no coverage claims.
 - Do not count any scripted executor success as installed usefulness, blind
   qualification, candidate selection or parent acceptance.
