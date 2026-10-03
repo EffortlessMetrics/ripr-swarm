@@ -3657,7 +3657,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -3667,8 +3667,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -3687,8 +3687,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -3717,7 +3717,7 @@
      {
       "kind": "static_analysis_execution",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "static:improved",
       "operator_visible": true,
       "intervention": null,
@@ -3727,7 +3727,7 @@
      {
       "kind": "receipt_execution",
       "subject": "ripr agent receipt",
-      "input_bytes": "argv:ripr agent receipt --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
+      "input_bytes": "argv:ripr agent receipt --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
       "output_bytes": "receipt:movement-improved",
       "operator_visible": true,
       "intervention": null,
@@ -3844,7 +3844,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-no-ignore",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-no-ignore'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -3854,8 +3854,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-no-ignore",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-no-ignore --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-no-ignore'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-no-ignore' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -3874,7 +3874,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-no-ignore --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-no-ignore' --seam-id seam-tier-boundary-equality --phase before",
       "output_bytes": "refused:missing effective `target/` ignore rule; recovery: add `/target/` to .gitignore, then rerun this command",
       "operator_visible": true,
       "intervention": null,
@@ -3981,7 +3981,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -3991,8 +3991,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4011,8 +4011,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4041,7 +4041,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "refused:edit cage violation at target/notes.rs; recovery: remove the file, restore the selected test surface, rerun the printed before phase",
       "operator_visible": true,
       "intervention": null,
@@ -4148,7 +4148,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -4158,8 +4158,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4178,8 +4178,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4208,7 +4208,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "refused:edit cage violation at src/lib.rs; recovery: restore the production file, then rerun the printed before phase",
       "operator_visible": true,
       "intervention": null,
@@ -4315,7 +4315,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -4325,8 +4325,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4345,8 +4345,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4375,7 +4375,7 @@
      {
       "kind": "static_analysis_execution",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "static:improved",
       "operator_visible": true,
       "intervention": null,
@@ -4385,7 +4385,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent receipt",
-      "input_bytes": "argv:ripr agent receipt --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
+      "input_bytes": "argv:ripr agent receipt --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
       "output_bytes": "refused:project verification failed; receipt closure is blocked until the focused test passes",
       "operator_visible": true,
       "intervention": null,
@@ -4492,7 +4492,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -4502,8 +4502,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4522,8 +4522,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4542,7 +4542,7 @@
      {
       "kind": "static_analysis_execution",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "static:improved",
       "operator_visible": true,
       "intervention": null,
@@ -4552,7 +4552,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent receipt",
-      "input_bytes": "argv:ripr agent receipt --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
+      "input_bytes": "argv:ripr agent receipt --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
       "output_bytes": "refused:project verification not_run; static movement cannot substitute for the printed test command",
       "operator_visible": true,
       "intervention": null,
@@ -4659,7 +4659,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -4669,8 +4669,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4689,8 +4689,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4719,7 +4719,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "refused:missing retained before snapshot target/ripr/repair-attempts/ra-tier-boundary-0001/artifacts/before.repo-exposure.json; recovery: rerun the printed --phase before command while the gap is open",
       "operator_visible": true,
       "intervention": null,
@@ -4830,7 +4830,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": "refused:workspace ripr binary detected ahead of the installed candidate; recovery: remove the planted binary and rerun",
       "operator_visible": true,
       "intervention": null,
@@ -4947,7 +4947,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -4957,8 +4957,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -4977,8 +4977,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -5007,7 +5007,7 @@
      {
       "kind": "static_analysis_execution",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "static:improved",
       "operator_visible": true,
       "intervention": null,
@@ -5027,7 +5027,7 @@
      {
       "kind": "receipt_execution",
       "subject": "ripr agent receipt",
-      "input_bytes": "argv:ripr agent receipt --root /srv/installed rust journey/tier-fixture-境界 --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
+      "input_bytes": "argv:ripr agent receipt --root '/srv/installed rust journey/tier-fixture-境界' --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
       "output_bytes": "receipt:movement-improved",
       "operator_visible": true,
       "intervention": null,
@@ -5134,7 +5134,7 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr doctor",
-      "input_bytes": "argv:ripr doctor --root /srv/installed rust journey/nested/../tier-fixture-境界",
+      "input_bytes": "argv:ripr doctor --root '/srv/installed rust journey/nested/../tier-fixture-境界'",
       "output_bytes": null,
       "operator_visible": true,
       "intervention": null,
@@ -5144,8 +5144,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr pilot",
-      "input_bytes": "argv:ripr pilot --root /srv/installed rust journey/nested/../tier-fixture-境界",
-      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root /srv/installed rust journey/nested/../tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
+      "input_bytes": "argv:ripr pilot --root '/srv/installed rust journey/nested/../tier-fixture-境界'",
+      "output_bytes": "top-gap:seam-tier-boundary-equality next:ripr agent repair --root '/srv/installed rust journey/nested/../tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -5164,8 +5164,8 @@
      {
       "kind": "product_command_invocation",
       "subject": "ripr agent repair before",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/nested/../tier-fixture-境界 --seam-id seam-tier-boundary-equality --phase before",
-      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root /srv/installed rust journey/nested/../tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/nested/../tier-fixture-境界' --seam-id seam-tier-boundary-equality --phase before",
+      "output_bytes": "attempt:ra-tier-boundary-0001 next:ripr agent repair --root '/srv/installed rust journey/nested/../tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after verify:cargo test --test tier_boundary",
       "operator_visible": true,
       "intervention": null,
       "actor": null,
@@ -5194,7 +5194,7 @@
      {
       "kind": "static_analysis_execution",
       "subject": "ripr agent repair after",
-      "input_bytes": "argv:ripr agent repair --root /srv/installed rust journey/nested/../tier-fixture-境界 --attempt ra-tier-boundary-0001 --phase after",
+      "input_bytes": "argv:ripr agent repair --root '/srv/installed rust journey/nested/../tier-fixture-境界' --attempt ra-tier-boundary-0001 --phase after",
       "output_bytes": "static:improved",
       "operator_visible": true,
       "intervention": null,
@@ -5204,7 +5204,7 @@
      {
       "kind": "receipt_execution",
       "subject": "ripr agent receipt",
-      "input_bytes": "argv:ripr agent receipt --root /srv/installed rust journey/nested/../tier-fixture-境界 --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
+      "input_bytes": "argv:ripr agent receipt --root '/srv/installed rust journey/nested/../tier-fixture-境界' --attempt ra-tier-boundary-0001 --out target/ripr/reports/agent-receipt.json",
       "output_bytes": "receipt:movement-improved",
       "operator_visible": true,
       "intervention": null,

@@ -151,8 +151,10 @@ in the committed executor corpus.
 - `xtask/src/fixture_contracts/general_validators.rs`
   (`installed_rust_fixture_tests`): committed manifest binds the snapshot
   bytes; committed scenarios exist in the executor corpus; an unknown
-  scenario id is reported; a drifted snapshot digest is rejected; git
-  identity binding accepts only lowercase 64-hex.
+  scenario id is reported; a drifted snapshot digest is rejected; an
+  unlisted snapshot file is rejected; every named scenario candidate binds
+  the manifest snapshots; git identity binding accepts only lowercase
+  40-hex.
 - `xtask/src/reports/blind_journey_execute.rs` gate tests: the enlarged
   committed corpus and receipt validate against the live executor and the
   required-scenario coverage cannot be dropped.

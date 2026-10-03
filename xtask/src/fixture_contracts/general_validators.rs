@@ -1926,6 +1926,9 @@ pub(crate) fn validate_blind_journey_installed_rust_fixture(
     for missing in installed_rust_missing_scenarios(&manifest, &corpus) {
         violations.push(missing);
     }
+    for violation in installed_rust_scenario_binding_violations(&manifest, &corpus) {
+        violations.push(violation);
+    }
     Ok(())
 }
 
@@ -2014,6 +2017,22 @@ fn installed_rust_manifest_violations(root: &Path, manifest: &Value) -> Vec<Stri
                 ));
             }
         }
+        let mut on_disk = Vec::new();
+        installed_rust_collect_snapshot_files(
+            &root.join("repository").join(name),
+            Path::new(""),
+            &mut on_disk,
+            &mut violations,
+            name,
+        );
+        for relative in on_disk {
+            if !files.contains_key(relative.as_str()) {
+                violations.push(format!(
+                    "blind journey installed rust snapshot `{name}` file `{relative}` is not \
+                     bound in the manifest"
+                ));
+            }
+        }
     }
     let journey = manifest.get("journey");
     let string_list = |key: &str| {
@@ -2052,6 +2071,146 @@ fn installed_rust_manifest_violations(root: &Path, manifest: &Value) -> Vec<Stri
              overlap"
                 .to_string(),
         );
+    }
+    violations
+}
+
+/// Fail-closed inventory of one retained snapshot directory: every regular
+/// file is reported with its manifest-relative `/`-separated path so a
+/// behavior-affecting snapshot file cannot stay unbound from the manifest.
+fn installed_rust_collect_snapshot_files(
+    dir: &Path,
+    prefix: &Path,
+    files: &mut Vec<String>,
+    violations: &mut Vec<String>,
+    snapshot: &str,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            violations.push(format!(
+                "blind journey installed rust snapshot `{snapshot}` directory {} cannot be \
+                 read: {error}",
+                normalize_path(dir)
+            ));
+            return;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                violations.push(format!(
+                    "blind journey installed rust snapshot `{snapshot}` directory {} cannot be \
+                     enumerated: {error}",
+                    normalize_path(dir)
+                ));
+                continue;
+            }
+        };
+        let relative = prefix.join(entry.file_name());
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                violations.push(format!(
+                    "blind journey installed rust snapshot `{snapshot}` path {} cannot be \
+                     inspected: {error}",
+                    normalize_path(&relative)
+                ));
+                continue;
+            }
+        };
+        if file_type.is_dir() {
+            installed_rust_collect_snapshot_files(
+                &entry.path(),
+                &relative,
+                files,
+                violations,
+                snapshot,
+            );
+        } else if file_type.is_file() {
+            files.push(normalize_path(&relative));
+        } else {
+            violations.push(format!(
+                "blind journey installed rust snapshot `{snapshot}` path {} is not a regular \
+                 file, so it is not digest-bound",
+                normalize_path(&relative)
+            ));
+        }
+    }
+}
+
+/// Every scripted scenario the manifest names must bind its recorded
+/// candidate identities to the same manifest snapshots, so a renamed row
+/// cannot claim an unrelated repository while this gate stays green.
+fn installed_rust_scenario_binding_violations(manifest: &Value, corpus: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(ids) = manifest
+        .get("journey_scenario_ids")
+        .and_then(Value::as_array)
+    else {
+        return violations;
+    };
+    let named: BTreeSet<&str> = ids.iter().filter_map(Value::as_str).collect();
+    if named.is_empty() {
+        return violations;
+    }
+    let Some(snapshots) = manifest
+        .get("repository")
+        .and_then(|repository| repository.get("snapshots"))
+        .and_then(Value::as_object)
+    else {
+        return violations;
+    };
+    let Some(base_commit) = snapshots
+        .get("base")
+        .and_then(|snapshot| snapshot.get("commit"))
+        .and_then(Value::as_str)
+    else {
+        violations.push(
+            "blind journey installed rust manifest is missing the base snapshot commit"
+                .to_string(),
+        );
+        return violations;
+    };
+    let Some(scenarios) = corpus.get("scenarios").and_then(Value::as_array) else {
+        return violations;
+    };
+    for scenario in scenarios {
+        let Some(id) = scenario.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if !named.contains(id) {
+            continue;
+        }
+        let candidate = scenario
+            .get("journey")
+            .and_then(|journey| journey.get("candidate"));
+        let candidate_base = candidate
+            .and_then(|candidate| candidate.get("base"))
+            .and_then(Value::as_str);
+        if candidate_base != Some(base_commit) {
+            violations.push(format!(
+                "blind journey installed rust scenario `{id}` candidate base must bind the base \
+                 snapshot commit"
+            ));
+        }
+        let head = candidate
+            .and_then(|candidate| candidate.get("head"))
+            .and_then(Value::as_str);
+        let tree = candidate
+            .and_then(|candidate| candidate.get("tree"))
+            .and_then(Value::as_str);
+        let head_binds_a_snapshot = snapshots.values().any(|snapshot| {
+            snapshot.get("commit").and_then(Value::as_str) == head
+                && snapshot.get("tree").and_then(Value::as_str) == tree
+        });
+        if !head_binds_a_snapshot {
+            violations.push(format!(
+                "blind journey installed rust scenario `{id}` candidate head and tree must bind \
+                 one manifest snapshot"
+            ));
+        }
     }
     violations
 }
@@ -2157,7 +2316,7 @@ mod installed_rust_fixture_tests {
             std::process::id()
         ));
         let snapshot = temp.join("repository").join("head");
-        std::fs::create_dir_all(&snapshot)
+        std::fs::create_dir_all(snapshot.join("src"))
             .map_err(|error| format!("create temp snapshot: {error}"))?;
         std::fs::write(snapshot.join("src/lib.rs"), b"fn drifted() {}\n")
             .map_err(|error| format!("write temp snapshot: {error}"))?;
@@ -2209,6 +2368,95 @@ mod installed_rust_fixture_tests {
                     "an ill-formed git identity must be rejected: {invalid}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unlisted_snapshot_file_is_rejected() -> Result<(), String> {
+        let temp = std::env::temp_dir().join(format!(
+            "ripr-installed-rust-extra-file-test-{}",
+            std::process::id()
+        ));
+        let snapshot = temp.join("repository").join("head");
+        std::fs::create_dir_all(snapshot.join("src"))
+            .map_err(|error| format!("create temp snapshot: {error}"))?;
+        std::fs::write(snapshot.join("src/lib.rs"), b"fn extra() {}\n")
+            .map_err(|error| format!("write temp snapshot: {error}"))?;
+        std::fs::write(snapshot.join("build.rs"), b"fn main() {}\n")
+            .map_err(|error| format!("write temp snapshot: {error}"))?;
+        let manifest: Value = serde_json::json!({
+            "schema_version": INSTALLED_RUST_FIXTURE_SCHEMA_VERSION,
+            "repository": {"snapshots": {"head": {
+                "commit": "01821f774cb2cc2bc745b7506a3941312456fb4e",
+                "tree": "8c3a6ff250d34675386567f37ccf05d8a0dd6d6e",
+                "files": {"src/lib.rs":
+                    "f70d3ed93649e7ee0271d38008eb4427cc0f3006fc1770462aafec2ee834bfcf"}
+            }}},
+            "journey": {
+                "expected_edit_cage": ["tests/tier_boundary.rs"],
+                "forbidden_edits": ["src/lib.rs"],
+                "selected_repair": {"edit_target": "tests/tier_boundary.rs"}
+            },
+            "journey_scenario_ids": []
+        });
+        let violations = installed_rust_manifest_violations(&temp, &manifest);
+        std::fs::remove_dir_all(&temp).map_err(|error| format!("clean temp dir: {error}"))?;
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("not bound in the manifest"))
+        {
+            return Err(format!(
+                "an unlisted snapshot file must be rejected, got: {violations:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scenario_candidate_must_bind_the_manifest_snapshots() -> Result<(), String> {
+        let manifest: Value = serde_json::json!({
+            "journey_scenario_ids": ["installed_rust_positive_journey_emits_receipt"],
+            "repository": {"snapshots": {
+                "base": {
+                    "commit": "01821f774cb2cc2bc745b7506a3941312456fb4e",
+                    "tree": "8c3a6ff250d34675386567f37ccf05d8a0dd6d6e",
+                    "files": {}
+                },
+                "head": {
+                    "commit": "18a45fa5cd718f85dc60fcb27495b24dbd9715e7",
+                    "tree": "60374952915a027947d4e1654bd6e945834114c3",
+                    "files": {}
+                }
+            }}
+        });
+        let bound: Value = serde_json::json!({"scenarios": [{
+            "id": "installed_rust_positive_journey_emits_receipt",
+            "journey": {"candidate": {
+                "base": "01821f774cb2cc2bc745b7506a3941312456fb4e",
+                "head": "18a45fa5cd718f85dc60fcb27495b24dbd9715e7",
+                "tree": "60374952915a027947d4e1654bd6e945834114c3"
+            }}
+        }]});
+        if !installed_rust_scenario_binding_violations(&manifest, &bound).is_empty() {
+            return Err("a snapshot-bound scenario candidate must be accepted".to_string());
+        }
+        let unbound: Value = serde_json::json!({"scenarios": [{
+            "id": "installed_rust_positive_journey_emits_receipt",
+            "journey": {"candidate": {
+                "base": "01821f774cb2cc2bc745b7506a3941312456fb4e",
+                "head": "0000000000000000000000000000000000000000",
+                "tree": "60374952915a027947d4e1654bd6e945834114c3"
+            }}
+        }]});
+        let violations = installed_rust_scenario_binding_violations(&manifest, &unbound);
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("must bind one manifest snapshot"))
+        {
+            return Err(format!(
+                "an unbound scenario candidate head must be rejected, got: {violations:?}"
+            ));
         }
         Ok(())
     }
