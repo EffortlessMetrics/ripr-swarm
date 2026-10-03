@@ -23,14 +23,21 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
 - The session is a lockstep request/response protocol: one object ID is
   queued per request, the response header is parsed, and the announced
   bytes stream to the destination file in bounded chunks — a large blob can
-  never deadlock against an unread pipe, and at most one 64 KiB chunk is
-  resident in memory.
+  never deadlock against an unread pipe. The stdout reader feeds a bounded
+  queue, so a slow destination stalls git through the pipe (backpressure)
+  instead of accumulating chunks in memory.
 - A single named overall deadline (the same value the per-blob calls each
-  used before, enforced once) bounds the entire materialization phase
-  incrementally on every blocking read. Deadline expiry classifies as the
-  shared named `git_invocation_timeout` error with the same repair route as
-  every other git invocation; cooperative cancellation is checked per
-  request and per chunk.
+  used before, enforced once) bounds the entire materialization phase —
+  both git processes: the clock starts at materialization entry, `ls-tree`
+  runs inside the remaining budget, and the batch session receives only
+  what is left. Every blocking read recomputes its wait allowance from the
+  absolute deadline, so a stream dribbling fragments just under each
+  individual wait cannot outlive the budget. Deadline expiry classifies as
+  the shared named `git_invocation_timeout` error with the same repair
+  route as every other git invocation; cooperative cancellation is checked
+  per request and per chunk. One residual limitation, unchanged from the
+  per-blob path and disclosed in code: a single stalled OS-level file
+  write is outside the deadline's reach.
 - Fail-closed behavior is preserved exactly: unsupported entry modes,
   non-UTF-8 paths, traversal attempts, malformed batch framing, truncated
   streams, and missing objects are named errors; any failure fails the
@@ -50,7 +57,8 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
 - Wall-clock measurement: spawn count N+1 → 2 is structural, but the
   magnitude of the wall-clock improvement stays a measurement-pending
   `design_question` (the issue's own classification) until measured on a
-  real large candidate; no unmeasured speedup is asserted in tracked files.
+  genuinely large candidate; no unmeasured speedup is asserted in tracked
+  files.
 - The unrelated per-blob `cat-file` consumers (`committed_source`,
   `python_repair_verification`) are untouched.
 - Real mutation testing, coverage dashboards, and any evidence-promotion
@@ -87,6 +95,7 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
 - `crates/ripr/src/git.rs::tests::cat_file_batch_stream_reads_across_chunk_boundaries`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_stream_fails_closed_on_truncated_blob`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_stream_times_out_when_budget_is_spent`
+- `crates/ripr/src/git.rs::tests::cat_file_batch_stream_enforces_the_absolute_deadline`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_session_round_trips_blobs_and_reports_missing`
 - `crates/ripr/src/git.rs::tests::cat_file_batch_session_enforces_the_overall_budget`
 - `crates/ripr/src/analysis/git_candidate_execution.rs::tests::batched_materialization_preserves_bytes_at_scale`
@@ -97,10 +106,13 @@ hanging git. Each call also buffered up to 512 MiB in memory per blob.
 ## Implementation Mapping
 
 - `crates/ripr/src/git.rs` — `CatFileBatch` session, `CatFileBatchStream`
-  parser, `git_invocation_timeout_message` (extracted from `poll_child`),
-  `spawn_cat_file_batch_chunk_reader`.
+  parser (absolute-deadline waits), bounded backpressure queue,
+  `git_invocation_timeout_message` (extracted from `poll_child`),
+  `spawn_cat_file_batch_chunk_reader`; every stream failure aborts the
+  owned process tree.
 - `crates/ripr/src/analysis/git_candidate_execution.rs` — `materialize`
-  entry validation up front, batched streaming loop, whole-tree byte cap.
+  entry validation up front, one budget clock for both git processes,
+  batched streaming loop, whole-tree byte cap.
 
 ## Metrics
 

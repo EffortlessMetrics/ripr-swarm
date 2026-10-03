@@ -275,10 +275,17 @@ fn materialize(
     // `core.autocrlf=false`, so extracted bytes could silently differ from
     // the bound blob identity (#3548 review); `ls-tree` + `cat-file --batch`
     // emit raw blob bytes only.
+    // ONE overall deadline bounds the whole materialization phase, both git
+    // processes included: the clock starts here, `ls-tree` runs inside
+    // whatever remains, and the batch session receives only what is left
+    // after listing and validation — so a slow listing followed by a slow
+    // batch stream still cannot exceed one deadline.
+    let budget = deadline.unwrap_or(Duration::from_mins(1));
+    let budget_started = std::time::Instant::now();
     let listing = crate::git::run_git_output_with_deadline_and_limit(
         root,
         &["ls-tree", "-r", "-z", candidate_tree],
-        deadline.unwrap_or(Duration::from_mins(1)),
+        budget.saturating_sub(budget_started.elapsed()),
         MAX_ARCHIVE_BYTES,
     )
     .map_err(|error| failed(format!("git ls-tree failed: {error}")))?;
@@ -327,12 +334,10 @@ fn materialize(
     if entries.is_empty() {
         return Ok((target.clone(), cleanup));
     }
-    // ONE overall deadline bounds the whole materialization phase: the same
-    // value the per-blob calls each used before, now enforced once around
-    // the loop by the batch session, so a slow or hanging git costs at most
-    // one deadline for the entire tree instead of one per file.
-    let budget = deadline.unwrap_or(Duration::from_mins(1));
-    let mut session = crate::git::CatFileBatch::spawn(root, budget)
+    // The batch session gets only the budget left after listing and
+    // validation.
+    let session_budget = budget.saturating_sub(budget_started.elapsed());
+    let mut session = crate::git::CatFileBatch::spawn(root, session_budget)
         .map_err(|error| failed(format!("git cat-file --batch failed: {error}")))?;
     let mut total_bytes: u64 = 0;
     let mut chunk = vec![0_u8; 64 * 1024];
@@ -364,6 +369,12 @@ fn materialize(
             session
                 .read_blob_bytes(&mut chunk[..take as usize])
                 .map_err(|error| failed(format!("git cat-file blob {object} failed: {error}")))?;
+            // The budget is enforced on every git stream read above and by
+            // `finish` below. One residual limitation, unchanged from the
+            // per-blob path: a single stalled OS-level `write_all` is
+            // outside the deadline's reach (std file I/O has no timed
+            // wait); the next stream read fails closed once the budget is
+            // spent.
             file.write_all(&chunk[..take as usize])
                 .map_err(|error| failed(format!("materialization write failed: {error}")))?;
             remaining -= take;

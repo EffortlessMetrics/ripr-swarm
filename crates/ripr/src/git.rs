@@ -583,9 +583,9 @@ fn drain_bounded_pipe_reader(
 /// overall deadline (`budget`), enforced incrementally on every blocking
 /// read through the same named `git_invocation_timeout` classification the
 /// polling collector uses. A hung git therefore costs at most one deadline,
-/// never one deadline per blob. Blob bytes are never buffered whole: at most
-/// one 64 KiB chunk is resident, so memory stays bounded regardless of tree
-/// size; the caller owns per-destination accounting.
+/// never one deadline per blob. Blob bytes are never buffered whole: the
+/// stdout reader feeds a bounded queue (backpressure), so a slow destination
+/// stalls git through the pipe instead of accumulating chunks in memory.
 ///
 /// Fail-closed contract, matching the per-blob path it replaces: a missing
 /// object reports `Ok(None)`; a malformed header, a truncated stream, a
@@ -651,12 +651,19 @@ impl CatFileBatch {
         })
     }
 
-    /// Budget left for the whole session; zero means the next blocking read
+    /// Budget left for the whole session; zero means the next blocking wait
     /// classifies as a timeout.
     fn remaining(&self) -> Duration {
         self.budget
             .checked_sub(self.started.elapsed())
             .unwrap_or(Duration::ZERO)
+    }
+
+    /// The absolute instant the overall budget runs out. Every blocking
+    /// stream wait recomputes its allowance from this, so dribbling
+    /// fragments cannot outlive the budget by resetting per-wait timeouts.
+    fn deadline(&self) -> Instant {
+        self.started + self.budget
     }
 
     /// Terminate the owned tree for an abortive outcome and keep the
@@ -686,7 +693,7 @@ impl CatFileBatch {
                     git_invocation_timeout_message(&self.describe, self.budget.as_millis());
                 self.abort("timeout", message)
             }
-            CatFileBatchReadError::Failed(message) => message,
+            CatFileBatchReadError::Failed(message) => self.abort("stream failure", message),
         }
     }
 
@@ -706,8 +713,8 @@ impl CatFileBatch {
             let message = format!("failed writing to {}: {err}", self.describe);
             return Err(self.abort("write failure", message));
         }
-        let remaining = self.remaining();
-        let header = self.stdout.read_line(remaining);
+        let deadline = self.deadline();
+        let header = self.stdout.read_line(deadline);
         let header = header.map_err(|error| self.classify_read_error(error))?;
         let header = String::from_utf8_lossy(&header);
         let mut fields = header.split(' ');
@@ -719,17 +726,21 @@ impl CatFileBatch {
                     .next()
                     .and_then(|size| size.parse::<u64>().ok())
                     .ok_or_else(|| {
-                        format!(
+                        let message = format!(
                             "malformed git cat-file --batch response header for {object}: \
                              `{header}`"
-                        )
+                        );
+                        self.abort("malformed stream", message)
                     })?;
                 Ok(Some(size))
             }
-            other => Err(format!(
-                "unexpected git cat-file --batch response kind `{other}` for {object}: \
-                 expected a blob"
-            )),
+            other => {
+                let message = format!(
+                    "unexpected git cat-file --batch response kind `{other}` for {object}: \
+                     expected a blob"
+                );
+                Err(self.abort("malformed stream", message))
+            }
         }
     }
 
@@ -740,8 +751,8 @@ impl CatFileBatch {
         if let Err(cancelled) = crate::analysis::cancellation::checkpoint() {
             return Err(self.abort("cancellation", cancelled));
         }
-        let remaining = self.remaining();
-        let read = self.stdout.read_exact(buf, remaining);
+        let deadline = self.deadline();
+        let read = self.stdout.read_exact(buf, deadline);
         read.map_err(|error| self.classify_read_error(error))
     }
 
@@ -749,14 +760,14 @@ impl CatFileBatch {
     /// stream framing.
     pub(crate) fn end_blob(&mut self) -> Result<(), String> {
         let mut newline = [0_u8; 1];
-        let remaining = self.remaining();
-        let read = self.stdout.read_exact(&mut newline, remaining);
+        let deadline = self.deadline();
+        let read = self.stdout.read_exact(&mut newline, deadline);
         read.map_err(|error| self.classify_read_error(error))?;
         if newline[0] != b'\n' {
-            return Err(
+            let message =
                 "malformed git cat-file --batch stream: blob not terminated by a newline"
-                    .to_string(),
-            );
+                    .to_string();
+            return Err(self.abort("malformed stream", message));
         }
         Ok(())
     }
@@ -831,11 +842,14 @@ impl CatFileBatchStream {
     }
 
     /// Pull the next chunk when the current one is exhausted.
-    /// `Ok(false)` is end of stream.
-    fn next_chunk(&mut self, remaining: Duration) -> Result<bool, CatFileBatchReadError> {
+    /// `Ok(false)` is end of stream. The wait allowance is recomputed from
+    /// the absolute `deadline` on every chunk so a stream dribbling
+    /// fragments just under each wait can never outlive the overall budget.
+    fn next_chunk(&mut self, deadline: Instant) -> Result<bool, CatFileBatchReadError> {
         if self.offset < self.current.len() {
             return Ok(true);
         }
+        let remaining = deadline.saturating_duration_since(Instant::now());
         match self.receiver.recv_timeout(remaining) {
             Ok(Ok(chunk)) => {
                 self.current = chunk;
@@ -849,7 +863,7 @@ impl CatFileBatchStream {
     }
 
     /// Read one `\n`-terminated line, returned without the terminator.
-    fn read_line(&mut self, remaining: Duration) -> Result<Vec<u8>, CatFileBatchReadError> {
+    fn read_line(&mut self, deadline: Instant) -> Result<Vec<u8>, CatFileBatchReadError> {
         let mut line = Vec::new();
         loop {
             if let Some(position) = self.current[self.offset..]
@@ -868,7 +882,7 @@ impl CatFileBatchStream {
                      {CAT_FILE_BATCH_HEADER_LINE_BYTES}-byte line limit"
                 )));
             }
-            if !self.next_chunk(remaining)? {
+            if !self.next_chunk(deadline)? {
                 return Err(CatFileBatchReadError::Failed(
                     "git cat-file --batch stream ended in the middle of a response header"
                         .to_string(),
@@ -881,11 +895,11 @@ impl CatFileBatchStream {
     fn read_exact(
         &mut self,
         buf: &mut [u8],
-        remaining: Duration,
+        deadline: Instant,
     ) -> Result<(), CatFileBatchReadError> {
         let mut filled = 0;
         while filled < buf.len() {
-            if self.offset >= self.current.len() && !self.next_chunk(remaining)? {
+            if self.offset >= self.current.len() && !self.next_chunk(deadline)? {
                 return Err(CatFileBatchReadError::Failed(
                     "git cat-file --batch stream ended in the middle of a blob".to_string(),
                 ));
@@ -901,15 +915,22 @@ impl CatFileBatchStream {
     }
 }
 
+/// Backpressure: at most this many stdout chunks may be queued between the
+/// reader thread and the consumer. A slow destination therefore stalls the
+/// reader, which stalls git's pipe, which stalls git — memory stays bounded
+/// (chunks × 64 KiB) no matter how large the tree or how slow the disk.
+const CAT_FILE_BATCH_QUEUED_CHUNKS: usize = 8;
+
 /// Drain the batch child's stdout in `CAT_FILE_BATCH_CHUNK_BYTES` chunks on a
 /// helper thread, exactly like [`spawn_bounded_pipe_reader`] but retaining
 /// every byte for the streaming parser (the caller, not this reader, owns the
-/// overall byte budget). The send failing means the consumer is gone; the
-/// thread ends either way, and dropping its handle detaches it.
+/// overall byte budget). The bounded channel provides backpressure: the send
+/// blocks while the consumer is busy, and a failed send means the consumer is
+/// gone, so the reader ends either way; dropping its handle detaches it.
 fn spawn_cat_file_batch_chunk_reader(
     mut pipe: impl std::io::Read + Send + 'static,
 ) -> mpsc::Receiver<Result<Vec<u8>, String>> {
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(CAT_FILE_BATCH_QUEUED_CHUNKS);
     std::thread::spawn(move || {
         let mut chunk = [0_u8; CAT_FILE_BATCH_CHUNK_BYTES];
         loop {
@@ -2218,29 +2239,29 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             }
         });
         let mut stream = CatFileBatchStream::new(receiver);
-        let remaining = Duration::from_secs(30);
+        let deadline = Instant::now() + Duration::from_secs(30);
         let header = stream
-            .read_line(remaining)
+            .read_line(deadline)
             .map_err(|error| format!("header read failed: {error:?}"))?;
         if header != b"<oid-a> blob 11" {
             return Err(format!("unexpected header: {header:?}"));
         }
         let mut content = [0_u8; 11];
         stream
-            .read_exact(&mut content, remaining)
+            .read_exact(&mut content, deadline)
             .map_err(|error| format!("content read failed: {error:?}"))?;
         if &content != b"hello\nworld" {
             return Err(format!("content corrupted across chunks: {content:?}"));
         }
         let mut newline = [0_u8; 1];
         stream
-            .read_exact(&mut newline, remaining)
+            .read_exact(&mut newline, deadline)
             .map_err(|error| format!("framing newline read failed: {error:?}"))?;
         if newline != [b'\n'] {
             return Err(format!("framing newline missing: {newline:?}"));
         }
         let second = stream
-            .read_line(remaining)
+            .read_line(deadline)
             .map_err(|error| format!("second header read failed: {error:?}"))?;
         if second != b"<oid-b> missing" {
             return Err(format!("unexpected second header: {second:?}"));
@@ -2248,22 +2269,59 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         Ok(())
     }
 
-    /// A stream that ends mid-blob fails closed instead of returning
-    /// short content.
+    /// A stream that ends after a parsed blob header but before the
+    /// announced content fails closed instead of returning short content.
     #[test]
     fn cat_file_batch_stream_fails_closed_on_truncated_blob() -> Result<(), String> {
         let (sender, receiver) = mpsc::channel();
-        let mut stream_bytes = b"<oid> blob 100\nshort".to_vec();
-        stream_bytes.push(b'\n');
+        // The header announces 5 content bytes; the stream delivers 3 and
+        // ends. Truncation must be caught after header parsing, not by
+        // mistaking header bytes for content.
+        let stream_bytes = b"<oid> blob 5\nhel".to_vec();
         std::thread::spawn(move || {
             let _ = sender.send(Ok(stream_bytes));
         });
         let mut stream = CatFileBatchStream::new(receiver);
-        let mut content = [0_u8; 100];
-        let outcome = stream.read_exact(&mut content, Duration::from_secs(30));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let header = stream
+            .read_line(deadline)
+            .map_err(|error| format!("header read failed: {error:?}"))?;
+        if header != b"<oid> blob 5" {
+            return Err(format!("unexpected header: {header:?}"));
+        }
+        let mut content = [0_u8; 5];
+        let outcome = stream.read_exact(&mut content, deadline);
         match outcome {
             Err(CatFileBatchReadError::Failed(message)) if message.contains("ended") => Ok(()),
             other => Err(format!("truncated blob must fail closed, got {other:?}")),
+        }
+    }
+
+    /// A producer that dribbles fragments just under each individual wait
+    /// must still hit the absolute deadline: the per-chunk allowance is
+    /// recomputed, not restarted.
+    #[test]
+    fn cat_file_batch_stream_enforces_the_absolute_deadline() -> Result<(), String> {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            // One byte every 20 ms: every fragment arrives well inside any
+            // single wait, forever. Only the absolute deadline stops it.
+            for byte in 0u8..=255 {
+                if sender.send(Ok(vec![byte])).is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let mut stream = CatFileBatchStream::new(receiver);
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let mut buf = [0_u8; 64];
+        let outcome = stream.read_exact(&mut buf, deadline);
+        match outcome {
+            Err(CatFileBatchReadError::TimedOut) => Ok(()),
+            other => Err(format!(
+                "a dribbling stream must hit the absolute deadline, got {other:?}"
+            )),
         }
     }
 
@@ -2278,7 +2336,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
         });
         let mut stream = CatFileBatchStream::new(receiver);
         let mut byte = [0_u8; 1];
-        let outcome = stream.read_exact(&mut byte, Duration::ZERO);
+        let outcome = stream.read_exact(&mut byte, Instant::now());
         match outcome {
             Err(CatFileBatchReadError::TimedOut) => Ok(()),
             other => Err(format!(
