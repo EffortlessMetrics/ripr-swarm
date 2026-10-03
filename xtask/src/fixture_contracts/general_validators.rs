@@ -1889,10 +1889,7 @@ fn installed_rust_missing_scenarios(manifest: &Value, corpus: &Value) -> Vec<Str
 }
 
 #[cfg(test)]
-fn installed_rust_scenario_binding_violations(
-    manifest: &Value,
-    corpus: &Value,
-) -> Vec<String> {
+fn installed_rust_scenario_binding_violations(manifest: &Value, corpus: &Value) -> Vec<String> {
     installed_journey_scenario_binding_violations(&INSTALLED_RUST_CONTRACT, manifest, corpus)
 }
 
@@ -2451,10 +2448,7 @@ fn installed_python_missing_scenarios(manifest: &Value, corpus: &Value) -> Vec<S
 }
 
 #[cfg(test)]
-fn installed_python_scenario_binding_violations(
-    manifest: &Value,
-    corpus: &Value,
-) -> Vec<String> {
+fn installed_python_scenario_binding_violations(manifest: &Value, corpus: &Value) -> Vec<String> {
     installed_journey_scenario_binding_violations(&INSTALLED_PYTHON_CONTRACT, manifest, corpus)
 }
 

@@ -135,8 +135,7 @@ pub(crate) fn installed_journey_manifest_violations(
     if json_string_field(manifest, "schema_version").as_deref() != Some(contract.schema_version) {
         violations.push(format!(
             "blind journey installed {} manifest schema_version must be {}",
-            contract.label,
-            contract.schema_version
+            contract.label, contract.schema_version
         ));
     }
     let Some(snapshots) = manifest
@@ -573,8 +572,7 @@ pub(crate) fn validate_installed_journey_fixture(
         if !body.contains(contract.spec_decision) {
             violations.push(format!(
                 "blind journey installed {} SPEC.md must name its {} decision",
-                contract.label,
-                contract.spec_decision
+                contract.label, contract.spec_decision
             ));
         }
         for heading in ["## Given", "## When", "## Then", "## Must Not"] {
@@ -823,8 +821,7 @@ mod installed_journey_contract_tests {
     #[test]
     fn extra_manifest_rules_are_python_specific() -> Result<(), String> {
         let manifest: Value = serde_json::json!({"journey": {}});
-        let python_extras =
-            (INSTALLED_PYTHON_CONTRACT.extra_manifest_violations)(&manifest);
+        let python_extras = (INSTALLED_PYTHON_CONTRACT.extra_manifest_violations)(&manifest);
         if python_extras.is_empty() {
             return Err(
                 "the python contract must add environment-binding rules for a manifest without \
