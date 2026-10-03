@@ -90,20 +90,18 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
             }
             (run_id, run_attempt)
         }
-        (None, None)
-            if std::env::var_os("CI").is_none() && std::env::var_os("GITHUB_ACTIONS").is_none() =>
-        {
-            (
-                format!(
-                    "local-{}",
-                    root.file_name()
-                        .and_then(|name| name.to_str())
-                        .ok_or("local fixture name is not UTF-8")?
-                ),
-                "0".to_string(),
-            )
+        (None, None) if std::env::var_os("GITHUB_ACTIONS").is_none() => (
+            format!(
+                "local-{}",
+                root.file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or("local fixture name is not UTF-8")?
+            ),
+            "0".to_string(),
+        ),
+        _ => {
+            return Err("GitHub transcript requires actual run and attempt identifiers".into());
         }
-        _ => return Err("CI transcript requires actual GitHub run and attempt identifiers".into()),
     };
     let nested = root.join("nested/inner");
     fs::create_dir_all(&nested)?;
@@ -133,6 +131,22 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
         Sha256::digest(&patch),
         String::from_utf8_lossy(&patch),
     );
+    // The existing always-uploaded test artifact retains this one observational
+    // file without a profile override or broad successful-output capture. Its
+    // per-test name is isolated from typed product/native acceptance receipts.
+    let transcript_path = super::workspace_root().join(format!(
+        "target/nextest/ci/python-symlink-source-admission-cli-{run_id}-{run_attempt}.txt"
+    ));
+    fs::create_dir_all(
+        transcript_path
+            .parent()
+            .ok_or("transcript parent missing")?,
+    )?;
+    assert!(
+        transcript.len() <= 1024 * 1024,
+        "observational CLI transcript exceeds its 1 MiB artifact bound"
+    );
+    fs::write(&transcript_path, &transcript)?;
     let root_arg = root.to_str().ok_or("fixture root is not UTF-8")?;
     let root_alias = root.join("selected-root-alias");
     std::os::unix::fs::symlink(&root, &root_alias)?;
@@ -171,6 +185,7 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
                     transcript.len() <= 1024 * 1024,
                     "observational CLI transcript exceeds its 1 MiB artifact bound"
                 );
+                fs::write(&transcript_path, &transcript)?;
                 assert!(
                     output.status.success(),
                     "CLI invocation failed before outcome discrimination"
@@ -209,18 +224,6 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
     fs::remove_file(&source_dir)?;
     fs::rename(&held_dir, &source_dir)?;
     let directory_restored = collect("restored-regular-after-directory-link")?;
-    // The existing always-uploaded test artifact retains this one observational
-    // file without a profile override or broad successful-output capture. Its
-    // per-test name is isolated from typed product/native acceptance receipts.
-    let transcript_path = super::workspace_root().join(format!(
-        "target/nextest/ci/python-symlink-source-admission-cli-{run_id}-{run_attempt}.txt"
-    ));
-    fs::create_dir_all(
-        transcript_path
-            .parent()
-            .ok_or("transcript parent missing")?,
-    )?;
-    fs::write(&transcript_path, &transcript)?;
     eprintln!(
         "observational CLI transcript: {}",
         transcript_path.display()

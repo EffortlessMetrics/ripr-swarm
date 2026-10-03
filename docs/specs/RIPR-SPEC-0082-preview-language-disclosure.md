@@ -158,7 +158,11 @@ The public control retains one bounded observational text transcript in the
 required test artifact, alongside unchanged JUnit and run context. It does not
 change test selection or retries and is not typed acceptance or release proof.
 Its exact filename binds the current run and attempt, so a skipped or unobserved
-test cannot reuse a cached transcript from another run.
+test cannot reuse a cached transcript from another run. The bounded header and
+each collected receipt are persisted before later outcome assertions; a partial
+transcript remains observational evidence, not proof that all controls ran.
+Outside GitHub Actions, absent GitHub identifiers use a unique fixture filename,
+including in other CI environments; this does not create a GitHub artifact receipt.
 
 ### Three honesty cases
 
