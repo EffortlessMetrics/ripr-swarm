@@ -127,7 +127,7 @@ adapter is not enabled, no skip limitation is emitted: the not-enabled
 advisory already discloses every routed file with its raw count. No new JSON
 field is introduced.
 
-### Missing changed Python source
+### Unavailable changed Python source
 
 A new-side changed Python path absent from the selected source root is not an
 analyzed file (#5110). Python reuses the shared regular-source-file admission
@@ -144,6 +144,16 @@ UTF-8 retains its existing read-failure limitation, while a readable comment-onl
 diff can still be a complete zero. Generated/excluded paths keep the skipped-scope
 rule above; genuine Git deletions are omitted by the parser's new-side selection
 and do not require a nonexistent new-side file to be restored.
+
+Admission matches source discovery's no-follow boundary below the selected root
+(#5141): a changed source whose final entry is a symlink, or whose relative
+ancestor is a symlink or non-directory, is unavailable for this analysis and
+uses the same typed limitation. The selected root itself may be a legitimate
+alias. Direct relative paths and valid repository-prefix suffix paths apply the
+same rule. This is source-availability disclosure, not a filesystem race or
+authentication guarantee. Public CLI controls hold a Git-generated diff fixed
+across regular source, owned file and directory links, and restoration, covering
+explicit roots, implicit repository/nested roots, and a selected-root alias.
 
 ### Three honesty cases
 

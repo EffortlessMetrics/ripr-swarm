@@ -95,23 +95,33 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
         "actual CLI binary: {binary}; SHA256: {:x}",
         binary_digest.finalize()
     );
+    let version = run_command(binary, Some(&root), &["--version"])?;
+    assert!(version.status.success());
+    let version = String::from_utf8(version.stdout)?;
+    eprintln!("actual CLI producing identity: {}", version.trim_end());
+    assert_eq!(version, super::expected_version_line());
     let root_arg = root.to_str().ok_or("fixture root is not UTF-8")?;
+    let root_alias = root.join("selected-root-alias");
+    std::os::unix::fs::symlink(&root, &root_alias)?;
+    assert!(fs::symlink_metadata(&root_alias)?.file_type().is_symlink());
+    let alias_arg = root_alias.to_str().ok_or("fixture alias is not UTF-8")?;
     let diff = root.join("change.patch");
     let diff_arg = diff.to_str().ok_or("fixture diff is not UTF-8")?;
     let collect = |state: &str| -> TestResult<Vec<(Value, String, Value)>> {
         let mut reports = Vec::new();
-        for (route, cwd, explicit) in [
-            ("explicit-root", nested.as_path(), true),
-            ("implicit-repo-root", root.as_path(), false),
-            ("implicit-nested-cwd", nested.as_path(), false),
+        for (route, cwd, selected) in [
+            ("explicit-root", nested.as_path(), Some(root_arg)),
+            ("implicit-repo-root", root.as_path(), None),
+            ("implicit-nested-cwd", nested.as_path(), None),
+            ("explicit-root-alias", nested.as_path(), Some(alias_arg)),
         ] {
             let mut outputs = Vec::new();
             for format in ["json", "human", "badge-json"] {
                 let mut args = vec![
                     "check", "--diff", diff_arg, "--mode", "fast", "--format", format,
                 ];
-                if explicit {
-                    args.extend(["--root", root_arg]);
+                if let Some(selected) = selected {
+                    args.extend(["--root", selected]);
                 }
                 let output = run_command(binary, Some(cwd), &args)?;
                 eprintln!(
@@ -147,17 +157,32 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
     fs::remove_file(&source)?;
     fs::rename(&target, &source)?;
     let restored = collect("restored-regular")?;
+    let source_dir = root.join("src");
+    let held_dir = root.join("target/held-src");
+    fs::create_dir_all(root.join("target"))?;
+    fs::rename(&source_dir, &held_dir)?;
+    std::os::unix::fs::symlink(&held_dir, &source_dir)?;
+    assert!(fs::symlink_metadata(&source_dir)?.file_type().is_symlink());
+    assert!(fs::metadata(&source_dir)?.is_dir());
+    assert_eq!(fs::read(&source)?, SOURCE.as_bytes());
+    let directory_linked = collect("owned-ignored-target-directory-symlink")?;
+    fs::remove_file(&source_dir)?;
+    fs::rename(&held_dir, &source_dir)?;
+    let directory_restored = collect("restored-regular-after-directory-link")?;
     assert_eq!(
         fs::read(&diff)?,
         patch,
         "the Git diff must remain byte-identical"
     );
+    fs::remove_file(&root_alias)?;
     fs::remove_dir_all(&root)?;
     // Gather every route and format before evaluating the disputed predicate:
     // a first-route failure must not hide the remaining actual CLI receipts.
-    assert_eq!(present.len(), 3);
-    assert_eq!(linked.len(), 3);
-    assert_eq!(restored.len(), 3);
+    assert_eq!(present.len(), 4);
+    assert_eq!(linked.len(), 4);
+    assert_eq!(restored.len(), 4);
+    assert_eq!(directory_linked.len(), 4);
+    assert_eq!(directory_restored.len(), 4);
     for (index, (report, human, badge)) in present.iter().enumerate() {
         assert_eq!(
             report["summary"]["findings"], 1,
@@ -167,22 +192,29 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
         assert_eq!(report["analysis_outcome"]["analysis_complete"], true);
         assert!(human.contains("1 Python file analyzed"));
         assert_eq!(badge["analysis_complete"], true);
-        assert_eq!(
-            &restored[index],
-            &(report.clone(), human.clone(), badge.clone()),
-            "restoration route {index}"
-        );
-        let (ref refused, ref refused_human, ref refused_badge) = linked[index];
-        assert_missing(refused, "src/discount.py");
-        assert_eq!(refused["summary"]["findings"], 0);
-        assert_eq!(python_count(refused), Some(0));
-        assert!(refused.get("preview_languages").is_none(), "{refused}");
-        assert!(!refused_human.contains("1 Python file analyzed"));
-        assert!(refused_human.contains("src/discount.py"));
-        assert_eq!(refused_badge["analysis_complete"], false);
-        assert_eq!(refused_badge["analysis_outcome"], *outcome(refused));
-        assert_ne!(refused_badge["color"], "brightgreen");
-        assert_ne!(refused_badge["status"], "pass");
+        for restored in [&restored[index], &directory_restored[index]] {
+            assert_eq!(&restored.0, report, "restoration JSON route {index}");
+            assert_eq!(&restored.1, human, "restoration human route {index}");
+            assert_eq!(&restored.2, badge, "restoration badge route {index}");
+        }
+        for (refused, refused_human, refused_badge) in [&linked[index], &directory_linked[index]] {
+            assert_missing(refused, "src/discount.py");
+            assert_eq!(refused["summary"]["findings"], 0);
+            assert_eq!(python_count(refused), Some(0));
+            assert!(refused.get("preview_languages").is_none(), "{refused}");
+            assert!(!refused_human.contains("1 Python file analyzed"));
+            assert!(
+                refused_human.lines().any(|line| {
+                    line.trim_start().starts_with("Limitation:")
+                        && line.contains("file: src/discount.py;")
+                }),
+                "{refused_human}"
+            );
+            assert_eq!(refused_badge["analysis_complete"], false);
+            assert_eq!(refused_badge["analysis_outcome"], *outcome(refused));
+            assert_ne!(refused_badge["color"], "brightgreen");
+            assert_ne!(refused_badge["status"], "pass");
+        }
     }
     Ok(())
 }

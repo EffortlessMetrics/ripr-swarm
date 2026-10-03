@@ -10,6 +10,13 @@ failure-output = "immediate-final"
 [profile.ci.junit]
 path = "junit.xml"
 
+# Retain the exact CLI subjects and all route outputs even when the repaired
+# source-admission witness passes. Other tests keep their existing output policy.
+[[profile.ci.overrides]]
+filter = 'test(=python_source_admission::changed_python_symlink_source_is_incomplete_across_root_routes)'
+success-output = "immediate"
+junit.store-success-output = true
+
 # #2695: Fast iteration path for local development.
 # Skip slow server-spawning tests with:
 #   cargo nextest run --skip framed_lsp_ --skip editor_agent_loop_
