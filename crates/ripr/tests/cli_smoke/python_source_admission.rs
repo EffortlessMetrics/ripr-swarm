@@ -371,13 +371,13 @@ fn mixed_python_paths_keep_whitespace_distinct_from_available_sibling() -> TestR
 
 #[test]
 fn shared_absence_disclosure_preserves_rust_path_identity() -> TestResult {
-    let path = " src/lib.rs";
+    let path = " leading/src/lib.rs";
     let source =
         "pub fn discount(total: i32) -> bool {\n    if total >= 100 { true } else { false }\n}\n";
     let root = git_path_fixture("rust-space-path-restoration", &[path], source)?;
     fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"space_path\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[lib]\npath = \" src/lib.rs\"\n",
+        root.join(" leading/Cargo.toml"),
+        "[package]\nname = \"space_path\"\nversion = \"0.1.0\"\nedition = \"2024\"",
     )?;
     let present = json(&root)?;
     assert_eq!(present["summary"]["findings"], 1, "{present}");
@@ -386,7 +386,7 @@ fn shared_absence_disclosure_preserves_rust_path_identity() -> TestResult {
     let absent = json(&root)?;
     assert_missing(&absent, path);
     assert_eq!(absent["summary"]["findings"], 0);
-    assert!(check(&root, "human")?.contains("file:  src/lib.rs;"));
+    assert!(check(&root, "human")?.contains("file:  leading/src/lib.rs;"));
     let badge: Value = serde_json::from_str(&check(&root, "badge-json")?)?;
     assert_eq!(badge["analysis_outcome"], *outcome(&absent));
     fs::rename(root.join("held-source.txt"), root.join(path))?;
