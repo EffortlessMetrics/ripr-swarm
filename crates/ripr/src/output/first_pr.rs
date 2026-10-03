@@ -3939,21 +3939,39 @@ mod tests {
         args.push("--check".to_string());
         let path = repo.join("proof packet").join(START_HERE_JSON);
         let packet = read_packet(&path)?;
-        for invalid in [
-            Value::Null,
-            json!({"authority": "advisory_display_only", "cwd": null}),
-            json!({"authority": "advisory_display_only", "cwd": "."}),
-            json!({"authority": "execution_allowed", "cwd": crate::output::path::human_path(&repo)}),
+        for (field, invalid, reason) in [
+            ("cwd", Value::Null, "no available repository directory"),
+            ("cwd", json!("."), "not a bounded absolute path"),
+            (
+                "cwd",
+                json!(format!("{}\n", crate::output::path::human_path(&repo))),
+                "not a bounded absolute path",
+            ),
+            (
+                "cwd",
+                json!(crate::output::path::human_path(&repo.join("missing-root"))),
+                "context directory is unavailable",
+            ),
+            (
+                "authority",
+                json!("execution_allowed"),
+                "missing or invalid display authority",
+            ),
         ] {
+            // Change only the named predicate. Valid producer form objects
+            // must not let shape refusal mask a missing cwd/authority guard.
             let mut altered = packet.clone();
-            altered["selected"]["command_context"] = invalid;
+            altered["selected"]["command_context"][field] = invalid;
             write_json(&path, altered)?;
+            let before = fs::read(&path).map_err(|error| error.to_string())?;
             let error = first_pr(&args)
                 .err()
                 .ok_or("check accepted invalid context")?;
-            assert!(
-                error.contains("command context is stale or unavailable"),
-                "{error}"
+            assert!(error.contains(reason), "{field}: {error}");
+            assert_eq!(
+                fs::read(&path).map_err(|error| error.to_string())?,
+                before,
+                "check rewrote refused context"
             );
         }
         for step in ["verify", "receipt"] {
