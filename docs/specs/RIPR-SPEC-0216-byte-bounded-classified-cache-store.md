@@ -1,4 +1,4 @@
-# RIPR-SPEC-0214: Byte-bounded classified-cache store publication
+# RIPR-SPEC-0216: Byte-bounded classified-cache store publication
 
 Status: proposed
 
@@ -47,7 +47,8 @@ proving a universal RSS threshold.
   shards. Manifest admission remains the generation gate: replacement
   shards use a new generation path so a failed publication leaves the
   previous valid generation or a miss, never a mixed authoritative
-  manifest.
+  manifest. An unpublished generation directory is removed on those
+  failure paths.
 - If one classified seam cannot fit under the configured byte ceiling,
   the store returns `skipped_oversized_record_index_{i}_ceiling_{n}` and
   does not claim a populated cache. Analysis output stays usable.
@@ -78,6 +79,8 @@ proving a universal RSS threshold.
   ordinary store path; IO high-water stays within the bounded buffer
   while the published file exceeds that buffer.
 - One oversized record skips without publishing a generation.
+- Failed replacement and cancellation leave the previous generation and
+  do not retain an extra unpublished `g*` directory.
 - Size probes stop once encoded bytes exceed the ceiling; a large record
   cap still splits on the byte bound without serializing a full
   record-limit window.

@@ -103,7 +103,7 @@ for full-repo analysis?
   `total_rust_files`, `total_production_files`).
 - Seam-cache sharding and visibility: classified seam-cache entries
   that exceed the encoded-byte ceiling (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`,
-  RIPR-SPEC-0214) or the secondary record cap (`RIPR_REPO_SEAM_CACHE_LIMIT`,
+  RIPR-SPEC-0216) or the secondary record cap (`RIPR_REPO_SEAM_CACHE_LIMIT`,
   default 20,000) are written as bounded shard files (#933, #4999);
   `cargo xtask cache report` summarizes
   shard families, shard counts, bytes, largest shard sets, and orphan

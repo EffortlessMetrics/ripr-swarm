@@ -298,6 +298,10 @@ fn publish_sharded_generation(
         .map_err(|err| format!("create sharded cache dir failed: {err}"))?;
     let previous = read_previous_manifest(cache, key);
     let publication_id = publication_id();
+    let generation_dir = sharded_dir.join(format!("g{publication_id}"));
+    std::fs::create_dir_all(&generation_dir)
+        .map_err(|err| format!("create sharded cache generation dir failed: {err}"))?;
+    let mut unpublished = UnpublishedGeneration::new(generation_dir);
     let mut shard_refs = Vec::with_capacity(shard_count);
     for (index, range) in ranges.iter().enumerate() {
         crate::analysis::cancellation::checkpoint()?;
@@ -313,10 +317,6 @@ fn publish_sharded_generation(
         };
         let file = format!("g{publication_id}/shard-{index:05}.json");
         let path = resolve_sharded_cache_file(&sharded_dir, &file)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| format!("create sharded cache generation dir failed: {err}"))?;
-        }
         let envelope = borrowed_shard_envelope(key, index, shard_count, chunk);
         let digest = super::semantic_body_digest(SHARDED_ENVELOPE_DIGEST_DOMAIN, &envelope)?;
         stream_checksummed_cache_file(path, "sharded cache file", &envelope, digest)?;
@@ -349,6 +349,7 @@ fn publish_sharded_generation(
     let digest = manifest.expected_digest()?;
     let manifest_path = cache.sharded_manifest_path(key);
     stream_checksummed_cache_file(manifest_path, "sharded cache manifest", &manifest, digest)?;
+    unpublished.retain();
     if let Some(previous) = previous {
         remove_replaced_generation_files(&sharded_dir, &previous, &publication_id);
     }
@@ -389,6 +390,29 @@ fn remove_replaced_generation_files(
     }
 }
 
+struct UnpublishedGeneration {
+    dir: PathBuf,
+    retain: bool,
+}
+
+impl UnpublishedGeneration {
+    fn new(dir: PathBuf) -> Self {
+        Self { dir, retain: false }
+    }
+
+    fn retain(&mut self) {
+        self.retain = true;
+    }
+}
+
+impl Drop for UnpublishedGeneration {
+    fn drop(&mut self) {
+        if !self.retain {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+}
+
 fn publication_id() -> String {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -418,6 +442,7 @@ fn stream_checksummed_cache_file<T: Serialize>(
     })
 }
 
+#[cfg(test)]
 fn checksummed_pretty_len<T: Serialize>(body: &T) -> Result<usize, String> {
     let mut counter = DiscardingCounter::default();
     encode_checksummed_pretty_to_writer(body, placeholder_payload_digest(), &mut counter)?;
@@ -437,11 +462,13 @@ fn checksummed_pretty_fits<T: Serialize>(body: &T, ceiling: usize) -> Result<boo
     }
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct DiscardingCounter {
     count: usize,
 }
 
+#[cfg(test)]
 impl Write for DiscardingCounter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.count = self.count.saturating_add(buf.len());
@@ -705,6 +732,30 @@ mod tests {
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("ripr-store-{label}-{}-{nanos}", std::process::id()))
+    }
+
+    fn listed_generation_dirs(
+        cache: &RepoSeamFactCache,
+        key: &RepoSeamCacheKey,
+    ) -> Result<Vec<String>, String> {
+        let dir = cache.sharded_entry_dir(key);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(&dir).map_err(|err| err.to_string())? {
+            let entry = entry.map_err(|err| err.to_string())?;
+            if !entry.file_type().map_err(|err| err.to_string())?.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('g') {
+                names.push(name.into_owned());
+            }
+        }
+        names.sort();
+        Ok(names)
     }
 
     fn classified_with_pad(pad: &str) -> ClassifiedSeam {
@@ -1059,6 +1110,12 @@ mod tests {
         cache
             .store_classified_seams_with_record_and_byte_limits(&key, &first, None, 1, 1_000_000)?;
         round_trip(&cache, &key, &first)?;
+        let generations_before = listed_generation_dirs(&cache, &key)?;
+        assert_eq!(
+            generations_before.len(),
+            1,
+            "first publication should leave one generation dir: {generations_before:?}"
+        );
         fail_after_writing_shards(1);
         let second = vec![
             classified_with_pad("second-a"),
@@ -1079,6 +1136,11 @@ mod tests {
         assert!(
             err.contains("injected"),
             "replacement failure should keep the injected diagnostic: {err}"
+        );
+        assert_eq!(
+            listed_generation_dirs(&cache, &key)?,
+            generations_before,
+            "failed publication must not leave an extra generation directory"
         );
         round_trip(&cache, &key, &first)?;
         ignore_remove_dir_all(&dir);
@@ -1131,6 +1193,7 @@ mod tests {
         let first = vec![classified_with_pad("warm-a"), classified_with_pad("warm-b")];
         cache
             .store_classified_seams_with_record_and_byte_limits(&key, &first, None, 1, 1_000_000)?;
+        let generations_before = listed_generation_dirs(&cache, &key)?;
         let token = AnalysisCancellationToken::new();
         token.cancel(AnalysisAbortKind::Cancelled);
         let err = with_token(&token, || {
@@ -1157,6 +1220,11 @@ mod tests {
                 "cancellation should be named: {err}"
             ),
         }
+        assert_eq!(
+            listed_generation_dirs(&cache, &key)?,
+            generations_before,
+            "cancelled publication must not leave an extra generation directory"
+        );
         round_trip(&cache, &key, &first)?;
         ignore_remove_dir_all(&dir);
         Ok(())
