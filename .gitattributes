@@ -28,3 +28,7 @@ metrics/rust-judged-behavior-panel/diffs/*.diff -whitespace
 fixtures/evidence-quality-benchmark/regex-word-boundary-empty/basis/matcher-original.rs -text -whitespace
 fixtures/evidence-quality-benchmark/regex-word-boundary-empty/outputs/*.stdout -text -whitespace
 fixtures/evidence-quality-benchmark/regex-word-boundary-empty/patches/*.patch -text whitespace=-blank-at-eol
+
+# Exact Git commit object used only by the custody boundary fixture. Its signed
+# header contains significant space-only continuation lines; never normalize it.
+xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.commit -text -whitespace

@@ -5921,6 +5921,8 @@ name = "preview-language disclosure"
 spec = "docs/specs/RIPR-SPEC-0082-preview-language-disclosure.md"
 tests = [
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::missing_changed_python_source_is_incomplete_and_restorable",
+  "crates/ripr/tests/cli_smoke/python_source_admission.rs::changed_python_symlink_source_is_incomplete_across_root_routes",
+  "crates/ripr/src/analysis/workspace/discover.rs::tests::source_admission_refuses_links_below_root_and_preserves_root_alias",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::git_generated_python_paths_preserve_whitespace_and_restore",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::git_quoted_python_path_preserves_tab_identity",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::mixed_python_paths_keep_whitespace_distinct_from_available_sibling",
@@ -5955,6 +5957,7 @@ code = [
   "crates/ripr/src/analysis/mod.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/workspace/discover.rs",
+  ".github/workflows/rust-gates.yml",
   "crates/ripr/src/app.rs",
   "crates/ripr/src/app/check.rs",
   "crates/ripr/src/app/check/output_builder.rs",
@@ -7371,6 +7374,17 @@ id = "RIPR-SPEC-0148"
 name = "exact source-promotion preflight"
 spec = "docs/specs/RIPR-SPEC-0148-source-promotion-preflight.md"
 tests = [
+  "xtask/src/reports/source_promotion.rs::tests::public_preflight_requires_complete_native_handoff_inputs",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_accepts_independently_selected_applicable_subset",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_parses_crlf_without_changing_raw_decision_identity",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_rereads_decisions_before_receipt_and_binds_source_identity",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_absent_decisions_and_generic_successful_ci",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_identity_roster_proof_and_decision_drift",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_omitted_failed_skipped_and_zero_qualification_rows",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_tampered_manifest_bundle_and_packets",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_stale_incomplete_or_unknown_qualification_acceptance",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_wrong_issue_comment_host_and_untrusted_issuer",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_preserves_explicitly_unselected_configured_subjects",
   "xtask/src/reports/source_promotion.rs::tests::requires_an_immutable_swarm_ref",
   "xtask/src/reports/source_promotion.rs::tests::rejects_a_branch_or_wrongly_named_swarm_ref",
   "xtask/src/reports/source_promotion.rs::tests::version_observation_reads_exact_parent_not_checkout_files",
@@ -7388,6 +7402,8 @@ fixtures = [
   "fixtures/source_promotion/SPEC.md",
 ]
 code = [
+  "xtask/src/reports/release/candidate_harness/live_head/handoff.rs",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/native.rs",
   "xtask/src/reports/source_promotion.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
@@ -8989,6 +9005,28 @@ id = "RIPR-SPEC-0144"
 name = "temporary 0.11 release-control lens"
 spec = "docs/specs/RIPR-SPEC-0144-release-control-lens.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_custody_does_not_require_historical_registry",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::producer_output_without_independently_accepted_digest_is_not_authority",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_refuses_templates_missing_bindings_and_predicted_source",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_revalidation_refuses_raw_packet_or_manifest_substitution",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_refuses_wrong_readback_and_unprotected_pin",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_binds_actual_committed_package_inputs",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_rejects_unknown_fields_and_future_self_issued_grants",
+  "xtask/src/reports/release/candidate_harness/live_head/tests.rs::direct_manifest_hash_match_cannot_supply_missing_or_stale_owner_acceptance",
+  "xtask/src/reports/release/candidate_harness/live_head/source_tests.rs::direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_substitution",
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::actual_read_limit_rejects_growth_without_consuming_the_tail",
+  "xtask/src/reports/release/candidate_harness/live_head/budget_tests.rs::direct_manifest_caps_proof_inputs_and_aggregate_bytes",
+  "xtask/src/reports/release/candidate_harness/live_head/budget_tests.rs::owned_reads_require_regular_contained_files_and_available_budget",
+  "xtask/src/reports/release_negative.rs::tests::direct_manifest_mode_requires_explicit_complete_digest_pinned_inputs",
+  "xtask/src/reports/release_negative.rs::tests::qualified_failure_hint_names_the_actual_written_report",
+  "xtask/src/run/input_tests.rs::byte_input_round_trips_more_than_pipe_capacity",
+  "xtask/src/run/input_tests.rs::byte_input_nonreader_timeout_and_early_exit_are_bounded_and_reaped",
+  "xtask/src/run/input_tests.rs::dropping_owned_byte_command_reaps_the_cancelled_primary",
+  "xtask/src/run/input_tests.rs::bounded_byte_capture_rejects_stdout_and_stderr_overflow_and_reaps_child",
+  "xtask/src/run/input_tests.rs::bounded_byte_drain_requires_terminal_output",
+  "xtask/src/reports/release/candidate_harness/source/inventory/tests.rs::replacement_objects_cannot_change_inventory_or_admit_substituted_checkout",
+  "xtask/src/reports/release/candidate_harness/source/inventory/tests.rs::source_inventory_and_checkout_enforce_independent_precise_budgets",
+  "xtask/src/reports/release/candidate_harness/source/inventory/tests.rs::batch_size_identity_cannot_expand_the_reviewed_source_inventory",
   "xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible",
   "xtask/src/reports/release_control.rs::tests::missing_candidate_selection_is_exposed_as_scope_pending",
   "xtask/src/reports/release_control.rs::tests::missing_disposition_fails_closed",
@@ -9016,12 +9054,19 @@ tests = [
   "xtask/src/reports/candidate_control.rs::tests::negative_candidate_state_fixture_covers_each_false_ready_boundary",
 ]
 fixtures = [
+  "xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.commit",
   "fixtures/benches_harness_evidence",
   "fixtures/release_control/complete.json",
   "fixtures/release_control/reconcile-required.json",
   "fixtures/release_control/candidate-state-negative.json",
 ]
 code = [
+  "xtask/src/reports/release/candidate_harness/live_head.rs",
+  "xtask/src/reports/release/candidate_harness/live_head/input.rs",
+  "xtask/src/reports/release/candidate_harness/input.rs",
+  "xtask/src/reports/release/candidate_harness/source.rs",
+  "xtask/src/reports/release/candidate_harness/source/inventory.rs",
+  "xtask/src/reports/source_promotion.rs",
   "xtask/src/reports/release_control.rs",
   "xtask/src/reports/candidate_control.rs",
   "xtask/src/command.rs",
@@ -10874,6 +10919,16 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities",
+  "crates/ripr/tests/owner_pin_execution.rs::local_empty_macro_preserves_independent_equality_execution",
+  "crates/ripr/tests/owner_pin_execution.rs::empty_macro_arguments_cannot_activate_a_real_far_oracle",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::empty_macro_call_predecessor_from_another_build_misses_and_current_reuses",
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::empty_local_macro_calls_preserve_real_call_text_and_original_source",
+  "crates/ripr/tests/owner_pin_execution.rs::async_test_discovery_does_not_supply_execution_provenance",
+  "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",
+  "crates/ripr/tests/owner_pin_execution.rs::equality_oracle_family_matched_static_and_runtime_controls",
+  "crates/ripr/tests/owner_pin_execution.rs::lexical_source_values_do_not_claim_observed_oracles",
+  "crates/ripr/tests/owner_pin_execution.rs::equality_family_admission_preserves_mixed_oracle_identity_and_projection",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_default_pinned_through_a_byte_slice_receiver",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::trait_method_needs_its_trait_imported_from_the_workspace",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::another_definition_of_the_method_defeats_the_pin",
@@ -10908,6 +10963,23 @@ tests = [
   "crates/ripr/tests/owner_pin_execution.rs::owner_pin_review_admission_controls",
 ]
 fixtures = [
+  "fixtures/predicate_boundary_oracle_refused",
+  "fixtures/predicate_empty_macro_boundary",
+  "fixtures/predicate_boundary_oracle_admitted",
+  "fixtures/error_path_oracle_execution_called",
+  "fixtures/error_path_oracle_execution_direct",
+  "fixtures/error_path_oracle_execution_false_branch",
+  "fixtures/error_path_oracle_execution_no_assertion",
+  "fixtures/error_path_oracle_execution_reached_uncalled",
+  "fixtures/error_path_oracle_execution_shadowed",
+  "fixtures/error_path_oracle_execution_uncalled",
+  "fixtures/predicate_oracle_execution_called",
+  "fixtures/predicate_oracle_execution_direct",
+  "fixtures/predicate_oracle_execution_false_branch",
+  "fixtures/predicate_oracle_execution_no_assertion",
+  "fixtures/predicate_oracle_execution_reached_uncalled",
+  "fixtures/predicate_oracle_execution_shadowed",
+  "fixtures/predicate_oracle_execution_uncalled",
   "fixtures/owner_return_pin_trait_method",
   "fixtures/owner_return_pin_identity_traps",
   "fixtures/infect_value_returned",
@@ -10935,6 +11007,11 @@ fixtures = [
   "fixtures/owner_return_pin_out_of_line_cfg",
 ]
 code = [
+  "crates/ripr/src/output/observed_values.rs",
+  "crates/ripr/src/output/human/evidence_lines.rs",
+  "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
@@ -10946,6 +11023,57 @@ code = [
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
 ]
 outputs = [
+  "fixtures/predicate_boundary_oracle_refused/expected/check.json",
+  "fixtures/predicate_empty_macro_boundary/expected/check.json",
+  "fixtures/predicate_empty_macro_boundary/expected/human.txt",
+  "fixtures/predicate_empty_macro_boundary/expected/human-full.txt",
+  "fixtures/predicate_boundary_oracle_refused/expected/human.txt",
+  "fixtures/predicate_boundary_oracle_refused/expected/human-full.txt",
+  "fixtures/predicate_boundary_oracle_admitted/expected/check.json",
+  "fixtures/predicate_boundary_oracle_admitted/expected/human.txt",
+  "fixtures/predicate_boundary_oracle_admitted/expected/human-full.txt",
+  "fixtures/error_path_oracle_execution_called/expected/check.json",
+  "fixtures/error_path_oracle_execution_called/expected/human.txt",
+  "fixtures/error_path_oracle_execution_called/expected/human-full.txt",
+  "fixtures/error_path_oracle_execution_direct/expected/check.json",
+  "fixtures/error_path_oracle_execution_direct/expected/human.txt",
+  "fixtures/error_path_oracle_execution_direct/expected/human-full.txt",
+  "fixtures/error_path_oracle_execution_false_branch/expected/check.json",
+  "fixtures/error_path_oracle_execution_false_branch/expected/human.txt",
+  "fixtures/error_path_oracle_execution_false_branch/expected/human-full.txt",
+  "fixtures/error_path_oracle_execution_no_assertion/expected/check.json",
+  "fixtures/error_path_oracle_execution_no_assertion/expected/human.txt",
+  "fixtures/error_path_oracle_execution_no_assertion/expected/human-full.txt",
+  "fixtures/error_path_oracle_execution_reached_uncalled/expected/check.json",
+  "fixtures/error_path_oracle_execution_reached_uncalled/expected/human.txt",
+  "fixtures/error_path_oracle_execution_reached_uncalled/expected/human-full.txt",
+  "fixtures/error_path_oracle_execution_shadowed/expected/check.json",
+  "fixtures/error_path_oracle_execution_shadowed/expected/human.txt",
+  "fixtures/error_path_oracle_execution_shadowed/expected/human-full.txt",
+  "fixtures/error_path_oracle_execution_uncalled/expected/check.json",
+  "fixtures/error_path_oracle_execution_uncalled/expected/human.txt",
+  "fixtures/error_path_oracle_execution_uncalled/expected/human-full.txt",
+  "fixtures/predicate_oracle_execution_called/expected/check.json",
+  "fixtures/predicate_oracle_execution_called/expected/human.txt",
+  "fixtures/predicate_oracle_execution_called/expected/human-full.txt",
+  "fixtures/predicate_oracle_execution_direct/expected/check.json",
+  "fixtures/predicate_oracle_execution_direct/expected/human.txt",
+  "fixtures/predicate_oracle_execution_direct/expected/human-full.txt",
+  "fixtures/predicate_oracle_execution_false_branch/expected/check.json",
+  "fixtures/predicate_oracle_execution_false_branch/expected/human.txt",
+  "fixtures/predicate_oracle_execution_false_branch/expected/human-full.txt",
+  "fixtures/predicate_oracle_execution_no_assertion/expected/check.json",
+  "fixtures/predicate_oracle_execution_no_assertion/expected/human.txt",
+  "fixtures/predicate_oracle_execution_no_assertion/expected/human-full.txt",
+  "fixtures/predicate_oracle_execution_reached_uncalled/expected/check.json",
+  "fixtures/predicate_oracle_execution_reached_uncalled/expected/human.txt",
+  "fixtures/predicate_oracle_execution_reached_uncalled/expected/human-full.txt",
+  "fixtures/predicate_oracle_execution_shadowed/expected/check.json",
+  "fixtures/predicate_oracle_execution_shadowed/expected/human.txt",
+  "fixtures/predicate_oracle_execution_shadowed/expected/human-full.txt",
+  "fixtures/predicate_oracle_execution_uncalled/expected/check.json",
+  "fixtures/predicate_oracle_execution_uncalled/expected/human.txt",
+  "fixtures/predicate_oracle_execution_uncalled/expected/human-full.txt",
   "fixtures/owner_return_pin_trait_method/expected/check.json",
   "fixtures/owner_return_pin_trait_method/expected/human.txt",
   "fixtures/owner_return_pin_identity_traps/expected/check.json",
@@ -11302,4 +11430,70 @@ outputs = []
 metrics = [
   "unit_test_pass_rate",
   "blind_journey_execute_positive_scenarios",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0209"
+name = "Installed Python journey fixture"
+spec = "docs/specs/RIPR-SPEC-0209-installed-python-journey-fixture.md"
+tests = [
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::committed_installed_python_manifest_binds_the_snapshot_bytes",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::committed_installed_python_scenarios_exist_in_the_executor_corpus",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::unknown_installed_python_scenario_is_reported_missing",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::drifted_installed_python_snapshot_digest_is_rejected",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::installed_python_git_identity_binding_accepts_only_lowercase_hex",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::unlisted_installed_python_snapshot_file_is_rejected",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::installed_python_scenario_candidate_must_bind_the_manifest_snapshots",
+  "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::bare_historical_command_must_not_become_the_recommendation",
+  "xtask/src/reports/blind_journey_execute.rs::tests::committed_corpus_and_receipt_validate_against_the_live_executor",
+  "xtask/src/reports/blind_journey_execute.rs::tests::required_scenarios_cannot_be_dropped_from_the_corpus",
+]
+fixtures = [
+  "fixtures/blind_journey_installed_python",
+  "fixtures/blind_journey_execute",
+]
+code = [
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/blind_journey_execute.rs",
+  "xtask/src/reports/fixtures.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "blind_journey_execute_positive_scenarios",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0208"
+name = "LSP work-done progress consumes shared analysis stages"
+spec = "docs/specs/RIPR-SPEC-0208-lsp-work-done-stage-mapping.md"
+tests = [
+  "crates/ripr/src/lsp/progress.rs::tests::report_stage_emits_one_bounded_report_per_stage_in_producer_order",
+  "crates/ripr/src/lsp/progress.rs::tests::report_stage_suppresses_consecutive_duplicate_stages",
+  "crates/ripr/src/lsp/progress.rs::tests::report_stage_is_silent_for_terminals_queued_unstarted_and_unknown",
+  "crates/ripr/src/lsp/progress.rs::tests::report_stage_is_silent_without_client_capability",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::stage_mapping_covers_every_non_terminal_producer_stage",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::cli_and_lsp_project_one_success_trace_with_identical_stage_identity",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::disclosed_limitation_stays_limited_on_the_lsp_surface",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::cancelled_and_failed_traces_stay_non_successful_on_both_surfaces",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::known_and_unknown_denominators_never_become_percentages",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::removing_the_shared_mapping_breaks_parity_even_with_legacy_progress",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::bridge_forwards_events_without_blocking_the_producer",
+  "crates/ripr/src/lsp/progress_stages.rs::tests::stalled_progress_sink_cannot_block_the_bounded_stage_drain",
+  "crates/ripr/src/lsp/tests.rs::work_done_progress_stage_reports_through_real_refresh_journey",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/lsp/progress_stages.rs",
+  "crates/ripr/src/lsp/progress.rs",
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/app/check.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0208-lsp-work-done-stage-mapping.md",
+]
+metrics = [
+  "lsp_progress_stage_reports",
+  "lsp_progress_records_per_token",
 ]
