@@ -65,6 +65,12 @@ sides can consume them: a removal/addition of source text beginning `--`/`++`
 is indistinguishable from that pair. Truncation before such an ambiguous plain
 section cannot always be identified; unambiguous boundaries remain checked.
 
+Limitation paths retain filename whitespace, including leading and trailing
+whitespace. Portable slash and current-directory normalization must not collapse
+distinct filesystem names. The same path identity survives construction,
+sorting/deduplication, serialization and deserialization, so recovery names the
+actual unavailable file and preview counts exclude only that file (#5110).
+
 Human output must name incomplete or unsupported analysis before any empty
 finding message and must state that zero findings is not a clean result when a
 limitation exists. JSON/status output must expose the same DTO and derive
@@ -128,6 +134,10 @@ projection does not analyze those regions.
 
 - combined hunk and conflict-marker parser limitations survive into the
   pipeline outcome;
+- a changed source file absent from the working tree (sparse checkout or
+  local delete) is a `changed_file_absent_from_worktree` limitation and a
+  `partial_with_limitations` outcome, not a complete `no_static_path`
+  finding; review-comments names the dropped file the same way;
 - ordinary zero-result input has a complete non-limitation kind distinct from
   unsupported or partial input;
 - human and JSON output carry the same limitation kind and recovery route;

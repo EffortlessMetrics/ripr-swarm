@@ -832,6 +832,17 @@ fn classified_seam_hover_markdown(
         push_first_useful_action(&mut lines, &first_action);
     }
 
+    // The compact RepairCard summary (#4668, RIPR-SPEC-0198): identity,
+    // instruction state, next-action presence, and detail availability only.
+    // The complete card with its stable detail references rides behind the
+    // "Agent handoff: copy repair card" action; a failed assembly omits the
+    // section instead of weakening the card.
+    if let Some(snapshot) = snapshot
+        && let Some(card) = super::repair_card::seam_repair_card(entry, snapshot)
+    {
+        lines.extend(super::repair_card::repair_card_hover_lines(&card));
+    }
+
     push_test_shape(&mut lines, entry);
     push_editor_commands(&mut lines, entry, snapshot);
     push_static_limits(&mut lines);
@@ -1398,6 +1409,7 @@ mod seam_hover_tests {
     fn sample_snapshot(mode: Mode) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode,
@@ -1410,6 +1422,7 @@ mod seam_hover_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,

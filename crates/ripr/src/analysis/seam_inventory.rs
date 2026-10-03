@@ -169,6 +169,7 @@ pub(crate) struct ClassifiedSeamsReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
+    pub(crate) naming_only_skips: Vec<PathBuf>,
 }
 
 pub(crate) fn inventory_classified_seams_at_with_config(
@@ -186,6 +187,9 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
     let store_limit = classified_seam_cache_store_limit()?;
+    // Refuse an invalid seam-limit override (#4529) before the cache lookup
+    // and the index build, not after the work it was meant to bound.
+    repo_exposure_seam_limit()?;
     let collect_started = Instant::now();
     let corpus = match scan_corpus_fingerprint(root, config) {
         Ok(scan) => scan,
@@ -202,6 +206,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     let rust_files = corpus.analyzable;
     let fingerprint = corpus.fingerprint;
     let skipped_generated = corpus.skipped_generated;
+    let naming_only_skips = corpus.naming_only_skips;
     let inputs = workspace_key_inputs(root, config);
 
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
@@ -234,6 +239,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                     classified: cached,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
+                    naming_only_skips,
                 });
             }
             CacheLoad::Miss => {
@@ -289,6 +295,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 classified: cached,
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
+                naming_only_skips,
             });
         }
         CacheLoad::Miss => {
@@ -348,6 +355,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
         classified,
         limit_info,
         skipped_generated,
+        naming_only_skips,
     })
 }
 
@@ -514,7 +522,8 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
-    let classified = seam_classification::classify_seams_owned(seams, evidence);
+    let classified =
+        classify_seams_owned_retaining(seams, evidence, super::witness::repo_adapter_input(false));
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
     Ok(classified)
 }
@@ -764,7 +773,7 @@ fn inventory_classified_seams_from_state_with_config(
     let mut seams = inventory_seams_from_index(&production_files, &cached.index);
     cancellation::checkpoint()?;
     trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
-    let limit_info = apply_repo_exposure_seam_limit(&mut seams);
+    let limit_info = apply_repo_exposure_seam_limit(&mut seams)?;
     let evidence_started = Instant::now();
     trace_latency_phase(
         "evidence_for_seams",
@@ -775,7 +784,11 @@ fn inventory_classified_seams_from_state_with_config(
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
-    let classified = seam_classification::classify_seams_owned(seams, evidence);
+    let classified = classify_seams_owned_retaining(
+        seams,
+        evidence,
+        super::witness::repo_adapter_input(limit_info.is_some()),
+    );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
     Ok((classified, limit_info, lexical_fallback_files))
@@ -784,6 +797,8 @@ fn inventory_classified_seams_from_state_with_config(
 #[derive(Clone, Debug)]
 pub(crate) struct ScopedClassifiedSeamInventory {
     pub(crate) classified: Vec<ClassifiedSeam>,
+    /// Complete evaluation count, independent of retained payload count.
+    pub(crate) classified_seams_considered: usize,
     pub(crate) file_fact_cache: FileFactCacheStats,
     pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
     pub(crate) total_rust_files: usize,
@@ -795,6 +810,10 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     /// [`DiffScopeEvidenceStages`] stage was sufficient; zero when
     /// every scoped seam was classified.
     pub(crate) unevaluated_seams: usize,
+    /// Changed source files named by the diff that are not regular files
+    /// in the working tree (#4586). Empty when every changed source file
+    /// is on disk.
+    pub(crate) absent_changed_files: Vec<PathBuf>,
 }
 
 /// Two-stage evidence for the diff-scoped inventory.
@@ -986,7 +1005,8 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         })
         .collect::<Vec<_>>();
     let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
-    let classified = seam_classification::classify_seams_owned(seams, evidence);
+    let classified =
+        classify_seams_owned_retaining(seams, evidence, super::witness::repo_adapter_input(true));
 
     Ok(TargetedTestClassifiedSeamInventory {
         classified,
@@ -1136,6 +1156,7 @@ fn try_no_impact_fast_path(
     Ok(NoImpactOutcome::Fast(Box::new(
         ScopedClassifiedSeamInventory {
             classified: Vec::new(),
+            classified_seams_considered: 0,
             file_fact_cache: FileFactCacheStats::zero_work(),
             workspace_cache_key,
             total_rust_files,
@@ -1144,6 +1165,7 @@ fn try_no_impact_fast_path(
             changed_production_files: Vec::new(),
             immediate_caller_files: Vec::new(),
             unevaluated_seams: 0,
+            absent_changed_files: Vec::new(),
         },
     )))
 }
@@ -1284,17 +1306,38 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         changed_owner_names,
         !no_impact_fast_path_disabled(),
         None,
+        None,
     )
 }
 
-/// [`inventory_diff_scoped_classified_seams_at_with_config`] with staged
-/// evidence; see [`DiffScopeEvidenceStages`].
-pub(crate) fn inventory_diff_scoped_classified_seams_staged_at_with_config(
+/// A bounded consumer of classified windows. Implementations retain their
+/// result payloads independently from the complete evaluation denominator.
+pub(crate) trait ScopedEvidenceConsumer {
+    fn in_first_stage(&self, seam: &RepoSeam) -> bool;
+    fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String>;
+    fn first_stage_sufficient(&self) -> bool;
+    fn retained_payloads(&self) -> usize;
+}
+
+const DEFAULT_REVIEW_EVIDENCE_WINDOW: usize = 32;
+const MAX_REVIEW_EVIDENCE_WINDOW: usize = 256;
+
+fn review_evidence_window_size() -> Result<usize, String> {
+    match std::env::var("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE") {
+        Ok(value) => value.parse::<usize>().ok()
+            .filter(|size| (1..=MAX_REVIEW_EVIDENCE_WINDOW).contains(size))
+            .ok_or_else(|| format!("RIPR_REVIEW_EVIDENCE_WINDOW_SIZE must be between 1 and {MAX_REVIEW_EVIDENCE_WINDOW}")),
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_REVIEW_EVIDENCE_WINDOW),
+        Err(error) => Err(format!("invalid RIPR_REVIEW_EVIDENCE_WINDOW_SIZE: {error}")),
+    }
+}
+
+pub(crate) fn inventory_diff_scoped_streamed_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
     changed_files: &[PathBuf],
     changed_owner_names: &[String],
-    stages: &DiffScopeEvidenceStages<'_>,
+    consumer: &mut dyn ScopedEvidenceConsumer,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
     inventory_diff_scoped_classified_seams_inner(
         root,
@@ -1302,8 +1345,99 @@ pub(crate) fn inventory_diff_scoped_classified_seams_staged_at_with_config(
         changed_files,
         changed_owner_names,
         !no_impact_fast_path_disabled(),
-        Some(stages),
+        None,
+        Some((consumer, review_evidence_window_size()?)),
     )
+}
+
+fn classify_scoped_seams_streamed(
+    seams: &[RepoSeam],
+    index: &RustIndex,
+    consumer: &mut dyn ScopedEvidenceConsumer,
+    window_size: usize,
+) -> Result<(usize, usize), String> {
+    if window_size == 0 || window_size > MAX_REVIEW_EVIDENCE_WINDOW {
+        return Err("invalid review evidence window size".into());
+    }
+    let pass = test_grip_evidence::EvidencePass::new(index);
+    cancellation::checkpoint()?;
+    let mut first = Vec::new();
+    let mut rest = Vec::new();
+    for (ordinal, seam) in seams.iter().enumerate() {
+        if consumer.in_first_stage(seam) {
+            first.push(ordinal);
+        } else {
+            rest.push(ordinal);
+        }
+    }
+    let mut evaluated = classify_evidence_windows(seams, &first, &pass, consumer, window_size)?;
+    if consumer.first_stage_sufficient() {
+        trace_latency_phase(
+            "evidence_for_seams",
+            "review_scope_first_stage_sufficient",
+            Duration::ZERO,
+        );
+        return Ok((evaluated, rest.len()));
+    }
+    evaluated = evaluated
+        .checked_add(classify_evidence_windows(
+            seams,
+            &rest,
+            &pass,
+            consumer,
+            window_size,
+        )?)
+        .ok_or("review evidence evaluation count overflow")?;
+    cancellation::checkpoint()?;
+    Ok((evaluated, 0))
+}
+
+fn classify_evidence_windows(
+    seams: &[RepoSeam],
+    ordinals: &[usize],
+    pass: &test_grip_evidence::EvidencePass<'_>,
+    consumer: &mut dyn ScopedEvidenceConsumer,
+    window_size: usize,
+) -> Result<usize, String> {
+    let mut evaluated = 0usize;
+    for window in ordinals.chunks(window_size) {
+        cancellation::checkpoint()?;
+        let window_seams = window
+            .iter()
+            .map(|ordinal| seams[*ordinal].clone())
+            .collect::<Vec<_>>();
+        let evidence = pass.evidence_for(&window_seams);
+        cancellation::checkpoint()?;
+        let classified = seam_classification::classify_seams_owned(window_seams, evidence);
+        if classified.len() != window.len() {
+            return Err(
+                "review evidence window is incomplete; no complete guidance is available".into(),
+            );
+        }
+        for (ordinal, entry) in window.iter().copied().zip(classified) {
+            if entry.seam.id() != seams[ordinal].id() {
+                return Err("review evidence window identity mismatch".into());
+            }
+            consumer.observe(ordinal, entry)?;
+        }
+        evaluated = evaluated
+            .checked_add(window.len())
+            .ok_or("review evidence evaluation count overflow")?;
+        pass.clear_window_memos();
+        trace_latency_phase(
+            "review_evidence_window",
+            &format!(
+                "evaluated_{evaluated}_window_{}_retained_{}",
+                window.len(),
+                consumer.retained_payloads()
+            ),
+            Duration::ZERO,
+        );
+        // No partially completed window can cross the caller's cancellation
+        // boundary as a complete aggregate, even after its payloads were moved.
+        cancellation::checkpoint()?;
+    }
+    Ok(evaluated)
 }
 
 /// Shared body behind [`inventory_diff_scoped_classified_seams_at_with_config`].
@@ -1317,13 +1451,20 @@ fn inventory_diff_scoped_classified_seams_inner(
     changed_owner_names: &[String],
     fast_path_enabled: bool,
     stages: Option<&DiffScopeEvidenceStages<'_>>,
+    consumer: Option<(&mut dyn ScopedEvidenceConsumer, usize)>,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
     cancellation::checkpoint()?;
+    let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
+        root,
+        changed_files.iter().map(PathBuf::as_path),
+    );
     if fast_path_enabled {
         match try_no_impact_fast_path(root, config, changed_files, changed_owner_names) {
             Ok(NoImpactOutcome::Fast(inventory)) => {
                 cancellation::checkpoint()?;
-                return Ok(*inventory);
+                let mut inventory = *inventory;
+                inventory.absent_changed_files = absent_changed_files;
+                return Ok(inventory);
             }
             Ok(NoImpactOutcome::Declined(reason)) => {
                 trace_latency_phase(
@@ -1415,11 +1556,21 @@ fn inventory_diff_scoped_classified_seams_inner(
         seams_started.elapsed(),
     );
     cancellation::checkpoint()?;
-    let (classified, unevaluated_seams) = classify_scoped_seams(seams, &cached.index, stages)?;
+    let (classified, classified_seams_considered, unevaluated_seams) =
+        if let Some((consumer, window_size)) = consumer {
+            let (evaluated, unevaluated) =
+                classify_scoped_seams_streamed(&seams, &cached.index, consumer, window_size)?;
+            (Vec::new(), evaluated, unevaluated)
+        } else {
+            let (classified, unevaluated) = classify_scoped_seams(seams, &cached.index, stages)?;
+            let evaluated = classified.len();
+            (classified, evaluated, unevaluated)
+        };
 
     cancellation::checkpoint()?;
     Ok(ScopedClassifiedSeamInventory {
         classified,
+        classified_seams_considered,
         file_fact_cache: cached.file_fact_cache,
         workspace_cache_key,
         total_rust_files,
@@ -1428,6 +1579,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         changed_production_files,
         immediate_caller_files,
         unevaluated_seams,
+        absent_changed_files,
     })
 }
 
@@ -1465,7 +1617,8 @@ fn classify_scoped_seams(
         );
         evidence = pass.evidence_for(&first);
         cancellation::checkpoint()?;
-        let classified_first = seam_classification::classify_seams(&first, &evidence);
+        let classified_first =
+            classify_seams_retaining(&first, &evidence, super::witness::repo_adapter_input(true));
         if (stages.sufficient)(&classified_first) {
             trace_latency_phase(
                 "evidence_for_seams",
@@ -1505,7 +1658,31 @@ fn classify_complete_scoped_evidence(
     evidence: Vec<test_grip_evidence::TestGripEvidence>,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     cancellation::checkpoint()?;
-    Ok(seam_classification::classify_seams_owned(seams, evidence))
+    Ok(classify_seams_owned_retaining(
+        seams,
+        evidence,
+        super::witness::repo_adapter_input(true),
+    ))
+}
+
+fn classify_seams_retaining(
+    seams: &[RepoSeam],
+    evidence: &[test_grip_evidence::TestGripEvidence],
+    input: super::witness::AdapterInput,
+) -> Vec<ClassifiedSeam> {
+    let classified = seam_classification::classify_seams(seams, evidence);
+    super::witness::retain_classified_seams(&classified, input);
+    classified
+}
+
+fn classify_seams_owned_retaining(
+    seams: Vec<RepoSeam>,
+    evidence: Vec<test_grip_evidence::TestGripEvidence>,
+    input: super::witness::AdapterInput,
+) -> Vec<ClassifiedSeam> {
+    let classified = seam_classification::classify_seams_owned(seams, evidence);
+    super::witness::retain_classified_seams(&classified, input);
+    classified
 }
 
 fn immediate_caller_file_set(
@@ -1552,32 +1729,61 @@ fn normalized_inventory_path(path: &Path) -> String {
 /// Return the effective seam limit and its source.
 ///
 /// - Env var unset → `Some((DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, Default))` — always-on cap.
-/// - Env var = "0" (or parses to 0) → `None` — operator opt-out: unbounded.
+/// - Env var = "0" → `None` — operator opt-out: unbounded.
 /// - Env var = N > 0 → `Some((N, Configured))`.
-pub(crate) fn repo_exposure_seam_limit() -> Option<(usize, SeamLimitSource)> {
-    match std::env::var(REPO_EXPOSURE_SEAM_LIMIT_ENV) {
-        Ok(value) => {
-            // Explicit env: "0" means opt-out (unbounded); N>0 means configured.
-            parse_repo_exposure_seam_limit(&value).map(|n| (n, SeamLimitSource::Configured))
-        }
-        Err(_) => {
-            // Env var not set → apply the default cap.
-            Some((DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, SeamLimitSource::Default))
-        }
+/// - Anything else → `Err` naming the variable (#4529). Only an explicit `0`
+///   removes the cap, so a typo never turns the memory guard off.
+pub(crate) fn repo_exposure_seam_limit() -> Result<Option<(usize, SeamLimitSource)>, String> {
+    seam_limit_from_env(
+        REPO_EXPOSURE_SEAM_LIMIT_ENV,
+        DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+        std::env::var(REPO_EXPOSURE_SEAM_LIMIT_ENV),
+    )
+}
+
+/// Shared parser for the seam caps whose `0` means "unbounded"
+/// (`RIPR_REPO_EXPOSURE_SEAM_LIMIT`, `RIPR_PILOT_SEAM_BUDGET`). Fails closed
+/// like `positive_limit_from_env`: an unparseable value is an error, never
+/// the opt-out.
+fn seam_limit_from_env(
+    env_name: &str,
+    default: usize,
+    value: Result<String, std::env::VarError>,
+) -> Result<Option<(usize, SeamLimitSource)>, String> {
+    match value {
+        Ok(raw) => parse_seam_limit(env_name, &raw)
+            .map(|limit| limit.map(|n| (n, SeamLimitSource::Configured))),
+        Err(std::env::VarError::NotPresent) => Ok(Some((default, SeamLimitSource::Default))),
+        Err(std::env::VarError::NotUnicode(value)) => Err(format!(
+            "{env_name} is not valid UTF-8 (got {value:?}): set a positive seam count, or 0 to \
+             remove the cap"
+        )),
     }
 }
 
-fn parse_repo_exposure_seam_limit(value: &str) -> Option<usize> {
-    value
-        .trim()
-        .parse::<usize>()
-        .ok()
-        .filter(|limit| *limit > 0)
+fn parse_seam_limit(env_name: &str, value: &str) -> Result<Option<usize>, String> {
+    let trimmed = value.trim();
+    let invalid = |value: &str| {
+        format!(
+            "{env_name} `{value}` is not a seam count: set a positive integer, or 0 to remove \
+             the cap"
+        )
+    };
+    match trimmed.parse::<usize>() {
+        // Only the exact spelling `0` is the opt-out: `+0` and `00` also parse
+        // as zero, but the documented opt-out form is `0` (#4606 review).
+        Ok(0) if trimmed == "0" => Ok(None),
+        Ok(0) => Err(invalid(value)),
+        Ok(limit) => Ok(Some(limit)),
+        Err(_) => Err(invalid(value)),
+    }
 }
 
-pub(crate) fn apply_repo_exposure_seam_limit(seams: &mut Vec<RepoSeam>) -> Option<SeamLimitInfo> {
-    let (limit, source) = repo_exposure_seam_limit()?;
-    apply_repo_exposure_seam_limit_inner(seams, limit, source)
+pub(crate) fn apply_repo_exposure_seam_limit(
+    seams: &mut Vec<RepoSeam>,
+) -> Result<Option<SeamLimitInfo>, String> {
+    Ok(repo_exposure_seam_limit()?
+        .and_then(|(limit, source)| apply_repo_exposure_seam_limit_inner(seams, limit, source)))
 }
 
 fn apply_repo_exposure_seam_limit_inner(
@@ -1621,9 +1827,9 @@ fn apply_repo_exposure_seam_limit_for_test(
 /// 3. Env var unset → `DEFAULT_PILOT_SEAM_BUDGET` (always-on default).
 pub(crate) fn apply_pilot_seam_budget(
     classified: &mut Vec<super::seam_classification::ClassifiedSeam>,
-) -> Option<SeamLimitInfo> {
-    let (limit, source) = pilot_seam_budget()?;
-    apply_pilot_seam_budget_inner(classified, limit, source)
+) -> Result<Option<SeamLimitInfo>, String> {
+    Ok(pilot_seam_budget()?
+        .and_then(|(limit, source)| apply_pilot_seam_budget_inner(classified, limit, source)))
 }
 
 fn apply_pilot_seam_budget_inner(
@@ -1648,13 +1854,13 @@ fn apply_pilot_seam_budget_inner(
 /// - Env var unset → `Some((DEFAULT_PILOT_SEAM_BUDGET, Default))`.
 /// - Env var = `"0"` → `None` (operator opt-out: unbounded).
 /// - Env var = N > 0 → `Some((N, Configured))`.
-pub(crate) fn pilot_seam_budget() -> Option<(usize, SeamLimitSource)> {
-    match std::env::var(PILOT_SEAM_BUDGET_ENV) {
-        Ok(value) => {
-            parse_repo_exposure_seam_limit(&value).map(|n| (n, SeamLimitSource::Configured))
-        }
-        Err(_) => Some((DEFAULT_PILOT_SEAM_BUDGET, SeamLimitSource::Default)),
-    }
+/// - Anything else → `Err` naming the variable (#4529).
+pub(crate) fn pilot_seam_budget() -> Result<Option<(usize, SeamLimitSource)>, String> {
+    seam_limit_from_env(
+        PILOT_SEAM_BUDGET_ENV,
+        DEFAULT_PILOT_SEAM_BUDGET,
+        std::env::var(PILOT_SEAM_BUDGET_ENV),
+    )
 }
 
 #[cfg(test)]
@@ -2218,6 +2424,111 @@ marker = "libtest_mimic::Trial"
     }
 
     #[test]
+    fn streamed_windows_preserve_full_evidence_and_refuse_boundary_cancellation()
+    -> Result<(), String> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        struct Consumer {
+            entries: Vec<ClassifiedSeam>,
+            cancel: Option<AnalysisCancellationToken>,
+            sufficient: bool,
+        }
+        impl ScopedEvidenceConsumer for Consumer {
+            fn in_first_stage(&self, seam: &RepoSeam) -> bool {
+                seam.owner().ends_with("eligible")
+            }
+            fn observe(&mut self, _: usize, entry: ClassifiedSeam) -> Result<(), String> {
+                self.entries.push(entry);
+                if let Some(token) = &self.cancel {
+                    token.cancel(AnalysisAbortKind::Cancelled);
+                }
+                Ok(())
+            }
+            fn first_stage_sufficient(&self) -> bool {
+                self.sufficient
+            }
+            fn retained_payloads(&self) -> usize {
+                self.entries.len()
+            }
+        }
+        let path = PathBuf::from("src/lib.rs");
+        let source =
+            "pub fn eligible(n:i32)->bool { n >= 10 }\npub fn other(n:i32)->bool { n < 20 }";
+        let mut index = index_from_files(&[
+            (path.clone(), source),
+            (
+                PathBuf::from("tests/boundary.rs"),
+                "#[test] fn exercises_both() { let _ = eligible(11); let _ = other(11); }",
+            ),
+        ])?;
+        index.tests = index
+            .files
+            .values()
+            .flat_map(|facts| facts.tests.iter().cloned())
+            .collect();
+        assert!(!index.tests.is_empty());
+        let seams = inventory_seams_from_index(&[path], &index);
+        if seams.len() < 2 {
+            return Err("fixture must span windows".into());
+        }
+        let (expected, _) = classify_scoped_seams(seams.clone(), &index, None)?;
+        for owner in ["eligible", "other"] {
+            assert!(
+                expected
+                    .iter()
+                    .any(|entry| entry.seam.owner().ends_with(owner)
+                        && !entry.evidence.related_tests.is_empty()),
+                "shared test evidence must reach {owner}"
+            );
+        }
+        for width in [1, 2, 32] {
+            let mut sink = Consumer {
+                entries: Vec::new(),
+                cancel: None,
+                sufficient: false,
+            };
+            let (evaluated, skipped) =
+                classify_scoped_seams_streamed(&seams, &index, &mut sink, width)?;
+            assert_eq!((evaluated, skipped), (seams.len(), 0));
+            assert_eq!(class_by_id(&sink.entries), class_by_id(&expected));
+        }
+        let mut early = Consumer {
+            entries: Vec::new(),
+            cancel: None,
+            sufficient: true,
+        };
+        let (evaluated, skipped) = classify_scoped_seams_streamed(&seams, &index, &mut early, 1)?;
+        let first = expected
+            .iter()
+            .filter(|entry| entry.seam.owner().ends_with("eligible"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!first.is_empty());
+        assert!(first.len() < seams.len());
+        assert_eq!(
+            (evaluated, skipped),
+            (first.len(), seams.len() - first.len())
+        );
+        assert_eq!(class_by_id(&early.entries), class_by_id(&first));
+        let token = AnalysisCancellationToken::new();
+        let mut sink = Consumer {
+            entries: Vec::new(),
+            cancel: Some(token.clone()),
+            sufficient: false,
+        };
+        let result = with_token(&token, || {
+            classify_scoped_seams_streamed(&seams, &index, &mut sink, 1)
+        });
+        assert_eq!(
+            result.err().as_deref(),
+            Some("analysis cancelled: Cancelled")
+        );
+        assert_eq!(sink.entries.len(), 1, "second window must not begin");
+        Ok(())
+    }
+
+    #[test]
     fn staged_scope_evidence_skips_the_rest_only_when_the_first_stage_is_sufficient()
     -> Result<(), String> {
         let prod = PathBuf::from("src/pricing.rs");
@@ -2478,7 +2789,7 @@ pub fn check_b(x: i32) -> i32 {
     x
 }
 "#;
-        let index = index_from_files(&[(a.clone(), a_src), (b.clone(), b_src)])?;
+        let mut index = index_from_files(&[(a.clone(), a_src), (b.clone(), b_src)])?;
 
         let forward = inventory_seams_from_index(&[a.clone(), b.clone()], &index);
         let reversed = inventory_seams_from_index(&[b.clone(), a.clone()], &index);
@@ -2490,6 +2801,22 @@ pub fn check_b(x: i32) -> i32 {
                 "seam IDs depend on input order:\n  forward:  {forward_ids:?}\n  reversed: {reversed_ids:?}"
             ));
         }
+        assert!(!forward_ids.is_empty());
+        let facts = index.files.get_mut(&a).ok_or("fixture file facts")?;
+        let probe = facts
+            .probe_shapes
+            .first()
+            .ok_or("fixture predicate")?
+            .clone();
+        facts.probe_shapes.push(probe);
+        let repeated = inventory_seams_from_index(&[b.clone(), a.clone(), b, a], &index);
+        assert_eq!(
+            repeated
+                .iter()
+                .map(|seam| seam.id().as_str())
+                .collect::<Vec<_>>(),
+            forward_ids
+        );
         Ok(())
     }
 
@@ -2843,12 +3170,98 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     #[test]
-    fn repo_exposure_seam_limit_parser_accepts_positive_integer_only() {
-        assert_eq!(parse_repo_exposure_seam_limit("8000"), Some(8000));
-        assert_eq!(parse_repo_exposure_seam_limit(" 12 "), Some(12));
-        assert_eq!(parse_repo_exposure_seam_limit("0"), None);
-        assert_eq!(parse_repo_exposure_seam_limit("-1"), None);
-        assert_eq!(parse_repo_exposure_seam_limit("not-a-number"), None);
+    fn repo_exposure_seam_limit_parser_accepts_positive_integer_or_zero_opt_out() {
+        let env = REPO_EXPOSURE_SEAM_LIMIT_ENV;
+        assert_eq!(parse_seam_limit(env, "8000"), Ok(Some(8000)));
+        assert_eq!(parse_seam_limit(env, " 12 "), Ok(Some(12)));
+        assert_eq!(parse_seam_limit(env, "0"), Ok(None));
+    }
+
+    #[test]
+    fn seam_limit_parser_refuses_values_that_are_not_a_count() -> Result<(), String> {
+        // #4529: before, every unparseable value fell into the `0` opt-out
+        // and silently removed the memory guard. `+0` and `00` parse as zero
+        // too, but only the exact spelling `0` is the opt-out (#4606 review).
+        for value in ["-1", "not-a-number", "1k", "", "1.5", "+0", "00"] {
+            let Err(error) = parse_seam_limit(REPO_EXPOSURE_SEAM_LIMIT_ENV, value) else {
+                return Err(format!(
+                    "`{value}` must be refused, not read as a cap or the opt-out"
+                ));
+            };
+            if !(error.starts_with("RIPR_REPO_EXPOSURE_SEAM_LIMIT `")
+                && error.contains("or 0 to remove the cap"))
+            {
+                return Err(format!(
+                    "error must name the variable and the repair: {error}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_limit_env_reader_keeps_default_and_refuses_non_unicode() -> Result<(), String> {
+        assert_eq!(
+            seam_limit_from_env(
+                PILOT_SEAM_BUDGET_ENV,
+                DEFAULT_PILOT_SEAM_BUDGET,
+                Err(std::env::VarError::NotPresent),
+            ),
+            Ok(Some((DEFAULT_PILOT_SEAM_BUDGET, SeamLimitSource::Default)))
+        );
+        assert_eq!(
+            seam_limit_from_env(
+                PILOT_SEAM_BUDGET_ENV,
+                DEFAULT_PILOT_SEAM_BUDGET,
+                Ok("7".into())
+            ),
+            Ok(Some((7, SeamLimitSource::Configured)))
+        );
+        assert!(
+            seam_limit_from_env(
+                PILOT_SEAM_BUDGET_ENV,
+                DEFAULT_PILOT_SEAM_BUDGET,
+                Ok("abc".into()),
+            )
+            .is_err_and(|error| error.starts_with("RIPR_PILOT_SEAM_BUDGET `abc`"))
+        );
+        assert!(matches!(
+            seam_limit_from_env(
+                PILOT_SEAM_BUDGET_ENV,
+                DEFAULT_PILOT_SEAM_BUDGET,
+                Err(std::env::VarError::NotUnicode(std::ffi::OsString::new())),
+            ),
+            Err(error) if error.starts_with("RIPR_PILOT_SEAM_BUDGET is not valid UTF-8 (got ")
+        ));
+        // The escaped invalid value rides in the error, like the Unicode
+        // branch's `{value}`; a value the user cannot see cannot be corrected.
+        #[cfg(windows)]
+        let non_unicode = {
+            use std::os::windows::ffi::OsStringExt;
+            std::ffi::OsString::from_wide(&[0xD800, 0x0061])
+        };
+        #[cfg(unix)]
+        let non_unicode = {
+            use std::os::unix::ffi::OsStringExt;
+            std::ffi::OsString::from_vec(vec![0xFF, 0x61])
+        };
+        let Err(error) = seam_limit_from_env(
+            PILOT_SEAM_BUDGET_ENV,
+            DEFAULT_PILOT_SEAM_BUDGET,
+            Err(std::env::VarError::NotUnicode(non_unicode)),
+        ) else {
+            return Err("a non-UTF-8 value must be refused".to_string());
+        };
+        assert!(
+            error.starts_with("RIPR_PILOT_SEAM_BUDGET is not valid UTF-8 (got ")
+                && error.ends_with("): set a positive seam count, or 0 to remove the cap"),
+            "the error names the variable and the accepted forms: {error}"
+        );
+        assert!(
+            error.contains(r"\u{") || error.contains("\\x"),
+            "the escaped invalid value must ride in the error: {error}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2921,6 +3334,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
@@ -2972,6 +3386,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
             impl_context: Default::default(),
         };
         let mut index = RustIndex::default();
@@ -4004,6 +4419,7 @@ marker = "libtest_mimic::Trial"
             &[],
             false,
             None,
+            None,
         )?;
         if !full.classified.is_empty() {
             return Err("docs-only diff must classify no seams on the full path".to_owned());
@@ -4187,6 +4603,7 @@ marker = "libtest_mimic::Trial"
             &[],
             false,
             None,
+            None,
         )?;
         if cold.total_rust_files == 0 || cold.total_production_files == 0 {
             return Err(
@@ -4243,6 +4660,7 @@ marker = "libtest_mimic::Trial"
             &changed,
             &[],
             true,
+            None,
             None,
         )?;
         if recovered.workspace_cache_key != cold.workspace_cache_key
@@ -4338,6 +4756,7 @@ marker = "libtest_mimic::Trial"
             &[],
             true,
             None,
+            None,
         )?;
         let full = inventory_diff_scoped_classified_seams_inner(
             &root,
@@ -4345,6 +4764,7 @@ marker = "libtest_mimic::Trial"
             &changed,
             &[],
             false,
+            None,
             None,
         )?;
         // ClassifiedSeam carries evidence payloads without structural
@@ -4872,14 +5292,20 @@ marker = "libtest_mimic::Trial"
     }
 
     #[test]
-    fn parse_repo_exposure_seam_limit_zero_returns_none() {
+    fn parse_seam_limit_zero_returns_none() {
         // "0" is the opt-out value: unbounded.
-        assert_eq!(parse_repo_exposure_seam_limit("0"), None);
+        assert_eq!(
+            parse_seam_limit(REPO_EXPOSURE_SEAM_LIMIT_ENV, "0"),
+            Ok(None)
+        );
     }
 
     #[test]
-    fn parse_repo_exposure_seam_limit_positive_returns_some() {
-        assert_eq!(parse_repo_exposure_seam_limit("7500"), Some(7500));
+    fn parse_seam_limit_positive_returns_some() {
+        assert_eq!(
+            parse_seam_limit(REPO_EXPOSURE_SEAM_LIMIT_ENV, "7500"),
+            Ok(Some(7500))
+        );
     }
 
     #[test]
@@ -4999,10 +5425,13 @@ pub fn check_b(x: i32) -> bool { x < 0 }
 
     #[test]
     fn pilot_seam_budget_env_zero_parses_as_unbounded() {
-        // The same `parse_repo_exposure_seam_limit` helper is shared for
-        // opt-out (value "0" → None means no budget applied).
-        assert_eq!(parse_repo_exposure_seam_limit("0"), None);
-        assert_eq!(parse_repo_exposure_seam_limit("500"), Some(500));
+        // The same `parse_seam_limit` helper is shared for opt-out
+        // (value "0" → None means no budget applied).
+        assert_eq!(parse_seam_limit(PILOT_SEAM_BUDGET_ENV, "0"), Ok(None));
+        assert_eq!(
+            parse_seam_limit(PILOT_SEAM_BUDGET_ENV, "500"),
+            Ok(Some(500))
+        );
     }
 
     #[test]
@@ -5474,10 +5903,9 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
     }
 
     #[test]
-    fn given_generator_header_only_ffi_when_repo_inventory_runs_then_file_stays_a_seam()
+    fn given_generator_header_only_ffi_when_repo_inventory_runs_then_file_is_not_a_seam()
     -> Result<(), String> {
-        // #4756's header/vendor predicate is not on this main. Aligning with
-        // `ripr check` must not invent that skip here.
+        // #4756 is now landed: inventory must share its generated-source authority.
         let root = make_tempdir("generated-header-not-absorbed")?;
         write_predicate_file(&root, "src/lib.rs")?;
         write_file(
@@ -5493,10 +5921,13 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
             &root,
             &RiprConfig::default(),
         )?);
-        if !files.contains("src/ffi.rs") {
+        if files.contains("src/ffi.rs") {
             return Err(format!(
-                "header-only src/ffi.rs must stay inventoried until #4756 lands, got {files:?}"
+                "header-only src/ffi.rs must share the diff exclusion, got {files:?}"
             ));
+        }
+        if !files.contains("src/lib.rs") {
+            return Err("the non-generated positive control must remain inventoried".to_string());
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

@@ -525,6 +525,7 @@ mod tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: "covers_split".to_string(),
                 file: PathBuf::from("tests/it.rs"),
@@ -565,6 +566,7 @@ mod tests {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
             impl_context: Default::default(),
+            item: Default::default(),
         }
     }
 

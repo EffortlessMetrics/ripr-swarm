@@ -16,6 +16,8 @@ use crate::cli::commands_timestamps::generated_at_unix_ms;
 
 #[path = "commands/agent.rs"]
 mod agent;
+#[path = "commands/agent_card.rs"]
+pub(crate) mod agent_card;
 #[path = "commands/agent_dispatch.rs"]
 mod agent_dispatch;
 #[path = "commands/agent_gap_packet.rs"]
@@ -6422,7 +6424,6 @@ language = "rust"
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove frontier dir: {err}"))?;
         Ok(())
     }
-
     #[test]
     fn outcome_defaults_to_markdown_stdout_shape() {
         assert_eq!(

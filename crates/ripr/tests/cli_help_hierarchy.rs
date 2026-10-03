@@ -236,6 +236,7 @@ fn exhaustive_help_marks_non_public_rows_visibly() -> Result<(), String> {
         "ripr agent start --root . --seam-id ID [--out target/ripr/workflow] [advanced]",
         "ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [advanced]",
         "ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json [advanced]",
+        "ripr agent card --root . --seam-id ID [--json] [advanced]",
         "ripr agent verify --root . --before before.json --after after.json --json [advanced]",
         "ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json [advanced]",
         "ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json [advanced]",
@@ -423,11 +424,37 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "--verify-authorized",
         "--verify-authority ID",
         "--verify-rollback",
-        "ripr agent repair [--root PATH] --attempt ID --phase verify",
+        "ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase before",
+        "ripr agent repair [--root PATH] [--store PATH] (--attempt ID|--seam-id ID) --phase after",
+        "ripr agent repair [--root PATH] [--store PATH] --attempt ID --phase verify",
+        "--store PATH Explicit repair-attempt store, resolved against --root.",
         "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
     ] {
         assert_contains(
             "agent repair help (`ripr agent repair --help`)",
+            &stdout,
+            needle,
+        )?;
+    }
+    if stdout.contains("ripr agent repair [--root PATH] --attempt ID --phase verify") {
+        return Err(
+            "agent repair help still prints verify usage without optional [--store PATH]"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_status_help_names_the_selected_store() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["agent", "status", "--help"])?);
+    for needle in [
+        "Usage: ripr agent status [--root PATH] [--store PATH] [--json] [--out PATH]",
+        "--store PATH Explicit repair-attempt store, resolved against --root.",
+        "Missing explicit stores do not fall back to the default.",
+    ] {
+        assert_contains(
+            "agent status help (`ripr agent status --help`)",
             &stdout,
             needle,
         )?;
@@ -612,6 +639,34 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     ] {
         assert_contains("Quickstart repair continuation", &repair, target)?;
     }
+    Ok(())
+}
+
+/// #2930 drift rule: the discovery chain (#4873, #4962, #4965, #4971) shipped
+/// after #2931 closed the original prose-alignment claim, so the hierarchy
+/// guide must name the landed discovery surfaces in its drift rule and its
+/// help row, and must not keep deferring them to #1613 as future work.
+#[test]
+fn hierarchy_doc_points_at_landed_discovery_surfaces() -> Result<(), String> {
+    let drift_rule = doc_section(COMMAND_HIERARCHY_DOC, "## Drift rule")?;
+    for needle in ["RIPR-SPEC-0187", "RIPR-SPEC-0189", "RIPR-SPEC-0190"] {
+        assert_contains("docs/COMMAND_HIERARCHY.md drift rule", &drift_rule, needle)?;
+    }
+    if drift_rule.contains("remain tracked") {
+        return Err(
+            "docs/COMMAND_HIERARCHY.md drift rule still defers shipped discovery surfaces as future work"
+                .to_string(),
+        );
+    }
+    let help_row = COMMAND_HIERARCHY_DOC
+        .lines()
+        .find(|line| line.contains("Read detailed help"))
+        .ok_or_else(|| "command guide lost task row `Read detailed help`".to_string())?;
+    assert_contains(
+        "docs/COMMAND_HIERARCHY.md help row",
+        help_row,
+        "ripr help workflow",
+    )?;
     Ok(())
 }
 

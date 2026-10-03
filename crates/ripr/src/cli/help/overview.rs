@@ -66,6 +66,11 @@ pub(super) const HELP_ALL: &str = r#"ripr — complete command reference.
 Task-oriented overview: ripr --help
 Options for one command: ripr help <command>
 
+Global flags (accepted in any position, before or after the command):
+  -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
+                  mode, and probe/finding counts. A -v/--verbose token is
+                  always this global flag, never another flag's value.
+
 Task map:
   Diagnose setup        ripr doctor
   Inspect one change    ripr check
@@ -101,6 +106,7 @@ Editor & Agent:
   ripr agent start --root . --seam-id ID [--out target/ripr/workflow]   [advanced]
   ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json   [advanced]
   ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json   [advanced]
+  ripr agent card --root . --seam-id ID [--json]   [advanced]
   ripr agent verify --root . --before before.json --after after.json --json   [advanced]
   ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json   [advanced]
   ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json   [advanced]
@@ -170,7 +176,7 @@ Quick start (one command per group):
 Start-here path:
   - `ripr doctor` checks whether the local workspace and config can produce evidence.
   - `ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.
-  - `ripr agent repair` owns the before/edit/after repair transaction; lower-level brief, packet, verify, and receipt commands remain available for control and debugging.
+  - `ripr agent repair` owns the before/edit/after repair transaction; `ripr agent card` is the compact default handoff for one seam, and the lower-level brief, packet, verify, and receipt commands remain available for control and debugging.
   - `ripr first-pr` and `ripr start-here` compose `target/ripr/reports/start-here.{json,md}` from existing artifacts; they do not run analysis or repair a gap.
   - Safe next action means repair one named gap, regenerate a missing or malformed artifact, or stop on no-action.
   - Missing artifact, stale evidence, wrong root, malformed artifact, and no actionable gap are explicit recovery states.

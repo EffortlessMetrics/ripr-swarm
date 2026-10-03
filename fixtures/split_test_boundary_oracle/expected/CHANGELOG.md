@@ -58,3 +58,26 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — split_test_boundary_oracle (6)
+
+Reason:
+RIPR-SPEC-0197 (#4478) composition with #4828: the return_value probe reads exposed through the owner-return pin (assert_eq!(gate(100), true)), while the predicate probe keeps same_test_pairing_missing and stays weakly_exposed
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (7)
+
+Reason:
+RIPR-SPEC-0197/#5027 and RIPR-SPEC-0186: describe the missing admitted boundary-call oracle without asserting that every failed pairing comes from different tests. Classification, confidence, strength and all stage states are unchanged.
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

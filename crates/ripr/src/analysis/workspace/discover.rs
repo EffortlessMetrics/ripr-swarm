@@ -2,6 +2,10 @@ use crate::analysis::cancellation;
 use crate::analysis::language::{
     LanguageAdapter, LanguageId, RustAdapter, route, unanalyzed_source_language,
 };
+use crate::analysis_outcome::{
+    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+    AnalysisStage,
+};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &[
@@ -12,6 +16,138 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "fixtures",
     "node_modules",
 ];
+
+/// Changed source files that are not regular files in the working tree.
+///
+/// Sparse checkout, local deletes and symlinks drop these from disk walks, so the
+/// owner never enters the index. Callers must disclose that as a named
+/// limitation instead of classifying the missing owner as
+/// `no_static_path` (#4586). Non-source paths (docs, manifests) are
+/// ignored: they are not analysis subjects.
+pub(crate) fn changed_source_files_absent_from_worktree<'a>(
+    root: &Path,
+    changed_paths: impl IntoIterator<Item = &'a Path>,
+) -> Vec<PathBuf> {
+    let mut absent = Vec::new();
+    for path in changed_paths {
+        if route(path).is_none() {
+            continue;
+        }
+        if worktree_contains_regular_source_file(root, path) {
+            continue;
+        }
+        absent.push(PathBuf::from(super::classify::normalize_path(path)));
+    }
+    absent.sort();
+    absent.dedup();
+    absent
+}
+
+/// Shared admission disclosure for a changed source path with no regular worktree file.
+pub(crate) fn limitations_for_absent_changed_files(
+    paths: &[PathBuf],
+) -> Result<Vec<AnalysisLimitation>, String> {
+    paths
+        .iter()
+        .map(|path| {
+            let display = super::classify::normalize_path(path);
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Check out the missing file, disable sparse checkout for it, or restore a regular source file under real directories below the selected root, then re-run the analysis.",
+                )?,
+            )
+            .with_path(&display)?
+            .with_affected_items(1)?
+            .with_detail(
+                "changed file is absent from the working tree or is not a discoverable regular source file (sparse checkout, local delete, or symlink); probes for this file were withheld",
+            )
+        })
+        .collect()
+}
+
+fn worktree_contains_regular_source_file(root: &Path, relative: &Path) -> bool {
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    if is_regular_source_below_root(root, relative) {
+        return true;
+    }
+    // Git diffs keep the repository-relative path. `--root` is often a
+    // crate subdirectory, so `root.join(diff_path)` misses a file that
+    // is on disk as the matching suffix (`src/lib.rs` under
+    // `examples/sample` while the diff names
+    // `crates/ripr/examples/sample/src/lib.rs`). Accept a suffix only
+    // when the stripped prefix is a trailing component sequence of
+    // `root`; a sibling crate's `src/lib.rs` must not count.
+    let normalized = super::classify::normalize_path(relative);
+    let root_norm = super::classify::normalize_path(root);
+    for (prefix, suffix) in path_prefix_suffix_pairs(&normalized) {
+        // A one-component prefix (`src`) matching only the root
+        // basename would map `src/lib.rs` onto a root-level `lib.rs`
+        // when `--root` itself is named `src`. Require a multi-segment
+        // crate/repo prefix, as in `crates/ripr/examples/sample`.
+        if !prefix.contains('/') || !root_ends_with_prefix(&root_norm, prefix) {
+            continue;
+        }
+        if is_regular_source_below_root(root, Path::new(suffix)) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_regular_source_below_root(root: &Path, relative: &Path) -> bool {
+    // The selected root may itself be an alias. Below that boundary, match
+    // discovery's no-follow semantics for both directory and source entries.
+    // Inspecting only the leaf would still follow a symlinked parent directory.
+    let mut components = relative
+        .components()
+        .filter(|component| !matches!(component, std::path::Component::CurDir))
+        .peekable();
+    let mut path = root.to_path_buf();
+    while let Some(component) = components.next() {
+        let std::path::Component::Normal(name) = component else {
+            return false;
+        };
+        path.push(name);
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            return false;
+        };
+        if components.peek().is_none() {
+            return metadata.is_file();
+        }
+        if !metadata.is_dir() {
+            return false;
+        }
+    }
+    false
+}
+
+fn path_prefix_suffix_pairs(normalized: &str) -> impl Iterator<Item = (&str, &str)> {
+    let bytes = normalized.as_bytes();
+    (0..normalized.len()).filter_map(move |idx| {
+        if idx == 0 || bytes.get(idx) != Some(&b'/') {
+            return None;
+        }
+        let prefix = normalized.get(..idx)?;
+        let suffix = normalized.get(idx + 1..)?;
+        if prefix.is_empty() || suffix.is_empty() {
+            return None;
+        }
+        Some((prefix, suffix))
+    })
+}
+
+fn root_ends_with_prefix(root_norm: &str, prefix: &str) -> bool {
+    root_norm == prefix || root_norm.ends_with(&format!("/{prefix}"))
+}
 
 pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
@@ -252,6 +388,152 @@ mod tests {
             result,
             vec![(LanguageId::Perl, PathBuf::from("lib/My/App.pm"))]
         );
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #4586: a changed source path that is not a regular file on disk
+    /// is named; docs and a present sibling stay out of the list.
+    #[test]
+    fn absent_worktree_source_is_named_and_present_or_nonsource_paths_are_not()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!("ripr-absent-worktree-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src"))?;
+        fs::write(dir.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")?;
+        fs::write(dir.join("README.md"), "docs\n")?;
+
+        let absent = changed_source_files_absent_from_worktree(
+            &dir,
+            [
+                Path::new("src/lib.rs"),
+                Path::new("src/missing.rs"),
+                Path::new("README.md"),
+            ],
+        );
+        assert_eq!(absent, vec![PathBuf::from("src/missing.rs")]);
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #4586: a repo-relative diff path against a crate subdirectory
+    /// root is the same on-disk file, not an absent worktree file.
+    /// A sibling crate prefix must not borrow this crate's `src/lib.rs`.
+    #[test]
+    fn repo_relative_diff_path_under_crate_root_is_present()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-absent-worktree-prefix-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let crate_root = dir.join("crates/ripr/examples/sample");
+        fs::create_dir_all(crate_root.join("src"))?;
+        fs::write(crate_root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")?;
+
+        let absent = changed_source_files_absent_from_worktree(
+            &crate_root,
+            [
+                Path::new("crates/ripr/examples/sample/src/lib.rs"),
+                Path::new("crates/other/src/lib.rs"),
+                Path::new("crates/ripr/examples/sample/src/missing.rs"),
+            ],
+        );
+        assert_eq!(
+            absent,
+            vec![
+                PathBuf::from("crates/other/src/lib.rs"),
+                PathBuf::from("crates/ripr/examples/sample/src/missing.rs"),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// Both direct and validated repository-prefix paths use discovery's
+    /// no-follow boundary, while the selected root itself may be an alias.
+    #[cfg(unix)]
+    #[test]
+    fn source_admission_refuses_links_below_root_and_preserves_root_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-source-admission-links-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let root = dir.join("crates/ripr/examples/sample");
+        fs::create_dir_all(root.join("src"))?;
+        let source = root.join("src/lib.rs");
+        fs::write(&source, "pub fn one() -> i32 { 1 }\n")?;
+        let alias = dir.join("alias/crates/ripr/examples/sample");
+        fs::create_dir_all(alias.parent().ok_or("alias parent missing")?)?;
+        std::os::unix::fs::symlink(&root, &alias)?;
+        let paths = [
+            Path::new("src/lib.rs"),
+            Path::new("crates/ripr/examples/sample/src/lib.rs"),
+        ];
+        for selected in [&root, &alias] {
+            assert!(changed_source_files_absent_from_worktree(selected, paths).is_empty());
+        }
+
+        let held_file = root.join("held-source.txt");
+        fs::rename(&source, &held_file)?;
+        std::os::unix::fs::symlink(&held_file, &source)?;
+        for selected in [&root, &alias] {
+            assert_eq!(
+                changed_source_files_absent_from_worktree(selected, paths).len(),
+                2
+            );
+        }
+        fs::remove_file(&source)?;
+        fs::rename(&held_file, &source)?;
+
+        let held_dir = root.join("target/held-src");
+        fs::create_dir_all(root.join("target"))?;
+        fs::rename(root.join("src"), &held_dir)?;
+        std::os::unix::fs::symlink(&held_dir, root.join("src"))?;
+        for selected in [&root, &alias] {
+            assert_eq!(
+                changed_source_files_absent_from_worktree(selected, paths).len(),
+                2
+            );
+        }
+        fs::remove_file(root.join("src"))?;
+        fs::rename(&held_dir, root.join("src"))?;
+        for selected in [&root, &alias] {
+            assert!(changed_source_files_absent_from_worktree(selected, paths).is_empty());
+        }
+        fs::remove_file(&alias)?;
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// #4586: a `--root` whose last component is `src` must not treat a
+    /// root-level `lib.rs` as the missing nested `src/lib.rs`.
+    #[test]
+    fn single_component_root_basename_does_not_mask_nested_absent_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-absent-worktree-src-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let crate_root = dir.join("src");
+        fs::create_dir_all(&crate_root)?;
+        fs::write(crate_root.join("lib.rs"), "pub fn one() -> i32 { 1 }\n")?;
+
+        let absent =
+            changed_source_files_absent_from_worktree(&crate_root, [Path::new("src/lib.rs")]);
+        assert_eq!(absent, vec![PathBuf::from("src/lib.rs")]);
+
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }

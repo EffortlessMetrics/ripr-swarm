@@ -21,13 +21,13 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
-pub(crate) use model::PERL_EXECUTABLE_OPT_IN_ENV;
 use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
 pub use model::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,
     LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TestHarnessAdapter,
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
+pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig};
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
@@ -115,11 +115,13 @@ path = ".ripr/suppressions.toml"
 # unavailable. See Campaign 31 #1379 + Support Tiers.)
 enabled = ["rust"]
 # Optional additive Rust generated-source globs. Built-in generated names and
-# directories remain excluded. A pattern without `/` matches any filename;
+# directories remain excluded unless declared in handwritten_files. A pattern without `/` matches any filename;
 # patterns with `/` match the repository-relative path.
 #
 # [languages.rust]
 # generated_file_patterns = ["*.gen.rs", "src/generated/**/*.rs"]
+# handwritten_files = ["tests/generated_workflow.rs"]
+# Exact paths exempt naming conventions only; patterns, headers and vendor markers win.
 
 # Optional Bun stable-byte UB advisory profile. Leave this commented unless the
 # repository wants TypeScript-family preview evidence for Bun Rust/FFI seams.
@@ -259,7 +261,7 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
 /// differing only in an unconsumed setting stay comparable). Closed set:
 /// when the producer starts consuming another config field, add it here in
 /// the same PR; do not widen the filter to whole sections.
-pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 6] = [
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 7] = [
     "oracles.broad_error_strength",
     "oracles.mock_expectation_strength",
     "oracles.snapshot_strength",
@@ -273,6 +275,7 @@ pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 6] = [
     // Generated-file patterns change which Rust files become seams and
     // which paths appear in `generated_rust_source_skipped` (#4788).
     "languages.rust.generated_file_patterns",
+    "languages.rust.handwritten_files",
 ];
 
 /// Canonical config identity for the repo-exposure artifact input identity
@@ -284,7 +287,11 @@ pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 6] = [
 /// pipeline and legitimately includes typescript/perl inputs the seam
 /// inventory never reads.
 pub(crate) fn repo_exposure_config_identity_hash(config: &RiprConfig) -> String {
-    let mut pairs = config
+    // This producer is Rust-only regardless of the diff adapter selection.
+    // Reuse the canonical field authority with its actual consumed language.
+    let mut consumed = config.clone();
+    consumed.languages.enabled = vec![LanguageId::Rust];
+    let mut pairs = consumed
         .check_artifact_identity_fields()
         .into_iter()
         .filter(|field| {
@@ -324,11 +331,70 @@ fn parse_config(text: &str) -> Result<RiprConfig, String> {
 /// which would otherwise trip `clippy::result_large_err` on every parser hop.
 pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<ConfigDiagnostic>> {
     let raw: RawConfig = toml::from_str(text).map_err(|err| {
+        // A valid key in the wrong table names its table (#4534). The hint is
+        // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
+        let err = err.to_string();
+        let hint = misplaced_key_hint(&err).unwrap_or_default();
         Box::new(ConfigDiagnostic::structural(format!(
-            "invalid ripr.toml: {err}"
+            "invalid ripr.toml: {err}{hint}"
         )))
     })?;
     RiprConfig::from_raw(raw, text)
+}
+
+/// Keys that belong to exactly one table, so a key found anywhere else was
+/// put in the wrong table rather than misspelled (#4534). Keys shared by two
+/// tables (the `[severity.findings]`/`[severity.seams]` classes) stay out:
+/// naming one table would be a guess.
+const KEY_HOME_TABLES: &[(&str, &str)] = &[
+    ("mode", "analysis"),
+    ("include_unchanged_tests", "analysis"),
+    ("production_like_targets", "analysis"),
+    ("test_harnesses", "analysis"),
+    ("snapshot_strength", "oracles"),
+    ("mock_expectation_strength", "oracles"),
+    ("broad_error_strength", "oracles"),
+    ("seam_diagnostics", "lsp"),
+    ("diagnostic_profile", "lsp"),
+    ("max_related_tests", "reports"),
+    ("enabled", "languages"),
+    ("generated_file_patterns", "languages.rust"),
+    ("resolve_tsconfig_paths", "typescript"),
+    ("bun_ub", "profiles"),
+    ("findings", "severity"),
+    ("seams", "severity"),
+];
+
+/// The table an unknown-field key belongs in, when serde rejected a real key
+/// that sits in the wrong table (for example a top-level `mode`).
+fn misplaced_key_hint(error: &str) -> Option<String> {
+    let (_, rest) = error.split_once("unknown field `")?;
+    let (key, _) = rest.split_once('`')?;
+    let (key, table) = KEY_HOME_TABLES.iter().find(|(known, _)| *known == key)?;
+    Some(format!("\n{}", misplaced_key_hint_line(key, table)))
+}
+
+fn misplaced_key_hint_line(key: &str, table: &str) -> String {
+    format!("`{key}` is a valid key, but it belongs under [{table}]")
+}
+
+/// A source-free summary of a config load error for surfaces that must not
+/// carry the TOML parser's source excerpt (doctor JSON, editor
+/// notifications; RIPR-SPEC-0007): the first line (path, parse location),
+/// plus the misplaced-key hint (#4534) when present. A hint line is kept
+/// only when it equals one built from the fixed key/table allowlist, so no
+/// file content passes through.
+pub(crate) fn config_error_summary(error: &str) -> String {
+    let first = error.lines().next().unwrap_or(error).trim();
+    let hint = error.lines().skip(1).map(str::trim).find(|line| {
+        KEY_HOME_TABLES
+            .iter()
+            .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+    });
+    match hint {
+        Some(hint) => format!("{first}; {hint}"),
+        None => first.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -363,37 +429,42 @@ impl RiprConfig {
         }
         if let Some(oracles) = raw.oracles {
             if let Some(strength) = oracles.snapshot_strength {
-                config.oracles.snapshot_strength = parse_oracle_strength(strength.get_ref())
-                    .map_err(|message| {
-                        ConfigDiagnostic::at_value(
-                            message,
-                            "oracles.snapshot_strength",
-                            strength.span(),
-                            text,
-                        )
-                    })?;
+                // The key-named message (#4534) rides in `message`; the
+                // diagnostic additionally carries the span and expected values.
+                config.oracles.snapshot_strength =
+                    parse_oracle_strength("oracles.snapshot_strength", strength.get_ref())
+                        .map_err(|message| {
+                            ConfigDiagnostic::at_value(
+                                message,
+                                "oracles.snapshot_strength",
+                                strength.span(),
+                                text,
+                            )
+                        })?;
             }
             if let Some(strength) = oracles.mock_expectation_strength {
                 config.oracles.mock_expectation_strength =
-                    parse_oracle_strength(strength.get_ref()).map_err(|message| {
-                        ConfigDiagnostic::at_value(
-                            message,
-                            "oracles.mock_expectation_strength",
-                            strength.span(),
-                            text,
-                        )
-                    })?;
+                    parse_oracle_strength("oracles.mock_expectation_strength", strength.get_ref())
+                        .map_err(|message| {
+                            ConfigDiagnostic::at_value(
+                                message,
+                                "oracles.mock_expectation_strength",
+                                strength.span(),
+                                text,
+                            )
+                        })?;
             }
             if let Some(strength) = oracles.broad_error_strength {
-                config.oracles.broad_error_strength = parse_oracle_strength(strength.get_ref())
-                    .map_err(|message| {
-                        ConfigDiagnostic::at_value(
-                            message,
-                            "oracles.broad_error_strength",
-                            strength.span(),
-                            text,
-                        )
-                    })?;
+                config.oracles.broad_error_strength =
+                    parse_oracle_strength("oracles.broad_error_strength", strength.get_ref())
+                        .map_err(|message| {
+                            ConfigDiagnostic::at_value(
+                                message,
+                                "oracles.broad_error_strength",
+                                strength.span(),
+                                text,
+                            )
+                        })?;
             }
         }
         if let Some(severity) = raw.severity {
@@ -430,11 +501,14 @@ impl RiprConfig {
             if let Some(enabled) = languages.enabled {
                 config.languages.enabled = parse_languages_enabled(&enabled)?;
             }
-            if let Some(rust) = languages.rust
-                && let Some(patterns) = rust.generated_file_patterns
-            {
-                config.languages.rust.generated_file_patterns =
-                    parse_generated_file_patterns(&patterns)?;
+            if let Some(rust) = languages.rust {
+                if let Some(patterns) = rust.generated_file_patterns {
+                    config.languages.rust.generated_file_patterns =
+                        parse_generated_file_patterns(&patterns)?;
+                }
+                if let Some(paths) = rust.handwritten_files {
+                    config.languages.rust.handwritten_files = parse_handwritten_files(&paths)?;
+                }
             }
         }
         if let Some(profiles) = raw.profiles {
@@ -472,7 +546,7 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
             "perl" => LanguageId::Perl,
             other => {
                 return Err(format!(
-                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer — see Campaign 31 #1379)"
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
                 ));
             }
         };
@@ -517,6 +591,34 @@ fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, Strin
         }
         parsed.push(trimmed.to_string());
     }
+    Ok(parsed)
+}
+
+fn parse_handwritten_files(values: &[String]) -> Result<Vec<String>, String> {
+    let field = "languages.rust.handwritten_files";
+    let mut parsed = Vec::with_capacity(values.len());
+    for value in values {
+        if value.chars().any(char::is_control) {
+            return Err(format!("{field} must not contain control characters"));
+        }
+        if value.contains(['*', '?', '[', ']']) {
+            return Err(format!(
+                "{field} must contain exact file paths, not glob patterns"
+            ));
+        }
+        let path = parse_relative_path(field, value)?;
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            return Err(format!("{field} must identify a Rust `.rs` file"));
+        }
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        if parsed.contains(&normalized) {
+            return Err(format!(
+                "{field} lists `{normalized}` more than once; remove the duplicate"
+            ));
+        }
+        parsed.push(normalized);
+    }
+    parsed.sort_unstable();
     Ok(parsed)
 }
 
@@ -586,6 +688,7 @@ struct RawLanguagesConfig {
 #[serde(deny_unknown_fields)]
 struct RawRustLanguageConfig {
     generated_file_patterns: Option<Vec<String>>,
+    handwritten_files: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -877,7 +980,7 @@ fn parse_mode_value(value: &str) -> Result<Mode, String> {
     }
 }
 
-fn parse_oracle_strength(value: &str) -> Result<OracleStrength, String> {
+fn parse_oracle_strength(field: &str, value: &str) -> Result<OracleStrength, String> {
     match value {
         "strong" => Ok(OracleStrength::Strong),
         "medium" => Ok(OracleStrength::Medium),
@@ -886,7 +989,7 @@ fn parse_oracle_strength(value: &str) -> Result<OracleStrength, String> {
         "none" => Ok(OracleStrength::None),
         "unknown" => Ok(OracleStrength::Unknown),
         _ => Err(format!(
-            "oracle strength `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown"
+            "{field} `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown"
         )),
     }
 }

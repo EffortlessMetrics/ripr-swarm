@@ -315,6 +315,9 @@ values defined in RIPR-SPEC-0026:
   input or expected values whose concrete discriminator coverage is not
   statically known)
 - `unsupported_syntax`
+- `python_transitive_reach_unresolved` (RIPR-SPEC-0201: a test constructs or
+  calls into the owner's class and a bounded same-class `self.` / `cls.` path
+  may reach the changed method; classification stays `no_static_path`)
 
 ## Canonical Gap Identity
 
@@ -696,6 +699,17 @@ or conditionally rebinds it, and an `__all__` replaced by an import), a
 binding of another name that keeps the re-export, and a docstring that
 mentions `__all__` without binding it.
 
+The curated upstream Werkzeug #2065 case lives under
+`fixtures/python-real-repo-evals/werkzeug-multiple-cookie/` and is referenced by
+the existing Python eval corpus. Its native broken/fixed and assertion-removal
+controls establish the `getlist("a") == ["b", "c"]` answer key independently
+of analyzer output. Fixture-contract checks bind retained bytes and execution
+records; the documented pytest replay executes the native controls separately.
+The recorded historical `cached_property` limitation is not a permanent
+expected capability boundary. Future promotion requires resolved descriptor
+reach, effective-versus-weakened observer separation, and conservative
+unknown/rebound-decorator controls before actionable guidance.
+
 ## Implementation Mapping
 
 Follow-up implementation belongs to Campaign 27 work item
@@ -754,3 +768,4 @@ adapter contributes:
 - `language_adapter_python_static_limit_property_based_test`
 - `language_adapter_python_static_limit_unresolved_pytest_fixture`
 - `language_adapter_python_static_limit_unsupported_syntax`
+- `language_adapter_python_static_limit_transitive_reach`

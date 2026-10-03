@@ -41,19 +41,19 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
 ) -> Result<AnalysisResult, String> {
-    run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
+    run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        &[],
+        &crate::config::RustLanguageConfig::default(),
     )
 }
 
-pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
     // Immutable Git candidate subject (#3237 / #3277): resolve the
     // bound identity through object plumbing, derive the exact
@@ -98,7 +98,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
             &candidate_options,
             oracle_policy,
             languages,
-            generated_file_patterns,
+            rust_config,
             &resolved.diff,
         )?;
         // #3279 R4: finding locations name the user's repository, not
@@ -126,13 +126,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
     };
     cancellation::checkpoint()?;
     let mut result = committed_source::with_overlay(overlay.clone(), || {
-        run_pipeline_for_diff_text(
-            options,
-            oracle_policy,
-            languages,
-            generated_file_patterns,
-            &loaded.text,
-        )
+        run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)
     })?;
     if let Some(overlay) = overlay {
         result.uncommitted_source_paths = overlay.dirty_source_paths();
@@ -190,11 +184,11 @@ fn committed_paths_missing_disclosure(paths: &[String]) -> Option<String> {
     ))
 }
 
-pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
     if options.diff_file.is_some() {
         return Err("worktree diff mode cannot be combined with --diff".to_string());
@@ -217,13 +211,8 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
         options.git_timeout,
     )?;
     cancellation::checkpoint()?;
-    let mut result = run_pipeline_for_diff_text(
-        options,
-        oracle_policy,
-        languages,
-        generated_file_patterns,
-        &loaded.text,
-    )?;
+    let mut result =
+        run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)?;
     bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
 }
@@ -599,7 +588,7 @@ fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
@@ -630,6 +619,8 @@ fn run_pipeline_for_diff_text(
     let mut findings: Vec<Finding> = Vec::new();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
     // `changed_rust_files` counts Rust adapter files only (#2103); every
     // adapter that ran records its own count in `changed_files_by_language`.
     let mut rust_changed_files: usize = 0;
@@ -647,12 +638,12 @@ fn run_pipeline_for_diff_text(
     // partial_budget_invalid), not a per-language advisory gap.
     if languages.contains(&LanguageId::Rust) {
         cancellation::checkpoint()?;
-        let result = RustAdapter.analyze_diff_for_languages_with_generated_file_patterns(
+        let result = RustAdapter.analyze_diff_for_languages_with_rust_config(
             options,
             oracle_policy,
             &analysis_changed_files,
             languages,
-            generated_file_patterns,
+            rust_config,
         )?;
         cancellation::checkpoint()?;
         if result.skipped_files > 0 {
@@ -662,7 +653,7 @@ fn run_pipeline_for_diff_text(
             // or `gen/` module went unanalyzed.
             let generated_sources = super::language::GeneratedRustSources::for_diff(
                 &options.root,
-                generated_file_patterns,
+                rust_config,
                 &analysis_changed_files,
             );
             let skipped = analysis_changed_files
@@ -673,19 +664,22 @@ fn run_pipeline_for_diff_text(
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
                 .collect::<Vec<_>>();
             let listed = bounded_path_listing(&skipped);
+            let skipped_paths = skipped
+                .iter()
+                .map(std::path::PathBuf::from)
+                .collect::<Vec<_>>();
+            let naming_only = skipped_paths
+                .iter()
+                .filter(|path| generated_sources.is_convention_only_exclusion(path))
+                .cloned()
+                .collect::<Vec<_>>();
             limitations.push(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::LanguageScopeUnsupported,
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
-                        format!(
-                            "Not analyzed as generated or vendored code: {listed}. ripr skips `gen/`, \
-                             `generated/`, `out/`, `generated.rs`, `schema.rs`, `bindings.rs`, \
-                             `*.gen.rs`, `*_generated.rs`, `generated_*`, files headed \
-                             `@generated` or `DO NOT EDIT`, `cargo vendor` crates and \
-                             `generated_file_patterns`; a hand-written match stays unanalyzed."
-                        ),
+                        super::generated_rust_recovery(&skipped_paths, &naming_only),
                     )?,
                 )
                 .with_affected_items(result.skipped_files as u64)?
@@ -701,6 +695,7 @@ fn run_pipeline_for_diff_text(
         partial_scope = result.partial_scope.clone();
         harness_projections.extend(result.harness_projections);
         rust_diagnostic_origins = result.rust_diagnostic_origins;
+        rust_consumed_sources = result.rust_consumed_sources;
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
         candidate_line_count += result.candidate_line_count;
@@ -784,7 +779,22 @@ fn run_pipeline_for_diff_text(
     // clean Rust-grade result for a TypeScript/JavaScript/Python change
     // (RIPR-SPEC-0082, #1111). Detection is pure path routing — it does not
     // require the adapter to be enabled.
-    let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files.iter().collect();
+    // Adapter admission has already withheld missing changed source. Use its
+    // typed result for the analyzed-file disclosure too, without another
+    // filesystem check in the pipeline or any renderer (#5110).
+    let absent_changed_paths = limitations
+        .iter()
+        .filter(|limitation| {
+            limitation.kind == AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+        })
+        .filter_map(|limitation| limitation.path.as_deref())
+        .collect::<BTreeSet<_>>();
+    let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files
+        .iter()
+        .filter(|changed| {
+            !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
+        })
+        .collect();
     let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
     for advisory in &preview_advisories {
         if !advisory.enabled {
@@ -1096,6 +1106,7 @@ fn run_pipeline_for_diff_text(
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
         rust_diagnostic_origins,
+        rust_consumed_sources,
     })
 }
 
@@ -1174,23 +1185,25 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
         .to_string());
     }
 
-    run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+    run_repo_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
-        &[],
+        &crate::config::RustLanguageConfig::default(),
     )
 }
 
-pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
-    generated_file_patterns: &[String],
+    rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
+    let mut rust_consumed_sources =
+        crate::analysis::consumed_source::ConsumedRustSources::default();
     // Same accounting as the diff loop (#2103): `changed_rust_files` carries
     // the Rust adapter's count only; every adapter records its own count.
     let mut rust_production_files: usize = 0;
@@ -1205,11 +1218,8 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         // failures are recorded, Rust failures still propagate.
         if !is_preview_language(*language) {
             // Rust (stable) failures propagate via `?`.
-            let result = RustAdapter.analyze_repo_with_generated_file_patterns(
-                options,
-                oracle_policy,
-                generated_file_patterns,
-            )?;
+            let result =
+                RustAdapter.analyze_repo_with_rust_config(options, oracle_policy, rust_config)?;
             cancellation::checkpoint()?;
             if result.skipped_files > 0 {
                 language_runs.push(LanguageRun {
@@ -1223,6 +1233,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
             }
             rust_harness_projections = result.harness_projections;
             rust_diagnostic_origins = result.rust_diagnostic_origins;
+            rust_consumed_sources = result.rust_consumed_sources;
             findings.extend(result.findings);
             rust_production_files += result.production_files;
             files_by_language.push((LanguageId::Rust, result.production_files));
@@ -1290,6 +1301,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
         rust_diagnostic_origins,
+        rust_consumed_sources,
     })
 }
 
@@ -1793,6 +1805,7 @@ mod tests {
             diff_file: None,
             mode: AnalysisMode::Draft,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -1909,6 +1922,7 @@ mod tests {
             diff_file: None,
             mode: AnalysisMode::Draft,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -1934,7 +1948,7 @@ mod tests {
                 &sample_rust_diff_options(root),
                 &OraclePolicy::default(),
                 &languages,
-                &[],
+                &crate::config::RustLanguageConfig::default(),
                 SAMPLE_RUST_DIFF,
             )?;
             let outcome = result
@@ -2087,11 +2101,17 @@ mod tests {
     #[test]
     fn eol_only_churn_discloses_a_typed_limitation_on_a_complete_outcome() -> Result<(), String> {
         let root = temp_root("outcome-eol-only")?;
+        // The changed file is present: an absent file routes the #4586
+        // absence disclosure instead of this #4952 EOL-churn control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x > 1 }\npub fn g() -> u8 { 2 }\npub fn h() -> u8 { 3 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             EOL_ONLY_RUST_DIFF,
         )?;
         let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
@@ -2127,7 +2147,7 @@ mod tests {
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             SAMPLE_RUST_DIFF,
         )?;
         let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
@@ -2157,11 +2177,17 @@ mod tests {
             "+pub fn f(x: i32) -> bool { x > 1 }\n",
         );
         let root = temp_root("outcome-bom-only")?;
+        // The changed file is present on disk: an absent file would route the
+        // #4586 absence disclosure, not the #4959 EOL-churn negative control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x > 1 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             bom_only,
         )?;
         let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
@@ -2193,11 +2219,17 @@ mod tests {
             "+pub fn m() -> u8 { 9 }\n",
         );
         let root = temp_root("outcome-moved-line-control")?;
+        // The changed file is present: an absent file routes the #4586
+        // absence disclosure instead of this EOL-pairing negative control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn a() -> u8 { 1 }\npub fn b() -> u8 { 2 }\npub fn m() -> u8 { 9 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             moved,
         )?;
         let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
@@ -2233,7 +2265,7 @@ mod tests {
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             mixed,
         )?;
         let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
@@ -2270,7 +2302,7 @@ mod tests {
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             SAMPLE_GO_DIFF,
         )?;
         let outcome = result
@@ -2302,7 +2334,7 @@ mod tests {
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             &format!("{SAMPLE_RUST_DIFF}{SAMPLE_GO_DIFF}"),
         )?;
         let outcome = result
@@ -2344,11 +2376,17 @@ mod tests {
         // A CI script beside Rust is listed as not analyzed but does not
         // downgrade an otherwise complete analysis.
         let root = temp_root("outcome-rust-and-shell")?;
+        // The changed Rust file is present: an absent file routes the #4586
+        // absence disclosure instead of this script-disclosure control.
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
         let result = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             &format!("{SAMPLE_RUST_DIFF}{SAMPLE_SHELL_DIFF}"),
         )?;
         let outcome = result
@@ -2409,7 +2447,7 @@ mod tests {
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             SAMPLE_SHELL_DIFF,
         )?;
         let outcome = result
@@ -2457,7 +2495,7 @@ mod tests {
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             &format!("{SAMPLE_RUST_DIFF}{docs}"),
         )?;
         let outcome = result
@@ -2525,7 +2563,7 @@ mod tests {
                 &sample_rust_diff_options(root),
                 &OraclePolicy::default(),
                 &[LanguageId::Rust],
-                &[],
+                &crate::config::RustLanguageConfig::default(),
                 SAMPLE_RUST_DIFF,
             )?;
             let outcome = result
@@ -2567,7 +2605,7 @@ mod tests {
             &sample_rust_diff_options(root),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             SAMPLE_RUST_DIFF,
         )?;
         let outcome = result
@@ -2580,6 +2618,68 @@ mod tests {
                 .any(|limitation| limitation.kind
                     == AnalysisLimitationKind::LanguageAdapterUnavailable),
             "rust enabled must not record an adapter exclusion"
+        );
+        Ok(())
+    }
+
+    /// #4586: a changed Rust file that is not on disk turns the outcome
+    /// partial. The probe is withheld, so the run is not a complete
+    /// `no_static_path` result.
+    #[test]
+    fn changed_file_absent_from_worktree_is_a_partial_limitation() -> Result<(), String> {
+        let root = temp_root("absent-worktree-outcome")?;
+        write(
+            root.join("Cargo.toml").as_path(),
+            "[package]\nname='pricing'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            root.join("tests/t.rs").as_path(),
+            "#[test]\nfn high_total_gets_discount() {\n    assert_eq!(pricing::discount(200), 20);\n}\n",
+        )?;
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- a/src/lib.rs\n\
+             +++ b/src/lib.rs\n\
+             @@ -1,3 +1,3 @@\n\
+             \u{20}pub fn discount(total: i32) -> i32 {\n\
+             -    if total > 100 { total / 10 } else { 0 }\n\
+             +    if total >= 100 { total / 10 } else { 0 }\n\
+             \u{20}}\n",
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "absent worktree file must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|finding| finding.class == crate::domain::ExposureClass::NoStaticPath),
+            "absent owner must not be classified no_static_path: {:?}",
+            result.findings
+        );
+        let limitation = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::ChangedFileAbsentFromWorktree
+            })
+            .ok_or_else(|| {
+                format!(
+                    "expected changed_file_absent_from_worktree, got {:?}",
+                    outcome.limitations
+                )
+            })?;
+        assert_eq!(limitation.path.as_deref(), Some("src/lib.rs"));
+        assert!(
+            limitation.recovery.detail.contains("sparse checkout")
+                && limitation.recovery.detail.contains("Check out"),
+            "recovery must name checkout / sparse checkout: {}",
+            limitation.recovery.detail
         );
         Ok(())
     }
@@ -2610,6 +2710,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2620,7 +2721,7 @@ mod tests {
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "this is not a unified diff\n",
         )?;
         let outcome = result
@@ -2645,7 +2746,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,7 +1,7 @@\n",
         )?;
         let outcome = result
@@ -2692,7 +2793,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "",
         )?;
         let outcome = result
@@ -2716,7 +2817,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "this is not a unified diff\n",
         )?;
         let outcome = result
@@ -2752,7 +2853,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/vendor/new b/vendor/new\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/new\n",
         )?;
         let outcome = result
@@ -2775,7 +2876,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/src/old.rs b/src/new.rs\nsimilarity index 100%\nrename from src/old.rs\nrename to src/new.rs\n",
         )?;
         let outcome = result
@@ -2843,7 +2944,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\ndiff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n",
         )?;
         let outcome = result
@@ -2881,7 +2982,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/vendor/new b/vendor/new\nnew file mode 160000\nindex 0000000..2222222\n--- /dev/null\n+++ b/vendor/new\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,7 +1,7 @@\n",
         )?;
         let outcome = result.analysis_outcome.ok_or_else(|| {
@@ -2918,7 +3019,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\nnot-a-hunk-line\n",
         )?;
         let outcome = result
@@ -2945,7 +3046,7 @@ mod tests {
             &draft_diff_options(root.clone()),
             &OraclePolicy::default(),
             &[],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,7 +1,7 @@\n",
         )?;
         let outcome = result.analysis_outcome.ok_or_else(|| {
@@ -3034,6 +3135,10 @@ mod tests {
         // keeps the fail-closed `unsupported_input` outcome.
         let run = |path: &str| -> Result<AnalysisOutcomeKind, String> {
             let root = temp_root("analysis-outcome-conflict-scope")?;
+            write(
+                root.join("src/lib.rs").as_path(),
+                "pub fn value() -> u32 { 1 }\n",
+            )?;
             let diff = format!(
                 "diff --git a/{path} b/{path}\n\
                  --- a/{path}\n\
@@ -3058,6 +3163,7 @@ mod tests {
                     diff_file: None,
                     mode: AnalysisMode::Draft,
                     resolved_subject_identity: None,
+                    open_rust_index_paths: Default::default(),
                     include_unchanged_tests: false,
                     resolve_tsconfig_paths: false,
                     perl_facts_path: None,
@@ -3068,7 +3174,7 @@ mod tests {
                 },
                 &OraclePolicy::default(),
                 &[LanguageId::Rust],
-                &[],
+                &crate::config::RustLanguageConfig::default(),
                 &diff,
             )?;
             result
@@ -3106,6 +3212,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3116,7 +3223,7 @@ mod tests {
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             &format!(
                 "diff --git a/{deep} b/{deep}\n--- /dev/null\n+++ b/{deep}\n@@ -0,0 +1 @@\n+pub fn v() -> u32 {{ 1 }}\n"
             ),
@@ -3139,6 +3246,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3149,7 +3257,10 @@ mod tests {
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &["src/generated_*.rs".to_string()],
+            &crate::config::RustLanguageConfig {
+                generated_file_patterns: vec!["src/generated_*.rs".to_string()],
+                ..Default::default()
+            },
             "diff --git a/src/generated_values.rs b/src/generated_values.rs\n\
              --- /dev/null\n\
              +++ b/src/generated_values.rs\n\
@@ -3225,6 +3336,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3235,7 +3347,7 @@ mod tests {
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             &diff,
         )?;
         assert!(
@@ -3270,13 +3382,14 @@ mod tests {
             &root.join("vendor/dep/src/lib.rs"),
             "pub fn b() -> u32 { 2 }\n",
         )?;
-        let result = run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
+        let result = run_repo_pipeline_with_oracle_policy_and_rust_config(
             &AnalysisOptions {
                 root,
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3287,7 +3400,7 @@ mod tests {
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
         )?;
         let rust_run = result
             .language_runs
@@ -3401,6 +3514,7 @@ mod tests {
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3490,6 +3604,7 @@ mod tests {
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3521,6 +3636,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3547,6 +3663,7 @@ mod tests {
             diff_file: None,
             mode: AnalysisMode::Draft,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -3566,7 +3683,7 @@ mod tests {
             &options,
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             combined,
         )?;
         let outcome = incomplete
@@ -3584,7 +3701,7 @@ mod tests {
             &options,
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/docs/readme.md b/docs/readme.md\n\
              --- a/docs/readme.md\n\
              +++ b/docs/readme.md\n\
@@ -3628,6 +3745,7 @@ mod tests {
             diff_file: None,
             mode: AnalysisMode::Draft,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -3640,7 +3758,7 @@ mod tests {
             &options,
             &OraclePolicy::default(),
             &[LanguageId::Rust],
-            &[],
+            &crate::config::RustLanguageConfig::default(),
             "diff --git a/src/lib.rs b/src/lib.rs\n\
              new file mode 100644\n\
              --- /dev/null\n\
@@ -3702,6 +3820,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3714,7 +3833,7 @@ mod tests {
                 &options,
                 &OraclePolicy::default(),
                 &[LanguageId::Rust],
-                &[],
+                &crate::config::RustLanguageConfig::default(),
                 diff,
             )?;
             let outcome = result
@@ -3744,6 +3863,7 @@ mod tests {
             diff_file: None,
             mode: AnalysisMode::Draft,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -3778,7 +3898,7 @@ mod tests {
                 &options(explicit),
                 &OraclePolicy::default(),
                 &[LanguageId::Rust],
-                &[],
+                &crate::config::RustLanguageConfig::default(),
                 diff,
             )?;
             // Precondition: the identity is built from the caller's base alone.
@@ -3814,6 +3934,7 @@ mod tests {
                 diff_file: None,
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3856,6 +3977,7 @@ mod tests {
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3961,6 +4083,7 @@ mod tests {
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: Some(facts),
@@ -4019,6 +4142,8 @@ mod tests {
     #[test]
     fn diff_pipeline_dispatches_enabled_preview_feature_adapters() -> Result<(), String> {
         let root = temp_root("preview-diff")?;
+        // An analyzed-file count requires a real admitted Python subject.
+        write(&root.join("app/main.py"), "# Python dispatch control\n")?;
         let diff_file = root.join("preview.diff");
         write(
             &diff_file,
@@ -4033,7 +4158,7 @@ index 0000000..1111111 100644
 --- a/app/main.py
 +++ b/app/main.py
 @@ -1,0 +1,1 @@
-+def price(): return 1
++# Python dispatch control
 "#,
         )?;
 
@@ -4044,6 +4169,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4076,6 +4202,7 @@ index 0000000..1111111 100644
     #[test]
     fn diff_pipeline_attributes_changed_files_per_language() -> Result<(), String> {
         let root = temp_root("mixed-rust-python")?;
+        write(&root.join("app/main.py"), "def price(): return 1\n")?;
         let src = root.join("src/lib.rs");
         write(&src, "pub fn discount(price: u32) -> u32 { price / 2 }\n")?;
         let diff_file = root.join("mixed.diff");
@@ -4101,6 +4228,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4159,6 +4287,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4204,6 +4333,7 @@ index 0000000..1111111 100644
             diff_file: Some(diff_file),
             mode: AnalysisMode::Draft,
             resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -4439,6 +4569,7 @@ index 0000000..1111111 100644
     #[test]
     fn enabled_python_advisory_excludes_detectable_excluded_paths() -> Result<(), String> {
         let root = temp_root("issue-4372-py-excluded-advisory")?;
+        write(&root.join("src/pricing.py"), "LIMIT = 1\n")?;
         let diff_file = root.join("py.diff");
         let diff = [
             "src/pricing.py",
@@ -4500,6 +4631,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4558,6 +4690,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4630,6 +4763,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4703,6 +4837,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4750,6 +4885,7 @@ index 0000000..1111111 100644
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4795,6 +4931,7 @@ index 0000000..1111111 100644
                 diff_file: None,
                 mode: AnalysisMode::Deep,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4838,6 +4975,7 @@ index 0000000..1111111 100644
                 diff_file: None,
                 mode: AnalysisMode::Deep,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -4908,6 +5046,7 @@ index 0000000..1111111 100644
                 diff_file: None,
                 mode: AnalysisMode::Deep,
                 resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,

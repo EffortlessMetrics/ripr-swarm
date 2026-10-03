@@ -244,6 +244,7 @@ impl LanguageAdapter for PerlAdapter {
             harness_projections: Vec::new(),
             limitations,
             rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 
@@ -293,6 +294,7 @@ impl LanguageAdapter for PerlAdapter {
             harness_projections: Vec::new(),
             partial_reason,
             rust_diagnostic_origins: Default::default(),
+            rust_consumed_sources: Default::default(),
         })
     }
 }
@@ -686,6 +688,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
                 missing_discriminators,
             },
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: related,
             recommended_next_step: Some(if static_limit_projection.missing_test_runner {
                 if is_already_observed {

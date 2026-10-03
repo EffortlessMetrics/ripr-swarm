@@ -79,6 +79,11 @@ Hidden:                                    (only when N > 0)
   Machine data: rerun with --format json
 ```
 
+The Summary denominator counts unsuppressed findings against the total
+(`N of M finding(s) unsuppressed`), disclosing the suppressed remainder; the
+word is never "shown", because the bounded digest renders exactly one finding
+and the `Hidden:` block below names the rest.
+
 Human lines lead with plain words and keep the stable id in parentheses, so a
 reader does not need the internal vocabulary and a script can still match the
 id: `State: a test gap to inspect or repair (top_gap)`, `Analysis outcome:
@@ -98,6 +103,17 @@ remainder that does not exist:
   a language name. Rust-only remainder stays the count line with no breakdown.
   This reads finding identity already on the omitted records; it is not the
   language-availability projection owned by #2615.
+- The omitted set's currentness mix is named wherever it is not purely
+  lower-priority candidates, whether or not a top gap was selected (#5021).
+  Base-side evidence (`base_deleted`, `moved_or_renamed`) and
+  `unresolved_subject` findings are not candidate edit targets, so when they
+  share the omitted set with lower-ranked candidates the count line names the
+  mix — `L lower-priority finding(s) omitted; B base-side evidence, not
+  candidate edit targets` (an `U unresolved currentness, not candidate edit
+  targets` clause joins when present) — and an omitted set that is entirely
+  base-side or entirely unresolved currentness says so (`All N omitted
+  finding(s) are base-side evidence, not candidate edit targets.`). Pure
+  lower-priority omitted sets keep the single count clause.
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -194,7 +210,7 @@ line; longer guidance wraps onto four-space continuation lines.
 | `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. |
 | `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
-| `static_limited` | The selected finding is no-path or unknown; inspect the named static limitation before treating it as repair-ready. |
+| `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
 | `missing_scope` | The run produced no findings because no analysis scope was provided. This empty output is not an all-clear. |
 
 The `preview_limited` safe next action distinguishes repair-packet

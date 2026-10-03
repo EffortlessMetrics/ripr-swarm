@@ -287,7 +287,6 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         let advisories = &output.preview_language_advisories;
         for (idx, adv) in advisories.iter().enumerate() {
             let analyzed = adv.analyzed(&output.language_runs);
-            let failed_run = adv.non_success_run(&output.language_runs);
             out.push_str("    {\n");
             field(&mut out, 3, "language", &adv.language, true);
             number_field(&mut out, 3, "file_count", adv.file_count, true);
@@ -300,17 +299,9 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             let why_owned;
             let why: &str = if analyzed {
                 "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
-            } else if !adv.enabled {
-                why_owned = adv.not_enabled_why();
-                &why_owned
-            } else if let Some(run) = failed_run {
-                why_owned = format!(
-                    "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
-                    run.status.as_str()
-                );
-                &why_owned
             } else {
-                "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean"
+                why_owned = adv.unaudited_why(&output.language_runs);
+                &why_owned
             };
             field(&mut out, 3, "why", why, false);
             out.push_str("    }");
@@ -610,8 +601,11 @@ fn finding_json_with_config_and_counts(
         indent + 1,
     );
     out.push_str(",\n");
-    let related_total = finding.related_tests.len();
-    let related_rendered = related_total.min(MAX_RELATED_TESTS_PER_FINDING_JSON);
+    let related_total = finding.related_tests_total();
+    let related_rendered = finding
+        .related_tests
+        .len()
+        .min(MAX_RELATED_TESTS_PER_FINDING_JSON);
     number_field(out, indent + 1, "related_tests_total", related_total, true);
     out.push_str(&format!(
         "{}\"related_tests\": [\n",
@@ -893,13 +887,7 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
         )
         .into_iter()
         .take(8)
-        .map(|fact| {
-            let context = display_label(fact.context.as_str());
-            format!(
-                "observed {} value {} at line {}",
-                context, fact.value, fact.line
-            )
-        }),
+        .map(crate::output::observed_values::source_value_evidence_line),
     );
 
     values.extend(
@@ -1686,6 +1674,7 @@ mod evidence_path_separator_tests {
             flow_sinks: vec![],
             activation: ActivationEvidence::default(),
             stop_reasons: vec![],
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: "applies the discount".to_string(),
                 file: PathBuf::from(file),

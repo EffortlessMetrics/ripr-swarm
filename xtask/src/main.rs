@@ -22,6 +22,8 @@ use ripr::output::start_here_state::{
 };
 
 mod agent_skills;
+mod blind_journey;
+mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod command;
@@ -39,9 +41,12 @@ mod fixture_contracts;
 mod gap_source_subject_shared;
 mod identity_registry;
 mod no_panic;
+mod orchestration_attempt;
 mod output_enum_contracts;
 mod package_qualification;
 mod policy;
+#[cfg(test)]
+mod portable_consumer;
 mod product_gate_plan;
 mod public_api_surface;
 mod python_judged_panel;
@@ -184,7 +189,8 @@ pub(crate) use evidence_promotion::{
     evidence_promotion_external_failure_kind, evidence_promotion_external_semantic_violations,
     evidence_promotion_human_class_line_matches, evidence_promotion_human_oracle_line_matches,
     evidence_promotion_pure_failure_kind, evidence_promotion_semantic_violations,
-    validate_evidence_promotion_honesty_corpus_at, write_evidence_promotion_external_report,
+    evidence_promotion_semantic_violations_scoped, validate_evidence_promotion_honesty_corpus_at,
+    write_evidence_promotion_external_report,
 };
 pub(crate) use evidence_promotion::{
     check_evidence_promotion_honesty, validate_evidence_promotion_honesty_corpus,
@@ -5155,6 +5161,18 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
             current_surface: "VS Code extension TypeScript".to_string(),
             recommendation: "Keep this code in the editor adapter; only move server behavior into ripr Rust modules or xtask.".to_string(),
             reason: "The VS Code Extension Host API is TypeScript-native, so this is an approved adapter boundary rather than core automation.".to_string(),
+        });
+    }
+
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "portable native-ripr consumer packet".to_string(),
+            recommendation: "Keep packet-local transport in stdlib Python; keep packet staging, policy, and oracles in Rust/xtask.".to_string(),
+            reason: "The consumer has to run in Python-capable agent environments that cannot compile or search PATH for ripr (#4713).".to_string(),
         });
     }
 
@@ -13439,7 +13457,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// the reason it is not a role authority. New entries need the reason in
     /// the surrounding code and a review that the check stays display- or
     /// identity-scoped.
-    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 7] = [
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 8] = [
         (
             "crates/ripr/src/output/review_comments.rs",
             "starts_with(\"tests",
@@ -13469,6 +13487,11 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "crates/ripr/src/analysis/classify/related_tests.rs",
             "starts_with(\"tests",
             "package_prefix/package_scope derive package identity from paths, which the source-role contract explicitly permits; they do not classify role",
+        ),
+        (
+            "crates/ripr/src/analysis/classify/owner_pin/tests.rs",
+            "\"#[cfg(test)]\"",
+            "owner-pin collectability preservation fixture in the cfg(test)-gated tests module; source spelling is input data, while cfg_predicates owns the production availability decision (#4478)",
         ),
         (
             "crates/ripr/src/lsp/tests.rs",
@@ -13854,6 +13877,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/evidence.rs",
         "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/probe.rs",
+        "crates/ripr/src/domain/repair_card.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
     ] {
@@ -13861,6 +13885,7 @@ fn check_output_contracts() -> Result<(), String> {
         domain.push('\n');
     }
     let app = read_text_lossy(Path::new("crates/ripr/src/app.rs"))?;
+    let repair_card_domain = read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
     let evidence_record = read_text_lossy(Path::new("crates/ripr/src/output/evidence_record.rs"))?;
     let mutation_calibration =
         read_text_lossy(Path::new("crates/ripr/src/output/mutation_calibration.rs"))?;
@@ -13919,6 +13944,38 @@ fn check_output_contracts() -> Result<(), String> {
                 );
                 validate_evidence_record_contract_schema_version(value, &mut violations)?;
             }
+            "repair_card_schema_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "repair_card_budget_version" => {
+                require_contract_value(
+                    "crates/ripr/src/domain/repair_card.rs",
+                    &repair_card_domain,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
             "context_version" => {
                 require_contract_value(
                     "crates/ripr/src/output/json/",
@@ -13951,9 +14008,21 @@ fn check_output_contracts() -> Result<(), String> {
                     &mut violations,
                 );
             }
-            "exposure_class" | "severity" | "probe_family" | "delta" | "flow_sink"
-            | "stage_state" | "confidence" | "oracle_kind" | "oracle_strength" | "stop_reason"
-            | "value_context" | "oracle_alignment" | "source_currentness" | "static_limit_kind" => {
+            "exposure_class"
+            | "severity"
+            | "probe_family"
+            | "delta"
+            | "flow_sink"
+            | "stage_state"
+            | "confidence"
+            | "oracle_kind"
+            | "oracle_strength"
+            | "stop_reason"
+            | "value_context"
+            | "oracle_alignment"
+            | "source_currentness"
+            | "static_limit_kind"
+            | "agent_card_refusal_kind" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",
                     &domain,
@@ -13987,6 +14056,7 @@ fn check_output_contracts() -> Result<(), String> {
             }
             "kind" => {
                 let producer = match value.as_str() {
+                    "agent_card_refusal" => "crates/ripr/src/cli/commands/agent_card.rs",
                     "python_repair_driver_binding" => {
                         "crates/ripr/src/app/python_repair_binding.rs"
                     }
@@ -21127,19 +21197,50 @@ pub(crate) fn read_file_policy_allowlist(path: &str) -> Result<Vec<GlobAllow>, S
         .collect())
 }
 
-pub(crate) fn read_file_policy_test_commands(path: &str) -> Result<Vec<(usize, String)>, String> {
+pub(crate) fn read_file_policy_test_commands(
+    path: &str,
+) -> Result<Vec<FilePolicyTestCommand>, String> {
     let entries = parse_file_policy_allowlist(path)?;
-    Ok(entries
-        .into_iter()
-        .flat_map(|entry| {
-            entry
-                .covered_by
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|command| is_cargo_test_command(command))
-                .map(move |command| (entry.line, command))
-        })
-        .collect())
+    let mut commands = Vec::new();
+    for entry in entries {
+        for (host, values) in [
+            (None, entry.covered_by),
+            (Some(FilePolicyHost::Unix), entry.covered_by_unix),
+            (Some(FilePolicyHost::Windows), entry.covered_by_windows),
+        ] {
+            for command in values.unwrap_or_default() {
+                if is_cargo_test_command(&command) {
+                    commands.push(FilePolicyTestCommand {
+                        line: entry.line,
+                        command,
+                        host,
+                    });
+                }
+            }
+        }
+    }
+    Ok(commands)
+}
+
+impl FilePolicyHost {
+    fn parse(family: &str) -> Result<Self, String> {
+        match family {
+            "unix" => Ok(Self::Unix),
+            "windows" => Ok(Self::Windows),
+            _ => Err(format!("unsupported file-policy host family `{family}`")),
+        }
+    }
+
+    fn current() -> Result<Self, String> {
+        Self::parse(std::env::consts::FAMILY)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Unix => "unix",
+            Self::Windows => "windows",
+        }
+    }
 }
 
 pub(crate) fn is_cargo_test_command(command: &str) -> bool {
@@ -21149,65 +21250,126 @@ pub(crate) fn is_cargo_test_command(command: &str) -> bool {
 
 fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, String> {
     let text = read_text_lossy(Path::new(path))?;
+    // Consume the same TOML parser that validates syntax and duplicate keys,
+    // retaining its spans instead of reparsing coverage arrays line by line.
+    let document = toml::de::DeTable::parse(&text)
+        .map_err(|error| format!("{path}: invalid non-Rust allowlist TOML: {error}"))?;
+    // Retain Value's numeric representability checks, even for ignored
+    // metadata, without parsing again or discarding the original spans.
+    let _: toml::Value = serde::Deserialize::deserialize(toml::de::Deserializer::from(
+        document.clone(),
+    ))
+    .map_err(|mut error: toml::de::Error| {
+        error.set_input(Some(&text));
+        format!("{path}: invalid non-Rust allowlist TOML: {error}")
+    })?;
+    let line_number = |offset| {
+        text.bytes()
+            .take(offset)
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1
+    };
     let mut entries = Vec::new();
-    let mut current = FilePolicyAllowEntry::default();
-    let mut in_entry = false;
-
-    let lines = text.lines().collect::<Vec<_>>();
-    let mut idx = 0;
-    while idx < lines.len() {
-        let line_number = idx + 1;
-        let trimmed = lines[idx].trim();
-        idx += 1;
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if trimmed == "[[allow]]" {
-            if in_entry {
-                validate_file_policy_allow_entry(path, &current)?;
-                entries.push(current);
-            }
-            current = FilePolicyAllowEntry {
-                line: line_number,
-                ..FilePolicyAllowEntry::default()
-            };
-            in_entry = true;
-            continue;
-        }
-        let Some((key, value)) = parse_toml_key_value(trimmed) else {
-            continue;
-        };
-        if !in_entry {
-            continue;
-        }
-        match key {
-            "glob" => current.glob = Some(parse_string_value(value, path, line_number)?),
-            "kind" => current.kind = Some(parse_string_value(value, path, line_number)?),
-            "owner" => current.owner = Some(parse_string_value(value, path, line_number)?),
-            "surface" => current.surface = Some(parse_string_value(value, path, line_number)?),
-            "classification" => {
-                current.classification = Some(parse_string_value(value, path, line_number)?)
-            }
-            "reason" => current.reason = Some(parse_string_value(value, path, line_number)?),
-            "generated_by" => {
-                current.generated_by = Some(parse_string_value(value, path, line_number)?)
-            }
-            "covered_by" => {
-                let value = collect_toml_array_value(path, line_number, value, &lines, &mut idx)?;
-                current.covered_by = Some(parse_inline_array(&value)?);
-            }
-            "expires" | "retired" => {}
-            other => {
+    for (key, value) in document.get_ref().iter() {
+        let key = key.get_ref().as_ref();
+        if key != "allow" {
+            let line = line_number(value.span().start);
+            if key.starts_with("covered_by") {
                 return Err(format!(
-                    "{path}:{line_number} unsupported non-Rust allowlist field `{other}`"
+                    "{path}:{line} coverage requires an [[allow]] entry"
                 ));
             }
+            if file_policy_has_table_header(value, &text) {
+                return Err(format!(
+                    "{path}:{line} unsupported non-Rust allowlist table `{key}`"
+                ));
+            }
+            continue;
         }
-    }
-
-    if in_entry {
-        validate_file_policy_allow_entry(path, &current)?;
-        entries.push(current);
+        let declarations = value.get_ref().as_array().ok_or_else(|| {
+            format!(
+                "{path}:{} expected [[allow]] entries",
+                line_number(value.span().start)
+            )
+        })?;
+        for declaration in declarations {
+            let line = line_number(declaration.span().start);
+            let fields = declaration
+                .get_ref()
+                .as_table()
+                .filter(|_| text.get(declaration.span()) == Some("[[allow]]"))
+                .ok_or_else(|| format!("{path}:{line} expected an [[allow]] entry"))?;
+            let mut entry = FilePolicyAllowEntry {
+                line,
+                ..FilePolicyAllowEntry::default()
+            };
+            let mut fields = fields.iter().collect::<Vec<_>>();
+            fields.sort_by_key(|(key, _)| key.span().start);
+            for (key, value) in fields {
+                let field_line = line_number(key.span().start);
+                let key = key.get_ref().as_ref();
+                // Keep the established scalar field reader and ignored metadata
+                // semantics; only coverage arrays adopt parsed string values.
+                let scalar = || {
+                    let raw = text.get(value.span()).ok_or_else(|| {
+                        format!("{path}:{field_line} missing non-Rust allowlist value span")
+                    })?;
+                    parse_string_value(raw, path, field_line)
+                };
+                match key {
+                    "glob" => entry.glob = Some(scalar()?),
+                    "kind" => entry.kind = Some(scalar()?),
+                    "owner" => entry.owner = Some(scalar()?),
+                    "surface" => entry.surface = Some(scalar()?),
+                    "classification" => entry.classification = Some(scalar()?),
+                    "reason" => entry.reason = Some(scalar()?),
+                    "generated_by" => entry.generated_by = Some(scalar()?),
+                    "covered_by" | "covered_by_unix" | "covered_by_windows" => {
+                        let array_error = || {
+                            format!(
+                                "{path}:{field_line} non-Rust allowlist `{key}` requires a string array"
+                            )
+                        };
+                        let commands = value
+                            .get_ref()
+                            .as_array()
+                            .ok_or_else(array_error)?
+                            .iter()
+                            .map(|item| {
+                                item.get_ref()
+                                    .as_str()
+                                    .map(str::to_string)
+                                    .ok_or_else(array_error)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        match key {
+                            "covered_by_unix" => entry.covered_by_unix = Some(commands),
+                            "covered_by_windows" => entry.covered_by_windows = Some(commands),
+                            _ => entry.covered_by = Some(commands),
+                        }
+                    }
+                    "expires" | "retired" => {
+                        let nested = value.get_ref().is_table()
+                            && !text
+                                .get(value.span())
+                                .is_some_and(|raw| raw.starts_with('{'));
+                        if nested || file_policy_has_table_header(value, &text) {
+                            return Err(format!(
+                                "{path}:{field_line} unsupported non-Rust allowlist table `{key}`"
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "{path}:{field_line} unsupported non-Rust allowlist field `{other}`"
+                        ));
+                    }
+                }
+            }
+            validate_file_policy_allow_entry(path, &entry)?;
+            entries.push(entry);
+        }
     }
     if entries.is_empty() {
         return Err(format!("{path} has no [[allow]] entries"));
@@ -21215,29 +21377,22 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
     Ok(entries)
 }
 
-fn collect_toml_array_value(
-    path: &str,
-    line_number: usize,
-    first_value: &str,
-    lines: &[&str],
-    idx: &mut usize,
-) -> Result<String, String> {
-    let mut value = first_value.trim().to_string();
-    if !value.starts_with('[') || value.ends_with(']') {
-        return Ok(value);
-    }
-    while *idx < lines.len() {
-        let next = lines[*idx].trim();
-        *idx += 1;
-        value.push(' ');
-        value.push_str(next);
-        if next.ends_with(']') {
-            return Ok(value);
+// The parser owns these spans: a bracket-like string or comment cannot supply
+// a header. Inline values of ignored metadata remain ignored as before.
+fn file_policy_has_table_header(value: &toml::Spanned<toml::de::DeValue<'_>>, text: &str) -> bool {
+    match value.get_ref() {
+        toml::de::DeValue::Table(fields) => {
+            text.get(value.span())
+                .is_some_and(|raw| raw.starts_with('['))
+                || fields
+                    .values()
+                    .any(|field| file_policy_has_table_header(field, text))
         }
+        toml::de::DeValue::Array(items) => items
+            .iter()
+            .any(|item| file_policy_has_table_header(item, text)),
+        _ => false,
     }
-    Err(format!(
-        "{path}:{line_number} unterminated non-Rust allowlist array"
-    ))
 }
 
 fn validate_file_policy_allow_entry(
@@ -21271,6 +21426,19 @@ fn validate_file_policy_allow_entry(
             "{path}:{} non-Rust allowlist `covered_by` values must be non-empty",
             entry.line
         ));
+    }
+    for (field, commands) in [
+        ("covered_by_unix", &entry.covered_by_unix),
+        ("covered_by_windows", &entry.covered_by_windows),
+    ] {
+        if let Some(commands) = commands
+            && (commands.is_empty() || commands.iter().any(|value| !is_cargo_test_command(value)))
+        {
+            return Err(format!(
+                "{path}:{} `{field}` requires a non-empty array of cargo test commands",
+                entry.line
+            ));
+        }
     }
     Ok(())
 }
@@ -21924,9 +22092,22 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "packaging/npm/launcher/bin/ripr.cjs" | "packaging/npm/launcher/lib/launcher.cjs"
+    ) || (path.starts_with("packaging/npm/launcher/test/") && path.ends_with(".test.cjs"))
+    {
+        return Some("npm launcher runtime and focused launcher contract tests");
+    }
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
+        return Some(
+            "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
         );
     }
 
@@ -21990,7 +22171,9 @@ fn is_dependency_surface_candidate(path: &str) -> bool {
 }
 
 fn is_process_policy_candidate(path: &str) -> bool {
-    path.ends_with(".rs") || path.ends_with(".ts")
+    path.ends_with(".rs")
+        || path.ends_with(".ts")
+        || (path.starts_with("tools/python/") && path.ends_with(".py"))
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -22014,6 +22197,9 @@ fn process_policy_patterns() -> Vec<String> {
         concat!("cp.", "spawn"),
         concat!("cp.", "exec("),
         concat!("cp.", "execFile"),
+        concat!("subprocess.", "Popen"),
+        concat!("subprocess.", "run"),
+        concat!("os.", "system"),
     ]
     .iter()
     .map(|value| value.to_string())

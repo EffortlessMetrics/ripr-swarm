@@ -124,3 +124,54 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+## Pending — guarded_result_match_fail_closed (9)
+
+Reason:
+RIPR-SPEC-0197 (#4478): conditional bare equality cannot independently supply return-value oracle credit; preserve dedicated guarded-match and ErrorPath authority
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (10)
+
+Reason:
+RIPR-SPEC-0197 (#4478, #5020): retain original assertion cardinality after admission; refused equality cannot manufacture singleton mock evidence
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (11)
+
+Reason:
+RIPR-SPEC-0197 #5027: conditional Ok equalities cannot supply ErrorPath execution credit; exact family-selected honesty controls require ErrorPath unrevealed while existing ReturnValue remains weak.
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (12)
+
+Reason:
+RIPR-SPEC-0197 #5027: conditional Ok equalities cannot supply ErrorPath execution credit; exact family-selected honesty controls require ErrorPath unrevealed while existing ReturnValue remains weak.
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

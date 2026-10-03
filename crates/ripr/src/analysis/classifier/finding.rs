@@ -1,7 +1,8 @@
 use super::evidence::ClassifiedProbeEvidence;
 use crate::analysis::classify::{
-    ProbeContext, body_contains_owner_call, ensure_unknown_stop_reason, exact_error_variant,
-    missing_evidence, recommended_next_step, stop_reasons,
+    ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
+    ensure_unknown_stop_reason, exact_error_variant, missing_evidence, recommended_next_step,
+    stop_reasons,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -35,20 +36,26 @@ pub(in crate::analysis) fn build_finding(
             &context.related_tests,
             &evidence,
         );
-    let recommended_next_step =
-        if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
-            None
-        } else if class == ExposureClass::StaticUnknown
-            && evidence.reach.state == StageState::No
-            && !context.owner_assertion_shaped
-        {
-            // A new function no test calls yields several unclassifiable lines;
-            // "escalate to real mutation" is useless while no test reaches
-            // the owner at all. The class stays static_unknown.
-            Some(STATIC_UNKNOWN_UNREACHED_NEXT_STEP.to_string())
-        } else {
-            recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
-        };
+    let recommended_next_step = if class == ExposureClass::WeaklyExposed
+        && exact_oracle_covers_direct_sink
+    {
+        None
+    } else if class == ExposureClass::StaticUnknown
+        && evidence.reach.state == StageState::No
+        && !context.owner_assertion_shaped
+    {
+        // A new function no test calls yields several unclassifiable lines;
+        // "escalate to real mutation" is useless while no test reaches
+        // the owner at all. The class stays static_unknown.
+        Some(STATIC_UNKNOWN_UNREACHED_NEXT_STEP.to_string())
+    } else if class == ExposureClass::ReachableUnrevealed
+        && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+        && !context.owner_assertion_shaped
+    {
+        Some("Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string())
+    } else {
+        recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
+    };
     let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
@@ -85,6 +92,7 @@ pub(in crate::analysis) fn build_finding(
         flow_sinks: evidence.flow_sinks,
         activation: evidence.activation,
         stop_reasons,
+        related_tests_matched_total: Some(evidence.related_tests_matched_total),
         related_tests: evidence.related_tests,
         recommended_next_step,
         // Language metadata is populated by the per-language adapter
@@ -404,6 +412,7 @@ mod tests {
             flow_sinks: sinks,
             propagation_witness: None,
             activation: ActivationEvidence::default(),
+            related_tests_matched_total: related_tests.len(),
             related_tests,
             reach: yes.clone(),
             infect: yes.clone(),
