@@ -12,6 +12,7 @@ use super::retained_files::{local_path, read_json, verify_file};
 mod captures;
 mod controls;
 mod observed_static;
+mod retained_support;
 #[cfg(test)]
 mod tests;
 
@@ -305,6 +306,7 @@ fn validate_pairing(
     key: &Value,
     pairing: &Value,
 ) -> Result<captures::Custody, String> {
+    retained_support::validate(root, pairing)?;
     verify_file(root, &pairing["lock"])?;
     let rows = pairing["observations"]
         .as_array()

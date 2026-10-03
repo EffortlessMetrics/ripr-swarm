@@ -151,6 +151,28 @@ required when capturing evidence; a Git build stamp alone is insufficient.
 Original workspace replay precedes any source/manifest reduction, whose
 equivalence needs separate observed evidence.
 
+Declared native-pairing support is checked through the same contained-path,
+byte-count and digest authority. `original_workspace` may be absent. When
+present it must be an object with `archives`, `inventories` and `provenance`
+object maps. Archives and inventories each require `parent` and `fixed`;
+provenance requires `parent-git-commit.json`, `fixed-git-commit.json`,
+`parent-git-tree.json` and `fixed-git-tree.json`. Every declared map entry,
+including additional entries, is verified. Archive payloads are opaque bytes;
+inventory payloads must parse as JSON arrays and provenance payloads as JSON
+objects. Empty or malformed maps and missing required slots reject.
+
+The top-level `native_packet`, `native_receipt`, `resolution_receipt`,
+`offline_setup_receipt` and `capture_checker_interruption` descriptors are
+individually optional. Every present descriptor must resolve to the declared
+bytes and parse as a JSON object; null is not absence. Future cases need not
+invent setup or interruption history. The concrete Regex membership test pins
+all thirteen existing support descriptors. Removing or corrupting their files
+must reject through the production fixture report even when the pairing and
+review bytes are unchanged. Generic declarations without this support metadata
+and absent legacy controls retain their existing behavior. These checks do not
+extract archives, replay commands, recursively interpret historical paths,
+authenticate provenance, or reverify external executable bytes.
+
 `check-fixture-contracts` consumes this axis through the existing benchmark
 validator and emits a `PolicyDisclosure` in `fixture-contracts.md` with
 valid/invalid/unreviewed, legacy-absent and rejected declaration counts. A
