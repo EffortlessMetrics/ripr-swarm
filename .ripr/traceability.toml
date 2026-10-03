@@ -5928,7 +5928,7 @@ code = [
   "crates/ripr/src/analysis/mod.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/workspace/discover.rs",
-  ".config/nextest.toml",
+  ".github/workflows/rust-gates.yml",
   "crates/ripr/src/app.rs",
   "crates/ripr/src/app/check.rs",
   "crates/ripr/src/app/check/output_builder.rs",

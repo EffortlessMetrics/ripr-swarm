@@ -154,6 +154,11 @@ same rule. This is source-availability disclosure, not a filesystem race or
 authentication guarantee. Public CLI controls hold a Git-generated diff fixed
 across regular source, owned file and directory links, and restoration, covering
 explicit roots, implicit repository/nested roots, and a selected-root alias.
+The public control retains one bounded observational text transcript in the
+required test artifact, alongside unchanged JUnit and run context. It does not
+change test selection or retries and is not typed acceptance or release proof.
+Its exact filename binds the current run and attempt, so a skipped or unobserved
+test cannot reuse a cached transcript from another run.
 
 ### Three honesty cases
 

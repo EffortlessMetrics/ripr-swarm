@@ -75,6 +75,36 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
     use sha2::{Digest, Sha256};
     use std::io::Read;
     let root = git_path_fixture("python-symlink-admission", &["src/discount.py"], SOURCE)?;
+    let (run_id, run_attempt) = match (
+        std::env::var("GITHUB_RUN_ID").ok(),
+        std::env::var("GITHUB_RUN_ATTEMPT").ok(),
+    ) {
+        (Some(run_id), Some(run_attempt)) => {
+            for value in [&run_id, &run_attempt] {
+                assert!(
+                    !value.is_empty()
+                        && value.len() <= 20
+                        && value.bytes().all(|byte| byte.is_ascii_digit()),
+                    "observational transcript requires bounded ASCII run identifiers"
+                );
+            }
+            (run_id, run_attempt)
+        }
+        (None, None)
+            if std::env::var_os("CI").is_none() && std::env::var_os("GITHUB_ACTIONS").is_none() =>
+        {
+            (
+                format!(
+                    "local-{}",
+                    root.file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or("local fixture name is not UTF-8")?
+                ),
+                "0".to_string(),
+            )
+        }
+        _ => return Err("CI transcript requires actual GitHub run and attempt identifiers".into()),
+    };
     let nested = root.join("nested/inner");
     fs::create_dir_all(&nested)?;
     let patch = fs::read(root.join("change.patch"))?;
@@ -91,15 +121,18 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
         }
         binary_digest.update(&buffer[..read]);
     }
-    eprintln!(
-        "actual CLI binary: {binary}; SHA256: {:x}",
-        binary_digest.finalize()
-    );
+    let binary_sha256 = format!("{:x}", binary_digest.finalize());
+    eprintln!("actual CLI binary: {binary}; SHA256: {binary_sha256}");
     let version = run_command(binary, Some(&root), &["--version"])?;
     assert!(version.status.success());
     let version = String::from_utf8(version.stdout)?;
     eprintln!("actual CLI producing identity: {}", version.trim_end());
     assert_eq!(version, super::expected_version_line());
+    let mut transcript = format!(
+        "Observational public CLI test transcript; not a typed receipt, native owner acceptance, or release qualification.\nRun ID: {run_id}\nRun attempt: {run_attempt}\nGit diff SHA256: {:x}\nretained Git diff: {}\nactual CLI binary: {binary}; SHA256: {binary_sha256}\nactual CLI producing identity: {version}\n",
+        Sha256::digest(&patch),
+        String::from_utf8_lossy(&patch),
+    );
     let root_arg = root.to_str().ok_or("fixture root is not UTF-8")?;
     let root_alias = root.join("selected-root-alias");
     std::os::unix::fs::symlink(&root, &root_alias)?;
@@ -107,7 +140,7 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
     let alias_arg = root_alias.to_str().ok_or("fixture alias is not UTF-8")?;
     let diff = root.join("change.patch");
     let diff_arg = diff.to_str().ok_or("fixture diff is not UTF-8")?;
-    let collect = |state: &str| -> TestResult<Vec<(Value, String, Value)>> {
+    let mut collect = |state: &str| -> TestResult<Vec<(Value, String, Value)>> {
         let mut reports = Vec::new();
         for (route, cwd, selected) in [
             ("explicit-root", nested.as_path(), Some(root_arg)),
@@ -124,12 +157,19 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
                     args.extend(["--root", selected]);
                 }
                 let output = run_command(binary, Some(cwd), &args)?;
-                eprintln!(
+                let receipt = format!(
                     "CLI receipt state={state} route={route} format={format} cwd={} args={args:?} status={}\nstdout={}\nstderr={}",
                     cwd.display(),
                     output.status,
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr)
+                );
+                eprintln!("{receipt}");
+                transcript.push_str(&receipt);
+                transcript.push('\n');
+                assert!(
+                    transcript.len() <= 1024 * 1024,
+                    "observational CLI transcript exceeds its 1 MiB artifact bound"
                 );
                 assert!(
                     output.status.success(),
@@ -169,6 +209,22 @@ fn changed_python_symlink_source_is_incomplete_across_root_routes() -> TestResul
     fs::remove_file(&source_dir)?;
     fs::rename(&held_dir, &source_dir)?;
     let directory_restored = collect("restored-regular-after-directory-link")?;
+    // The existing always-uploaded test artifact retains this one observational
+    // file without a profile override or broad successful-output capture. Its
+    // per-test name is isolated from typed product/native acceptance receipts.
+    let transcript_path = super::workspace_root().join(format!(
+        "target/nextest/ci/python-symlink-source-admission-cli-{run_id}-{run_attempt}.txt"
+    ));
+    fs::create_dir_all(
+        transcript_path
+            .parent()
+            .ok_or("transcript parent missing")?,
+    )?;
+    fs::write(&transcript_path, &transcript)?;
+    eprintln!(
+        "observational CLI transcript: {}",
+        transcript_path.display()
+    );
     assert_eq!(
         fs::read(&diff)?,
         patch,
