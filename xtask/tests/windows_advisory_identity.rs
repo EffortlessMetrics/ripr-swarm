@@ -1,4 +1,4 @@
-//! Production-command discriminators for #5043. The Cargo-shaped logs are
+//! Production-command discriminators for #5043 and #5107. The Cargo-shaped logs are
 //! synthetic; they establish parser identity, not native Windows execution.
 //! The control inventory is deliberately independent of the implementation.
 use std::collections::BTreeMap;
@@ -228,6 +228,15 @@ fn verify(
     forbidden: &[&str],
 ) -> Result<(), String> {
     let output = invoke(&first, &second)?;
+    verify_output(output, exit, required, forbidden)
+}
+
+fn verify_output(
+    output: Output,
+    exit: i32,
+    required: &[&str],
+    forbidden: &[&str],
+) -> Result<(), String> {
     let text = format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
@@ -250,6 +259,97 @@ fn verify(
         }
     }
     Ok(())
+}
+
+fn replace_first_completion(log: &str, replacement: &str) -> Result<String, String> {
+    let original = log
+        .lines()
+        .find(|line| line.starts_with("test result:"))
+        .ok_or_else(|| "fixture has no completion to replace".to_string())?;
+    Ok(log.replacen(original, replacement, 1))
+}
+
+#[test]
+fn consistent_completion_preserves_all_required_controls() -> Result<(), String> {
+    let log = controls(None);
+    verify(
+        log.clone(),
+        log,
+        0,
+        &[
+            "Run 1: `completed_clean`",
+            "Run 2: `completed_clean`",
+            "observed 15 pass, 0 fail",
+            "No test failed in either run.",
+        ],
+        &["Evidence failure", "not_observed"],
+    )
+}
+
+#[test]
+fn contradictory_completion_cannot_credit_passing_rows() -> Result<(), String> {
+    let clean = controls(None);
+    // The first target is lsp_lifecycle with two passing control rows. Keep
+    // target identity, announcement, rows and captured exit zero unchanged.
+    assert!(clean.starts_with("Running tests/lsp_lifecycle.rs"));
+    let contradictory = replace_first_completion(
+        &clean,
+        "test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+    )?;
+    verify(
+        contradictory,
+        clean,
+        1,
+        &[
+            "Run 1: `incomplete_evidence`",
+            "provenance:",
+            "observed 15 pass, 0 fail",
+        ],
+        &["Run 1: `completed_clean`", "No test failed in either run."],
+    )
+}
+
+#[test]
+fn malformed_completion_is_not_completion_evidence() -> Result<(), String> {
+    let clean = controls(None);
+    verify(
+        replace_first_completion(&clean, "test result: not a libtest summary")?,
+        clean,
+        1,
+        &["Run 1: `incomplete_evidence`", "provenance:"],
+        &["Run 1: `completed_clean`", "No test failed in either run."],
+    )
+}
+
+#[test]
+fn an_orphan_completion_cannot_complete_a_run() -> Result<(), String> {
+    let clean = controls(None);
+    let orphan = "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+    verify(
+        clean.clone() + orphan,
+        clean,
+        1,
+        &["Run 1: `incomplete_evidence`", "provenance:"],
+        &["Run 1: `completed_clean`", "No test failed in either run."],
+    )
+}
+
+#[test]
+fn missing_peer_evidence_cannot_issue_a_cross_run_verdict() -> Result<(), String> {
+    let first = controls(None) + &alpha("FAILED");
+    let output = invoke_with_missing(&first, &controls(None), Some("run2.log"))?;
+    verify_output(
+        output,
+        1,
+        &[
+            "Run 1: `nonzero_with_observed_test_failures`",
+            "Run 2: `log_missing`",
+            "No verdict: see the evidence failure above.",
+            "observed 15 pass, 1 fail",
+            "Run 1: Error: alpha reason",
+        ],
+        &["masked_unknown (", "unstable (", "repeated_failure ("],
+    )
 }
 
 #[test]
