@@ -841,8 +841,20 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
     if responses.len() != 8 {
         return Err(format!("expected 8 MCP responses, got {}", responses.len()));
     }
-    let templates = responses[1]
-        .pointer("/result/resourceTemplates")
+    // rmcp answers concurrently, so key every response by request id instead
+    // of assuming positional order.
+    let by_id: std::collections::HashMap<&str, &Value> = responses
+        .iter()
+        .filter_map(|response| {
+            response
+                .pointer("/id")
+                .and_then(Value::as_str)
+                .map(|id| (id, response))
+        })
+        .collect();
+    let templates = by_id
+        .get("templates")
+        .and_then(|response| response.pointer("/result/resourceTemplates"))
         .and_then(Value::as_array)
         .ok_or_else(|| "resources/templates/list omitted resourceTemplates".to_string())?;
     let template_uris = templates
@@ -861,11 +873,10 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
             ));
         }
     }
-    for (index, id) in [(2, "list"), (3, "get"), (5, "prepare")] {
-        let response = &responses[index];
-        if response.pointer("/id").and_then(Value::as_str) != Some(id) {
-            return Err(format!("{id} response lost its request id: {response}"));
-        }
+    for id in ["list", "get", "prepare"] {
+        let response = by_id
+            .get(id)
+            .ok_or_else(|| format!("{id} response missing: {responses:?}"))?;
         if response.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
             return Err(format!(
                 "{id} must fail closed with isError before refresh: {response}"
@@ -884,11 +895,10 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
     // The repair-attempt and receipt lookups route through the durable
     // read-only store, so before any refresh they fail closed with the typed
     // not-found code instead of no_snapshot.
-    for (index, id) in [(6, "attempt"), (7, "receipt")] {
-        let response = &responses[index];
-        if response.pointer("/id").and_then(Value::as_str) != Some(id) {
-            return Err(format!("{id} response lost its request id: {response}"));
-        }
+    for id in ["attempt", "receipt"] {
+        let response = by_id
+            .get(id)
+            .ok_or_else(|| format!("{id} response missing: {responses:?}"))?;
         if response.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
             return Err(format!(
                 "{id} must fail closed with isError before refresh: {response}"
@@ -904,7 +914,9 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
             ));
         }
     }
-    let snapshot = &responses[4];
+    let snapshot = by_id
+        .get("snapshot")
+        .ok_or_else(|| format!("snapshot response missing: {responses:?}"))?;
     if snapshot.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
         return Err(format!(
             "unknown snapshot resource must stay a current-version resource miss: {snapshot}"
