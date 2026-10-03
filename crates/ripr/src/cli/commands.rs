@@ -6646,7 +6646,7 @@ language = "rust"
             packet["canonical_gap_id"].as_str(),
             "receipt must bind to the packet's canonical gap id"
         );
-        assert_eq!(options.verify_command, "jest tests/discount.test.ts");
+        assert_eq!(options.verify_command, "npx jest tests/discount.test.ts");
         assert_eq!(
             Some(options.verify_command.as_str()),
             packet["verify_command"].as_str(),

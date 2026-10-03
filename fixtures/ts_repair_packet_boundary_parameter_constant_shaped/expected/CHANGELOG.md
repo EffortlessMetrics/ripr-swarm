@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_constant_shaped (2)
+
+Reason:
+RIPR-SPEC-0085: TypeScript verify commands launch the framework through the package runner (npx, pnpm exec, yarn, bunx) because node_modules/.bin is not on PATH
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_constant_shaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
