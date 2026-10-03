@@ -222,9 +222,12 @@ such a directory are refused. The Unix public-consumer controls
 these producer/validator roundtrips; the refresh argument control does not
 claim shell-text replay.
 
-This is presentation only. Raw `selected.verify_command`,
+The context wrapper and check-mode validation are presentation only. They do
+not rewrite raw `selected.verify_command`,
 `selected.receipt_command`, `commands.verify`, `commands.receipt`, receipt
-source/path/state, and the receipt's nested `--verify-command` stay unchanged.
+source/path/state, or the receipt's nested `--verify-command`. Producer-generated
+root and artifact arguments intentionally follow the selected physical root;
+that generation change does not confer execution authority.
 No legacy display string becomes a `CommandSpec`, signature, digest, eligibility,
 execution permission, or authenticated receipt. Editor/LSP command allowlists
 continue to consume the raw route. Runtime execution and receipt authenticity
