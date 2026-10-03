@@ -1,5 +1,5 @@
 //! `cargo xtask orchestration-scorecard [--captured <path>]` (#4925,
-//! RIPR-SPEC-0212): runs the committed orchestration fixture corpus through
+//! RIPR-SPEC-0213): runs the committed orchestration fixture corpus through
 //! the typed counting-law validator in `crate::orchestration_attempt`,
 //! evaluates every committed expectation, and projects one deterministic
 //! `OrchestrationScorecardV1` DTO to JSON and Markdown. Both projections

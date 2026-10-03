@@ -1,4 +1,4 @@
-# RIPR-SPEC-0212: Orchestration attempt receipts contract and scorecard projection
+# RIPR-SPEC-0213: Orchestration attempt receipts contract and scorecard projection
 
 Status: proposed
 

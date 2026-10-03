@@ -1815,9 +1815,9 @@ pub(crate) fn validate_orchestration_attempt_receipts_fixture_corpus(
     let spec_path = root.join("SPEC.md");
     if spec_path.exists() {
         let body = read_text_lossy(&spec_path)?;
-        if !body.contains("RIPR-SPEC-0212") {
+        if !body.contains("RIPR-SPEC-0213") {
             violations.push(
-                "orchestration attempt receipts SPEC.md must name its RIPR-SPEC-0212 decision"
+                "orchestration attempt receipts SPEC.md must name its RIPR-SPEC-0213 decision"
                     .to_string(),
             );
         }

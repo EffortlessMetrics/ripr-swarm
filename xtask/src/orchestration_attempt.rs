@@ -1,4 +1,4 @@
-//! Orchestration attempt receipts contract (#4925, RIPR-SPEC-0212).
+//! Orchestration attempt receipts contract (#4925, RIPR-SPEC-0213).
 //!
 //! Typed, versioned DTOs for one governed orchestration attempt:
 //! `OrchestrationAttemptV1`, `OrchestrationCorpusV1`, `AttemptStrategyV1`,
@@ -841,7 +841,7 @@ pub(crate) struct OrchestrationFixtureScenarioV1 {
     pub attempt: OrchestrationAttemptV1,
 }
 
-/// The committed orchestration fixture corpus (RIPR-SPEC-0212).
+/// The committed orchestration fixture corpus (RIPR-SPEC-0213).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OrchestrationFixtureCorpusV1 {
