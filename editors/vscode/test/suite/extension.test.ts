@@ -4658,6 +4658,9 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.showRouteQuality'));
   });
 
+  // Replaces the four no-client tests that previously asserted hung-server
+  // wording (`not responding`) for showReceiptStatus, copyReceiptCommand,
+  // openAttemptLedger, and showRouteQuality. Those assertions encoded #5099.
   const cockpitAbsenceCommands: Array<{
     name: string;
     run: (controller: RiprClientController) => Promise<void>;
@@ -4757,6 +4760,40 @@ suite('Extension Smoke', () => {
       }
     });
   }
+
+  test('an array LSP response still shows a user-visible toast and does not crash', async () => {
+    const cases: Array<{
+      name: string;
+      run: (controller: RiprClientController) => Promise<void>;
+      includes: string;
+    }> = [
+      {
+        name: 'copyTopRepairPacket',
+        run: (controller) => controller.copyTopRepairPacket(),
+        includes: 'No complete repair packet available'
+      },
+      {
+        name: 'showReceiptStatus',
+        run: (controller) => controller.showReceiptStatus(),
+        includes: 'not_available'
+      }
+    ];
+    for (const command of cases) {
+      const context = createControllerTestContext({ lspResult: ['not', 'a', 'packet'] });
+      try {
+        await context.controller.start();
+        await command.run(context.controller);
+
+        const message = context.infoMessages.at(-1) ?? '';
+        assert.ok(message.includes(command.includes), `${command.name}: ${message}`);
+        assert.notStrictEqual(message, NO_RUNNING_SERVER_MESSAGE, command.name);
+        assert.strictEqual(messageClaimsHungServer(message), false, command.name);
+        assert.deepStrictEqual(context.clipboardWrites, [], command.name);
+      } finally {
+        await context.dispose();
+      }
+    }
+  });
 });
 
 interface ControllerTestOptions {
