@@ -1164,7 +1164,11 @@ mod tests {
             .and_then(Value::as_str)
             .ok_or_else(|| "command spec lost its display".to_string())?;
         let naive_tokens = display.split(' ').map(str::to_string).collect::<Vec<_>>();
-        if naive_tokens == args {
+        let structured_args = args
+            .iter()
+            .map(|arg| arg.as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>();
+        if naive_tokens == structured_args {
             return Err(
                 "the removal experiment failed: display whitespace tokenization reproduced argv"
                     .to_string(),

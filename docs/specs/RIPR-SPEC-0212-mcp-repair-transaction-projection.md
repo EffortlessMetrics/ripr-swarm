@@ -26,6 +26,7 @@ Support-tier impact:
 
 - None. The slice projects producer facts the CLI and LSP already compute;
   it adds no language support claim and runs no new analysis.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
