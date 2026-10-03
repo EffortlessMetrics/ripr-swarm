@@ -10,7 +10,10 @@ used that boolean as "the root directory does not exist", so `ripr doctor --root
 Cargo.toml` (and `doctor --json`) contradicted `ls`. Classify with
 `metadata`/`symlink_metadata` once and reuse the result for evidence, skip
 reasons, and MissingRoot guidance. Keep a missing-path control that must still
-say "does not exist"; a symlink to a directory must still pass.
+say "does not exist"; a symlink to a directory must still pass. A live name
+whose follow fails with a non-`NotFound` error (symlink into an unreadable
+directory) is unreadable, not a non-directory. Do not give MissingRoot's
+Directory re-classify arm the missing-path sentence.
 
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
 

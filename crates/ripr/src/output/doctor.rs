@@ -695,7 +695,17 @@ impl DoctorRootPath {
             // `metadata` follows symlinks. A dangling symlink is `NotFound`
             // after follow, but the typed name still exists on disk.
             Err(error) => match std::fs::symlink_metadata(root) {
-                Ok(_) => Self::NotADirectory,
+                Ok(_) => {
+                    // A dangling symlink is `NotFound` after follow. Any other
+                    // follow error with a live name (PermissionDenied on the
+                    // target) is unreadability, not "exists but is not a
+                    // directory".
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        Self::NotADirectory
+                    } else {
+                        Self::Unreadable
+                    }
+                }
                 Err(symlink_error) => {
                     let missing = error.kind() == std::io::ErrorKind::NotFound
                         && symlink_error.kind() == std::io::ErrorKind::NotFound;
@@ -755,10 +765,13 @@ impl DoctorRootPath {
                 "- The selected root could not be read; check permissions and rerun with \
                  `--root <path>` naming an accessible repository directory"
             }
-            Self::Missing | Self::Directory => {
+            Self::Missing => {
                 "- The selected root does not exist; rerun with `--root <path>` naming an \
                  existing repository directory"
             }
+            // MissingRoot re-classifies at render time. If the path became a
+            // directory after evaluation, do not claim it is absent.
+            Self::Directory => "- Rerun with `--root <path>` naming the repository directory",
         }
     }
 }
@@ -982,19 +995,20 @@ fn evaluate_doctor_core_with_probe_for_profile(
     }
     for tool in DOCTOR_TOOLS {
         let name = format!("tool_{tool}");
-        if let RustToolchainScope::NotInScope(reason) = &rust_scope {
-            if RUST_TOOLCHAIN_TOOLS.contains(&tool) && profile == DoctorProfile::Analysis {
-                report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
-                continue;
-            }
+        if let RustToolchainScope::NotInScope(reason) = &rust_scope
+            && RUST_TOOLCHAIN_TOOLS.contains(&tool)
+            && profile == DoctorProfile::Analysis
+        {
+            report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
+            continue;
         }
         // The toolchain is probed in the selected root; an unusable root
         // fails the spawn and would read as a missing tool (#4531, #5101).
-        if RUST_TOOLCHAIN_TOOLS.contains(&tool) {
-            if let Some(reason) = root_path.unusable_skip_reason() {
-                report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
-                continue;
-            }
+        if RUST_TOOLCHAIN_TOOLS.contains(&tool)
+            && let Some(reason) = root_path.unusable_skip_reason()
+        {
+            report.add_skipped_check(&name, format!("{tool} check skipped: {reason}"));
+            continue;
         }
         let (status, evidence) = probe_tool(tool, root);
         if RUST_TOOLCHAIN_TOOLS.contains(&tool)
@@ -2280,6 +2294,73 @@ mod tests {
         json_root_directory_evidence_distinguishes(&report, "cannot determine", "does not exist")
     }
 
+    /// `metadata` follows the link; `symlink_metadata` sees the live name.
+    /// A follow `PermissionDenied` must not inherit the dangling-link
+    /// `NotADirectory` arm (#5101).
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_into_an_unreadable_directory_is_not_reported_as_a_file() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let parent = unique_test_dir("unreadable-symlink-follow");
+        let jail = parent.join("jail");
+        let target = jail.join("actual_dir");
+        std::fs::create_dir_all(&target)
+            .map_err(|err| format!("create unreadable follow target: {err}"))?;
+        let link = parent.join("link-to-jailed-dir");
+        std::os::unix::fs::symlink(&target, &link)
+            .map_err(|err| format!("symlink into jail: {err}"))?;
+        let restore = |mode: u32| -> Result<(), String> {
+            std::fs::set_permissions(&jail, std::fs::Permissions::from_mode(mode))
+                .map_err(|err| format!("restore jail mode {mode:#o}: {err}"))
+        };
+        restore(0o000)?;
+        let classified = DoctorRootPath::classify(&link);
+        let (report, probed) = evaluate_without_rust_toolchain(&link, &[LanguageId::Rust]);
+        restore(0o755)?;
+        let _ = std::fs::remove_dir_all(&parent);
+        if classified != DoctorRootPath::Unreadable {
+            return Err(format!(
+                "symlink into an unreadable directory classified as {classified:?}"
+            ));
+        }
+        assert_unusable_root_skips_root_bound_probes(
+            &report,
+            &probed,
+            "cannot determine",
+            "is not a directory",
+            "the root directory cannot be read",
+        )?;
+        json_root_directory_evidence_distinguishes(
+            &report,
+            "cannot determine",
+            "is not a directory",
+        )
+    }
+
+    #[test]
+    fn doctor_root_path_recovery_guidance_does_not_borrow_sibling_wording() {
+        let missing = DoctorRootPath::Missing.recovery_guidance();
+        let file = DoctorRootPath::NotADirectory.recovery_guidance();
+        let unreadable = DoctorRootPath::Unreadable.recovery_guidance();
+        let directory = DoctorRootPath::Directory.recovery_guidance();
+        assert!(
+            missing.contains("does not exist") && !missing.contains("is not a directory"),
+            "missing guidance: {missing}"
+        );
+        assert!(
+            file.contains("exists but is not a directory") && !file.contains("does not exist"),
+            "file guidance: {file}"
+        );
+        assert!(
+            unreadable.contains("could not be read") && !unreadable.contains("does not exist"),
+            "unreadable guidance: {unreadable}"
+        );
+        assert!(
+            !directory.contains("does not exist") && !directory.contains("is not a directory"),
+            "directory re-classify guidance must not claim absence or a file: {directory}"
+        );
+    }
+
     /// Shared #4531/#5101 oracle: an unusable root still fails
     /// `root_directory`, skips root-bound probes, and must not borrow the
     /// sibling state's wording.
@@ -3134,6 +3215,20 @@ mod tests {
         {
             return Err(format!(
                 "a file root must get not-a-directory guidance, not missing-path guidance: {file_guidance:?}"
+            ));
+        }
+        let existing_dir = unique_test_dir("missing-root-guidance-dir");
+        std::fs::create_dir_all(&existing_dir)
+            .map_err(|error| format!("create directory-root fixture: {error}"))?;
+        let directory_guidance =
+            DoctorFirstCommand::MissingRoot.recommendation_lines_for(&existing_dir);
+        let _ = std::fs::remove_dir_all(&existing_dir);
+        if directory_guidance
+            .iter()
+            .any(|line| line.contains("does not exist") || line.contains("is not a directory"))
+        {
+            return Err(format!(
+                "MissingRoot re-classifying an existing directory must not claim it is absent or a file: {directory_guidance:?}"
             ));
         }
         // An unavailable relative root is bound to the producing directory,
