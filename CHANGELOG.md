@@ -13,7 +13,8 @@ are scoped or reviewed.
 
 - Source-subject stamps keep whitespace-bearing path identity, so a check JSON
   stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
-  tab path, or treat a correct whitespace stamp as malformed (#5128).
+  tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
+  prefix components stay rejected (#5128).
 
 ### Changed
 

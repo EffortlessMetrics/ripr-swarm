@@ -324,6 +324,47 @@ mod tests {
     }
 
     #[test]
+    fn subject_relative_path_rejects_prefix_and_root_escape() {
+        let root = Path::new("/repo");
+        assert_eq!(subject_relative_path(root, "/outside.py"), None);
+        assert_eq!(subject_relative_path(root, "../outside.py"), None);
+        // `check-local-context` forbids contiguous drive-letter path literals.
+        let drive_relative = format!("{}:outside.py", 'C');
+        let drive_absolute = format!("{}:/outside.py", 'C');
+        if cfg!(windows) {
+            assert_eq!(
+                subject_relative_path(root, &drive_relative),
+                None,
+                "drive-relative identity must not join outside the workspace"
+            );
+            assert_eq!(subject_relative_path(root, &drive_absolute), None);
+            assert_eq!(
+                check_source_subject(
+                    root,
+                    Some(&json!({
+                        "digest_algorithm": "sha256",
+                        "files": [{"path": drive_relative, "digest": null}]
+                    })),
+                    &BTreeSet::new()
+                ),
+                SourceSubjectCheck::Unverifiable("source_subject_malformed"),
+                "currentness must fail closed before reading a prefixed stamp"
+            );
+        } else {
+            assert_eq!(
+                subject_relative_path(root, &drive_relative).as_deref(),
+                Some(drive_relative.as_str()),
+                "a drive-letter lookalike is an ordinary Unix filename"
+            );
+            assert_eq!(
+                subject_relative_path(root, &drive_absolute).as_deref(),
+                Some(drive_absolute.as_str()),
+                "a drive-absolute lookalike is a Unix directory named like a drive"
+            );
+        }
+    }
+
+    #[test]
     fn source_subject_stays_current_until_a_stamped_file_changes() -> Result<(), String> {
         let root = temp_root("edit")?;
         std::fs::write(root.join("src/lib.rs"), "fn a() {}\n").map_err(|err| err.to_string())?;

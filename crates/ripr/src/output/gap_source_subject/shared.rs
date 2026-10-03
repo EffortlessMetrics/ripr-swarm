@@ -87,16 +87,17 @@ fn subject_named_file(raw: &str) -> Option<&str> {
     (!file.is_empty()).then_some(file)
 }
 
-/// Repo-relative stamp spelling: `/` separators, no `.`/`..` segments, last
-/// segment has an extension. Whitespace in a segment is kept.
+/// Repo-relative stamp spelling: `/` separators, last segment has an
+/// extension, and parent/root/prefix components are rejected. Whitespace in a
+/// `Normal` segment is kept; slash-splitting would drop Windows prefix and
+/// rooted-path rejection (#5128).
 fn relative_stamp_path(relative: &Path) -> Option<String> {
-    let normalized = relative.to_str()?.replace('\\', "/");
     let mut parts = Vec::new();
-    for segment in normalized.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => return None,
-            value => parts.push(value),
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?.to_string()),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
     }
     if !parts.last()?.contains('.') {

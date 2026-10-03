@@ -12,9 +12,11 @@ dropped. The currentness consumer then treated a correctly spelled whitespace
 stamp as `source_subject_malformed`.
 
 Keep filesystem identity in the source-subject owner. Split `path::test_name`
-selectors, but do not trim the file part or reject interior whitespace. Paths
-remain the limitation-path rule: they are identities, not prose. Do not add a
-second filesystem authority in a renderer or `lsp/diagnostics.rs`.
+selectors, but do not trim the file part or reject interior whitespace. Walk
+`Path` components so parent, root, and prefix segments stay rejected; a
+slash-split rewrite dropped Windows drive-relative and rooted identities.
+Paths remain the limitation-path rule: they are identities, not prose. Do not
+add a second filesystem authority in a renderer or `lsp/diagnostics.rs`.
 
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
 
