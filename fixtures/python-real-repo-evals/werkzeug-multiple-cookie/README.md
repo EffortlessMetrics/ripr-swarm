@@ -41,6 +41,26 @@ locations. Original archive URLs/digests, exact commits/tree and retained-file
 identities are in `manifest.json`. The original upstream license is also copied
 to `upstream/LICENSE.rst`; all copyright and license text is preserved.
 
+## Install-report projection
+
+`evidence/dependency-install-report.projected.json` is a deterministic,
+post-capture projection of the pip-generated install report, not a raw receipt
+or a new installation. It omits only the seven optional
+`install[*].metadata.description` long-form registry descriptions. Every other
+parsed field remains identical, including package names/versions, source URLs,
+archive hashes, dependency constraints, request flags and runtime environment.
+Public package descriptions can contain developer-path examples unrelated to
+this case; they are not needed to establish dependency identity.
+
+`evidence/setup.json` records the exact transformation, projected artifact
+identity, and each omitted JSON pointer, decoded-string UTF-8 size and SHA-256.
+The original pip report remains outside Git in task evidence: 52,953 bytes,
+SHA-256 `4b130755d073982c6d41bae627e6269ef8dd269ed239b9f18ebe5d866f87de84`.
+The observed pip command still names the raw file it actually wrote. The
+projection does not claim that pip directly produced the renamed artifact.
+The updated case-manifest digest reflects evidence packaging only; upstream
+source, native observations, replay driver and dependency lock are unchanged.
+
 ## When
 
 Use CPython 3.12 on Linux x86_64 and explicit task-local dependencies. The lock

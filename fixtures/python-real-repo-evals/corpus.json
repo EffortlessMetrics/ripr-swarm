@@ -2098,7 +2098,7 @@
       "reason": "Retain a genuine upstream production/test/license/provenance case and a native oracle before assessing static output. Future capability work must distinguish the effective getlist assertion from the retained ineffective first-value assertion, with established descriptor identity and negative rebound/unknown-decorator controls.",
       "upstream_evidence": {
         "manifest": "werkzeug-multiple-cookie/manifest.json",
-        "sha256": "bb18db3d590d3052380a0bc34ee5535d2bc65704edab4c9ecfee6a15801dae00"
+        "sha256": "28bca009452fee508860fda5f50a1db303cda5c7731dcde40c005e5aff7f5fb3"
       }
     }
   ],
