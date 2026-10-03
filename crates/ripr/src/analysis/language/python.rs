@@ -20,11 +20,14 @@
 //! `no_static_path`.
 
 use super::super::{
-    AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression, workspace,
+    AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod bounded_read;
+use crate::analysis::workspace::{
+    changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
+};
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
@@ -652,15 +655,13 @@ impl PythonAdapter {
         // The workspace walk cannot discover a missing NEW-side path. Reuse
         // source admission before counting or classifying it (#5110); genuine
         // deletions are already omitted by the diff parser.
-        let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
+        let absent_changed_files = changed_source_files_absent_from_worktree(
             &options.root,
             python_changed_files
                 .iter()
                 .map(|changed| changed.path.as_path()),
         );
-        limitations.extend(workspace::limitations_for_absent_changed_files(
-            &absent_changed_files,
-        )?);
+        limitations.extend(limitations_for_absent_changed_files(&absent_changed_files)?);
         let absent_changed_paths = absent_changed_files
             .iter()
             .map(|path| normalized_path(path))

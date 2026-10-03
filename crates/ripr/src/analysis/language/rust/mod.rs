@@ -31,10 +31,6 @@ use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_fi
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::analysis::workspace::limitations_for_absent_changed_files;
-use crate::analysis_outcome::{
-    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
-    AnalysisStage,
-};
 use crate::config::OraclePolicy;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
