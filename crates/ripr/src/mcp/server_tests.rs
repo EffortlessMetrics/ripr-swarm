@@ -16,9 +16,9 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         return Err("SDK metadata changed application identity or analysis authority".into());
     }
     let tools = &server.tools;
-    if tools.tools.len() != 4 {
+    if tools.tools.len() != 7 {
         return Err(format!(
-            "SDK descriptor must expose the four-tool slice surface, got {} tools",
+            "SDK descriptor must expose the seven-tool slice surface, got {} tools",
             tools.tools.len()
         ));
     }
@@ -59,6 +59,8 @@ fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), Strin
     for expected in [
         protocol::SNAPSHOT_RESOURCE_TEMPLATE,
         protocol::GAP_RESOURCE_TEMPLATE,
+        protocol::REPAIR_ATTEMPT_TEMPLATE,
+        protocol::RECEIPT_TEMPLATE,
     ] {
         if !uris.contains(&expected) {
             return Err(format!("SDK resource templates lost {expected}: {uris:?}"));
@@ -126,6 +128,200 @@ async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), Stri
                     "get_gap must reject malformed arguments with invalid params, got {error:?}"
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn prepare_repair_fails_closed_before_refresh() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let arguments = serde_json::from_value(serde_json::json!({"gap_id": "gap:any"}))
+        .map_err(|error| error.to_string())?;
+    let response = server
+        .prepare_repair_tool(arguments)
+        .await
+        .map_err(|error| error.to_string())?;
+    let result = match response {
+        rmcp::model::CallToolResponse::Complete(result) => result,
+        other => {
+            return Err(format!(
+                "pre-refresh prepare_repair must complete with a typed failure, got {other:?}"
+            ));
+        }
+    };
+    let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+    if value
+        .pointer("/isError")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Err(format!(
+            "pre-refresh prepare_repair must be a typed failure: {value}"
+        ));
+    }
+    if value
+        .pointer("/structuredContent/failure/code")
+        .and_then(serde_json::Value::as_str)
+        != Some(workspace::CODE_NO_SNAPSHOT)
+    {
+        return Err(format!(
+            "pre-refresh prepare_repair lost no_snapshot: {value}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn repair_attempt_lookup_fails_closed_before_refresh() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let arguments = serde_json::from_value(serde_json::json!({"attempt_id": "repair-attempt:absent"}))
+        .map_err(|error| error.to_string())?;
+    let response = server
+        .get_repair_attempt_tool(arguments)
+        .await
+        .map_err(|error| error.to_string())?;
+    let result = match response {
+        rmcp::model::CallToolResponse::Complete(result) => result,
+        other => {
+            return Err(format!(
+                "pre-refresh get_repair_attempt must complete with a typed failure, got {other:?}"
+            ));
+        }
+    };
+    let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+    if value
+        .pointer("/isError")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Err(format!(
+            "pre-refresh get_repair_attempt must be a typed failure: {value}"
+        ));
+    }
+    if value
+        .pointer("/structuredContent/failure/code")
+        .and_then(serde_json::Value::as_str)
+        != Some("attempt_not_found")
+    {
+        return Err(format!(
+            "pre-refresh get_repair_attempt lost attempt_not_found: {value}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn receipt_status_fails_closed_before_refresh() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let arguments = serde_json::from_value(serde_json::json!({"receipt_id": "receipt:absent"}))
+        .map_err(|error| error.to_string())?;
+    let response = server
+        .get_receipt_status_tool(arguments)
+        .await
+        .map_err(|error| error.to_string())?;
+    let result = match response {
+        rmcp::model::CallToolResponse::Complete(result) => result,
+        other => {
+            return Err(format!(
+                "pre-refresh get_receipt_status must complete with a typed failure, got {other:?}"
+            ));
+        }
+    };
+    let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+    if value
+        .pointer("/isError")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Err(format!(
+            "pre-refresh get_receipt_status must be a typed failure: {value}"
+        ));
+    }
+    if value
+        .pointer("/structuredContent/failure/code")
+        .and_then(serde_json::Value::as_str)
+        != Some("attempt_not_found")
+    {
+        return Err(format!(
+            "pre-refresh get_receipt_status lost attempt_not_found: {value}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    for (arguments, call) in [
+        (
+            serde_json::json!({}),
+            "prepare_repair rejects a missing gap_id",
+        ),
+        (
+            serde_json::json!({"gap_id": ""}),
+            "prepare_repair rejects an empty gap_id",
+        ),
+        (
+            serde_json::json!({"gap_id": 7}),
+            "prepare_repair rejects a non-string gap_id",
+        ),
+        (
+            serde_json::json!({"gap_id": "gap:x", "verbose": true}),
+            "prepare_repair rejects unknown arguments",
+        ),
+        (
+            serde_json::json!({}),
+            "get_repair_attempt rejects a missing attempt_id",
+        ),
+        (
+            serde_json::json!({"attempt_id": ""}),
+            "get_repair_attempt rejects an empty attempt_id",
+        ),
+        (
+            serde_json::json!({"attempt_id": 7}),
+            "get_repair_attempt rejects a non-string attempt_id",
+        ),
+        (
+            serde_json::json!({"attempt_id": "repair-attempt:x", "verbose": true}),
+            "get_repair_attempt rejects unknown arguments",
+        ),
+        (
+            serde_json::json!({}),
+            "get_receipt_status rejects a missing receipt_id",
+        ),
+        (
+            serde_json::json!({"receipt_id": ""}),
+            "get_receipt_status rejects an empty receipt_id",
+        ),
+        (
+            serde_json::json!({"receipt_id": 7}),
+            "get_receipt_status rejects a non-string receipt_id",
+        ),
+        (
+            serde_json::json!({"receipt_id": "receipt:x", "verbose": true}),
+            "get_receipt_status rejects unknown arguments",
+        ),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let rejected = match (
+            server.prepare_repair_tool(arguments.clone()).await,
+            server.get_repair_attempt_tool(arguments.clone()).await,
+            server.get_receipt_status_tool(arguments).await,
+        ) {
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error))
+                if error.code == rmcp::model::ErrorCode::INVALID_PARAMS =>
+            {
+                true
+            }
+            _ => false,
+        };
+        if !rejected {
+            return Err(format!("{call} with invalid params"));
         }
     }
     Ok(())
