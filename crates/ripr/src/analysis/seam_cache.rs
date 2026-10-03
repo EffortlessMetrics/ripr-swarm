@@ -2048,6 +2048,7 @@ impl CacheEnvelope {
         Self::new_with_fallback(key, classified_seams, seam_limit_info, Vec::new())
     }
 
+    #[cfg(test)]
     fn new_with_fallback(
         key: RepoSeamCacheKey,
         classified_seams: Vec<ClassifiedSeam>,
@@ -2191,6 +2192,7 @@ impl ShardedCacheManifest {
 }
 
 impl ShardedCacheEnvelope {
+    #[cfg(test)]
     fn new(
         key: RepoSeamCacheKey,
         shard_index: usize,
@@ -2447,6 +2449,7 @@ mod codec {
         ShardedCacheManifest,
     };
 
+    #[cfg(test)]
     pub(super) fn encode(envelope: &CacheEnvelope) -> Result<Vec<u8>, String> {
         super::encode_integrity_body(envelope, envelope.expected_digest()?)
     }
@@ -2455,6 +2458,7 @@ mod codec {
         serde_json::from_slice(bytes).map_err(|err| format!("decode failed: {err}"))
     }
 
+    #[cfg(test)]
     pub(super) fn encode_sharded_manifest(
         manifest: &ShardedCacheManifest,
     ) -> Result<Vec<u8>, String> {
@@ -2466,6 +2470,7 @@ mod codec {
             .map_err(|err| format!("decode sharded manifest failed: {err}"))
     }
 
+    #[cfg(test)]
     pub(super) fn encode_shard(envelope: &ShardedCacheEnvelope) -> Result<Vec<u8>, String> {
         super::encode_integrity_body(envelope, envelope.expected_digest()?)
     }
