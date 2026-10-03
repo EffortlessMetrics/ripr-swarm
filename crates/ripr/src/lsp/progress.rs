@@ -982,8 +982,7 @@ mod tests {
     }
 
     #[test]
-    fn report_stage_emits_one_bounded_report_per_stage_in_producer_order(
-    ) -> Result<(), String> {
+    fn report_stage_emits_one_bounded_report_per_stage_in_producer_order() -> Result<(), String> {
         runtime()?.block_on(async {
             let (tracker, sink) = tracker_with_recorder();
             let request = test_request(1);
@@ -1070,8 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn report_stage_is_silent_for_terminals_queued_unstarted_and_unknown(
-    ) -> Result<(), String> {
+    fn report_stage_is_silent_for_terminals_queued_unstarted_and_unknown() -> Result<(), String> {
         runtime()?.block_on(async {
             // Terminal stages never become reports: the outcome-derived end
             // owns the terminal disposition.
@@ -1100,13 +1098,17 @@ mod tests {
             }
 
             // Unknown generation is a no-op.
-            tracker.report_stage(99, AnalysisProgressStage::LoadingInput).await;
+            tracker
+                .report_stage(99, AnalysisProgressStage::LoadingInput)
+                .await;
 
             // A queued (started) token must not carry stage reports: only
             // the active analyzing attempt may.
             let queued = test_request(2);
             tracker.begin(&queued, AnalysisProgressPhase::Queued).await;
-            tracker.report_stage(2, AnalysisProgressStage::LoadingInput).await;
+            tracker
+                .report_stage(2, AnalysisProgressStage::LoadingInput)
+                .await;
 
             reports = sink
                 .events()
@@ -1135,8 +1137,12 @@ mod tests {
             tracker
                 .begin(&request, AnalysisProgressPhase::Analyzing)
                 .await;
-            tracker.report_stage(1, AnalysisProgressStage::LoadingInput).await;
-            tracker.report_stage(1, AnalysisProgressStage::BuildingOutput).await;
+            tracker
+                .report_stage(1, AnalysisProgressStage::LoadingInput)
+                .await;
+            tracker
+                .report_stage(1, AnalysisProgressStage::BuildingOutput)
+                .await;
             if !sink.events().is_empty() {
                 return Err(format!(
                     "capability-absent client received stage reports: {:?}",

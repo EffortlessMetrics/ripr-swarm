@@ -112,7 +112,9 @@ impl AnalysisProgressSink for StageReportBridge {
 
 #[cfg(test)]
 mod tests {
-    use super::super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
+    use super::super::progress::{
+        AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker,
+    };
     use super::super::refresh_scheduler::{RefreshReason, RefreshScope};
     use super::*;
     use crate::app::{AnalysisProgressScope, AnalysisProgressStage};
@@ -125,6 +127,8 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
+    use tower_lsp_server::jsonrpc::Result as LspResult;
+    use tower_lsp_server::ls_types::{InitializeParams, InitializeResult};
     use tower_lsp_server::{LanguageServer, LspService};
 
     /// Semantic terminal both surfaces must agree on for one producer
@@ -191,11 +195,8 @@ mod tests {
     struct ClientOnly(tower_lsp_server::Client);
 
     impl LanguageServer for ClientOnly {
-        async fn initialize(
-            &self,
-            _: tower_lsp_server::ls_types::InitializeParams,
-        ) -> tower_lsp_server::jsonrpc::Result<tower_lsp_server::ls_types::InitializeResult> {
-            Ok(tower_lsp_server::ls_types::InitializeResult::default())
+        async fn initialize(&self, _: InitializeParams) -> LspResult<InitializeResult> {
+            Ok(InitializeResult::default())
         }
 
         async fn shutdown(&self) -> tower_lsp_server::jsonrpc::Result<()> {
@@ -303,7 +304,8 @@ mod tests {
         let denominator_known = trace
             .iter()
             .any(|event| event.completed_units.is_some() && event.total_units.is_some());
-        let producer_stages: Vec<AnalysisProgressStage> = trace.iter().map(|event| event.stage).collect();
+        let producer_stages: Vec<AnalysisProgressStage> =
+            trace.iter().map(|event| event.stage).collect();
         let Some(terminal_stage) = producer_stages.last().copied() else {
             return Err("parity trace must be non-empty".to_string());
         };
@@ -313,7 +315,8 @@ mod tests {
 
         // CLI projection: the real stderr sink over a buffer, non-TTY policy.
         let buffer = Buffer::new();
-        let cli_sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        let cli_sink =
+            CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
         for event in trace {
             cli_sink.emit(*event);
         }
@@ -328,7 +331,9 @@ mod tests {
         for token in &cli_stage_tokens {
             let needle = format!("ripr progress: {token} [");
             if !cli_text.contains(&needle) {
-                return Err(format!("CLI projection lost stage token {token}: {cli_text}"));
+                return Err(format!(
+                    "CLI projection lost stage token {token}: {cli_text}"
+                ));
             }
         }
 
@@ -429,9 +434,7 @@ mod tests {
                 report.lsp_stage_messages.len()
             ));
         }
-        if report.lsp_selected_records
-            != report.lsp_stage_messages.len().saturating_add(3)
-        {
+        if report.lsp_selected_records != report.lsp_stage_messages.len().saturating_add(3) {
             return Err(format!(
                 "LSP record accounting drifted: {} records for {} stage reports + create + begin + end",
                 report.lsp_selected_records,
@@ -486,8 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_and_lsp_project_one_success_trace_with_identical_stage_identity(
-    ) -> Result<(), String> {
+    fn cli_and_lsp_project_one_success_trace_with_identical_stage_identity() -> Result<(), String> {
         let trace = success_trace(AnalysisProgressScope::Worktree);
         let report = project_trace(&trace, None, false)?;
         assert_parity(&report)?;
@@ -498,7 +500,9 @@ mod tests {
             return Err(format!("LSP terminal drifted: {:?}", report.lsp_terminal));
         }
         if report.limitations.is_empty() != (report.lsp_terminal == SemanticTerminal::Success) {
-            return Err("limitations must be empty exactly when the run is not limited".to_string());
+            return Err(
+                "limitations must be empty exactly when the run is not limited".to_string(),
+            );
         }
         Ok(())
     }
@@ -524,11 +528,20 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_and_failed_traces_stay_non_successful_on_both_surfaces(
-    ) -> Result<(), String> {
+    fn cancelled_and_failed_traces_stay_non_successful_on_both_surfaces() -> Result<(), String> {
         let cancelled = vec![
-            event(AnalysisProgressStage::LoadingInput, AnalysisProgressScope::Diff, None, None),
-            event(AnalysisProgressStage::Cancelled, AnalysisProgressScope::Diff, None, None),
+            event(
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressScope::Diff,
+                None,
+                None,
+            ),
+            event(
+                AnalysisProgressStage::Cancelled,
+                AnalysisProgressScope::Diff,
+                None,
+                None,
+            ),
         ];
         let report = project_trace(&cancelled, None, false)?;
         assert_parity(&report)?;
@@ -538,9 +551,24 @@ mod tests {
         }
 
         let failed = vec![
-            event(AnalysisProgressStage::LoadingInput, AnalysisProgressScope::Diff, None, None),
-            event(AnalysisProgressStage::Analyzing, AnalysisProgressScope::Diff, None, None),
-            event(AnalysisProgressStage::Failed, AnalysisProgressScope::Diff, None, None),
+            event(
+                AnalysisProgressStage::LoadingInput,
+                AnalysisProgressScope::Diff,
+                None,
+                None,
+            ),
+            event(
+                AnalysisProgressStage::Analyzing,
+                AnalysisProgressScope::Diff,
+                None,
+                None,
+            ),
+            event(
+                AnalysisProgressStage::Failed,
+                AnalysisProgressScope::Diff,
+                None,
+                None,
+            ),
         ];
         let report = project_trace(&failed, None, false)?;
         assert_parity(&report)?;
@@ -573,8 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn removing_the_shared_mapping_breaks_parity_even_with_legacy_progress(
-    ) -> Result<(), String> {
+    fn removing_the_shared_mapping_breaks_parity_even_with_legacy_progress() -> Result<(), String> {
         // Control 10: with the stage mapping removed, the LSP projection
         // keeps its legacy begin/end traffic but loses every stage report,
         // and the parity oracle must reject that.
@@ -585,8 +612,7 @@ mod tests {
         }
         match assert_parity(&report) {
             Ok(()) => Err(
-                "parity oracle accepted a projection without the shared stage mapping"
-                    .to_string(),
+                "parity oracle accepted a projection without the shared stage mapping".to_string(),
             ),
             Err(_) => Ok(()),
         }
