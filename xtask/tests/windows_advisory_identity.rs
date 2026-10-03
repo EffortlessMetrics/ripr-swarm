@@ -186,20 +186,29 @@ fn corpus_root(nonce: u128) -> PathBuf {
 }
 
 fn invoke_with_missing(first: &str, second: &str, missing: Option<&str>) -> Result<Output, String> {
+    invoke_artifacts(first, second, missing, None)
+}
+
+fn invoke_artifacts(
+    first: &str,
+    second: &str,
+    missing: Option<&str>,
+    statuses: Option<[i32; 2]>,
+) -> Result<Output, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
     let root = TempRoot::create(corpus_root(nonce)).map_err(|e| e.to_string())?;
-    for (label, log) in [("run1", first), ("run2", second)] {
+    for (index, (label, log)) in [("run1", first), ("run2", second)].into_iter().enumerate() {
         fs::write(root.0.join(format!("{label}.log")), log).map_err(|e| e.to_string())?;
+        let status = statuses.map_or_else(
+            || if log.contains(" ... FAILED") { 101 } else { 0 },
+            |values| values[index],
+        );
         fs::write(
             root.0.join(format!("{label}.status")),
-            if log.contains(" ... FAILED") {
-                "101\n"
-            } else {
-                "0\n"
-            },
+            format!("{status}\n"),
         )
         .map_err(|e| e.to_string())?;
     }
@@ -349,6 +358,139 @@ fn missing_peer_evidence_cannot_issue_a_cross_run_verdict() -> Result<(), String
             "Run 1: Error: alpha reason",
         ],
         &["masked_unknown (", "unstable (", "repeated_failure ("],
+    )
+}
+
+#[test]
+fn a_zero_status_cannot_hide_a_consistent_failed_completion() -> Result<(), String> {
+    let failure = controls(None) + &alpha("FAILED");
+    verify_output(
+        invoke_artifacts(&failure, &controls(None), None, Some([0, 0]))?,
+        1,
+        &[
+            "Run 1: `incomplete_evidence` (cargo exit 0)",
+            "zero cargo exit status contradicts observed test failures",
+            "No verdict: see the evidence failure above.",
+            "observed 15 pass, 1 fail",
+            "Run 1: Error: alpha reason",
+        ],
+        &["masked_unknown (", "unstable (", "repeated_failure ("],
+    )
+}
+
+#[test]
+fn a_nonzero_status_after_passing_targets_retains_the_infrastructure_distinction()
+-> Result<(), String> {
+    let failure = controls(None) + &alpha("FAILED");
+    verify_output(
+        invoke_artifacts(&failure, &controls(None), None, Some([101, 101]))?,
+        0,
+        &[
+            "Run 2: `compile_or_harness_failure` (cargo exit 101)",
+            "Infrastructure failure",
+            "masked_unknown (1)",
+        ],
+        &[
+            "Evidence failure",
+            "incomplete_evidence",
+            "repeated_failure (",
+        ],
+    )
+}
+
+#[test]
+fn unusable_observed_failures_keep_diagnostics_without_any_verdict() -> Result<(), String> {
+    let failure = controls(None) + &alpha("FAILED");
+    for missing in ["run1.status", "run2.status"] {
+        verify_output(
+            invoke_with_missing(&failure, &failure, Some(missing))?,
+            1,
+            &[
+                "status_missing",
+                "No verdict: see the evidence failure above.",
+                "Run 1: Error: alpha reason",
+                "Run 2: Error: alpha reason",
+            ],
+            &["masked_unknown (", "unstable (", "repeated_failure ("],
+        )?;
+    }
+    let incomplete = replace_first_completion(&failure, "test result: incomplete")?;
+    for (first, second) in [
+        (&incomplete, &failure),
+        (&failure, &incomplete),
+        (&incomplete, &incomplete),
+    ] {
+        verify(
+            first.clone(),
+            second.clone(),
+            1,
+            &[
+                "incomplete_evidence",
+                "No verdict: see the evidence failure above.",
+                "Run 1: Error: alpha reason",
+                "Run 2: Error: alpha reason",
+            ],
+            &["masked_unknown (", "unstable (", "repeated_failure ("],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn completion_requires_matching_each_outcome_and_an_announced_owner() -> Result<(), String> {
+    let clean = controls(None);
+    let valid = "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s";
+    for summary in [
+        valid.replace("ok.", "FAILED."),
+        valid.replace("2 passed; 0 failed", "1 passed; 1 failed"),
+        valid.replace(
+            "2 passed; 0 failed; 0 ignored",
+            "1 passed; 0 failed; 1 ignored",
+        ),
+        valid.replace("2 passed", "1 passed"),
+        valid.replace("0 measured", "1 measured"),
+        valid.replace("2 passed", "many passed"),
+        valid.replace("2 passed", "9999999999999999999999999999999999999 passed"),
+        valid.replace("0 ignored; ", ""),
+        valid.replace("0 filtered out", "-1 filtered out"),
+        valid.replace("0.01s", "NaNs"),
+        valid.replace("0.01s", "-1s"),
+        valid.replace("0.01s", "later"),
+        format!("{valid} trailing evidence"),
+    ] {
+        verify(
+            replace_first_completion(&clean, &summary)?,
+            clean.clone(),
+            1,
+            &["incomplete_evidence", "provenance:"],
+            &["No test failed in either run."],
+        )?;
+    }
+    let unannounced = clean.replacen("running 2 tests\n", "", 1);
+    verify(
+        unannounced,
+        clean,
+        1,
+        &[
+            "incomplete_evidence",
+            "completion summary without an announced owning harness",
+        ],
+        &["No test failed in either run."],
+    )
+}
+
+#[test]
+fn completion_preserves_ignored_filtered_empty_and_doctest_batches() -> Result<(), String> {
+    let log = controls(None)
+        + "Running tests/mixed.rs (target/debug/deps/mixed-1111111111111111.exe)\nrunning 3 tests\ntest success ... ok\ntest deferred ... ignored, requires a device\ntest other ... ignored\ntest result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 12 filtered out; finished in 0.00s\n"
+        + "Running tests/empty.rs (target/debug/deps/empty-1111111111111111.exe)\nrunning 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s\n"
+        + "Doc-tests ripr\nrunning 1 test\ntest src/lib.rs - example (line 1) ... ignored\ntest result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\nrunning 1 test\ntest src/lib.rs - example (line 5) ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\nall doctests ran in 0.01s; merged doctests compilation took 0.01s\n";
+    verify(
+        log.clone(),
+        log,
+        0,
+        &["completed_clean", "observed 17 pass, 0 fail"],
+        &["Evidence failure", "incomplete_evidence"],
     )
 }
 
