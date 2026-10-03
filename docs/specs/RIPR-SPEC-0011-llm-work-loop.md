@@ -686,6 +686,10 @@ This diagnosis never accepts
 legacy evidence or authenticates an executable. Malformed/unrelated JSON and
 present-but-invalid envelopes retain canonical parsing errors. Existing current
 artifact commitment and root/currentness validation still govern acceptance.
+Recovery labels the Bash/Git Bash form and the PowerShell form translated by
+the existing Markdown command helper. If that helper refuses translation, the
+diagnostic labels the command Bash/Git Bash only and names PowerShell recovery
+as unavailable. Root apostrophes and dollar signs remain literal path text.
 Printed recovery still requires the current installed RIPR executable; this
 partial repair does not bind PATH or qualify installed binary substitution.
 

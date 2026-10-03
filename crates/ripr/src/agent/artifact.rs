@@ -219,13 +219,21 @@ pub(crate) fn validate_repo_exposure_artifact(
 ) -> Result<ValidatedArtifact, String> {
     let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
         if is_unversioned_repo_exposure(raw) {
-            let recovery = super::loop_commands::check_repo_exposure_command(
+            let bash_recovery = super::loop_commands::check_repo_exposure_command(
                 &super::loop_commands::bound_root(&root.to_string_lossy()),
                 "draft",
                 "recovered.repo-exposure.json",
             );
+            let recovery = match crate::output::markdown::powershell_command(&bash_recovery) {
+                Some(powershell) => {
+                    format!("Bash/Git Bash: `{bash_recovery}`; PowerShell: `{powershell}`")
+                }
+                None => format!(
+                    "Bash/Git Bash only: `{bash_recovery}` (PowerShell recovery unavailable)"
+                ),
+            };
             return format!(
-                "agent verify {label} artifact is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable: `{recovery}`. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
+                "agent verify {label} artifact is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. Regenerate with the current installed RIPR executable. {recovery}. Replace this input with the regenerated artifact; the legacy artifact was not accepted",
                 env!("CARGO_PKG_VERSION")
             );
         }
@@ -1100,6 +1108,28 @@ mod tests {
             {
                 return Err(format!("unrelated/enveloped JSON misclassified: {error}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_recovery_labels_shells_and_quotes_literal_root_characters() -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[]}"#;
+        let error = validate_repo_exposure_artifact(Path::new("selected's $root"), raw, "before")
+            .err()
+            .ok_or("legacy artifact was accepted")?;
+        for text in ["Bash/Git Bash:", "PowerShell:", "selected''s $root"] {
+            if !error.contains(text) {
+                return Err(format!("shell-labeled literal recovery omitted {text}: {error}"));
+            }
+        }
+        let unsupported = validate_repo_exposure_artifact(Path::new("selected>root"), raw, "before")
+            .err()
+            .ok_or("legacy artifact was accepted")?;
+        if !unsupported.contains("Bash/Git Bash only:")
+            || !unsupported.contains("PowerShell recovery unavailable")
+        {
+            return Err(format!("unsupported PowerShell route was advertised: {unsupported}"));
         }
         Ok(())
     }
