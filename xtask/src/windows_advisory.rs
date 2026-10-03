@@ -992,6 +992,11 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
                 .push("test row inside an unowned nested harness".to_string());
             continue;
         }
+        if current.is_some() && announced.is_none() && trimmed.starts_with("test ") {
+            outcome
+                .provenance_errors
+                .push("test row before its owning harness announcement".to_string());
+        }
         if let Some(name) = ignored_result_line(trimmed) {
             if let Some(target) = &current {
                 observed_rows += 1;
