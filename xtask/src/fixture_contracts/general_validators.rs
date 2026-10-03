@@ -492,7 +492,7 @@ pub(crate) fn validate_evidence_quality_benchmark_corpus_value(
         let case_id = json_string_field(case, "id").unwrap_or_else(|| "unknown".to_string());
         if !seen_ids.insert(case_id.clone()) {
             violations.push(format!(
-                "Lane 1 evidence-quality benchmark case {case_id} is duplicated"
+                "Lane 1 evidence-quality benchmark cases collection has duplicate id {case_id}"
             ));
         }
         validate_evidence_quality_benchmark_case(

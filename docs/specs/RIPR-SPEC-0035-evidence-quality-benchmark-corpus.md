@@ -176,7 +176,7 @@ The same corpus may carry an optional top-level `semantic_oracle_controls`
 array. It contains exact reviewed alternate oracle views of historical cases,
 without requiring an `evidence_class`, `expected_repo_exposure` record or a
 normative static classification. The existing `cases` collection retains its
-static/calibration meaning and ID rules. Controls add no pilot, calibration,
+static/calibration meaning and unique-ID rule. Controls add no pilot, calibration,
 blind-opportunity or frozen-selection membership.
 
 A control is an object with nonblank `id` and `fixture_reference`, a complete
@@ -191,8 +191,9 @@ and exact independent-review subject binding are reused without a new runner.
 The observed static capture is historical data, explicitly marked as having
 no normative static expectation. Its retained producer and execution receipts
 must agree on source head/tree, selected executable, byte count/digest, command,
-root, diff and per-command identity fences. Three distinct corrected/original/
-weak observations bind exact retained stdout/stderr and before/after input
+root, diff and per-command identity fences. The selected artifact's own head/tree
+must also match, and its compiler target must be the `ripr` binary. Three distinct
+corrected/original/weak observations bind exact retained stdout/stderr and before/after input
 inventories to their actual commands. Each full inventory must equal its fixed-
 production native variant inventory and carry the exact fixed source, test and
 lock identities. Report root/shape and any retained classification summary

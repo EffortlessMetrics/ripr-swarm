@@ -15,6 +15,9 @@ promote any capability globally.
 
 ## Rules
 
+- The legacy `cases` collection requires unique IDs. Historical
+  `semantic_oracle_controls` requires unique `(id, variant)` keys, so the two
+  reviewed views may share one historical case ID.
 - Every case names one evidence class and one maturity scope.
 - Every case has at least one expected claim and at least one
   `must_not_claim` guard.
