@@ -180,7 +180,7 @@ shared RIPR authority:
 
 ## Slice C (#3090): repair transaction projection
 
-The session-evidence slice was extended by #3090 (RIPR-SPEC-0213) with
+The session-evidence slice was extended by #3090 (RIPR-SPEC-0214) with
 repair tools and resources — still without moving any authority into the
 transport. The server remains a bounded adapter over shared RIPR authority:
 

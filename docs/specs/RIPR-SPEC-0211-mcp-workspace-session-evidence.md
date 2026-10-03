@@ -98,7 +98,7 @@ official SDK transport:
   kind, probe kind, normalized discriminator), discriminator availability,
   related tests with oracle kind/strength, typed limitations for producer
   fields that are not established, and resource links. This slice pinned
-  readiness as a hard `repair_packet_ready: false` negative; RIPR-SPEC-0213
+  readiness as a hard `repair_packet_ready: false` negative; RIPR-SPEC-0214
   (slice C, #3090) owns the committed producer repair-readiness evaluation
   that replaced the pin, and it also owns binding the repair boundary and
   the repair-attempt link when a session transaction exists — until then
@@ -131,13 +131,13 @@ official SDK transport:
 - `cargo test -p ripr --lib mcp::gaps` — canonical identity projection
   (producer gap id preferred, finding id fallback), the readiness block this
   slice pinned (the readiness evaluation itself is owned with
-  RIPR-SPEC-0213), strict resource-URI parsing.
+  RIPR-SPEC-0214), strict resource-URI parsing.
 - `cargo test -p ripr --lib mcp` — descriptor contracts, positive
   LLM-facing tool descriptions, resource-template discovery, dispatch-edge
   argument rejection.
 - `crates/ripr/tests/mcp_sdk.rs` — the pinned official SDK client
   discovers the slice-B tools (four at that slice; the surface is seven
-  tools and four templates after RIPR-SPEC-0213), the static resource, and
+  tools and four templates after RIPR-SPEC-0214), the static resource, and
   the resource templates across the `initialize` and `server/discover`
   lifecycles, and the status tool/resource project the same session
   document.
@@ -155,7 +155,7 @@ official SDK transport:
   links as explicit nulls so #3090 can extend the document without a
   breaking change.
 - No source edit or command execution. This slice pinned readiness as a
-  hard negative; RIPR-SPEC-0213 (slice C, #3090) owns the committed
+  hard negative; RIPR-SPEC-0214 (slice C, #3090) owns the committed
   producer repair-readiness evaluation that replaced that pin.
 - No custom LSP request expansion; MCP and LSP remain peers over shared
   producers.
@@ -186,7 +186,7 @@ official SDK transport:
    `snapshot:sha256:` identity, while each server's status document keeps
    its own host-local root hash.
 5. `ripr_get_gap` for any item reports the committed producer
-   repair-readiness facts (the evaluation is owned by RIPR-SPEC-0213, slice
+   repair-readiness facts (the evaluation is owned by RIPR-SPEC-0214, slice
    C #3090, which superseded this slice's hard `repair_packet_ready: false`
    pin), a `none_declared` repair boundary, and an explicit-null
    repair-attempt link until a session transaction binds one; missing
@@ -198,7 +198,7 @@ official SDK transport:
   failures, identity portability, boundedness, last-known-good retention.
 - `crates/ripr/src/mcp/gaps.rs::tests` — canonical item projection and the
   readiness block this slice pinned (the readiness evaluation itself is
-  owned with RIPR-SPEC-0213).
+  owned with RIPR-SPEC-0214).
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
