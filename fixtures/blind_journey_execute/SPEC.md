@@ -27,8 +27,18 @@ repair journey of #4516 (fixture authority RIPR-SPEC-0207,
 `fixtures/blind_journey_installed_rust/`): the positive row and its ten
 failure controls script only public docs/help and literal product-emitted
 commands over the bounded tier-boundary Cargo fixture, recorded from a
-foreign launch directory against the selected root. They exist alongside the
-generic executor scenarios and obey the same derived-terminal law.
+foreign launch directory against the selected root. The
+`installed_typescript_*` scenarios are the retained literal installed
+TypeScript repair journey of #4519 (fixture authority RIPR-SPEC-0209,
+`fixtures/blind_journey_installed_typescript/`): the positive row, its
+failure controls and one scripted row per retained negative binding/reach
+variant (rebindable `let`, reassignment, shadowing, imported constant,
+object/namespace write, enum or computed initializer, nonliteral arithmetic
+and the accepted control-flow reach barrier) script only public docs/help
+and literal product-emitted commands over the bounded npm/Vitest
+threshold fixture, recorded from a foreign launch directory against the
+selected root. They exist alongside the generic executor scenarios and
+obey the same derived-terminal law.
 
 ## When
 
