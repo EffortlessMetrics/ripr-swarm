@@ -724,23 +724,25 @@ mod tests {
     #[test]
     fn rooted_bash_executes_from_selected_directory_preserving_arguments_and_status()
     -> Result<(), Box<dyn std::error::Error>> {
-        let selected = tempfile::tempdir()?;
-        let foreign = tempfile::tempdir()?;
+        let selected = native_proof_root("rooted-bash-selected").map_err(std::io::Error::other)?;
+        let _selected_guard = RemoveOnDrop(selected.clone());
+        let foreign = native_proof_root("rooted-bash-foreign").map_err(std::io::Error::other)?;
+        let _foreign_guard = RemoveOnDrop(foreign.clone());
         std::fs::write(
-            selected.path().join("verify"),
+            selected.join("verify"),
             "printf '%s\\n' \"$PWD\" \"$1\" \"$2\"\nexit 23\n",
         )?;
         let command = "bash ./verify --test-threads=1 'literal=two words'";
-        let root = selected.path().canonicalize()?;
+        let root = selected.canonicalize()?;
         let forms = rooted_command_forms(root.to_str(), command);
         let bash = forms["bash"].as_str().ok_or("missing Bash form")?;
-        let stdout_path = foreign.path().join("stdout");
+        let stdout_path = foreign.join("stdout");
         let mut command = std::process::Command::new("bash");
         command
             .args(["-c", bash])
-            .current_dir(foreign.path())
+            .current_dir(&foreign)
             .stdout(std::fs::File::create(&stdout_path)?)
-            .stderr(std::fs::File::create(foreign.path().join("stderr"))?);
+            .stderr(std::fs::File::create(foreign.join("stderr"))?);
         let mut child = crate::process_owner::OwnedProcess::spawn(command)?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let status = loop {
