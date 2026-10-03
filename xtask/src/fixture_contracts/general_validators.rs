@@ -1906,7 +1906,9 @@ pub(crate) fn validate_blind_journey_installed_rust_fixture(
     let manifest = match read_json_value(&manifest_path) {
         Ok(value) => value,
         Err(err) => {
-            violations.push(format!("blind journey installed rust manifest is invalid: {err}"));
+            violations.push(format!(
+                "blind journey installed rust manifest is invalid: {err}"
+            ));
             return Ok(());
         }
     };
@@ -2107,7 +2109,9 @@ mod installed_rust_fixture_tests {
         let manifest = read_json_value(&root.join("manifest.json"))?;
         let violations = installed_rust_manifest_violations(&root, &manifest);
         if !violations.is_empty() {
-            return Err(format!("committed installed rust manifest drifted: {violations:?}"));
+            return Err(format!(
+                "committed installed rust manifest drifted: {violations:?}"
+            ));
         }
         Ok(())
     }
@@ -2174,7 +2178,10 @@ mod installed_rust_fixture_tests {
         });
         let violations = installed_rust_manifest_violations(&temp, &manifest);
         std::fs::remove_dir_all(&temp).map_err(|error| format!("clean temp dir: {error}"))?;
-        if !violations.iter().any(|violation| violation.contains("drifted")) {
+        if !violations
+            .iter()
+            .any(|violation| violation.contains("drifted"))
+        {
             return Err(format!(
                 "a drifted snapshot digest must be rejected, got: {violations:?}"
             ));
@@ -2198,7 +2205,9 @@ mod installed_rust_fixture_tests {
             serde_json::json!(40),
         ] {
             if installed_rust_git_identity_wellformed(Some(&invalid)) {
-                return Err(format!("an ill-formed git identity must be rejected: {invalid}"));
+                return Err(format!(
+                    "an ill-formed git identity must be rejected: {invalid}"
+                ));
             }
         }
         Ok(())
