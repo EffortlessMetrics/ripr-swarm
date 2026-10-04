@@ -197,6 +197,13 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
+  reported as strongly gripped with every mutant missed. Neither is credited
+  in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
+  reads limited. The spot-check miss on the otel line came from a build that
+  did not compile it, so its truth comes from `--features profiling-traced`.
+  The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
+  #5332, #5335).
 - Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
   second semver and bytesize pins), now 32 cases across 10 subjects. The
   report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and
