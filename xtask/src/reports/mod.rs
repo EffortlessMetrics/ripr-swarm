@@ -1,3 +1,4 @@
+mod agentic_bench;
 mod annotations;
 mod back_sync;
 mod badges;
@@ -7,6 +8,7 @@ mod bun;
 mod candidate_control;
 mod ci_budget;
 mod dogfood;
+mod dx_scoreboard;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
@@ -60,6 +62,7 @@ mod targeted_test;
 mod test_oracles;
 mod verdict_corpus;
 
+pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use back_sync::back_sync;
 #[cfg(test)]
@@ -100,6 +103,7 @@ pub(crate) use blind_journey_execute::{
 pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use ci_budget::ci_budget;
 pub(crate) use dogfood::dogfood;
+pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{
