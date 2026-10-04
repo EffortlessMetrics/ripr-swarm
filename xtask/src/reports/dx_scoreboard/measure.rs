@@ -118,7 +118,7 @@ fn measure_in(
     }
     if wants("trust") {
         samples.push(measure_bad_input(binary, scratch));
-        samples.push(measure_hostile_repos());
+        samples.push(measure_hostile_repos(binary));
     }
     if wants("paste") {
         samples.extend(measure_paste(binary, scratch));
@@ -757,9 +757,10 @@ pub(crate) fn probe_result(measured: &MeasuredOutput) -> Probe {
 }
 
 /// Run the hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`)
-/// and count the failing ones. A run that does not report a test result is a
-/// failed instrument, not zero failures.
-fn measure_hostile_repos() -> Sample {
+/// against the binary under measurement (`RIPR_HOSTILE_BIN`) and count the
+/// failing ones. A run that does not report a test result is a failed
+/// instrument, not zero failures.
+fn measure_hostile_repos(binary: &Path) -> Sample {
     let sample = |outcome: SampleOutcome, detail: String| Sample {
         metric: "trust.hostile_repo_failures".to_string(),
         repo: None,
@@ -770,11 +771,12 @@ fn measure_hostile_repos() -> Sample {
         .iter()
         .map(|arg| (*arg).to_string())
         .collect();
+    let binary_text = binary.display().to_string();
     let measured = match capture_output_measured(
         "cargo",
         &args,
         None,
-        &[],
+        &[("RIPR_HOSTILE_BIN", binary_text.as_str())],
         GIT_TIMEOUT,
         "dx-scoreboard hostile repos",
     ) {

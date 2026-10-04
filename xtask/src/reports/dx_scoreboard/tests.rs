@@ -1152,3 +1152,38 @@ fn a_symlinked_target_is_never_cleared() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_negative_ingested_value_is_refused() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let input = json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "install",
+        "metrics": [{"id": "ci.install_seconds", "value": -0.5}],
+    });
+    assert!(parse_ingest(&input, &config).is_err_and(|e| e.contains("negative")));
+    let fine = json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "install",
+        "metrics": [{"id": "ci.install_seconds", "value": 0.97}],
+    });
+    assert_eq!(parse_ingest(&fine, &config)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn libtest_summary_counts_are_read_by_label_not_position() {
+    let line = "test result: FAILED. 123 passed; 45 failed; 6 ignored; 7 measured; 890 filtered out; finished in 1.0s\n";
+    assert_eq!(parse_test_result(line), Some((123, 45)));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_probe_ended_by_a_signal_is_a_refusal_not_a_clean_exit() {
+    use std::os::unix::process::ExitStatusExt;
+    let mut run = measured(false, None);
+    run.output.status = Some(std::process::ExitStatus::from_raw(9));
+    assert_eq!(probe_result(&run), Probe::Refused);
+    run.output.status = Some(std::process::ExitStatus::from_raw(0));
+    assert_eq!(probe_result(&run), Probe::ExitedZero);
+}

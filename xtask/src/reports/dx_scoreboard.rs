@@ -497,6 +497,13 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
             .as_f64()
             .filter(|number| number.is_finite())
             .ok_or_else(|| format!("ingest metric `{id}` needs a finite numeric `value`"))?;
+        // Every scoreboard metric is a duration, count or rate; a negative
+        // one is a broken receipt and must not read as a fast pass.
+        if number < 0.0 {
+            return Err(format!(
+                "ingest metric `{id}` has negative value {number}; fix the harness that wrote it"
+            ));
+        }
         let completed = match &row["completed"] {
             Value::Null => true,
             Value::Bool(done) => *done,
