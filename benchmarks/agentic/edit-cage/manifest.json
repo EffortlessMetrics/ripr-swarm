@@ -1,0 +1,23 @@
+{
+  "schema_version": "ripr-agentic-bench-manifest-v1",
+  "bench": "edit-cage",
+  "bench_index": "B6",
+  "title": "Edit-cage provenance binding",
+  "stimulus": "Bounded baseline capture of a small worktree, one edit inside the allowed surface (the selected test target), one edit outside it, and a receipt re-read after each step.",
+  "oracle_states": ["compliant", "violated", "incomparable", "superseded"],
+  "oracle_command": "cargo test -p ripr --test agentic_bench_cage",
+  "selected_target": { "path": "tests/cage_target.rs", "scope": "exact" },
+  "allowed_surface": [{ "path": "tests", "scope": "subtree" }],
+  "forbidden_paths": [{ "path": "src", "scope": "subtree" }],
+  "fixtures": [
+    {
+      "path": "input/src/lib.rs",
+      "sha256": "sha256:59a7833db39e0b2fd948aa3ea98b891455ebd4c15d8e6df0453ab6f1116f0e88"
+    },
+    {
+      "path": "input/tests/cage_target.rs",
+      "sha256": "sha256:b442a44472c66da3373b578121edd29516a42b99b7bb2604f9ce0a8e2e56b454"
+    }
+  ],
+  "bounds": { "max_paths": 64, "max_file_bytes": 65536, "max_total_bytes": 1048576 }
+}
