@@ -7,12 +7,48 @@ use std::collections::BTreeSet;
 /// `--committed`; a dirty tree is otherwise read as a working tree by default,
 /// RIPR-SPEC-0116) reads every source and test file as committed at `HEAD`,
 /// so uncommitted edits and new files count neither in the diff nor as test
-/// evidence. Dropping `--committed`, or `--worktree`, is the remedy that
-/// includes them. Committing works too, but staging alone does not change a
-/// committed-history diff.
+/// evidence. Dropping `--committed`, or `--worktree`, is the remedy for the
+/// tracked subset — the wording matches `check --help`, which documents
+/// "staged and unstaged tracked edits" (#5258). Committing works too, but
+/// staging alone does not change a committed-history diff.
 const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test changes were not analyzed; \
 this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
-include staged and unstaged edits (for example `ripr check --worktree`).\n";
+include staged and unstaged tracked edits (for example `ripr check --worktree`).\n";
+
+/// #5258: untracked files are invisible to the committed diff AND to
+/// `--worktree` (it diffs tracked edits only), so the note must name the
+/// real repair — staging — instead of sending the reader through a second
+/// empty `no_scope` run. Fires whenever untracked routed files exist in an
+/// unanalyzed working-tree state; it also states what `--worktree` does add,
+/// so a mixed tracked-plus-untracked tree keeps one accurate note. Paths are
+/// control-escaped (`escape_terminal_display`) before display: a crafted
+/// filename cannot forge report lines or inject terminal control (#2142
+/// review, #5398 review).
+fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
+    let untracked = &output.untracked_working_tree_source_paths;
+    if untracked.is_empty() {
+        return UNANALYZED_WORKING_TREE_NOTE.to_string();
+    }
+    const NAMED_PATHS: usize = 3;
+    let named = untracked
+        .iter()
+        .take(NAMED_PATHS)
+        .map(|path| escape_terminal_display(path))
+        .collect::<Vec<_>>();
+    let more = untracked.len().saturating_sub(NAMED_PATHS);
+    let listing = if more > 0 {
+        format!("{} and {more} more", named.join(", "))
+    } else {
+        named.join(", ")
+    };
+    format!(
+        "\nNote: uncommitted source and test changes were not analyzed; this run read each \
+         file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
+         Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+         or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
+         rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
+    )
+}
 
 /// Render the bounded triage report in the default human-readable CLI format.
 pub fn render(output: &CheckOutput) -> String {
@@ -68,7 +104,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             out.push_str(&render_no_scope_note(output));
         }
         if output.unanalyzed_working_tree {
-            out.push_str(UNANALYZED_WORKING_TREE_NOTE);
+            out.push_str(&unanalyzed_working_tree_note(output));
         }
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
@@ -79,7 +115,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     triage::render_human_triage(&mut out, &triage, output, config, drill_in);
     render_all_no_path_disclosure(&mut out, output);
     if output.unanalyzed_working_tree {
-        out.push_str(UNANALYZED_WORKING_TREE_NOTE);
+        out.push_str(&unanalyzed_working_tree_note(output));
     }
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
@@ -125,7 +161,7 @@ pub(crate) fn render_full_with_config_and_navigation(
         // changes were NOT analyzed. An empty result here does NOT mean those changes
         // are covered — they were excluded from the committed-history diff.
         if output.unanalyzed_working_tree {
-            out.push_str(UNANALYZED_WORKING_TREE_NOTE);
+            out.push_str(&unanalyzed_working_tree_note(output));
         }
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
@@ -177,7 +213,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
     if output.unanalyzed_working_tree {
-        out.push_str(UNANALYZED_WORKING_TREE_NOTE);
+        out.push_str(&unanalyzed_working_tree_note(output));
     }
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
@@ -825,6 +861,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -841,6 +878,128 @@ mod tests {
         ));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
         assert!(!rendered.contains("Next:"));
+    }
+
+    /// #5258: when the unanalyzed working-tree state is untracked files, the
+    /// note must name the real repair (staging; `git add -N` intent-to-add)
+    /// instead of offering `--worktree`, which never sees untracked files.
+    #[test]
+    fn untracked_only_note_names_the_staging_repair() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: true,
+            analyzed_revisions: None,
+            untracked_working_tree_source_paths: vec![
+                "src/new.rs".to_string(),
+                "tests/new.rs".to_string(),
+                "Cargo.toml".to_string(),
+                "src/other.rs".to_string(),
+            ],
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains(
+                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("git add <paths>"), "{rendered}");
+        assert!(rendered.contains("git add -N <paths>"), "{rendered}");
+        assert!(
+            rendered.contains("`--worktree` adds staged and unstaged tracked edits only"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered
+                .contains("(or pass `--worktree`) to include staged and unstaged tracked edits"),
+            "the tracked-only remedy must not stand in for the staging repair: {rendered}"
+        );
+    }
+
+    /// #5398 review: named untracked paths are control-escaped for terminal
+    /// display, so a crafted filename cannot forge report lines or inject
+    /// terminal control into the note.
+    #[test]
+    fn untracked_note_escapes_control_bytes_in_named_paths() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: true,
+            analyzed_revisions: None,
+            untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("src/\\u{1b}[31mevil.rs"),
+            "ESC must render as its escaped spelling: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains('\u{1b}'),
+            "a raw control byte must not reach the terminal: {rendered:?}"
+        );
+    }
+
+    /// #5258: the tracked-edits note keeps the `--worktree` remedy but
+    /// qualifies it as "tracked", matching `check --help`.
+    #[test]
+    fn tracked_only_note_qualifies_the_worktree_remedy() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: true,
+            analyzed_revisions: None,
+            untracked_working_tree_source_paths: Vec::new(),
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered
+                .contains("drop `--committed` (or pass `--worktree`) to include staged and unstaged tracked edits (for example `ripr check --worktree`)"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Untracked files"), "{rendered}");
     }
 
     /// #4322: the three unknown classes answer *which* discriminator
@@ -868,6 +1027,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -916,6 +1076,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -967,6 +1128,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1037,6 +1199,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
@@ -1113,6 +1276,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
@@ -1178,6 +1342,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1257,6 +1422,7 @@ mod tests {
                 language_runs: Vec::new(),
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
@@ -1301,6 +1467,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1345,6 +1512,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1870,6 +2038,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1914,6 +2083,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -1965,6 +2135,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2016,6 +2187,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2045,6 +2217,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: true,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2086,6 +2259,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2557,6 +2731,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2655,6 +2830,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2700,6 +2876,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2798,6 +2975,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2857,6 +3035,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2909,6 +3088,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -2970,6 +3150,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: suppressed
@@ -3078,6 +3259,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -3128,6 +3310,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
                 suppressed: vec![SuppressedCheckFinding {
@@ -3164,6 +3347,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -3249,6 +3433,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -3355,6 +3540,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: Some(crate::analysis::PartialDiffScope {
@@ -3673,6 +3859,39 @@ mod tests {
             expr_lines > 1,
             "a long expression should wrap across continuation lines"
         );
+    }
+
+    /// A multi-line struct literal whose total length passes the budget while
+    /// every source line stays short must render line for line. Chunking the
+    /// whole value cut `BuildMetadata::EMPTY` into `EM` / `PTY,` on a real
+    /// `return_value` probe.
+    #[test]
+    fn render_finding_keeps_short_source_lines_of_a_long_multiline_fragment_whole() {
+        let field = "            build: BuildMetadata::EMPTY,";
+        let after = format!("Version {{\n{}\n        }}", [field; 6].join("\n"));
+        assert!(
+            after.chars().count() > 180,
+            "fixture must exceed the display budget in total, got {}",
+            after.chars().count()
+        );
+        let mut finding = sample_finding();
+        finding.probe.before = None;
+        finding.probe.after = Some(after.clone());
+
+        let rendered = render_finding(&finding);
+
+        let block: Vec<&str> = rendered
+            .lines()
+            .skip_while(|line| !line.starts_with("  after:  "))
+            .take(8)
+            .collect();
+        assert_eq!(block.first().copied(), Some("  after:  Version {"));
+        assert_eq!(
+            block.iter().filter(|line| **line == field).count(),
+            6,
+            "each short source line must survive intact; got:\n{rendered}"
+        );
+        assert_eq!(block.last().copied(), Some("        }"));
     }
 
     #[test]
@@ -4320,6 +4539,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4477,6 +4697,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4520,6 +4741,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4567,6 +4789,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4607,6 +4830,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4645,6 +4869,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4731,6 +4956,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4820,6 +5046,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: true,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4871,6 +5098,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4908,6 +5136,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: true,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4946,6 +5175,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: true,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -4988,6 +5218,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5045,6 +5276,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5107,6 +5339,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5156,6 +5389,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5212,6 +5446,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5249,6 +5484,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5283,6 +5519,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5314,6 +5551,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5350,6 +5588,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5385,6 +5624,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5431,6 +5671,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
@@ -5494,6 +5735,7 @@ mod tests {
                 language_runs: Vec::new(),
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,

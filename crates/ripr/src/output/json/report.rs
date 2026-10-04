@@ -1571,6 +1571,7 @@ mod harness_projection_tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,

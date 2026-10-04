@@ -8,6 +8,7 @@ use crate::analysis::{
     run_worktree_analysis_with_oracle_policy_and_rust_config,
 };
 use crate::config::RiprConfig;
+use crate::core_error::CoreError;
 use crate::domain::LanguageId;
 use crate::domain::Summary;
 use std::path::{Path, PathBuf};
@@ -63,6 +64,7 @@ pub(crate) fn check_workspace_worktree_with_origins(
 > {
     check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)
         .map(|(output, origins, _)| (output, origins))
+        .map_err(Into::into)
 }
 
 /// Sink-bearing variant of the worktree+sources+open-paths check entry
@@ -80,7 +82,7 @@ pub(crate) fn check_workspace_worktree_with_sources_open_rust_paths_and_progress
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
     ),
-    String,
+    CoreError,
 > {
     if open_rust_index_paths.is_empty() {
         return check_with_progress_and_origins(
@@ -133,6 +135,7 @@ pub(crate) fn check_workspace_repo_with_origins(
 > {
     check_with_progress_and_origins(input, config, AnalysisProgressScope::Repo, None)
         .map(|(output, origins, _)| (output, origins))
+        .map_err(Into::into)
 }
 
 /// Run a check while observing producer-owned progress boundaries.
@@ -156,7 +159,7 @@ fn check_with_progress_and_origins(
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
     ),
-    String,
+    CoreError,
 > {
     check_with_progress_and_origins_with_open_rust_paths(
         input,
@@ -179,7 +182,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
         crate::analysis::consumed_source::ConsumedRustSources,
     ),
-    String,
+    CoreError,
 > {
     let mut progress = ProgressRun::new(sink, scope);
     progress.emit(AnalysisProgressStage::LoadingInput);
@@ -312,6 +315,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             effective_base: None,
             uncommitted_source_paths: Vec::new(),
             analyzed_revisions: None,
+            untracked_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         },
@@ -848,6 +852,7 @@ mod tests {
             effective_base,
             uncommitted_source_paths: Vec::new(),
             analyzed_revisions: None,
+            untracked_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         }

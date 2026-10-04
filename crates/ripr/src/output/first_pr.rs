@@ -161,9 +161,19 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     }
 
     let mut options = parse_options(args)?;
+    let repo = repo_root()?;
+    // A root that is not a directory cannot be analyzed: refuse (exit 2) before
+    // the disclosure and before writing a recovery packet, so a mistyped path
+    // does not read as a completed run. The recovery packet still serves roots
+    // that exist but are not workspaces.
+    if !resolve_path(&repo, &options.root).is_dir() {
+        return Err(format!(
+            "first-pr: --root {} is not a directory, so nothing was written. Pass the repository root with `--root`, or run from inside the repository.",
+            options.root
+        ));
+    }
     print_side_effect_disclosure(&options);
 
-    let repo = repo_root()?;
     let resolution = omitted_base_resolution(&repo, &options);
     // A missing packet is answered before a base failure (#4285): `--check`
     // never diffs, so a repository where no default base resolves still gets
@@ -414,8 +424,8 @@ fn validate_current_preflight_recovery(
     Err(format!(
         "first-pr start-here packet is stale for current root/git preflight; rerun `ripr first-pr --root {} --base {} --head {}` before relying on it",
         shell_arg(&options.command_root()),
-        options.base,
-        options.head
+        shell_arg(&options.base),
+        shell_arg(&options.head)
     ))
 }
 
@@ -651,14 +661,19 @@ fn missing_base_command(options: &FirstPrOptions) -> String {
         .filter(|branch| !branch.trim().is_empty())
         .map(|branch| {
             format!(
-                "git fetch origin {branch}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                shell_arg(&options.command_root()), options.base, options.head
+                "git fetch origin -- {}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                shell_arg(branch),
+                shell_arg(&options.command_root()),
+                shell_arg(&options.base),
+                shell_arg(&options.head)
             )
         })
         .unwrap_or_else(|| {
             format!(
                 "Fetch or choose a local base ref, then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                shell_arg(&options.command_root()), options.base, options.head
+                shell_arg(&options.command_root()),
+                shell_arg(&options.base),
+                shell_arg(&options.head)
             )
         })
 }
@@ -1662,11 +1677,12 @@ impl RepoExposureLatencySummary {
 
 fn repo_exposure_latency_report_summary(root: &Path) -> Option<RepoExposureLatencySummary> {
     let report = read_json(&resolve_path(root, DEFAULT_REPO_EXPOSURE_LATENCY_JSON)).ok()?;
-    // 0.2 (#3864) only added the file-fact cache receipt; the run status and
-    // trace fields read here are unchanged, so both versions stay usable.
+    // 0.2 (#3864) only added the file-fact cache receipt and 0.3 (#5213) only
+    // added the analyzer's own resource cost; the run status and trace fields
+    // read here are unchanged, so every version stays usable.
     if !matches!(
         string_path(&report, &["schema_version"]).as_deref(),
-        Some("0.1" | "0.2")
+        Some("0.1" | "0.2" | "0.3")
     ) || string_path(&report, &["tool"]).as_deref() != Some("ripr")
         || string_path(&report, &["report"]).as_deref() != Some("repo-exposure-latency")
     {
@@ -2614,7 +2630,7 @@ fn git_success_with_ceiling(
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
         format!(
-            "git -C {} fetch origin {}",
+            "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),
             shell_arg(branch)
         )
@@ -3317,8 +3333,10 @@ mod tests {
 
     #[test]
     fn missing_repo_exposure_uses_existing_latency_report_before_rerun() -> Result<(), String> {
-        // 0.2 is what `repo-exposure-latency-report` writes since #3864.
-        for schema_version in ["0.1", "0.2"] {
+        // 0.2 is what `repo-exposure-latency-report` wrote since #3864 and
+        // 0.3 since #5213; 0.1 predates both. This consumer reads only status
+        // and trace fields, so it must accept every version rather than one.
+        for schema_version in ["0.1", "0.2", "0.3"] {
             existing_latency_timeout_report_is_used(schema_version)?;
         }
         Ok(())
@@ -3798,7 +3816,7 @@ mod tests {
         );
         assert_eq!(
             packet["selected"]["next_command"],
-            format!("git -C {} fetch origin missing-base", bound_arg("."))
+            format!("git -C {} fetch origin -- missing-base", bound_arg("."))
         );
         cleanup(&repo)
     }
@@ -6171,7 +6189,7 @@ mod tests {
         assert!(
             base["next_command"]
                 .as_str()
-                .is_some_and(|command| command.contains("git fetch origin missing-base"))
+                .is_some_and(|command| command.contains("git fetch origin -- missing-base"))
         );
         let config = preflight_check(&packet, "ripr_config")?;
         assert_eq!(config["status"], "defaulted");
@@ -6670,7 +6688,7 @@ mod tests {
         run_git_within(&root, &args, Duration::from_mins(1))
             .map_err(|err| format!("control: {err}"))?;
         match run_git_within(&root, &args, Duration::ZERO) {
-            Err(err) if crate::git::is_git_invocation_timeout(&err) => Ok(()),
+            Err(err) if err.starts_with("git_invocation_timeout:") => Ok(()),
             other => Err(format!("zero deadline must be refused, got {other:?}")),
         }
     }
