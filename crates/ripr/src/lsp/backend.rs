@@ -181,6 +181,8 @@ pub(super) struct Backend {
     refresh_idle: Notify,
     #[cfg(test)]
     consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
+    #[cfg(test)]
+    refresh_publication_barrier: Mutex<Option<RefreshPublicationBarrier>>,
     pub(super) progress: Arc<AnalysisProgressTracker>,
 }
 
@@ -193,6 +195,23 @@ type ConsumedSourceBarrierChannels = (
 #[cfg(test)]
 struct ConsumedSourceBarrier {
     reached: tokio::sync::oneshot::Sender<(u64, AnalysisSnapshot)>,
+    release: tokio::sync::oneshot::Receiver<()>,
+}
+
+#[cfg(test)]
+type RefreshPublicationBarrierChannels = (
+    tokio::sync::oneshot::Receiver<u64>,
+    tokio::sync::oneshot::Sender<()>,
+);
+
+/// Pauses one refresh inside the transition-guarded publication block, after
+/// the terminal currentness check passes and before the first publish (#5202).
+/// Lets a test hold publication mid-flight (while the refresh owns
+/// `workspace_root_transition`) so a concurrent `shutdown` must serialize
+/// behind it.
+#[cfg(test)]
+struct RefreshPublicationBarrier {
+    reached: tokio::sync::oneshot::Sender<u64>,
     release: tokio::sync::oneshot::Receiver<()>,
 }
 
@@ -285,6 +304,8 @@ impl Backend {
             refresh_idle: Notify::new(),
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
+            #[cfg(test)]
+            refresh_publication_barrier: Mutex::new(None),
             progress: Arc::new(AnalysisProgressTracker::new(client.clone())),
             client,
         }
@@ -654,6 +675,9 @@ impl Backend {
             .await;
             return cancellation_outcome(request);
         }
+        #[cfg(test)]
+        self.wait_refresh_publication_barrier(request.generation)
+            .await;
         if !self.pull_diagnostics_enabled() {
             // Read the stored delivery selection computed at refresh-transaction
             // prepare time (#1973). The push path no longer evaluates the
@@ -961,6 +985,39 @@ impl Backend {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn install_refresh_publication_barrier_for_test(
+        &self,
+    ) -> Result<RefreshPublicationBarrierChannels, String> {
+        let (reached, witness) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut slot = self
+            .refresh_publication_barrier
+            .lock()
+            .map_err(|_poisoned_barrier| "refresh-publication barrier lock poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("refresh-publication barrier already installed".to_string());
+        }
+        *slot = Some(RefreshPublicationBarrier {
+            reached,
+            release: released,
+        });
+        Ok((witness, release))
+    }
+
+    #[cfg(test)]
+    async fn wait_refresh_publication_barrier(&self, generation: u64) {
+        let barrier = self
+            .refresh_publication_barrier
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(barrier) = barrier {
+            let _ = barrier.reached.send(generation);
+            let _ = barrier.release.await;
+        }
+    }
+
     pub(super) fn prepare_refresh_transaction(
         &self,
         diagnostics: WorkspaceDiagnostics,
@@ -1084,6 +1141,14 @@ impl Backend {
         plan: &DiagnosticRefreshPlan,
     ) {
         if self.pull_diagnostics_enabled() {
+            return;
+        }
+        // A stopped scheduler is shutting down: shutdown publishes the
+        // terminal empty state itself, so a cancelled refresh must not
+        // resurrect the previous diagnostics after that clear (#5202). This
+        // single choke point covers every rollback call site, including the
+        // mid-clear-loop cancellation that bypasses the authority check.
+        if self.refresh_scheduler.is_stopping() {
             return;
         }
         let mut uris = previous_diagnostics
@@ -4925,6 +4990,14 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> LspResult<()> {
         self.trace_inbound("request", "shutdown", None).await;
+        // Serialize the terminal clear with an in-flight refresh publication
+        // (#5202): without the shared transition guard a refresh cancelled by
+        // `stop()` can publish one more batch — or roll back the previous
+        // diagnostics — after these empties, recreating the stale client
+        // state this clear removes. The refresh publication/commit block
+        // holds the same guard, so the clear either precedes the refresh's
+        // terminal check or follows its last publish, never interleaves it.
+        let transition = self.workspace_root_transition.lock().await;
         self.refresh_scheduler.stop();
         self.progress.end_all(AnalysisProgressEnd::Cancelled).await;
         // Mirror the root-change path: dropping the tracked URIs without
@@ -4935,6 +5008,7 @@ impl LanguageServer for Backend {
                 self.client.publish_diagnostics(uri, Vec::new(), None).await;
             }
         }
+        drop(transition);
         self.reset_health_for_input_change();
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();

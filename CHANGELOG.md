@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- LSP: `shutdown` publishes an empty diagnostic set for every previously
+  published URI on push clients (pull clients stay silent), matching the
+  root-change path. The terminal clear serializes with in-flight refresh
+  publication behind the shared transition guard, and a refresh cancelled
+  by shutdown no longer rolls back previous diagnostics afterward, so no
+  stale diagnostics survive shutdown (#5202).
+
 - LSP: `session_value_sources` reports `initialization` only for applied
   initialization options. A malformed value such as `checkMode: "Deep"` keeps
   the session up, discloses the `repo` or `default` fallback, and emits one
