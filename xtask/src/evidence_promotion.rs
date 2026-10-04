@@ -4551,23 +4551,35 @@ mod related_test_assertion_tests {
             "kind": "relational_check",
             "strength": "weak"
         });
-        assert!(evidence_promotion_parse_assertion("related_test_identity", 0, &original).is_ok());
+        match evidence_promotion_parse_assertion("related_test_identity", 0, &original) {
+            Ok(_) => {}
+            Err(error) => {
+                return Err(format!(
+                    "valid related-test assertion was rejected: {error}"
+                ));
+            }
+        }
         for field in ["name", "file", "line", "kind", "strength"] {
             let mut missing = original.clone();
             missing
                 .as_object_mut()
                 .ok_or("related-test assertion must be an object")?
                 .remove(field);
-            assert!(
-                evidence_promotion_parse_assertion("related_test_identity", 0, &missing).is_err(),
-                "{field}"
-            );
+            match evidence_promotion_parse_assertion("related_test_identity", 0, &missing) {
+                Err(_) => {}
+                Ok(_) => {
+                    return Err(format!("related-test assertion accepted missing `{field}`"));
+                }
+            }
         }
         let mut zero_line = original;
         zero_line["line"] = serde_json::json!(0);
-        assert!(
-            evidence_promotion_parse_assertion("related_test_identity", 0, &zero_line).is_err()
-        );
+        match evidence_promotion_parse_assertion("related_test_identity", 0, &zero_line) {
+            Err(_) => {}
+            Ok(_) => {
+                return Err("related-test assertion accepted source line zero".to_string());
+            }
+        }
         Ok(())
     }
 }
