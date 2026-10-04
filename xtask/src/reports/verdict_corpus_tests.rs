@@ -404,6 +404,46 @@ fn committed_corpus_is_valid_and_measures_both_error_directions() -> Result<(), 
     Ok(())
 }
 
+#[test]
+fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    let dir = crate::dogfood::repo_rooted_fixture_path(&corpus_dir("python")?.to_string_lossy());
+    let corpus = corpus_for_language(&dir, "python")?;
+    assert!(
+        corpus.cases.len() >= 60,
+        "corpus shrank to {}",
+        corpus.cases.len()
+    );
+    // One subject per test library the corpus exists to cover.
+    let subjects: BTreeSet<&str> = corpus
+        .subjects
+        .iter()
+        .map(|s| s.subject_id.as_str())
+        .collect();
+    for library in ["pytest", "unittest", "hypothesis"] {
+        assert!(
+            subjects
+                .iter()
+                .any(|id| id.starts_with(&format!("authored-py-{library}-"))),
+            "no {library} subject in {subjects:?}"
+        );
+    }
+    // Both error directions need a denominator: discriminated cases measure
+    // false actionable, the rest measure false exposed and false silent.
+    assert!(
+        corpus
+            .cases
+            .iter()
+            .any(|c| c.truth.state == TruthState::Discriminated)
+    );
+    assert!(
+        corpus
+            .cases
+            .iter()
+            .any(|c| c.truth.state != TruthState::Discriminated)
+    );
+    Ok(())
+}
+
 fn tampered(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
     let dir = repo_corpus_dir();
     let mut raw: Value =

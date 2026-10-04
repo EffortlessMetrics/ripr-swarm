@@ -5,8 +5,8 @@ diff --git a/src/subject.py b/src/subject.py
  
  
  def label_call(x):
--    return content_type(x)
-+    return content_kind(x)
+-    return content_kind(x)
++    return content_type(x)
  
  
  def label_lambda_text(x):

@@ -68,7 +68,7 @@
         },
         {
           "path": "src/subject.py",
-          "sha256": "758448f8d1f58fb4f763d0f29f574e17998a000fd7354cbdad777718014d1e05"
+          "sha256": "b67fcfd1ee5c3fad191842436d0ab8fdf6f911a75d34034675911b3983ee4d2d"
         },
         {
           "path": "tests/__init__.py",
@@ -84,7 +84,7 @@
         },
         {
           "path": "tests/test_subject.py",
-          "sha256": "dc413dd8fd57b6d27867e862bed94126b263cb3bee9ce9d74a9d3d18dd56b394"
+          "sha256": "32d283f5f9bce9df0f86f3c059c4f8b4f71bc74f6515938b51c1763b32aa1dc4"
         }
       ]
     },
@@ -217,7 +217,7 @@
           "silent"
         ]
       },
-      "reasoning": "test_free_shipping_starts_at_threshold pins 4999 and 5000 with `assert ==`, an exact-value oracle under RIPR-SPEC-0028, so both shifts of the boundary fail it. ripr reports weakly_exposed on a predicate against a module constant, a false actionable verdict; the TypeScript twin is credited exposed.",
+      "reasoning": "test_free_shipping_starts_at_threshold pins 4999 and 5000 with `assert ==`, an exact-value oracle under RIPR-SPEC-0028, so both shifts of the boundary fail it. ripr reports weakly_exposed on a predicate against a module constant, a false actionable verdict; the literal-boundary case py-pytest-silver-parametrized is credited exposed.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "gap",
@@ -359,7 +359,7 @@
           "limited"
         ]
       },
-      "reasoning": "test_gold_members_get_a_discount asserts only `discount_cents(\"gold\", 1000) > 0`, a bare relational assert that RIPR-SPEC-0028 reads as a smoke oracle, so doubling the gold rate passes. ripr's weakly_exposed is the ideal gap.",
+      "reasoning": "test_gold_members_get_a_discount asserts only `discount_cents(\"gold\", 1000) > 0`, a relational_check / weak oracle (RIPR-SPEC-0028 as amended by RIPR-SPEC-0233), so doubling the gold rate passes. ripr's weakly_exposed is the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "gap",
@@ -402,7 +402,7 @@
           "limited"
         ]
       },
-      "reasoning": "test_total_includes_tax compares total_with_tax(1000) with `1000 + tax_cents(1000)`, an expected value computed through the changed function, so a 9 percent rate passes. RIPR-SPEC-0004 and RIPR-SPEC-0035 say a self-computed expected value is not a strong oracle; ripr credits the line exposed, a false exposed verdict. The TypeScript twin reads weakly_exposed.",
+      "reasoning": "test_total_includes_tax compares total_with_tax(1000) with `1000 + tax_cents(1000)`, an expected value computed through the changed function, so a 9 percent rate passes. RIPR-SPEC-0004 and RIPR-SPEC-0035 say a self-computed expected value is not a strong oracle; ripr credits the line exposed, a false exposed verdict.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "credited",
@@ -494,7 +494,7 @@
           "limited"
         ]
       },
-      "reasoning": "test_points_are_whole_numbers asserts only isinstance(..., int), a broad-type oracle under RIPR-SPEC-0028; dividing by 10 still returns an int. ripr's weakly_exposed is the ideal gap.",
+      "reasoning": "test_points_are_whole_numbers asserts only isinstance(..., int), a relational_check / weak oracle (RIPR-SPEC-0028 as amended by RIPR-SPEC-0233); dividing by 10 still returns an int. ripr's weakly_exposed is the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "gap",
@@ -537,7 +537,7 @@
           "limited"
         ]
       },
-      "reasoning": "test_label_is_not_the_raw_tier asserts `!= \"gold\"`, which RIPR-SPEC-0028 records as broad; title() returns \"Gold\", which still differs. ripr's weakly_exposed is the ideal gap.",
+      "reasoning": "test_label_is_not_the_raw_tier asserts `!= \"gold\"`, a relational_check / weak oracle (RIPR-SPEC-0028 as amended by RIPR-SPEC-0233); title() returns \"Gold\", which still differs. ripr's weakly_exposed is the ideal gap.",
       "labeling_observation": {
         "ripr_commit": "127309619",
         "full_checkout_verdict": "gap",
@@ -1015,7 +1015,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_exact",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1059,7 +1059,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1102,7 +1102,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1145,7 +1145,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1188,7 +1188,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_and_chain",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1232,7 +1232,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1275,7 +1275,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_approx",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1319,7 +1319,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::TestNotEqual::test_almost_equal",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1363,7 +1363,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_fluent",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1407,7 +1407,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_exact_then_other",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1451,7 +1451,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_other_then_exact",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -1844,7 +1844,7 @@
             "replacement": "return {\"port\": 81, \"timeout\": 8080}",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: build() returns port 81 instead of 80"
+            "equivalence_review": "not equivalent: the owner returns port 81 instead of 80"
           }
         ]
       },
@@ -1887,7 +1887,7 @@
             "replacement": "return {\"port\": 81, \"timeout\": 8080}",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_dict_whole",
-            "equivalence_review": "not equivalent: build() returns port 81 instead of 80"
+            "equivalence_review": "not equivalent: the owner returns port 81 instead of 80"
           }
         ]
       },
@@ -2061,7 +2061,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -2101,10 +2101,10 @@
         "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
         "mutants": [
           {
-            "replacement": "return content_kind(x)",
+            "replacement": "return content_type(x)",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_label_call",
-            "equivalence_review": "not equivalent: label_call(1) returns 'b' instead of 'a'"
+            "equivalence_review": "not equivalent: label_call(1) returns 'a' instead of 'b'"
           }
         ]
       },
@@ -2116,12 +2116,12 @@
           "silent"
         ]
       },
-      "reasoning": "RIPR-SPEC-0233 example 26: `return content_kind(x)` replaces `content_type(x)`, and test_label_call asserts the result is 'a', so 'b' fails it. ripr credits exposed with no static limit, the spec's verdict.",
+      "reasoning": "RIPR-SPEC-0233 example 26: the edit changes `content_kind(x)` to `content_type(x)`, a call whose name ends in `type`, and test_label_call asserts the result is 'b', so 'a' fails it. The spec says no static limit and exposed; ripr's verdict at labeling is recorded in the labeling observation.",
       "labeling_observation": {
         "ripr_commit": "127309619",
-        "full_checkout_verdict": "credited",
+        "full_checkout_verdict": "limited",
         "full_checkout_classifications": [
-          "exposed"
+          "static_unknown"
         ],
         "excerpt_parity": "matched"
       }
@@ -2236,7 +2236,7 @@
             "replacement": "return int(text) + 2",
             "outcome": "tests_failed",
             "failing_test": "tests/test_subject.py::test_patch_call_and_exact",
-            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+            "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
           }
         ]
       },
@@ -2367,7 +2367,7 @@
             "replacement": "return {\"port\": 81, \"timeout\": 8080}",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: build() returns port 81 instead of 80"
+            "equivalence_review": "not equivalent: the owner returns port 81 instead of 80"
           }
         ]
       },

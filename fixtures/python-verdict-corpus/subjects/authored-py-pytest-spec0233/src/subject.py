@@ -134,7 +134,7 @@ def content_kind(x):
 
 
 def label_call(x):
-    return content_type(x)
+    return content_kind(x)
 
 
 def label_lambda_text(x):

@@ -8,8 +8,8 @@ Spec: RIPR-SPEC-0238. Corpus version: 2026-10-04.1. Cases: 61.
 | False actionable (of discriminated) | 15/33 | 0.4545 |
 | False exposed (of not fully discriminated) | 6/28 | 0.2143 |
 | False silent (of not fully discriminated) | 0/28 | 0.0000 |
-| Ideal verdict | 26/61 | 0.4262 |
-| Abstained (limited or silent where acceptable) | 14/61 | 0.2295 |
+| Ideal verdict | 25/61 | 0.4098 |
+| Abstained (limited or silent where acceptable) | 15/61 | 0.2459 |
 | Findings with a contradiction | 0/61 | 0.0000 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -57,7 +57,7 @@ Spec: RIPR-SPEC-0238. Corpus version: 2026-10-04.1. Cases: 61.
 | `py-spec0233-ex24-method-orthogonal` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
 | `py-spec0233-ex24-method-bound` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `py-spec0233-ex25-rival-import` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `py-spec0233-ex26-call-named-type` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `py-spec0233-ex26-call-named-type` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `py-spec0233-ex27-module-imports-os` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `py-spec0233-ex28-lambda-in-string` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `py-spec0233-ex29-client-patch` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |

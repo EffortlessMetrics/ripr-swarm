@@ -169,7 +169,7 @@ def test_cart_bound():
 
 
 def test_label_call():
-    assert label_call(1) == "a"
+    assert label_call(1) == "b"
 
 
 def test_label_lambda_text():

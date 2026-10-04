@@ -12071,15 +12071,18 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_undeclared_language",
   "xtask/src/reports/verdict_corpus_tests.rs::each_language_owns_its_corpus_directory_and_run_paths",
   "xtask/src/reports/verdict_corpus_tests.rs::a_language_directory_must_declare_that_language",
+  "xtask/src/reports/verdict_corpus_tests.rs::committed_python_corpus_is_valid_and_covers_each_test_library",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
+  "fixtures/python-verdict-corpus",
 ]
 code = [
   "xtask/src/reports/verdict_corpus.rs",
 ]
 outputs = [
   "fixtures/rust-verdict-corpus/expected/report.json",
+  "fixtures/python-verdict-corpus/expected/report.json",
 ]
 metrics = [
   "verdict_corpus_false_actionable_rate",
