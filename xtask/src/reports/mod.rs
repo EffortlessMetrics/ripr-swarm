@@ -13,7 +13,6 @@ mod eval_sweep_refresh;
 mod eval_sweep_report;
 mod first_pr;
 mod fixtures;
-mod impacted_evidence;
 mod index;
 mod issue_intake;
 mod lsp;
@@ -50,6 +49,7 @@ mod review_comments;
 mod rust_corpus;
 mod rust_repair_trust;
 mod sarif;
+mod scale_cliff;
 mod seam_inventory_scaling;
 mod source_promotion;
 mod spec_maintenance;
@@ -114,7 +114,6 @@ pub(crate) use fixtures::{
     json_string_values_for_key, next_pending_heading, normalize_golden_text, parse_reason,
     run_fixture, run_fixture_outputs, validate_bless_reason,
 };
-pub(crate) use impacted_evidence::impacted_evidence;
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
 pub(crate) use lsp::lsp_cockpit_report;
@@ -163,6 +162,7 @@ pub(crate) use sarif::{
     build_sarif_policy_report, parse_sarif_policy_args, parse_sarif_policy_results,
     sarif_policy_report_json, sarif_policy_report_markdown,
 };
+pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use spec_maintenance::spec_digest;
