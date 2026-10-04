@@ -3176,12 +3176,6 @@ mod tests {
         validate_binary_identity, validate_doctor_result, validate_installed_version,
         validate_package_entry, vsix_start_current_repair_command_present,
     };
-    // Unix-only like its only caller (`ci_summary_first_run_probe_reads_the_
-    // binary_output`); ungated, the import is dead on Windows and fails
-    // clippy -D warnings there (inherited from main; file untouched by this
-    // branch).
-    #[cfg(unix)]
-    use super::ci_summary_first_run_missing;
     use serde_json::Value;
     use std::fs;
     use std::path::Path;
