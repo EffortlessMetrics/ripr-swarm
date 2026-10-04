@@ -140,6 +140,85 @@ pub mod inner {
 }
 "#;
 
+/// #5471: owner shapes from real crates (bytesize, humantime, semver) that
+/// were refused with reasons that did not name the blocker.
+const FIXTURE_5471: &str = r#"use std::str::FromStr;
+
+pub fn early(x: u32) -> u32 {
+    if x > 40 { 1 } else { 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn smoke() {}
+}
+
+pub struct Parser<'a> {
+    pub src: &'a str,
+}
+
+impl<'a> Parser<'a> {
+    pub fn parse_unit(&mut self, start: usize, end: usize) -> Result<u64, String> {
+        if end > start { Ok(1) } else { Err(String::from(self.src)) }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Unit {
+    Second,
+    Minute,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum UnitError {
+    Unknown,
+}
+
+impl FromStr for Unit {
+    type Err = UnitError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "s" => Ok(Unit::Second),
+            "m" => Ok(Unit::Minute),
+            _ => Err(UnitError::Unknown),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Version {
+    pub major: u64,
+    pub minor: u64,
+    pub patch: u64,
+}
+
+impl Version {
+    pub fn next_minor(&self) -> Version {
+        Version {
+            major: self.major,
+            minor: self.minor + 1,
+            patch: 0,
+        }
+    }
+}
+
+pub struct Wrap<T>(pub T);
+
+impl<T: Copy> Wrap<T> {
+    pub fn pick(&self, n: u8) -> u8 {
+        if n > 3 { n } else { 0 }
+    }
+}
+
+#[cfg(test)]
+mod more_tests {
+    #[test]
+    fn smoke() {}
+}
+"#;
+
 enum Expect {
     /// The stub is written, compiles, and its test stops at a `ripr:` todo.
     StopsAtRiprTodo,
@@ -173,10 +252,25 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // A type imported under a std name is not assumed comparable.
         ("n > 6", Expect::StopsAtRiprTodo),
         ("n > 7", Expect::Refused("owner_unsupported")),
-        ("self.max > 3", Expect::Refused("owner_trait_method")),
-    ];
-    for (needle, expect) in cases {
-        let line = FIXTURE
+        // A trait method with a `&self` receiver is called through
+        // `<Parser as std::fmt::Display>::fmt(&subject, ..)`.
+        ("self.max > 3", Expect::StopsAtRiprTodo),
+    ]
+    .map(|(needle, expect)| (FIXTURE, needle, expect));
+    let cases_5471 = [
+        // Two inline test modules: the nearest one after the owner.
+        ("x > 40", Expect::StopsAtRiprTodo),
+        // `impl<'a> Parser<'a>` with a `&mut self` method.
+        ("end > start", Expect::StopsAtRiprTodo),
+        // `impl FromStr for Unit` returning `Result<Self, Self::Err>`.
+        ("\"m\" =>", Expect::StopsAtRiprTodo),
+        // A field of the struct literal the owner returns.
+        ("minor: self.minor + 1", Expect::StopsAtRiprTodo),
+        ("n > 3 { n }", Expect::Refused("owner_generic_impl")),
+    ]
+    .map(|(needle, expect)| (FIXTURE_5471, needle, expect));
+    for (fixture, needle, expect) in cases.into_iter().chain(cases_5471) {
+        let line = fixture
             .lines()
             .position(|text| text.contains(needle))
             .map(|index| index + 1)
@@ -188,7 +282,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             "[package]\nname = \"stub_oracle\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         )
         .map_err(|error| error.to_string())?;
-        std::fs::write(root.join("src/lib.rs"), FIXTURE).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), fixture).map_err(|error| error.to_string())?;
 
         let mut stub = Command::new(env!("CARGO_BIN_EXE_ripr"));
         stub.args(["agent", "stub", "--root"]).arg(&root).args([
@@ -210,7 +304,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 assert_eq!(
                     std::fs::read_to_string(root.join("src/lib.rs"))
                         .map_err(|error| error.to_string())?,
-                    FIXTURE,
+                    fixture,
                     "{needle}: a refusal must not touch the file"
                 );
             }
@@ -219,6 +313,13 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
+                if fixture == FIXTURE_5471 {
+                    // Two inline test modules: one is picked, not refused.
+                    assert_eq!(
+                        document["placement"]["kind"], "existing_inline_module",
+                        "{needle}"
+                    );
+                }
                 let test_name = document["test_name"]
                     .as_str()
                     .ok_or_else(|| format!("{needle}: test_name"))?

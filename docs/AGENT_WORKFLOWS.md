@@ -291,7 +291,9 @@ To go from one `ripr check` finding to a test in one step, run
 prints (or `--seam-id ID`). It prints a compiling `#[test]` placed in the
 owner file's inline `#[cfg(test)]` module, a new inline module, or the
 proposed `tests/` file, calling the changed function with its real receiver
-and arguments and a boundary input when the changed comparison names one. The
+and arguments and a boundary input when the changed comparison names one. A
+trait-impl method is called as `<Type as Trait>::method`, and an impl with
+only lifetime generics binds its receiver as `Type<'_>`. The
 expected value is a labelled `todo!()`, so the test fails until it is
 written. `--write` applies it; `--json` emits the `rust_test_stub` document.
 Its `run_command` runs only that test through the owning package's

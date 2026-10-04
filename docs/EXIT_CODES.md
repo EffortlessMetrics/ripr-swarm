@@ -88,9 +88,13 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   Other verify rejections (unreadable or invalid artifacts, lineage or
   metadata mismatches) exit `2`.
 - **Agent stub refusal**: `ripr agent stub` found the gap but will not write
-  a stub for it (a side-effect or call-presence change, an async, unsafe, or
-  generic owner, no return value, an out-of-line or ambiguous test module),
-  or the selector names no reported gap. The named reason is on stderr, with
+  a stub for it (a side-effect or call-presence change, a changed field of a
+  struct the owner does not return directly, an async, unsafe, or generic
+  owner, an impl with type or const generics, no return value, an
+  out-of-line test module), or the selector names no reported gap. Several
+  inline test modules are not a refusal: the stub goes into the one that
+  already names the owner, else the nearest one after it, else the nearest
+  one before it. The named reason is on stderr, with
   a `rust_test_stub` `state: refused` envelope under `--json`; stdout stays
   empty. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named

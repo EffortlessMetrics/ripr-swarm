@@ -11,6 +11,21 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Agent stub: `ripr agent stub` now writes a compiling stub for four owner
+  shapes it refused with reasons that did not name the blocker. A file with
+  several inline `#[cfg(test)]` modules gets the stub in the one that already
+  names the owner, else the nearest one after it, else the nearest before it
+  (was `ambiguous_test_module`). A method of an impl with only lifetime
+  generics (`impl<'a> Parser<'a>`, `impl Parser<'_>`) binds its receiver as
+  `Parser<'_>` (was `owner_unsupported`). A trait-impl method is called as
+  `<Type as Trait>::method(..)` with the trait as the impl header writes it,
+  and `Self::Assoc` types are spelled `<Type as Trait>::Assoc` (was
+  `owner_trait_method`). A changed field of the struct literal the owner
+  returns directly gets a stub asserting the whole return value (was
+  `field_type_unresolved`). Impls with type or const generics are refused
+  as `owner_generic_impl`, and a field of a literal the owner does not
+  return as `field_not_returned`
+  ([#5471](https://github.com/EffortlessMetrics/ripr-swarm/issues/5471)).
 - Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
   `mutants.out` output. Outcomes nested under `scenario.Mutant` with
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
