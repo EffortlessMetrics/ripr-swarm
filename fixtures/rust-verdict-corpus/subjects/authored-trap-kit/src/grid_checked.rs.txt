@@ -1,0 +1,28 @@
+pub struct Board {
+    cols: usize,
+}
+
+impl Board {
+    pub fn new(cols: usize) -> Board {
+        assert!(cols > 0, "board needs columns");
+        Board { cols }
+    }
+
+    pub fn row_at(&self, index: usize) -> usize {
+        if index >= 100 {
+            panic!("index out of range");
+        }
+        index / self.cols
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "index out of range")]
+    fn row_at_rejects_large_index() {
+        Board::new(4).row_at(100);
+    }
+}

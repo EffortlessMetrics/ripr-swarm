@@ -1,0 +1,23 @@
+#[derive(Clone, Debug, Default)]
+pub struct Counter {
+    pub n: u32,
+}
+
+impl Counter {
+    pub fn bump(&mut self) {
+        self.n += 2;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bump_moves_the_counter() {
+        let mut counter = Counter::default();
+        let snapshot = counter.clone();
+        counter.bump();
+        assert_eq!(snapshot.n, 0);
+    }
+}

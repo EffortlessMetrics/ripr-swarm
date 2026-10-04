@@ -1,0 +1,15 @@
+pub fn limit() -> u32 {
+    12
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[allow(unnameable_test_items)]
+    fn limit_suite() {
+        #[test]
+        fn limit_is_twelve() {
+            assert_eq!(super::limit(), 12);
+        }
+    }
+}

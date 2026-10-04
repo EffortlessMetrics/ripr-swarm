@@ -1,0 +1,16 @@
+<!-- section: Added -->
+- Verdict corpus: 22 authored false-credit cases in `authored-trap-kit`
+  (corpus `2026-10-04.6`). Eighteen are traps whose tests cannot notice the
+  change: a self-computed expected value via a test helper, `assert_eq!(x, x)`,
+  an assert on the input or on a stale clone, a sibling-named or same-named
+  function tested instead, an assert after an always-taken return, a bare
+  `#[should_panic]` satisfied by an unrelated panic, the owner only in an
+  assert message, an empty table loop, an `#[ignore]` pin, `catch_unwind`,
+  `assert!(unsigned >= 0)`, a sibling match arm, credit borrowed from a
+  same-named function, a name-only relation, a local binding named like the
+  owner, and a nested `#[test]`. Four are negative controls that do notice
+  it. Truth comes from real mutant runs on rustc 1.95. Defects found:
+  [#6537](https://github.com/EffortlessMetrics/ripr-swarm/issues/6537),
+  [#6538](https://github.com/EffortlessMetrics/ripr-swarm/issues/6538),
+  [#6541](https://github.com/EffortlessMetrics/ripr-swarm/issues/6541),
+  [#6544](https://github.com/EffortlessMetrics/ripr-swarm/issues/6544).

@@ -1,0 +1,11 @@
+diff --git a/src/nested.rs b/src/nested.rs
+index f6f2b21..13720d7 100644
+--- a/src/nested.rs
++++ b/src/nested.rs
+@@ -1,5 +1,5 @@
+ pub fn limit() -> u32 {
+-    12
++    6 + 6
+ }
+ 
+ #[cfg(test)]

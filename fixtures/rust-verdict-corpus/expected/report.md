@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.5. Cases: 104.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 126.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 37/104 | 0.3558 |
-| False actionable (of discriminated) | 33/56 | 0.5893 |
-| False exposed (of not fully discriminated) | 4/48 | 0.0833 |
-| False silent (of not fully discriminated) | 0/48 | 0.0000 |
-| Ideal verdict | 33/104 | 0.3173 |
-| Abstained (limited or silent where acceptable) | 34/104 | 0.3269 |
-| Findings with a contradiction | 2/138 | 0.0145 |
+| False verdicts (all cases) | 42/126 | 0.3333 |
+| False actionable (of discriminated) | 36/60 | 0.6000 |
+| False exposed (of not fully discriminated) | 6/66 | 0.0909 |
+| False silent (of not fully discriminated) | 0/66 | 0.0000 |
+| Ideal verdict | 49/126 | 0.3889 |
+| Abstained (limited or silent where acceptable) | 35/126 | 0.2778 |
+| Findings with a contradiction | 2/160 | 0.0125 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 70 | 27/70 | 23/36 | 4/34 | 0/34 | 28/70 | 15/70 |
+| authored | 92 | 32/92 | 26/40 | 6/52 | 0/52 | 44/92 | 16/92 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -125,6 +125,28 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `shop-gate-let-bound-input` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `roles-limit-const-value` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `roles-cfg-test-helper-input` | authored | discriminated | credited | silent | none | abstained | no | none |
+| `trap-tax-reference-helper` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `trap-score-tautology` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-widen-asserts-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-bump-stale-clone` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `trap-area-sibling-not-called` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-round-other-module` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-round-same-module-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `trap-count-early-return` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-count-reached-assert-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `trap-row-of-unrelated-panic` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-row-of-expected-panic-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `trap-scale-message-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-halve-empty-table` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-rate-ignored-test` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-level-catch-unwind` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-retries-unsigned-nonnegative` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-delay-sibling-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-delay-asserted-arm-control` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `trap-delay-borrowed-same-name` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `trap-fee-name-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-total-local-binding` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-limit-nested-test` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
 
 Non-claims:
 

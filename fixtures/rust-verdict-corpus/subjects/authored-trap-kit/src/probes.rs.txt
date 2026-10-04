@@ -1,0 +1,17 @@
+pub fn count() -> u32 {
+    7
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_is_seven() {
+        let n = count();
+        if n < 1000 {
+            return;
+        }
+        assert_eq!(n, 7);
+    }
+}

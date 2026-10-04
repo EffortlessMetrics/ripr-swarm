@@ -1,0 +1,13 @@
+diff --git a/src/modes_checked.rs b/src/modes_checked.rs
+index 1ade1ae..cb129da 100644
+--- a/src/modes_checked.rs
++++ b/src/modes_checked.rs
+@@ -6,7 +6,7 @@ pub enum Season {
+ 
+ pub fn pause(season: Season) -> u32 {
+     match season {
+-        Season::Spring => 5,
++        Season::Spring => 2 + 3,
+         Season::Autumn => 50,
+     }
+ }
