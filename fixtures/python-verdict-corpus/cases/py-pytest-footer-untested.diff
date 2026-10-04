@@ -1,0 +1,9 @@
+diff --git a/pricing/receipts.py b/pricing/receipts.py
+--- a/pricing/receipts.py
++++ b/pricing/receipts.py
+@@ -8,4 +8,4 @@ def print_receipt(total_cents):
+ 
+ def receipt_footer(store_name):
+     """Closing line printed under every receipt."""
+-    return f"Thank you for shopping at {store_name}!"
++    return f"Thanks for shopping at {store_name}!"

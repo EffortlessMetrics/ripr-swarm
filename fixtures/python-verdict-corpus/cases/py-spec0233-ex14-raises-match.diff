@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -47,7 +47,7 @@ def parse_exact_second(text):
+ 
+ def perr_match(text):
+     if not text:
+-        raise KeyError("empty")
++        raise KeyError("blank")
+     return int(text)
+ 
+ 

@@ -99,6 +99,17 @@ StrykerJS (or, for a test library Stryker cannot drive, the same mutants
 applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
+### Python corpus
+
+Subjects are authored projects (`authored-py-<library>-<name>`) with a
+`pyproject.toml` or `setup.cfg` marker and no `ripr.toml`, so Python is
+enabled the way a new user's repository enables it. Cases cover pytest
+(asserts, `parametrize`, `raises`, fixtures, `capsys`, `tmp_path`,
+`monkeypatch`), unittest (assert methods, mocks, mixins) and Hypothesis
+(`@given`, `@example`, `assume`), plus one case per RIPR-SPEC-0233
+acceptance example that can run. Truth is the same hand-applied mutant run
+the Rust corpus uses, under the test command each case records.
+
 ## Required Evidence
 
 - A corpus without `language` reads as Rust and its rendered report has no

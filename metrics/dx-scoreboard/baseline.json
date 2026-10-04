@@ -505,6 +505,84 @@
     {
       "baseline": {
         "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "trust",
+      "direction": "lower_is_better",
+      "id": "trust.verdict_corpus_python_false_actionable",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "fixtures/python-verdict-corpus/expected/report.json false_actionable_rate: 15/33",
+          "repo": null,
+          "status": "below_target",
+          "value": 0.4545
+        }
+      ],
+      "source": "file:fixtures/python-verdict-corpus/expected/report.json#false_actionable_rate",
+      "status": "below_target",
+      "target": 0.05,
+      "title": "Authored Python edits the project's tests fully catch that ripr still flags as a gap",
+      "unit": "ratio",
+      "value": 0.4545
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "trust",
+      "direction": "lower_is_better",
+      "id": "trust.verdict_corpus_python_false_exposed",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "fixtures/python-verdict-corpus/expected/report.json false_exposed_rate: 6/28",
+          "repo": null,
+          "status": "below_target",
+          "value": 0.2143
+        }
+      ],
+      "source": "file:fixtures/python-verdict-corpus/expected/report.json#false_exposed_rate",
+      "status": "below_target",
+      "target": 0.0,
+      "title": "Authored Python edits the project's tests miss that ripr credits as caught",
+      "unit": "ratio",
+      "value": 0.2143
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "trust",
+      "direction": "lower_is_better",
+      "id": "trust.verdict_corpus_python_false_silent",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "fixtures/python-verdict-corpus/expected/report.json false_silent_rate: 0/28",
+          "repo": null,
+          "status": "meets_target",
+          "value": 0.0
+        }
+      ],
+      "source": "file:fixtures/python-verdict-corpus/expected/report.json#false_silent_rate",
+      "status": "meets_target",
+      "target": 0.0,
+      "title": "Authored Python edits the project's tests miss that ripr reports as fine",
+      "unit": "ratio",
+      "value": 0.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
         "reason": "metric absent from baseline"
       },
       "board": "trust",

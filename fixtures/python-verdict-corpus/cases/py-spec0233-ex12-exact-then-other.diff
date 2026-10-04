@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -38,7 +38,7 @@ def parse_fluent(text):
+ 
+ 
+ def parse_exact_first(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def parse_exact_second(text):

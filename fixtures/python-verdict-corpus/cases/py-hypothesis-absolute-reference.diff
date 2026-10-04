@@ -1,0 +1,12 @@
+diff --git a/stats/__init__.py b/stats/__init__.py
+--- a/stats/__init__.py
++++ b/stats/__init__.py
+@@ -8,7 +8,7 @@ def clamp(x, lo, hi):
+ 
+ def absolute(x):
+     """Absolute value of an integer."""
+-    return x if x >= 0 else -x
++    return x if x >= 1 else -x
+ 
+ 
+ def mean(xs):

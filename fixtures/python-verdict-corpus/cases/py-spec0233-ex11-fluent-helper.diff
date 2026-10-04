@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -34,7 +34,7 @@ def parse_almost_equal(text):
+ 
+ 
+ def parse_fluent(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def parse_exact_first(text):

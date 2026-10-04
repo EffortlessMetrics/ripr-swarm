@@ -1,0 +1,2897 @@
+{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0238",
+  "language": "python",
+  "corpus_version": "2026-10-04.1",
+  "description": "Hand-labeled Python verdict corpus: one-line edits in small authored Python projects, one subject per test library, each labeled with what the project's own tests actually discriminate, so ripr's Python verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
+  "label_method": "For each case the edit was applied to a scratch copy of the whole authored project, the project's own test command (pytest, with Hypothesis where a subject uses it, or python3 -m unittest, recorded on the case) was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited line was applied on top and the same command run. A mutant counts as detected (`tests_failed`) when the test command fails after the code loads; no recorded failure is an import or syntax error. Each mutant was reviewed by hand for equivalence. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
+  "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
+  "non_claims": [
+    "Rates describe this corpus only; they are not a population estimate for Python code or for ripr in general.",
+    "Every subject is authored to cover a test-library oracle or reach rule; the rates describe those cells, not real-world Python tests.",
+    "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
+    "The harness does not run mutation testing, the Python test runners, or any network access."
+  ],
+  "subjects": [
+    {
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "version_label": "authored@127309619",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "pricing/__init__.py",
+          "sha256": "2a9d1ed248f2bda615e7f56144bd320e03e215ee735c9b4f20369fafe9246c81"
+        },
+        {
+          "path": "pricing/core.py",
+          "sha256": "3bdf63984cdee714df0c199cc35d115def7479eebb836511d3029337019f5756"
+        },
+        {
+          "path": "pricing/receipts.py",
+          "sha256": "46407347c59ab7e65fa5f8a45cda57ef08659b2d7fc4bfa24d3698a29fa40b04"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "9e38fe998cffe3ffe658244b392696a13bdc461962665235a271a7c2b27f9b72"
+        },
+        {
+          "path": "tests/test_pricing.py",
+          "sha256": "34f207961a539ccf234a4fbb4f331724ac2e883301374d5dd4e45c30d6b339c0"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "version_label": "authored@127309619",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "301cbff089d6551aebfaa250aeeaf4a86f4834863378053a757817a4093c66b8"
+        },
+        {
+          "path": "src/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "src/geometry.py",
+          "sha256": "0ff4148549895889991e9f334e0f86a9f98a2d260feff1ee6f97e20caf414f21"
+        },
+        {
+          "path": "src/other.py",
+          "sha256": "5ba69e9962b37d1c64249b048cd3ad6109b4e34b09e544ce5a3447317841c2e8"
+        },
+        {
+          "path": "src/subject.py",
+          "sha256": "758448f8d1f58fb4f763d0f29f574e17998a000fd7354cbdad777718014d1e05"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/fluent.py",
+          "sha256": "9384b7ab962b1f7897fb0f6b27825d76c5c9c4c3013c43ff1ea953ca8f4b4948"
+        },
+        {
+          "path": "tests/test_rival.py",
+          "sha256": "18aabb598174b15e240bc62dcb335f57f3db3e5b21b03c46541af46b6091f43a"
+        },
+        {
+          "path": "tests/test_subject.py",
+          "sha256": "dc413dd8fd57b6d27867e862bed94126b263cb3bee9ce9d74a9d3d18dd56b394"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-py-pytest-fixtures",
+      "origin": "authored",
+      "version_label": "authored@127309619",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "cde568e6929fb37e682e43a28de1c6a9b007fd97366a78c965990c15581540e0"
+        },
+        {
+          "path": "shop/__init__.py",
+          "sha256": "98b798d9e3ce7a33a6e8d0ee02e32047968eef58789f4d19325b3e06625f6a70"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/conftest.py",
+          "sha256": "d5257ab74676d9bf1bd105f2fc1bf606c7619aee65cb2055fc0831e4ceb02cb7"
+        },
+        {
+          "path": "tests/test_shop.py",
+          "sha256": "06414a191e945cfe6c44c21e0308707466ba3970b23fa6f94277aca59e48249d"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-py-hypothesis-stats",
+      "origin": "authored",
+      "version_label": "authored@127309619",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "pyproject.toml",
+          "sha256": "d72a073027f6ec940107398e03e60c27d8c096a188a38d5062879df68a9ad44e"
+        },
+        {
+          "path": "stats/__init__.py",
+          "sha256": "011f20deae05f8802d9c7d2f2b2ff80ac5ad6921e9e47f03d68a83776bb47748"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/conftest.py",
+          "sha256": "77be4d98395481ee773755ba6a7fb10a5b4aaa4f720c1bc8f26d40deec572b7a"
+        },
+        {
+          "path": "tests/test_stats.py",
+          "sha256": "31dc727ee259cd25f25b1205a14f9a986b87a7ec1992d3bd251ee8c9c4efe10d"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-py-unittest-accounts",
+      "origin": "authored",
+      "version_label": "authored@127309619",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "accounts/__init__.py",
+          "sha256": "101399871f03e9f6435b944f45d44ac5c74e0be8f992dde802897f857a8b2141"
+        },
+        {
+          "path": "accounts/ledger.py",
+          "sha256": "a85be750efd0b17d659c81a65a57ffeaa0a3e2c4fd252f5a64d844388f3af8e8"
+        },
+        {
+          "path": "setup.cfg",
+          "sha256": "e7ace89265dcf3b12875976855b3876cd15692ee7621a61277cc575fc9fbddf6"
+        },
+        {
+          "path": "tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "tests/test_ledger.py",
+          "sha256": "8b0dade6613662ca191f593ad756337bae86c0139cad794cee97a0efb5582d7f"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "py-pytest-shipping-threshold",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-shipping-threshold.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_assert_eq_boundary_pinned",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "if subtotal_cents > FREE_SHIPPING_CENTS:",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_pricing.py::test_free_shipping_starts_at_threshold",
+            "equivalence_review": "not equivalent: a 5000-cent order pays 499 shipping instead of shipping free"
+          },
+          {
+            "replacement": "if subtotal_cents >= FREE_SHIPPING_CENTS - 1:",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_pricing.py::test_free_shipping_starts_at_threshold",
+            "equivalence_review": "not equivalent: a 4999-cent order ships free instead of paying 499"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_free_shipping_starts_at_threshold pins 4999 and 5000 with `assert ==`, an exact-value oracle under RIPR-SPEC-0028, so both shifts of the boundary fail it. ripr reports weakly_exposed on a predicate against a module constant, a false actionable verdict; the TypeScript twin is credited exposed.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-gold-threshold",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-gold-threshold.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 16
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_assert_eq_far_from_boundary",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "if points > 5000:",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 5000 points earns silver instead of gold"
+          },
+          {
+            "replacement": "if points > 4998:",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 4999 points earns gold instead of silver"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_tiers_far_from_thresholds checks 6000 and 0 points only, so neither shift of the 5000-point boundary fails it. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-silver-parametrized",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-silver-parametrized.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_parametrize_boundary_pinned",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "if points > 1000:",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_pricing.py::test_silver_starts_at_one_thousand[1000-silver]",
+            "equivalence_review": "not equivalent: 1000 points earns bronze instead of silver"
+          },
+          {
+            "replacement": "if points > 998:",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_pricing.py::test_silver_starts_at_one_thousand[999-bronze]",
+            "equivalence_review": "not equivalent: 999 points earns silver instead of bronze"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The @pytest.mark.parametrize rows (999, bronze) and (1000, silver) pin the silver boundary with `assert ==`, so each shift fails one row. ripr credits the predicate exposed, the ideal verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-gold-discount-rate",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-gold-discount-rate.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 26
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_bare_assert_relational",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return subtotal_cents * 20 // 100",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the gold discount on 1000 cents is 200 instead of 100"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_gold_members_get_a_discount asserts only `discount_cents(\"gold\", 1000) > 0`, a bare relational assert that RIPR-SPEC-0028 reads as a smoke oracle, so doubling the gold rate passes. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-tax-self-computed",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-tax-self-computed.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 34
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_expected_computed_through_changed_function",
+      "hard_case": "the expected value is computed through the changed function",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return subtotal_cents * 9 // 100",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: tax on 1000 cents is 90 instead of 80"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_total_includes_tax compares total_with_tax(1000) with `1000 + tax_cents(1000)`, an expected value computed through the changed function, so a 9 percent rate passes. RIPR-SPEC-0004 and RIPR-SPEC-0035 say a self-computed expected value is not a strong oracle; ripr credits the line exposed, a false exposed verdict. The TypeScript twin reads weakly_exposed.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-quantity-guard",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-quantity-guard.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 45
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_guard_boundary",
+      "test_shape": "pytest_raises_one_side",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "if value < 0:",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_pricing.py::test_zero_quantity_is_rejected",
+            "equivalence_review": "not equivalent: quantity 0 is accepted instead of raising"
+          },
+          {
+            "replacement": "if value < 2:",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: quantity 1 raises instead of being accepted"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_zero_quantity_is_rejected feeds only \"0\" to pytest.raises(ValueError): `value < 0` accepts 0 and fails the test, while `value < 2` also rejects 1 and passes. The truth is partially_discriminated and ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-points-divisor",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-points-divisor.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 52
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_isinstance_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return subtotal_cents // 10",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 1050 cents earns 105 points instead of 10"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_points_are_whole_numbers asserts only isinstance(..., int), a broad-type oracle under RIPR-SPEC-0028; dividing by 10 still returns an int. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-label-case",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-label-case.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 57
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "return_value",
+      "test_shape": "pytest_not_equal_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return tier.title()",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the gold label is \"Gold\" instead of \"GOLD\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_label_is_not_the_raw_tier asserts `!= \"gold\"`, which RIPR-SPEC-0028 records as broad; title() returns \"Gold\", which still differs. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-bulk-default",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-bulk-default.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 60
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "parameter_default",
+      "test_shape": "pytest_every_call_binds_the_default",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "def bulk_price(unit_cents, quantity, bulk_threshold=12):",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: bulk_price(100, 10) without a threshold costs 1000 instead of 900"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Every test call passes bulk_threshold explicitly, so the default is never reached and raising it to 12 passes. RIPR-SPEC-0028 says such a default line is not credited exposed; ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-quote-shipping-term",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-quote-shipping-term.diff",
+      "anchor": {
+        "file": "pricing/core.py",
+        "line": 71
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "field_construction",
+      "test_shape": "pytest_dict_field_one_branch",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return {\"tier\": tier, \"total_cents\": total}",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: quote(1000, 0) totals 1000 instead of 1499"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_quote_for_a_large_bronze_order asserts total_cents exactly, but for a 6000-cent order that ships free, so dropping the shipping term passes. ripr credits the dict construction exposed, a false exposed verdict; this is the Python twin of pricing-quote-total-field.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-receipt-format",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-receipt-format.diff",
+      "anchor": {
+        "file": "pricing/receipts.py",
+        "line": 6
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "output_text",
+      "test_shape": "pytest_capsys_exact_output",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "print(f\"Total: {total_cents / 100:.1f}\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_pricing.py::test_receipt_prints_dollars",
+            "equivalence_review": "not equivalent: 1250 cents prints \"Total: 12.5\" instead of \"Total: 12.50\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_receipt_prints_dollars compares capsys.readouterr().out exactly, an output oracle under RIPR-SPEC-0028, so printing 12.5 instead of 12.50 fails it. The test reaches the owner as `pricing.print_receipt`, through the package re-export. ripr reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-pytest-footer-untested",
+      "subject_id": "authored-py-pytest-pricing",
+      "diff": "cases/py-pytest-footer-untested.diff",
+      "anchor": {
+        "file": "pricing/receipts.py",
+        "line": 11
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "return_value",
+      "test_shape": "no_test_references_owner",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return f\"Thanks for shopping at {store_name}!\"",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the footer reads \"Thanks for shopping\" instead of \"Thank you for shopping\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "No test references receipt_footer, so the wording change passes. ripr reports no_static_path, an acceptable limit; the ideal verdict is a gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-unittest-deposit-add",
+      "subject_id": "authored-py-unittest-accounts",
+      "diff": "cases/py-unittest-deposit-add.diff",
+      "anchor": {
+        "file": "accounts/ledger.py",
+        "line": 19
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "state_update",
+      "test_shape": "unittest_assert_equal_field",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python3 -m unittest",
+        "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "self.balance_cents = amount_cents",
+            "outcome": "tests_failed",
+            "failing_test": "tests.test_ledger.TestDeposits.test_deposit_adds_to_balance",
+            "equivalence_review": "not equivalent: the balance becomes the deposit (50) instead of 150"
+          },
+          {
+            "replacement": "self.balance_cents = self.balance_cents - amount_cents",
+            "outcome": "tests_failed",
+            "failing_test": "tests.test_ledger.TestDeposits.test_deposit_adds_to_balance",
+            "equivalence_review": "not equivalent: the deposit is subtracted, leaving 50 instead of 150"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_deposit_adds_to_balance deposits 50 on 100 and checks balance_cents with self.assertEqual, an exact-value oracle, so overwriting or subtracting fails it. ripr reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-unittest-owner-strip",
+      "subject_id": "authored-py-unittest-accounts",
+      "diff": "cases/py-unittest-owner-strip.diff",
+      "anchor": {
+        "file": "accounts/ledger.py",
+        "line": 13
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "constructor_field",
+      "test_shape": "unittest_constructor_call_input_never_padded",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python3 -m unittest",
+        "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "self.owner = owner",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: Account(\" ann \").owner keeps its spaces"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_owner_is_kept constructs Account(\"ann\"), a constructor_call relation under RIPR-SPEC-0028, and asserts the owner exactly, but \"ann\" has no surrounding whitespace, so dropping strip() passes. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-unittest-can-withdraw",
+      "subject_id": "authored-py-unittest-accounts",
+      "diff": "cases/py-unittest-can-withdraw.diff",
+      "anchor": {
+        "file": "accounts/ledger.py",
+        "line": 22
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "unittest_assert_true_smoke",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python3 -m unittest",
+        "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return amount_cents < self.balance_cents",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: can_withdraw(100) on a 100 balance returns False instead of True"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_small_withdrawal_is_allowed asserts self.assertTrue(can_withdraw(50)) on a 100 balance, a smoke oracle; `<` still allows 50. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-unittest-overdraft-boundary",
+      "subject_id": "authored-py-unittest-accounts",
+      "diff": "cases/py-unittest-overdraft-boundary.diff",
+      "anchor": {
+        "file": "accounts/ledger.py",
+        "line": 25
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_guard_boundary",
+      "test_shape": "unittest_assert_raises_far_from_boundary",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python3 -m unittest",
+        "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "if amount_cents >= self.balance_cents:",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: withdrawing the exact balance raises InsufficientFunds"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_overdraft_is_refused withdraws 500 from 100 under self.assertRaises, far from the boundary, and no test withdraws the exact balance, so `>=` passes. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-unittest-transfer-notify",
+      "subject_id": "authored-py-unittest-accounts",
+      "diff": "cases/py-unittest-transfer-notify.diff",
+      "anchor": {
+        "file": "accounts/ledger.py",
+        "line": 41
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "call_argument",
+      "test_shape": "unittest_mock_assert_called_once_with",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python3 -m unittest",
+        "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "notifier.send(target.owner, amount_cents * 100)",
+            "outcome": "tests_failed",
+            "failing_test": "tests.test_ledger.TestTransfers.test_receiver_is_notified_of_the_amount",
+            "equivalence_review": "not equivalent: the notification carries 2500 instead of 25"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_receiver_is_notified_of_the_amount checks notifier.send.assert_called_once_with(\"bob\", 25), the mock call oracle RIPR-SPEC-0028 names, so sending 2500 fails it. ripr reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-unittest-fee-waiver-mixin",
+      "subject_id": "authored-py-unittest-accounts",
+      "diff": "cases/py-unittest-fee-waiver-mixin.diff",
+      "anchor": {
+        "file": "accounts/ledger.py",
+        "line": 32
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "unittest_same_file_mixin_boundary_pinned",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python3 -m unittest",
+        "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "if balance_cents > FEE_WAIVER_BALANCE_CENTS:",
+            "outcome": "tests_failed",
+            "failing_test": "tests.test_ledger.TestFees.test_fee_waived_exactly_at_waiver_balance",
+            "equivalence_review": "not equivalent: a 10000-cent balance pays the 300 fee"
+          },
+          {
+            "replacement": "if balance_cents >= FEE_WAIVER_BALANCE_CENTS - 1:",
+            "outcome": "tests_failed",
+            "failing_test": "tests.test_ledger.TestFees.test_fee_waived_exactly_at_waiver_balance",
+            "equivalence_review": "not equivalent: a 9999-cent balance has its fee waived"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The boundary test lives on the same-file mixin FeeChecks, which TestFees inherits alongside unittest.TestCase (RIPR-SPEC-0028, #4562); it pins 9999 and 10000 with self.assertEqual, so both shifts fail. ripr reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex01-exact",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex01-exact.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 5
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_exact",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 1: test_exact asserts `parse_exact(\"1\") == 2`, an exact_value oracle, so `+ 2` fails it. ripr credits exposed, the verdict the spec names.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex02-not-equal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex02-not-equal.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 9
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_not_equal",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 2: `parse_not_equal(\"1\") != 0` is a relational_check, and 3 is still not 0, so the edit passes. ripr's weakly_exposed is the ideal gap and the spec's verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex03-assert-not-equal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex03-assert-not-equal.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 13
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "unittest_assert_not_equal",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 3: self.assertNotEqual(parse_assert_not_equal(\"1\"), 0) in a unittest.TestCase is a relational_check; 3 is still not 0, so the edit passes. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex04-isinstance",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex04-isinstance.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 17
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_isinstance_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 4: `isinstance(parse_isinstance(\"1\"), int)` is a relational_check, and 3 is still an int. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex05-and-chain",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex05-and-chain.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 21
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq_inside_and_chain",
+      "hard_case": "the spec reads an `and` chain as smoke, yet its exact conjunct discriminates",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_and_chain",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 5: `assert parse_and_chain(\"1\") == 2 and other == 3` is read as smoke_only, yet the left conjunct compares exactly, so `+ 2` fails the test. ripr's weakly_exposed is the spec's verdict and scores false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex06-self-compare",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex06-self-compare.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 25
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_owner_compared_with_itself",
+      "hard_case": "the expected value is the changed owner itself",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 6: `parse_self_compare(\"1\") == parse_self_compare(\"1\")` compares the owner with itself, so every edit passes. The spec says relational_check and weakly_exposed; ripr today credits exposed, a false exposed verdict the spec's rule 1 removes.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex07-approx",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex07-approx.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 29
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq_approx",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_approx",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 7: `parse_approx(\"1\") == pytest.approx(2.0)` is exact_value, and 3 is not approximately 2. ripr credits exposed, the spec's verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex08-almost-equal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex08-almost-equal.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 33
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "unittest_assert_almost_equal",
+      "hard_case": "the spec leaves assertAlmostEqual unrecognized, yet it discriminates this edit",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::TestNotEqual::test_almost_equal",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 8: self.assertAlmostEqual(parse_almost_equal(\"1\"), 2.0) is not a recognized assertion (Decision 7), so ripr reports weakly_exposed, the spec's verdict; at the default seven places it still fails for 3, so the verdict scores false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex11-fluent-helper",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex11-fluent-helper.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 37
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "fluent_assert_that_helper",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_fluent",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 11: `assert_that(parse_fluent(\"1\")).is_equal_to(2)` goes through tests/fluent.py, a helper written for this corpus that raises on inequality, so `+ 2` fails. The spec moves this to static_unknown with opaque_custom_assertion_helper (limited, acceptable); ripr today reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex12-exact-then-other",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex12-exact-then-other.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 41
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_owner_assert_before_unrelated_assert",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_exact_then_other",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 12: the owner's exact assert comes first and an unrelated `assert other == 3` second; `+ 2` fails the first. The spec credits exposed through rule 4; ripr today reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex13-other-then-exact",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex13-other-then-exact.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 45
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_unrelated_assert_before_owner_assert",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_other_then_exact",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 13: with the unrelated assert first and the owner's exact assert second, ripr credits exposed, the spec's verdict, and `+ 2` fails the test.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex14-raises-match",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex14-raises-match.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 50
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_match_literal",
+      "hard_case": "the edit changes the message the match= pattern reads, not the exception class the spec example changes",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_raises_with_match",
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Shaped on RIPR-SPEC-0233 example 14, with a message edit instead of a class edit: pytest.raises(KeyError, match=\"empty\") fails when the message becomes 'blank'. ripr reports weakly_exposed, a false actionable verdict; the spec's example (class change) expects exposed through changed_sink_token.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex15-raises-broad",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex15-raises-broad.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 56
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_class_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 15: pytest.raises(KeyError) without match= is broad_error and passes whatever the message. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex16-value-only",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex16-value-only.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 62
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_success_value_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 16: the only test asserts the success value `perr_value_only(\"1\") == 1` and never reaches the raise. ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex17-raises-match-and-value",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex17-raises-match-and-value.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 68
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_match_then_value_one_test",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_raises_with_match_and_value",
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 17: one test holds pytest.raises(KeyError, match=\"empty\") and the success-value assert; the message edit fails the raises block. The spec credits exposed; ripr today reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex18-split-tests",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex18-split-tests.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 74
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_match_and_value_in_two_tests",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_a_split_raises",
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 18: test_a_split_raises holds the match=\"empty\" block and test_b_split_value the success value; the message edit fails test_a. The spec credits exposed; ripr today reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex19-match-anything",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex19-match-anything.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 80
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_trivial_match",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 19: match=\".*\" accepts any message, so the edit passes. The spec reads it as broad_error and weakly_exposed; ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex20-raises-regex",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex20-raises-regex.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 86
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "unittest_assert_raises_regex_callable",
+      "hard_case": "the spec does not read callable-form assertRaisesRegex, yet it discriminates the message",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::TestNotEqual::test_raises_regex",
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 20: self.assertRaisesRegex(KeyError, \"empty\", perr_raises_regex, \"\") is not used as an oracle (Decision 9), so ripr reports weakly_exposed, the spec's verdict; the regex fails for 'blank', so it scores false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex21-exc-value",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex21-exc-value.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 92
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_as_exc_value_assert",
+      "hard_case": "the spec does not credit a value assert on exc.value, yet it discriminates the message",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "raise KeyError(\"blank\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_raises_as_exc_value",
+            "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 21: pytest.raises(KeyError) as exc, then `str(exc.value) == \"'empty'\"`, fails for 'blank'. The spec keeps weakly_exposed (Decision 4), so ripr's verdict matches the spec and scores false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex22-dict-field",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex22-dict-field.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 97
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_dict_other_key_assert",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return {\"port\": 81, \"timeout\": 8080}",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: build() returns port 81 instead of 80"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 22: the test asserts only `build_field()[\"timeout\"] == 8080`, so changing the port passes. The spec says weakly_exposed (orthogonal); ripr's weakly_exposed is the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex22-dict-whole",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex22-dict-whole.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 101
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_dict_whole_value_assert",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return {\"port\": 81, \"timeout\": 8080}",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_dict_whole",
+            "equivalence_review": "not equivalent: build() returns port 81 instead of 80"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 22, second test: `build_whole() == {\"port\": 80, \"timeout\": 8080}` compares the whole dict, so port 81 fails it. ripr credits exposed, the spec's verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex23-list-index",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex23-list-index.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 105
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_list_other_index_assert",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return [81, 8080]",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: build_list() returns [81, 8080] instead of [80, 8080]"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 23: the test asserts only `build_list()[1] == 8080`, so changing the first element passes. ripr's weakly_exposed is the ideal gap and the spec's verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex24-method-orthogonal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex24-method-orthogonal.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 116
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_class_token_on_unrelated_receiver",
+      "hard_case": "the class token appears only as the expected value",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return 5 + 2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: CartOrthogonal().total_orthogonal() returns 7 instead of 6"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 24: the only test calls total_orthogonal on an unrelated SimpleNamespace and compares with CartOrthogonal.LIMIT, so the class token is the only link and the edit passes. The spec says weakly_exposed (rule 9); ripr today credits exposed, a false exposed verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex24-method-bound",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex24-method-bound.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 121
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_bound_receiver_assert_eq",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return 5 + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_cart_bound",
+            "equivalence_review": "not equivalent: CartBound().total_bound() returns 7 instead of 6"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 24, bound receiver: `c = CartBound()` then `c.total_bound() == 6` fails for 7. ripr credits exposed, the spec's verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex25-rival-import",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex25-rival-import.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 125
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_rival_module_same_name",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 25: tests/test_rival.py imports parse_rival from src.other, a rival module with the same name, so the edit in src/subject.py passes. The spec says not related, no_static_path (limited, acceptable); ripr today reports weakly_exposed, the ideal gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex26-call-named-type",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex26-call-named-type.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 137
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "call_target",
+      "test_shape": "pytest_assert_eq_type_named_callee",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return content_kind(x)",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_label_call",
+            "equivalence_review": "not equivalent: label_call(1) returns 'b' instead of 'a'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 26: `return content_kind(x)` replaces `content_type(x)`, and test_label_call asserts the result is 'a', so 'b' fails it. ripr credits exposed with no static limit, the spec's verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex27-module-imports-os",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex27-module-imports-os.diff",
+      "anchor": {
+        "file": "src/geometry.py",
+        "line": 7
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq_owner_module_imports_os",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return pos.x + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_shift",
+            "equivalence_review": "not equivalent: shift returns 4 instead of 3 for x=2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 27: src/geometry.py imports os, the changed line `pos.x + 2` does not use it, and test_shift asserts 3 exactly, so the edit fails. ripr reports static_unknown with missing_import_graph (limited, acceptable); the spec removes the limit, which would credit exposed.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex28-lambda-in-string",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex28-lambda-in-string.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 141
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "return_value",
+      "test_shape": "pytest_assert_eq_lambda_word_in_string",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return \"lambda y\"",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_label_lambda_text",
+            "equivalence_review": "not equivalent: the label is \"lambda y\" instead of \"lambda x\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 28: the changed line returns the string \"lambda y\", and test_label_lambda_text asserts \"lambda x\" exactly, so it fails. ripr reports static_unknown with unsupported_syntax (limited, acceptable); the spec drops the limit for a lambda word inside a string.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex29-client-patch",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex29-client-patch.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 149
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_non_mock_patch_call_in_test",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return int(text) + 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_patch_call_and_exact",
+            "equivalence_review": "not equivalent: parse(\"1\") returns 3 instead of 2"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 29: the related test calls a fake client's .patch(\"/x\") and asserts `parse_with_patch_call(\"1\") == 2`, which fails for 3. ripr reports static_unknown with mocked_module (limited, acceptable); the spec says a non-mock .patch call is no limit and credits exposed.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex30-property",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex30-property.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 155
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "return_value",
+      "test_shape": "pytest_property_owner",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_property",
+            "equivalence_review": "not equivalent: Settings().version is 2 instead of 1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 30: the changed line is in a @property, and test_property asserts `Settings().version == 1`, which fails for 2. ripr reports static_unknown with decorator_indirection, the spec's verdict (limited, acceptable).",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex31-fstring-length",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex31-fstring-length.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 159
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "format_string",
+      "test_shape": "pytest_length_only_and_unrelated_assert",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return f\"ID:{n}\"",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: fmt(7) returns \"ID:7\" instead of \"NO:7\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 31: test_a asserts only `len(fmt(7)) == 4` and test_b calls fmt(7) beside an unrelated assert; \"ID:7\" has the same length, so the edit passes. The spec says weakly_exposed (rule 11); ripr today credits exposed, a false exposed verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex32-split-dict",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex32-split-dict.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 109
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_field_and_whole_value_gates_in_two_tests",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return {\"port\": 81, \"timeout\": 8080}",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: build() returns port 81 instead of 80"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 32: test_a asserts only the timeout key and test_b calls build_split() beside an unrelated whole-dict assert, so changing the port passes. The spec says weakly_exposed; ripr today credits exposed, a false exposed verdict that joins one test's identity with another's whole-collection gate.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-spec0233-ex33-spaced-getattr",
+      "subject_id": "authored-py-pytest-spec0233",
+      "diff": "cases/py-spec0233-ex33-spaced-getattr.diff",
+      "anchor": {
+        "file": "src/subject.py",
+        "line": 145
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "call_argument",
+      "test_shape": "pytest_spaced_getattr",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return getattr (x, \"b\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_subject.py::test_label_getattr",
+            "equivalence_review": "not equivalent: label_getattr returns 2 instead of 1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "RIPR-SPEC-0233 example 33: `getattr (x, \"b\")` reads attribute b (2) instead of a (1), and test_label_getattr asserts 1, so it fails. ripr credits exposed (ideal); the spec adds a dynamic_dispatch limit for a spaced getattr call, which would read limited.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-hypothesis-clamp-invariant",
+      "subject_id": "authored-py-hypothesis-stats",
+      "diff": "cases/py-hypothesis-clamp-invariant.diff",
+      "anchor": {
+        "file": "stats/__init__.py",
+        "line": 6
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "hypothesis_range_invariant_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return max(lo, min(x, hi - 1))",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: clamp(10, 0, 5) returns 4 instead of 5"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_clamp_stays_in_range is a Hypothesis property that checks only `lo <= clamp(...) <= hi`; `min(x, hi - 1)` still stays in range, so it passes. ripr reports static_unknown with property_based_test, an acceptable limit.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-hypothesis-absolute-reference",
+      "subject_id": "authored-py-hypothesis-stats",
+      "diff": "cases/py-hypothesis-absolute-reference.diff",
+      "anchor": {
+        "file": "stats/__init__.py",
+        "line": 11
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "hypothesis_assert_eq_reference_implementation",
+      "hard_case": "the named limit misreads a @given argument as a pytest fixture",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return -x if x >= 0 else x",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_stats.py::test_absolute_matches_builtin",
+            "equivalence_review": "not equivalent: absolute(5) returns -5"
+          },
+          {
+            "replacement": "return x if x >= 0 else x",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_stats.py::test_absolute_matches_builtin",
+            "equivalence_review": "not equivalent: absolute(-3) returns -3"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_absolute_matches_builtin compares absolute(x) with the builtin abs(x) for generated integers, so both mutants fail. ripr reports static_unknown and names unresolved_pytest_fixture for the @given argument, an acceptable limit, though x is a Hypothesis argument, not a pytest fixture.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-hypothesis-mean-bounds",
+      "subject_id": "authored-py-hypothesis-stats",
+      "diff": "cases/py-hypothesis-mean-bounds.diff",
+      "anchor": {
+        "file": "stats/__init__.py",
+        "line": 16
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "arithmetic_operator",
+      "test_shape": "hypothesis_relational_property",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return sum(xs) / (len(xs) + 1)",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_stats.py::test_mean_lies_between_extremes",
+            "equivalence_review": "not equivalent: mean([1]) returns 0.5 instead of 1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_mean_lies_between_extremes checks `min(xs) <= mean(xs) <= max(xs)`; dividing by len + 1 puts mean([1]) at 0.5, below the minimum, so Hypothesis finds a failure. ripr reports static_unknown with property_based_test, an acceptable limit.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-hypothesis-passing-threshold",
+      "subject_id": "authored-py-hypothesis-stats",
+      "diff": "cases/py-hypothesis-passing-threshold.diff",
+      "anchor": {
+        "file": "stats/__init__.py",
+        "line": 21
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "hypothesis_given_with_boundary_examples",
+      "hard_case": "the named limit misreads a @given argument as a pytest fixture",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return score > 50",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_stats.py::test_passing_threshold",
+            "equivalence_review": "not equivalent: 50 no longer passes"
+          },
+          {
+            "replacement": "return score > 48",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_stats.py::test_passing_threshold",
+            "equivalence_review": "not equivalent: 49 passes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_passing_threshold runs @given(integers(0, 100)) with @example(49) and @example(50) and asserts `is_passing(score) == (score >= 50)`, so both boundary shifts fail. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit with a misnamed kind.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-hypothesis-label-no-crash",
+      "subject_id": "authored-py-hypothesis-stats",
+      "diff": "cases/py-hypothesis-label-no-crash.diff",
+      "anchor": {
+        "file": "stats/__init__.py",
+        "line": 26
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "return_value",
+      "test_shape": "hypothesis_no_assertion",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return \"passed\" if is_passing(score) else \"fail\"",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: grade_label(60) returns \"passed\" instead of \"pass\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_label_never_crashes calls grade_label with no assertion, so changing \"pass\" to \"passed\" passes. ripr reports static_unknown with property_based_test, an acceptable limit; the ideal is a gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-fixtures-deposit",
+      "subject_id": "authored-py-pytest-fixtures",
+      "diff": "cases/py-fixtures-deposit.diff",
+      "anchor": {
+        "file": "shop/__init__.py",
+        "line": 12
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "state_update",
+      "test_shape": "pytest_conftest_fixture_assert_eq",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "self.balance = amount",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_shop.py::test_deposit_through_fixture",
+            "equivalence_review": "not equivalent: the balance becomes 50 instead of 150"
+          },
+          {
+            "replacement": "self.balance = self.balance - amount",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_shop.py::test_deposit_through_fixture",
+            "equivalence_review": "not equivalent: the deposit is subtracted, leaving 50"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_deposit_through_fixture takes `account` from conftest.py (Account(100)), deposits 50 and asserts the balance is 150, so both mutants fail. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-fixtures-fee-boundary",
+      "subject_id": "authored-py-pytest-fixtures",
+      "diff": "cases/py-fixtures-fee-boundary.diff",
+      "anchor": {
+        "file": "shop/__init__.py",
+        "line": 17
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_parametrized_fixture_boundary_pinned",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return 0 if amount > 100 else 5",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_shop.py::test_handling_fee_boundary[at]",
+            "equivalence_review": "not equivalent: 100 pays the 5 fee"
+          },
+          {
+            "replacement": "return 0 if amount > 98 else 5",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_shop.py::test_handling_fee_boundary[below]",
+            "equivalence_review": "not equivalent: 99 pays no fee"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The parametrized conftest fixture fee_case feeds (99, 5) and (100, 0) to test_handling_fee_boundary, so each boundary shift fails one id. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-fixtures-report-file",
+      "subject_id": "authored-py-pytest-fixtures",
+      "diff": "cases/py-fixtures-report-file.diff",
+      "anchor": {
+        "file": "shop/__init__.py",
+        "line": 22
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "output_text",
+      "test_shape": "pytest_tmp_path_file_content",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "path.write_text(f\"total: {total}\\n\")",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_shop.py::test_report_file",
+            "equivalence_review": "not equivalent: the report reads \"total: 5\" instead of \"total=5\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_report_file writes through tmp_path and asserts the file reads exactly \"total=5\\n\", so \"total: 5\" fails it. ripr reports weakly_exposed, a false actionable verdict.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-fixtures-greeting-default",
+      "subject_id": "authored-py-pytest-fixtures",
+      "diff": "cases/py-fixtures-greeting-default.diff",
+      "anchor": {
+        "file": "shop/__init__.py",
+        "line": 27
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "default_value",
+      "test_shape": "pytest_monkeypatch_env_always_set",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "return f\"hello {os.environ.get('USER_NAME', 'anon')}\"",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: with USER_NAME unset the greeting is \"hello anon\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "test_greeting_uses_environment sets USER_NAME with monkeypatch, so the 'guest' default is never read and changing it passes. ripr reports static_unknown with missing_import_graph, an acceptable limit; the ideal is a gap.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "py-fixtures-warning-stderr",
+      "subject_id": "authored-py-pytest-fixtures",
+      "diff": "cases/py-fixtures-warning-stderr.diff",
+      "anchor": {
+        "file": "shop/__init__.py",
+        "line": 32
+      },
+      "edit_kind": "behavior_change",
+      "behavior_family": "output_text",
+      "test_shape": "pytest_capsys_err_exact",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "python -m pytest -q -p no:cacheprovider",
+        "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+        "mutants": [
+          {
+            "replacement": "print(f\"warn: {message}\", file=sys.stderr)",
+            "outcome": "tests_failed",
+            "failing_test": "tests/test_shop.py::test_warning_goes_to_stderr",
+            "equivalence_review": "not equivalent: stderr reads \"warn: low stock\" instead of \"warning: low stock\""
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "test_warning_goes_to_stderr compares capsys.readouterr().err exactly, so \"warn: low stock\" fails it. ripr reports static_unknown with missing_import_graph (the module imports os and sys), an acceptable limit.",
+      "labeling_observation": {
+        "ripr_commit": "127309619",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    }
+  ]
+}

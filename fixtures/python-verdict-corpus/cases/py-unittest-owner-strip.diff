@@ -1,0 +1,12 @@
+diff --git a/accounts/ledger.py b/accounts/ledger.py
+--- a/accounts/ledger.py
++++ b/accounts/ledger.py
+@@ -10,7 +10,7 @@ class InsufficientFunds(Exception):
+ 
+ class Account:
+     def __init__(self, owner, opening_cents=0):
+-        self.owner = owner.strip()
++        self.owner = owner
+         self.balance_cents = opening_cents
+ 
+     def deposit(self, amount_cents):

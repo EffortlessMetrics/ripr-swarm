@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -138,7 +138,7 @@ def label_call(x):
+ 
+ 
+ def label_lambda_text(x):
+-    return "lambda x"
++    return "lambda y"
+ 
+ 
+ def label_getattr(x):

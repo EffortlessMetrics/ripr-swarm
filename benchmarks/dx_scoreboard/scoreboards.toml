@@ -251,6 +251,51 @@ runner_dependent = false
 source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_exposed_rate"
 pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
 
+# Python verdict corpus (RIPR-SPEC-0238). Every Python case is authored to
+# cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0233),
+# so these describe those cells, not real-world code. One more wrong case
+# out of 33 discriminated (0.030) or 28 not fully discriminated (0.036)
+# exceeds the floor and regresses.
+
+[[metric]]
+id = "trust.verdict_corpus_python_false_actionable"
+board = "trust"
+title = "Authored Python edits the project's tests fully catch that ripr still flags as a gap"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "file:fixtures/python-verdict-corpus/expected/report.json#false_actionable_rate"
+pending_reason = "fixtures/python-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language python` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_python_false_exposed"
+board = "trust"
+title = "Authored Python edits the project's tests miss that ripr credits as caught"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "file:fixtures/python-verdict-corpus/expected/report.json#false_exposed_rate"
+pending_reason = "fixtures/python-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language python` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_python_false_silent"
+board = "trust"
+title = "Authored Python edits the project's tests miss that ripr reports as fine"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "file:fixtures/python-verdict-corpus/expected/report.json#false_silent_rate"
+pending_reason = "fixtures/python-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language python` reports any drift"
+
 [[metric]]
 id = "trust.discriminator_claim_agreement"
 board = "trust"

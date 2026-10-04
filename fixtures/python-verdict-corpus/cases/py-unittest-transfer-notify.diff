@@ -1,0 +1,12 @@
+diff --git a/accounts/ledger.py b/accounts/ledger.py
+--- a/accounts/ledger.py
++++ b/accounts/ledger.py
+@@ -38,7 +38,7 @@ def transfer(source, target, amount_cents, notifier):
+     """Move money and tell the receiving owner how much arrived."""
+     source.withdraw(amount_cents)
+     target.deposit(amount_cents)
+-    notifier.send(target.owner, amount_cents)
++    notifier.send(target.owner, amount_cents * 100)
+ 
+ 
+ def statement_header(account):

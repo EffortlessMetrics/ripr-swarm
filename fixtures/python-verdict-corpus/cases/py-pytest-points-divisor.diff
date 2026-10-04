@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -49,7 +49,7 @@ def parse_quantity(text):
+ 
+ def loyalty_points(subtotal_cents):
+     """Points earned for a subtotal: one per whole dollar."""
+-    return subtotal_cents // 100
++    return subtotal_cents // 10
+ 
+ 
+ def label_for(tier):

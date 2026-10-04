@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -18,7 +18,7 @@ def parse_isinstance(text):
+ 
+ 
+ def parse_and_chain(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def parse_self_compare(text):

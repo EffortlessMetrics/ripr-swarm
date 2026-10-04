@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -122,7 +122,7 @@ class CartBound:
+ 
+ 
+ def parse_rival(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def content_type(x):

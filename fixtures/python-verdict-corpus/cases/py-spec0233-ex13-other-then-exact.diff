@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -42,7 +42,7 @@ def parse_exact_first(text):
+ 
+ 
+ def parse_exact_second(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def perr_match(text):

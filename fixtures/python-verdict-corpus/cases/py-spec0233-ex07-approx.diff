@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -26,7 +26,7 @@ def parse_self_compare(text):
+ 
+ 
+ def parse_approx(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def parse_almost_equal(text):

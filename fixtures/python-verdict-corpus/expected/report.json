@@ -1,0 +1,1266 @@
+{
+  "schema_version": "ripr_verdict_corpus_report.v1",
+  "spec": "RIPR-SPEC-0238",
+  "language": "python",
+  "corpus_version": "2026-10-04.1",
+  "cases_total": 61,
+  "by_truth": {
+    "discriminated": 33,
+    "not_discriminated": 27,
+    "partially_discriminated": 1
+  },
+  "by_outcome": {
+    "abstained": 14,
+    "false_actionable": 15,
+    "false_exposed": 6,
+    "ideal": 26
+  },
+  "by_observed_verdict": {
+    "credited": 14,
+    "gap": 33,
+    "limited": 14
+  },
+  "false_verdict_rate": {
+    "numerator": 21,
+    "denominator": 61,
+    "rate": "0.3443"
+  },
+  "false_actionable_rate": {
+    "numerator": 15,
+    "denominator": 33,
+    "rate": "0.4545"
+  },
+  "false_exposed_rate": {
+    "numerator": 6,
+    "denominator": 28,
+    "rate": "0.2143"
+  },
+  "false_silent_rate": {
+    "numerator": 0,
+    "denominator": 28,
+    "rate": "0.0000"
+  },
+  "ideal_rate": {
+    "numerator": 26,
+    "denominator": 61,
+    "rate": "0.4262"
+  },
+  "abstention_rate": {
+    "numerator": 14,
+    "denominator": 61,
+    "rate": "0.2295"
+  },
+  "contradiction_rate": {
+    "numerator": 0,
+    "denominator": 61,
+    "rate": "0.0000"
+  },
+  "contradictions_by_code": {},
+  "by_origin": {
+    "authored": {
+      "cases_total": 61,
+      "by_observed_verdict": {
+        "credited": 14,
+        "gap": 33,
+        "limited": 14
+      },
+      "false_verdict_rate": {
+        "numerator": 21,
+        "denominator": 61,
+        "rate": "0.3443"
+      },
+      "false_actionable_rate": {
+        "numerator": 15,
+        "denominator": 33,
+        "rate": "0.4545"
+      },
+      "false_exposed_rate": {
+        "numerator": 6,
+        "denominator": 28,
+        "rate": "0.2143"
+      },
+      "false_silent_rate": {
+        "numerator": 0,
+        "denominator": 28,
+        "rate": "0.0000"
+      },
+      "ideal_rate": {
+        "numerator": 26,
+        "denominator": 61,
+        "rate": "0.4262"
+      },
+      "abstention_rate": {
+        "numerator": 14,
+        "denominator": 61,
+        "rate": "0.2295"
+      }
+    }
+  },
+  "rows": [
+    {
+      "case_id": "py-pytest-shipping-threshold",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:9",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_assert_eq_boundary_pinned",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-gold-threshold",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:16",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_assert_eq_far_from_boundary",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-silver-parametrized",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:18",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_parametrize_boundary_pinned",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-gold-discount-rate",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:26",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_bare_assert_relational",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-tax-self-computed",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:34",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_expected_computed_through_changed_function",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-quantity-guard",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:45",
+      "behavior_family": "error_guard_boundary",
+      "test_shape": "pytest_raises_one_side",
+      "hard_case": false,
+      "truth": "partially_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-points-divisor",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:52",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_isinstance_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-label-case",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:57",
+      "behavior_family": "return_value",
+      "test_shape": "pytest_not_equal_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-bulk-default",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:60",
+      "behavior_family": "parameter_default",
+      "test_shape": "pytest_every_call_binds_the_default",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-quote-shipping-term",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/core.py:71",
+      "behavior_family": "field_construction",
+      "test_shape": "pytest_dict_field_one_branch",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-receipt-format",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/receipts.py:6",
+      "behavior_family": "output_text",
+      "test_shape": "pytest_capsys_exact_output",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-pytest-footer-untested",
+      "subject_id": "authored-py-pytest-pricing",
+      "origin": "authored",
+      "anchor": "pricing/receipts.py:11",
+      "behavior_family": "return_value",
+      "test_shape": "no_test_references_owner",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-unittest-deposit-add",
+      "subject_id": "authored-py-unittest-accounts",
+      "origin": "authored",
+      "anchor": "accounts/ledger.py:19",
+      "behavior_family": "state_update",
+      "test_shape": "unittest_assert_equal_field",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-unittest-owner-strip",
+      "subject_id": "authored-py-unittest-accounts",
+      "origin": "authored",
+      "anchor": "accounts/ledger.py:13",
+      "behavior_family": "constructor_field",
+      "test_shape": "unittest_constructor_call_input_never_padded",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-unittest-can-withdraw",
+      "subject_id": "authored-py-unittest-accounts",
+      "origin": "authored",
+      "anchor": "accounts/ledger.py:22",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "unittest_assert_true_smoke",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-unittest-overdraft-boundary",
+      "subject_id": "authored-py-unittest-accounts",
+      "origin": "authored",
+      "anchor": "accounts/ledger.py:25",
+      "behavior_family": "error_guard_boundary",
+      "test_shape": "unittest_assert_raises_far_from_boundary",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-unittest-transfer-notify",
+      "subject_id": "authored-py-unittest-accounts",
+      "origin": "authored",
+      "anchor": "accounts/ledger.py:41",
+      "behavior_family": "call_argument",
+      "test_shape": "unittest_mock_assert_called_once_with",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-unittest-fee-waiver-mixin",
+      "subject_id": "authored-py-unittest-accounts",
+      "origin": "authored",
+      "anchor": "accounts/ledger.py:32",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "unittest_same_file_mixin_boundary_pinned",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex01-exact",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:5",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex02-not-equal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:9",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_not_equal",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex03-assert-not-equal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:13",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "unittest_assert_not_equal",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex04-isinstance",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:17",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_isinstance_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex05-and-chain",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:21",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq_inside_and_chain",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex06-self-compare",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:25",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_owner_compared_with_itself",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex07-approx",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:29",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq_approx",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex08-almost-equal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:33",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "unittest_assert_almost_equal",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex11-fluent-helper",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:37",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "fluent_assert_that_helper",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex12-exact-then-other",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:41",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_owner_assert_before_unrelated_assert",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex13-other-then-exact",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:45",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_unrelated_assert_before_owner_assert",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex14-raises-match",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:50",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_match_literal",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex15-raises-broad",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:56",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_class_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex16-value-only",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:62",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_success_value_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex17-raises-match-and-value",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:68",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_match_then_value_one_test",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex18-split-tests",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:74",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_match_and_value_in_two_tests",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex19-match-anything",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:80",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_trivial_match",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex20-raises-regex",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:86",
+      "behavior_family": "error_message",
+      "test_shape": "unittest_assert_raises_regex_callable",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex21-exc-value",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:92",
+      "behavior_family": "error_message",
+      "test_shape": "pytest_raises_as_exc_value_assert",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex22-dict-field",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:97",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_dict_other_key_assert",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex22-dict-whole",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:101",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_dict_whole_value_assert",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex23-list-index",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:105",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_list_other_index_assert",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex24-method-orthogonal",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:116",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_class_token_on_unrelated_receiver",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex24-method-bound",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:121",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_bound_receiver_assert_eq",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex25-rival-import",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:125",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_rival_module_same_name",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex26-call-named-type",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:137",
+      "behavior_family": "call_target",
+      "test_shape": "pytest_assert_eq_type_named_callee",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex27-module-imports-os",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/geometry.py:7",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_assert_eq_owner_module_imports_os",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex28-lambda-in-string",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:141",
+      "behavior_family": "return_value",
+      "test_shape": "pytest_assert_eq_lambda_word_in_string",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex29-client-patch",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:149",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "pytest_non_mock_patch_call_in_test",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex30-property",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:155",
+      "behavior_family": "return_value",
+      "test_shape": "pytest_property_owner",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex31-fstring-length",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:159",
+      "behavior_family": "format_string",
+      "test_shape": "pytest_length_only_and_unrelated_assert",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex32-split-dict",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:109",
+      "behavior_family": "collection_element",
+      "test_shape": "pytest_field_and_whole_value_gates_in_two_tests",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "false_exposed",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-spec0233-ex33-spaced-getattr",
+      "subject_id": "authored-py-pytest-spec0233",
+      "origin": "authored",
+      "anchor": "src/subject.py:145",
+      "behavior_family": "call_argument",
+      "test_shape": "pytest_spaced_getattr",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-hypothesis-clamp-invariant",
+      "subject_id": "authored-py-hypothesis-stats",
+      "origin": "authored",
+      "anchor": "stats/__init__.py:6",
+      "behavior_family": "arithmetic_constant",
+      "test_shape": "hypothesis_range_invariant_only",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-hypothesis-absolute-reference",
+      "subject_id": "authored-py-hypothesis-stats",
+      "origin": "authored",
+      "anchor": "stats/__init__.py:11",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "hypothesis_assert_eq_reference_implementation",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-hypothesis-mean-bounds",
+      "subject_id": "authored-py-hypothesis-stats",
+      "origin": "authored",
+      "anchor": "stats/__init__.py:16",
+      "behavior_family": "arithmetic_operator",
+      "test_shape": "hypothesis_relational_property",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-hypothesis-passing-threshold",
+      "subject_id": "authored-py-hypothesis-stats",
+      "origin": "authored",
+      "anchor": "stats/__init__.py:21",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "hypothesis_given_with_boundary_examples",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-hypothesis-label-no-crash",
+      "subject_id": "authored-py-hypothesis-stats",
+      "origin": "authored",
+      "anchor": "stats/__init__.py:26",
+      "behavior_family": "return_value",
+      "test_shape": "hypothesis_no_assertion",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-fixtures-deposit",
+      "subject_id": "authored-py-pytest-fixtures",
+      "origin": "authored",
+      "anchor": "shop/__init__.py:12",
+      "behavior_family": "state_update",
+      "test_shape": "pytest_conftest_fixture_assert_eq",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-fixtures-fee-boundary",
+      "subject_id": "authored-py-pytest-fixtures",
+      "origin": "authored",
+      "anchor": "shop/__init__.py:17",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "pytest_parametrized_fixture_boundary_pinned",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-fixtures-report-file",
+      "subject_id": "authored-py-pytest-fixtures",
+      "origin": "authored",
+      "anchor": "shop/__init__.py:22",
+      "behavior_family": "output_text",
+      "test_shape": "pytest_tmp_path_file_content",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-fixtures-greeting-default",
+      "subject_id": "authored-py-pytest-fixtures",
+      "origin": "authored",
+      "anchor": "shop/__init__.py:27",
+      "behavior_family": "default_value",
+      "test_shape": "pytest_monkeypatch_env_always_set",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "py-fixtures-warning-stderr",
+      "subject_id": "authored-py-pytest-fixtures",
+      "origin": "authored",
+      "anchor": "shop/__init__.py:32",
+      "behavior_family": "output_text",
+      "test_shape": "pytest_capsys_err_exact",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    }
+  ],
+  "non_claims": [
+    "Rates describe this corpus only; they are not a population estimate for Python code or for ripr in general.",
+    "Every subject is authored to cover a test-library oracle or reach rule; the rates describe those cells, not real-world Python tests.",
+    "Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.",
+    "The harness does not run mutation testing, the Python test runners, or any network access."
+  ]
+}
