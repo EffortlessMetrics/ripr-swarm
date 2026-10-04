@@ -41,8 +41,8 @@ filing the analyzer follow-up.
 
 ### Read the examined tests
 
-A finding lists every related test ripr examined, not only the ones whose
-assertions matched. Each line gives the test file, line and name, then why that
+A finding lists the related tests ripr examined (up to a bounded number),
+including ones whose assertions did not match. Each line gives the test file, line and name, then why that
 test would not notice the change being wrong:
 
 ```text

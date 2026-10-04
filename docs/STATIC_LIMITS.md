@@ -87,8 +87,8 @@ How the two count:
   diagnostic severity is `[severity.seams] opaque`, default `info`.
 - `activation_unknown` is headline-eligible. In the editor its severity is
   `[severity.seams] activation_unknown`, default `info`.
-- `ungripped` now means ripr found no related test and no unresolved candidate
-  path. A seam with an unresolved path reads `opaque`, not `ungripped`.
+- `ungripped` (`no path` in human output) means ripr found no related test and
+  no unresolved candidate path. A seam with an unresolved path reads `opaque`, not `ungripped`.
 
 `opaque` errs toward unknown. Matching is by name, so a trait impl of a type
 that your tests use reads `opaque` even when no test runs that impl (`Debug`,
