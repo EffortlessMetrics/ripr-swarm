@@ -46,7 +46,7 @@ fn run_ripr(args: &[&str]) -> Output {
 }
 
 #[cfg(feature = "lang-rust")]
-fn run_ripr_with_deadline(
+fn run_matcher_calibration_with_deadline(
     args: &[&str],
     budget: std::time::Duration,
 ) -> Result<Output, std::io::Error> {

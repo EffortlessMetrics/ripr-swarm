@@ -1,4 +1,6 @@
-use super::{Digest, Sha256, run_ripr_with_deadline, unique_temp_workspace, workspace_root};
+use super::{
+    Digest, Sha256, run_matcher_calibration_with_deadline, unique_temp_workspace, workspace_root,
+};
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ
 /// only in the returned offset; their patches each describe the actual source.
@@ -24,7 +26,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     "current CLI control batch exceeded its 120s instrument budget".to_string(),
                 );
             }
-            run_ripr_with_deadline(args, budget).map_err(|error| error.to_string())
+            run_matcher_calibration_with_deadline(args, budget).map_err(|error| error.to_string())
         };
         let mut binary =
             std::fs::File::open(env!("CARGO_BIN_EXE_ripr")).map_err(|error| error.to_string())?;
