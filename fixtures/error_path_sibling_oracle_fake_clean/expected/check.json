@@ -89,8 +89,8 @@
           "oracle": "assert_eq!(validate_or_default(\"hello\"), Ok(\"valid\"));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `ParseError::TooLong`"
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `ParseError::TooLong`"
         }
       ],
       "stop_reasons": [],
@@ -181,8 +181,8 @@
           "oracle": "assert_eq!(validate_or_default(\"hello\"), Ok(\"valid\"));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `ParseError::TooLong`"
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `ParseError::TooLong`"
         }
       ],
       "stop_reasons": [],

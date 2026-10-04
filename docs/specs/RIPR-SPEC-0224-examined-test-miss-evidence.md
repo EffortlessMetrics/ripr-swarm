@@ -42,19 +42,23 @@ developer who disagreed had to re-derive the analysis.
 - Each retained test may carry `miss`, a `RelatedTestMiss` naming why it would
   not notice the change: `no_call_path`, `no_assertion`,
   `assertion_not_observing`, `assertion_not_credited`, `weak_assertion`,
-  `missing_input`, `observation_unconfirmed`. The analyzer sets the first four
-  while matching assertions; the finding builder sets `no_call_path` for
-  `no_static_path`, and `weak_assertion`, `missing_input` and
+  `missing_input`, `missing_exact_assertion`, `observation_unconfirmed`. The
+  analyzer sets `no_assertion`, `assertion_not_observing`,
+  `assertion_not_credited` and the name-only `no_call_path` while matching
+  assertions; these are facts about the test and can appear under any class.
+  The finding builder sets `no_call_path` for `no_static_path`, and
+  `weak_assertion`, `missing_input` (predicate boundary facts only),
+  `missing_exact_assertion` (error-variant and field facts) and
   `observation_unconfirmed` for `weakly_exposed` and `reachable_unrevealed`.
-  `exposed` and the unknown classes get no miss: ripr does not claim a miss it
-  has not established.
+  `exposed` findings and the unknown classes get no class-level miss.
 - `miss` is evidence only. No stage, class, confidence, stop reason, or next
   step reads it. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
-- A test that supplied an oracle row always ranks ahead of an
-  `assertion_not_observing` row, so the eight-row window never loses a
-  matched test to an examined miss.
+- Oracle rows are ranked and packed into the eight-row window exactly as
+  before; `assertion_not_observing` rows take only the slots left free, so no
+  window, fix site, exact-oracle alignment or repair readiness changes.
+  Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
@@ -70,7 +74,10 @@ developer who disagreed had to re-derive the analysis.
   `assertion_not_observing` with `none` strength and `unknown` kind, and the
   stages stay `no`.
 - A unit test that eight matched tests keep the window when a ninth examined
-  miss exists, and the total counts all nine.
+  miss exists, and the total counts all nine; and that a test's second, strong
+  assertion row keeps its slot when seven examined misses exist.
+- A unit test that a finding whose only related tests are examined misses has
+  no fix site.
 - A unit test that each miss renders a reason naming a checkable fact.
 - Golden fixtures re-blessed with no change to any finding's classification,
   confidence, severity, stop reasons, missing entries, or next step.

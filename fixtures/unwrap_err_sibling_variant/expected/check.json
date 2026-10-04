@@ -183,8 +183,8 @@
           "oracle": "assert_eq!(err, CalcError::Negative);",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `CalcError::TooLarge`"
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `CalcError::TooLarge`"
         }
       ],
       "stop_reasons": [],

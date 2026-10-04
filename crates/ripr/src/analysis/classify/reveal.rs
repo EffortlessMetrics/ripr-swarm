@@ -1981,19 +1981,26 @@ fn finalize_related_tests(mut related: Vec<RelatedTest>) -> (Vec<RelatedTest>, u
     // Renderers present the first entry as the primary related test, so the
     // strongest relation leads. The sort is stable: name and line order holds
     // within one confidence tier, and the dedup above is unchanged.
-    // A test listed only as an examined miss (#5344) ranks after every test
-    // that supplied an oracle row, so it never displaces one from the window.
-    related.sort_by_key(|test| std::cmp::Reverse((!test.is_unmatched(), related_test_rank(test))));
+    related.sort_by_key(|test| std::cmp::Reverse(related_test_rank(test)));
+    // #5344: tests listed only as examined misses are packed separately and
+    // only into slots the oracle rows leave free, so the oracle rows, their
+    // order and their packing are exactly what they were before misses were
+    // listed. Downstream selection (exact-oracle alignment, fix sites, repair
+    // readiness) reads this window.
+    let (mut oracle_rows, unmatched): (Vec<_>, Vec<_>) =
+        related.into_iter().partition(|test| !test.is_unmatched());
     // Same post-dedup row unit as before; retain the total separately without
     // exposing discarded rows to downstream evidence/target selection.
-    let matched_total = related.len();
+    let matched_total = oracle_rows.len() + unmatched.len();
     // JSON/human renderers cap at eight rows. When one test's assertions would
     // fill that window, unique tests go first (#4760). Under the cap, keep
     // per-assertion rows so existing goldens and #1728 witnesses stay intact.
-    if related.len() > RELATED_TESTS_RENDER_CAP {
-        related = pack_unique_tests_first(related, RELATED_TESTS_RENDER_CAP);
+    if oracle_rows.len() > RELATED_TESTS_RENDER_CAP {
+        oracle_rows = pack_unique_tests_first(oracle_rows, RELATED_TESTS_RENDER_CAP);
     }
-    (related, matched_total)
+    let free = RELATED_TESTS_RENDER_CAP.saturating_sub(oracle_rows.len());
+    oracle_rows.extend(unmatched.into_iter().take(free));
+    (oracle_rows, matched_total)
 }
 
 const RELATED_TESTS_RENDER_CAP: usize = 8;
@@ -2980,6 +2987,75 @@ mod tests {
         );
         assert_eq!(related[0].oracle_strength, OracleStrength::None);
         assert_eq!(related[0].oracle_kind, OracleKind::Unknown);
+    }
+
+    /// #5344 review: examined misses must not enter the unique-test packing.
+    /// One test with two matched rows (weak, then strong) plus seven examined
+    /// misses: both oracle rows survive, the misses fill the slots left.
+    #[test]
+    fn examined_misses_never_push_a_second_oracle_row_out_of_the_window() {
+        let probe = probe(ProbeFamily::StaticUnknown, "score");
+        let exact = test_with_assertions(
+            "check_exact",
+            vec![
+                oracle(
+                    "assert!(score > 0);",
+                    OracleKind::Unknown,
+                    OracleStrength::Weak,
+                ),
+                oracle(
+                    "assert_eq!(score, 3);",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                ),
+            ],
+        );
+        let misses: Vec<_> = (0..7)
+            .map(|idx| {
+                test_with_assertions(
+                    &format!("aaa_miss_{idx}"),
+                    vec![
+                        oracle(
+                            "assert!(other);",
+                            OracleKind::Unknown,
+                            OracleStrength::Unknown,
+                        ),
+                        oracle(
+                            "assert!(more);",
+                            OracleKind::Unknown,
+                            OracleStrength::Unknown,
+                        ),
+                    ],
+                )
+            })
+            .collect();
+        let mut related_input = vec![(&exact, RelationReason::DirectOwnerCall)];
+        related_input.extend(misses.iter().map(|test| (test, RelationReason::SameModule)));
+        let (_, _, related, total) = reveal_evidence_with_expression(
+            &probe,
+            &probe.expression,
+            &related_input,
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                owner_return_pin: &|_, _| false,
+                assertion_admitted: &|_, _| true,
+            },
+        );
+        assert_eq!(total, 9);
+        assert_eq!(related.len(), 8);
+        let exact_rows: Vec<_> = related
+            .iter()
+            .filter(|test| test.name == "check_exact")
+            .filter_map(|test| test.oracle.as_deref())
+            .collect();
+        assert_eq!(
+            exact_rows,
+            vec!["assert!(score > 0);", "assert_eq!(score, 3);"],
+            "{related:?}"
+        );
+        assert_eq!(related.iter().filter(|test| test.is_unmatched()).count(), 6);
     }
 
     #[test]

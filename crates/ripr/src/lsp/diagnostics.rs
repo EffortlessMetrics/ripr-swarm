@@ -2524,9 +2524,20 @@ fn examined_test_related_information(
     root: &Path,
     finding: &Finding,
 ) -> Vec<DiagnosticRelatedInformation> {
+    let mut seen = Vec::new();
     finding
         .related_tests
         .iter()
+        // One row per test: a test with several assertion rows is one place
+        // to open.
+        .filter(|test| {
+            let key = (&test.name, &test.file, test.line);
+            let fresh = !seen.contains(&key);
+            if fresh {
+                seen.push(key);
+            }
+            fresh
+        })
         .filter_map(|test| {
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,

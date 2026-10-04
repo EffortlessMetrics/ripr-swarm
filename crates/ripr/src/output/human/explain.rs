@@ -5,7 +5,10 @@
 //! concluded about each one, says what a test would need to change the
 //! verdict, and spells out each stop reason.
 
-use crate::domain::{ExposureClass, Finding, RelatedTestMiss, StopReason};
+use crate::domain::{
+    ExposureClass, Finding, RelatedTest, RelatedTestMiss, StopReason, exact_assertion_fact,
+    input_boundary_fact,
+};
 use crate::output::path::display_path;
 use crate::output::related_test_miss::{checked_assertion_text, related_test_miss_reason};
 
@@ -15,8 +18,17 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
     if finding.related_tests.is_empty() {
         out.push_str("  ripr found no test related to this change.\n");
     } else {
-        out.push_str(&format!("  Tests examined: {total}\n"));
-        for test in &finding.related_tests {
+        // `related_tests` holds one row per matched assertion, so a test can
+        // appear more than once; print each test once with every assertion
+        // it was judged by.
+        let groups = group_rows_by_test(&finding.related_tests);
+        out.push_str(&format!(
+            "  Tests examined: {} listed ({} assertion row(s) of {total})\n",
+            groups.len(),
+            finding.related_tests.len()
+        ));
+        for rows in groups {
+            let test = rows[0];
             let verdict =
                 match related_test_miss_reason(test, &finding.activation.missing_discriminators) {
                     Some(why) => format!("misses: {why}"),
@@ -35,16 +47,18 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
                 test.line,
                 test.name
             ));
-            if let Some(oracle) = &test.oracle {
-                out.push_str(&format!(
-                    "      checked: {}\n",
-                    checked_assertion_text(oracle)
-                ));
+            for row in &rows {
+                if let Some(oracle) = &row.oracle {
+                    out.push_str(&format!(
+                        "      checked: {}\n",
+                        checked_assertion_text(oracle)
+                    ));
+                }
             }
         }
         if total > finding.related_tests.len() {
             out.push_str(&format!(
-                "  ({} more examined; ripr keeps the {} most closely related)\n",
+                "  ({} more row(s) examined; ripr keeps the {} most closely related)\n",
                 total - finding.related_tests.len(),
                 finding.related_tests.len()
             ));
@@ -70,17 +84,33 @@ pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
     out
 }
 
+/// Rows of the same test (name, file, line), in first-seen order.
+fn group_rows_by_test(rows: &[RelatedTest]) -> Vec<Vec<&RelatedTest>> {
+    let mut groups: Vec<Vec<&RelatedTest>> = Vec::new();
+    for row in rows {
+        match groups.iter_mut().find(|group| {
+            group[0].name == row.name && group[0].file == row.file && group[0].line == row.line
+        }) {
+            Some(group) => group.push(row),
+            None => groups.push(vec![row]),
+        }
+    }
+    groups
+}
+
 /// What a test would have to do for ripr to see a discriminator, one line per
-/// distinct miss. Only gap classes get this list: for `exposed` there is
-/// nothing to change, and for the unknown classes ripr has not established
-/// what is missing.
+/// distinct miss. Only gap classes with a repair step get this list: for
+/// `exposed` there is nothing to change, for the unknown classes ripr has not
+/// established what is missing, and a gap whose next step was withheld (an
+/// exact oracle already covers the direct sink) indicates no assertion repair.
 fn verdict_changers(finding: &Finding) -> Vec<String> {
     if !matches!(
         finding.class,
         ExposureClass::NoStaticPath
             | ExposureClass::ReachableUnrevealed
             | ExposureClass::WeaklyExposed
-    ) {
+    ) || finding.recommended_next_step.is_none()
+    {
         return Vec::new();
     }
     let owner = finding
@@ -118,14 +148,19 @@ fn verdict_changers(finding: &Finding) -> Vec<String> {
             RelatedTestMiss::WeakAssertion => {
                 "assert the exact value, not only success or presence".to_string()
             }
-            // The input need is added once below, from the finding itself.
-            RelatedTestMiss::MissingInput => continue,
+            // These needs are added once below, from the finding itself.
+            RelatedTestMiss::MissingInput | RelatedTestMiss::MissingExactAssertion => continue,
         });
     }
     // A missing discriminator is a need whether or not any listed test got
-    // far enough to be judged on its input.
-    if let Some(fact) = finding.activation.missing_discriminators.first() {
+    // far enough to be judged on it. A predicate boundary is an input a test
+    // must use; an error variant or field value is an assertion it must make.
+    let facts = &finding.activation.missing_discriminators;
+    if let Some(fact) = input_boundary_fact(facts, &finding.probe.family) {
         push(format!("use an input that reaches `{}`", fact.value));
+    }
+    if let Some(fact) = exact_assertion_fact(facts, &finding.probe.family) {
+        push(format!("assert the exact `{}`", fact.value));
     }
     needs
 }

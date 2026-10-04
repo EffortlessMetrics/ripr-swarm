@@ -93,3 +93,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_field_construction_token_coincidence (9)
+
+Reason:
+RIPR-SPEC-0224: exact-head review fixes; examined misses never displace oracle rows, error-variant and field gaps name the missing assertion (#5344)
+
+Command:
+`cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

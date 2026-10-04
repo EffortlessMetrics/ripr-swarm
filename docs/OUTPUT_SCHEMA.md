@@ -1012,21 +1012,29 @@ The evidence-first fields are additive in schema `0.2`:
   #5344) why this test would not notice the changed behavior being wrong.
   `miss` is a controlled `related_test_miss` value; `why` is one short
   sentence for people. Both are omitted when the analyzer established no
-  miss, for example for an `exposed` finding's catching test or under the
-  unknown classes. `no_call_path`: linked by name or file location only, no
+  miss, for example for an `exposed` finding's catching test. The
+  assertion-level values (`no_assertion`, `assertion_not_observing`,
+  `assertion_not_credited`) can appear under any class; the class-level values
+  (`no_call_path`, `weak_assertion`, `missing_input`,
+  `missing_exact_assertion`, `observation_unconfirmed`) appear only under
+  `no_static_path`, `weakly_exposed` and `reachable_unrevealed`. `no_call_path`: linked by name or file location only, no
   call to the changed code. `no_assertion`: the test has no assertion ripr
   recognizes. `assertion_not_observing`: the test asserts, but none of its
   assertions observe the changed value; `oracle` then carries the first
   assertion as checked text and `oracle_strength` is `none`.
   `assertion_not_credited`: an assertion exists but ripr could not establish
   that it runs as the standard macro. `weak_assertion`: the matched oracle is
-  weak or smoke-only. `missing_input`: the oracle observes the behavior but no
-  input reaches the first `missing_discriminators` value.
+  weak or smoke-only. `missing_input`: on a predicate probe, the oracle
+  observes the behavior but no input reaches the boundary value in
+  `missing_discriminators` (the `left == right` entry).
+  `missing_exact_assertion`: no assertion pins the exact error variant or
+  constructed field value named in `missing_discriminators`.
   `observation_unconfirmed`: the oracle has the right shape but its text never
   names the changed expression (`observation_unverified`). Tests are listed
   even when they supply no oracle, so `related_tests_total` counts every
-  examined test; a test that supplies an oracle always ranks ahead of one
-  listed only as `assertion_not_observing`.
+  examined row (one per matched assertion, one per test that supplied none).
+  Rows listed only as `assertion_not_observing` take only window slots the
+  oracle rows leave free, so the oracle rows and their order are unchanged.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -2172,6 +2180,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `assertion_not_credited`
 - `weak_assertion`
 - `missing_input`
+- `missing_exact_assertion`
 - `observation_unconfirmed`
 
 ## Badge Output

@@ -286,6 +286,33 @@ pub struct MissingDiscriminatorFact {
     pub flow_sink: Option<FlowSinkFact>,
 }
 
+/// The missing discriminator that names an input boundary a test never
+/// reaches. Only predicate probes produce one, and its value is always
+/// `left == right` (`classify::activation::missing_boundary_discriminator`);
+/// error-variant and field facts name an assertion that is missing instead.
+pub(crate) fn input_boundary_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    if *family != ProbeFamily::Predicate {
+        return None;
+    }
+    facts.iter().find(|fact| fact.value.contains(" == "))
+}
+
+/// The missing discriminator that names an exact assertion no test makes
+/// (an error variant or a constructed field): the first fact that is not the
+/// predicate input boundary.
+pub(crate) fn exact_assertion_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = input_boundary_fact(facts, family);
+    facts
+        .iter()
+        .find(|fact| boundary.is_none_or(|boundary| !std::ptr::eq(*fact, boundary)))
+}
+
 /// Prefix the classifier puts on the value-shaped entries of `Finding.missing`.
 ///
 /// The field mixes value-shaped entries (`Missing discriminator value: X`,
@@ -377,6 +404,10 @@ pub enum RelatedTestMiss {
     /// The assertion observes the behavior, but no test input reaches the
     /// value that separates the old behavior from the new one.
     MissingInput,
+    /// The assertion observes the behavior, but none pins the exact value the
+    /// change alters (an error variant or a constructed field), so a wrong
+    /// value of the same shape still passes.
+    MissingExactAssertion,
     /// The assertion has the right shape, but its text never names the
     /// changed expression, so ripr cannot confirm it observes this change
     /// rather than a sibling value.
@@ -392,6 +423,7 @@ impl RelatedTestMiss {
             Self::AssertionNotCredited => "assertion_not_credited",
             Self::WeakAssertion => "weak_assertion",
             Self::MissingInput => "missing_input",
+            Self::MissingExactAssertion => "missing_exact_assertion",
             Self::ObservationUnconfirmed => "observation_unconfirmed",
         }
     }

@@ -4,7 +4,10 @@
 //! single place that turns it into prose, so human, JSON, LSP and agent output
 //! say the same thing about the same test.
 
-use crate::domain::{MissingDiscriminatorFact, RelatedTest, RelatedTestMiss, RelationReason};
+use crate::domain::{
+    MissingDiscriminatorFact, ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason,
+    exact_assertion_fact, input_boundary_fact,
+};
 
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
@@ -31,10 +34,22 @@ pub(crate) fn related_test_miss_reason(
         RelatedTestMiss::ObservationUnconfirmed => {
             "assertion does not mention the changed expression".to_string()
         }
-        RelatedTestMiss::MissingInput => match missing_discriminators.first() {
-            Some(fact) => format!("no test input reaches `{}`", one_line(&fact.value)),
-            None => "no test input reaches the changed boundary".to_string(),
-        },
+        // The analyzer assigns `missing_input` only for a predicate probe
+        // with a boundary fact, and `missing_exact_assertion` only when no
+        // boundary fact exists, so reading the facts as a predicate's picks
+        // the fact each miss was assigned from.
+        RelatedTestMiss::MissingInput => {
+            match input_boundary_fact(missing_discriminators, &ProbeFamily::Predicate) {
+                Some(fact) => format!("no test input reaches `{}`", one_line(&fact.value)),
+                None => "no test input reaches the changed boundary".to_string(),
+            }
+        }
+        RelatedTestMiss::MissingExactAssertion => {
+            match exact_assertion_fact(missing_discriminators, &ProbeFamily::Predicate) {
+                Some(fact) => format!("no assertion pins `{}`", one_line(&fact.value)),
+                None => "no assertion pins the exact changed value".to_string(),
+            }
+        }
     })
 }
 
@@ -145,5 +160,20 @@ mod tests {
                 "{miss:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_exact_assertion_miss_names_the_variant_not_an_input() {
+        let mut finding = sample_finding();
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "CalcError::TooLarge".to_string(),
+            reason: "No exact error variant assertion for CalcError::TooLarge".to_string(),
+            flow_sink: None,
+        }];
+        let test = test_with(Some(RelatedTestMiss::MissingExactAssertion), None);
+        assert_eq!(
+            related_test_miss_reason(&test, &finding.activation.missing_discriminators).as_deref(),
+            Some("no assertion pins `CalcError::TooLarge`")
+        );
     }
 }

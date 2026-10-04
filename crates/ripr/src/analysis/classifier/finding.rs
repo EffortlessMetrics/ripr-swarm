@@ -93,6 +93,7 @@ pub(in crate::analysis) fn build_finding(
         annotate_related_test_misses(
             &mut related_tests,
             &class,
+            &context.probe.family,
             &evidence.activation,
             observation_unverified,
         );
@@ -137,17 +138,22 @@ pub(in crate::analysis) fn build_finding(
 /// tests whose oracle row was matched but cannot carry the finding: under
 /// `no_static_path` no related test is tied to the owner by a call; under a
 /// gap class a weak or smoke oracle cannot tell the values apart, and an
-/// oracle that does observe still misses when no input reaches the missing
-/// discriminator value, and an oracle whose text never names the changed
+/// oracle that does observe still misses when no input reaches the predicate
+/// boundary value, or when no assertion pins the exact error variant or field
+/// value the change alters, and an oracle whose text never names the changed
 /// expression (`observation_unverified`) is not confirmed to observe it.
 /// `exposed` and the unknown classes are left alone: ripr does not claim a
 /// miss it has not established.
 fn annotate_related_test_misses(
     related_tests: &mut [RelatedTest],
     class: &ExposureClass,
+    family: &ProbeFamily,
     activation: &ActivationEvidence,
     observation_unverified: bool,
 ) {
+    let facts = &activation.missing_discriminators;
+    let boundary = input_boundary_fact(facts, family).is_some();
+    let exact = exact_assertion_fact(facts, family).is_some();
     for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
         test.miss = match class {
             ExposureClass::NoStaticPath => Some(RelatedTestMiss::NoCallPath),
@@ -159,8 +165,10 @@ fn annotate_related_test_misses(
                     OracleStrength::Weak | OracleStrength::Smoke
                 ) {
                     Some(RelatedTestMiss::WeakAssertion)
-                } else if !activation.missing_discriminators.is_empty() {
+                } else if boundary {
                     Some(RelatedTestMiss::MissingInput)
+                } else if exact {
+                    Some(RelatedTestMiss::MissingExactAssertion)
                 } else if observation_unverified {
                     Some(RelatedTestMiss::ObservationUnconfirmed)
                 } else {
