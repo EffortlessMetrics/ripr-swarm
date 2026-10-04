@@ -139,12 +139,21 @@ strength.
 
 ### Admission rules
 
-A **catch-all binding** is a pattern that matches every value: a
-lowercase-initial identifier other than `true` and `false` (including
-`_name`), optionally with `ref`,
-`mut` or `ref mut`, or `name @ p` where `p` is itself `_`, `..` or a
-catch-all binding. `name @ E::X` and `name @ Some(_)` are not catch-all;
-they are read through their sub-pattern.
+Two pattern terms are used below.
+
+- An **irrefutable pattern** accepts every value of its type: `_`; a
+  catch-all binding (a lowercase-initial identifier other than `true` and
+  `false`, including `_name`, optionally with `ref`, `mut` or `ref mut`);
+  `name @ p`, `&p` or `box p` where `p` is irrefutable; a tuple or slice
+  pattern, or a struct or tuple-struct pattern of a struct type (not an enum
+  variant), whose every sub-pattern is irrefutable or `..` (`(_, _)`,
+  `[..]`, `S { .. }`); and an or-pattern whose alternatives
+  together cover every constructor of the type (`Some(_) | None`,
+  `Ok(_) | Err(_)`). `name @ E::X` and `name @ Some(_)` are read through
+  their sub-pattern.
+- A **side-only pattern** checks only which side of an `Option` or `Result`
+  the value is on: `Some(p)`, `Ok(p)` or `Err(p)` where every payload
+  sub-pattern is irrefutable or `..`, and `None` (RIPR-SPEC-0227).
 
 1. **Inequality is never exact.** At steps 0, 1, 5 and 10, an inequality
    assigns `relational_check` / weak, whatever its operands: `assert_ne!`,
@@ -157,23 +166,19 @@ they are read through their sub-pattern.
    closure or block operand) assigns `relational_check`. A negated pattern
    assertion takes rule 1 before rules 2 and 3.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
-   `matches!` or `assert_matches!` whose `Err(..)` inner pattern is `_`, `..`
-   or a catch-all binding assigns `broad_error` / weak, guard or not.
+   `matches!` or `assert_matches!` whose `Err(..)` inner pattern is
+   irrefutable or `..` assigns `broad_error` / weak, guard or not.
    `Err(E::X)`, `Err(E::X(..))` and `Err(E::X { .. })` stay
    `exact_error_variant`. `assert_eq!` against `Err(value)` with any
    expression stays `exact_error_variant`, because equality pins the value.
-3. **Pattern assertions follow their pattern.** At steps 0 and 5, a `matches!`
-   or `assert_matches!` whose whole pattern is a guarded `_` or a catch-all
-   binding assigns `relational_check` / weak; the wildcard pre-check already
-   covers an unguarded `_`. A constructor pattern whose every payload
-   sub-pattern is `_`, `..` or a catch-all binding (`Some(_)`, `Ok(..)`,
-   `Some(ref x)`, `Ok(mut x)`, `Ok(x @ _)`), and `None`, assign `smoke_only` /
-   smoke when unguarded, because they only check the side (RIPR-SPEC-0227);
-   with a guard they assign `relational_check` / weak. An or-pattern
-   (`p | q`) reads as its weakest alternative, and one whose alternatives
-   together cover every constructor of the type (`Some(_) | None`,
-   `Ok(_) | Err(_)`) assigns `relational_check` / weak, because it accepts
-   every value. Any other pattern stays `exact_value`.
+3. **Pattern assertions follow their pattern.** At steps 0 and 5, a
+   `matches!` or `assert_matches!` whose whole pattern is irrefutable
+   assigns `relational_check` / weak, guard or not; the wildcard pre-check
+   already covers an unguarded `_`. A side-only pattern assigns
+   `smoke_only` / smoke when unguarded, because it only checks the side,
+   and `relational_check` / weak with a guard. An or-pattern that is not
+   irrefutable reads as its weakest alternative. Any other pattern stays
+   `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -276,8 +281,10 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(matches!(lookup(1), Some(x @ 3)))` stays `exact_value`.
 24. `assert!(matches!(lookup(1), Some(_) | None))`: `relational_check` / weak
     (today `exact_value` / strong at step 5).
-    `assert!(matches!(check(5), Ok(_) | Err(_)))`: `relational_check` / weak
-    (today `broad_error` / weak at step 2, so no strength moves).
+    `assert!(matches!(check(5), Ok(_) | Err(_)))` stays `broad_error` /
+    weak, because step 2 matches `Err(_)` before rule 3 runs.
+    `assert!(matches!(pair(), (_, _)))` and `matches!(cfg(), Cfg { .. })`:
+    `relational_check` / weak (today `exact_value` / strong).
     `assert!(matches!(lookup(1), Some(3) | Some(_)))`: `smoke_only` / smoke
     (weakest alternative).
 
