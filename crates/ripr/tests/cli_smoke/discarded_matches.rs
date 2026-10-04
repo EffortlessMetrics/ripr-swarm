@@ -205,6 +205,16 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     "{id}: human/JSON classification agreement"
                 );
                 let projection = "- related test src/lib.rs:8 observes_score uses ";
+                assert_eq!(
+                    human_full_text
+                        .lines()
+                        .filter(|line| line
+                            .trim()
+                            .starts_with("- related test src/lib.rs:8 observes_score"))
+                        .count(),
+                    1,
+                    "{id}: full output must retain the intended consumer exactly once"
+                );
                 match expected {
                     "discarded" => {
                         assert_ne!(
