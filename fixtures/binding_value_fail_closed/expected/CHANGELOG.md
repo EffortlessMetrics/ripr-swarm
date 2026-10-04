@@ -129,3 +129,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_value_fail_closed (9)
+
+Reason:
+RIPR-SPEC-0158: char literals no longer count as inputs against an integer boundary, so infection stays unknown
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

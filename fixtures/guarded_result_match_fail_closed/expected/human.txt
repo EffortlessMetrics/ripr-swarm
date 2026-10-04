@@ -18,9 +18,9 @@ Start here:
   Missing discriminator (1 of 2): No exact error variant discriminator was detected
   Related test (1 of 4): tests/protocol.rs:43 message_only_error_predicate_never_pins
   Next step: ripr did not credit the `assert_eq!` in message_only_error_predicate_never_pins at
-    tests/protocol.rs:45; the "assertion not credited" evidence says why. If that assertion does run
-    as the standard macro, this is a static limit, not a missing test: confirm with a real mutation
-    run. Otherwise move the check onto a path that always runs.
+    tests/protocol.rs:45; the "not credited" note says why. If that assertion does run as the
+    standard macro, this is a static limit, not a missing test: confirm with a real mutation run.
+    Otherwise move the check onto a path that always runs.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam
     - infection yes: Reachable tests can plausibly activate this changed behavior

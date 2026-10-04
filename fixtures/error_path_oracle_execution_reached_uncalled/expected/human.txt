@@ -17,10 +17,10 @@ Start here:
   Changed behavior: let n = rdr.read(&mut buf)?;
   Missing discriminator (1 of 2): No exact error variant discriminator was detected
   Related test: src/lib.rs:21 reports_read_failure
-  Next step: ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:24; the
-    "assertion not credited" evidence says why. If that assertion does run as the standard macro,
-    this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the
-    check onto a path that always runs.
+  Next step: ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:24; the "not
+    credited" note says why. If that assertion does run as the standard macro, this is a static
+    limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a
+    path that always runs.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach read_all: reports_read_failure
     - infection yes: Reachable tests can plausibly activate this changed behavior

@@ -936,6 +936,10 @@ fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
         format!("#[macro_use] mod tests {{ {shadow} }}"),
         format!("#[macro_use] mod a {{ mod tests {{ {shadow} }} }}"),
         format!("mod tests {{ {shadow} mod child; }}"),
+        // `#[macro_export]` reaches the crate root from any enclosing item.
+        format!("mod helpers {{ #[macro_export] {shadow} }}"),
+        format!("fn helper() {{ #[macro_export] {shadow} }}"),
+        format!("mod helpers {{ #[cfg_attr(test, macro_export)] {shadow} }}"),
     ] {
         assert!(
             matches!(
@@ -992,7 +996,7 @@ fn each_refusal_names_the_gate_that_failed() {
     );
     assert_eq!(
         refusal(&format!("return; {pin}"), ""),
-        conditional("code after an earlier `return`")
+        conditional("a block that an earlier `return` can skip")
     );
     assert_eq!(
         refusal(&format!("t!(x); {pin}"), ""),

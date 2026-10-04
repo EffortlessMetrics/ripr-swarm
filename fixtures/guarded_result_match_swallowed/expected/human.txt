@@ -18,9 +18,9 @@ Start here:
   Missing discriminator (1 of 3): ParseError::InvalidData
   Related test (1 of 2): tests/messages.rs:4 logs_failures_without_discriminating
   Next step: ripr did not credit the `assert_eq!` in logs_failures_without_discriminating at
-    tests/messages.rs:9; the "assertion not credited" evidence says why. If that assertion does run
-    as the standard macro, this is a static limit, not a missing test: confirm with a real mutation
-    run. Otherwise move the check onto a path that always runs.
+    tests/messages.rs:9; the "not credited" note says why. If that assertion does run as the
+    standard macro, this is a static limit, not a missing test: confirm with a real mutation run.
+    Otherwise move the check onto a path that always runs.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin
     - infection yes: Reachable tests can plausibly activate this changed behavior

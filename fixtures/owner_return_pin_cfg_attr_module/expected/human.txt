@@ -13,14 +13,16 @@ Start here:
   File: fixtures/owner_return_pin_cfg_attr_module/input/src/lib.rs:2
   Static exposure: unrevealed (reachable_unrevealed, warning, confidence 0.79)
   Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
-  Not credited: `assert_eq!` in inner at tests/weight_tests.rs:2: the test or an enclosing module is gated by a `cfg` ripr cannot evaluate
+  Not credited: `assert_eq!` in inner at tests/weight_tests.rs:2: an enclosing module carries
+    `#[r#cfg_attr(test, r#cfg_attr(all(), r#cfg(any())))]`, which ripr cannot evaluate for test
+    builds
   Changed behavior: input * 3
   Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   Related test (1 of 2): tests/weight_tests.rs:2 inner
-  Next step: ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:2; the
-    "assertion not credited" evidence says why. If that assertion does run as the standard macro,
-    this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the
-    check onto a path that always runs.
+  Next step: ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:2; the "not
+    credited" note says why. If that assertion does run as the standard macro, this is a static
+    limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a
+    path that always runs.
   Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach weight: inner, smoke
     - infection yes: Reachable tests can plausibly activate this changed behavior

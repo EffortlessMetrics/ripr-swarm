@@ -73,6 +73,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
+    /// Disclosure memo: the first workspace-wide site per refused name, so
+    /// naming a refusal does not rescan every file once per finding.
+    workspace_macro_sites: RefCell<BTreeMap<String, Option<(PathBuf, MacroBindingSite)>>>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
@@ -118,13 +121,21 @@ impl OwnerPinSyntax {
             ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
-                let site = macro_binding_site(&name, test, index, &|path, line, declaration| {
+                let resolved = |path: &Path, line: usize, declaration: &str| {
                     self.resolved_module_declarations(index).contains(&(
                         path.to_path_buf(),
                         line,
                         declaration.to_string(),
                     ))
-                });
+                };
+                let workspace = self
+                    .workspace_macro_sites
+                    .borrow_mut()
+                    .entry(name.clone())
+                    .or_insert_with(|| workspace_macro_binding_site(&name, index, &resolved))
+                    .clone();
+                let site =
+                    workspace.or_else(|| test_macro_binding_site(&name, test, index, &resolved));
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
@@ -372,10 +383,12 @@ impl AssertionRefusal {
                         "the test carries `{attribute}`, which may change whether or how it runs"
                     )
                 }
-                AssertionContextRefusal::UnsupportedItemContext => {
-                    "the test or an enclosing module is gated by a `cfg` ripr cannot evaluate"
-                        .into()
+                AssertionContextRefusal::NestedItem => {
+                    "the test is declared inside a function body, which ripr does not model".into()
                 }
+                AssertionContextRefusal::GatedItem(attribute) => format!(
+                    "an enclosing module carries `{attribute}`, which ripr cannot evaluate for test builds"
+                ),
                 AssertionContextRefusal::OpaqueMacro(name) => format!(
                     "the test calls `{name}!`, whose expansion ripr cannot see, so a hidden `return` or `?` could skip the assertion"
                 ),
@@ -430,8 +443,25 @@ impl AssertionRefusal {
 }
 
 /// The first workspace file, in path order, whose scan makes `name`
-/// ambiguous. Disclosure only: the admission decision uses the set.
-fn macro_binding_site(
+/// ambiguous everywhere. Disclosure only: the admission decision uses the set.
+fn workspace_macro_binding_site(
+    name: &str,
+    index: &RustIndex,
+    module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+) -> Option<(PathBuf, MacroBindingSite)> {
+    if !NON_RETURNING_MACROS.contains(&name) {
+        return None;
+    }
+    index.files().iter().find_map(|(path, facts)| {
+        macro_binding_sites(name, path, &facts.source, index, module_resolved)
+            .into_iter()
+            .find(|(_, site)| site.scope.is_none())
+            .map(|(_, site)| (path.clone(), site))
+    })
+}
+
+/// The scoped site in the test's own file that covers the test.
+fn test_macro_binding_site(
     name: &str,
     test: &TestSummary,
     index: &RustIndex,
@@ -440,30 +470,26 @@ fn macro_binding_site(
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
     }
-    let sites = |path: &PathBuf, source: &str| {
-        trusted_macro_binding_sites(
-            source,
-            index.macro_scope_crates(),
-            &[name],
-            &|line, declaration| module_resolved(path, line, declaration),
-        )
-    };
-    index
-        .files()
-        .iter()
-        .find_map(|(path, facts)| {
-            sites(path, &facts.source)
-                .into_iter()
-                .find(|(_, site)| site.scope.is_none())
-                .map(|(_, site)| (path.clone(), site))
-        })
-        .or_else(|| {
-            let facts = index.files().get(&test.file)?;
-            sites(&test.file, &facts.source)
-                .into_iter()
-                .find(|(_, site)| site_covers(site, test))
-                .map(|(_, site)| (test.file.clone(), site))
-        })
+    let facts = index.files().get(&test.file)?;
+    macro_binding_sites(name, &test.file, &facts.source, index, module_resolved)
+        .into_iter()
+        .find(|(_, site)| site_covers(site, test))
+        .map(|(_, site)| (test.file.clone(), site))
+}
+
+fn macro_binding_sites(
+    name: &str,
+    path: &Path,
+    source: &str,
+    index: &RustIndex,
+    module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+) -> Vec<(String, MacroBindingSite)> {
+    trusted_macro_binding_sites(
+        source,
+        index.macro_scope_crates(),
+        &[name],
+        &|line, declaration| module_resolved(path, line, declaration),
+    )
 }
 
 /// Whether a test file imports a name from outside the workspace; the

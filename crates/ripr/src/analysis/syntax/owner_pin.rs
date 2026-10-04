@@ -46,9 +46,11 @@ pub(crate) enum AssertionContextRefusal {
     /// An attribute other than `#[test]` (for example `#[should_panic]`,
     /// `#[ignore]` or a `#[cfg(..)]`) may change whether or how it runs.
     TestAttribute(String),
-    /// The test is nested in an executable body, or an enclosing module is
-    /// gated by a `cfg` ripr cannot evaluate for test builds.
-    UnsupportedItemContext,
+    /// The test is nested in an executable body (a function or block).
+    NestedItem,
+    /// An enclosing module carries an attribute (usually a `cfg`) ripr cannot
+    /// evaluate for test builds.
+    GatedItem(String),
     /// The body invokes a macro whose expansion ripr cannot see, so a hidden
     /// `return` or `?` could skip the assertion.
     OpaqueMacro(String),
@@ -399,7 +401,18 @@ fn macro_binding_ambiguities(
 /// out-of-line `mod name;` inside it (whose file would inherit the scope).
 /// `None` for a file-level definition or a `macro` 2.0 item.
 fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
-    ast::MacroRules::cast(definition.clone())?;
+    let rules = ast::MacroRules::cast(definition.clone())?;
+    // `#[macro_export]` (also under `cfg_attr`) puts the macro at crate-root
+    // path scope, so a bare `assert_eq!` anywhere in the crate root resolves
+    // to it whatever item encloses the definition.
+    if rules.attrs().any(|attr| {
+        attr.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| token.text() == "macro_export")
+    }) {
+        return None;
+    }
     let scope = definition.ancestors().skip(1).find(|node| {
         ast::Fn::can_cast(node.kind())
             || ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_some())
@@ -644,10 +657,8 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             Some(AssertionContextRefusal::TestAttribute(
                 attr.syntax().text().to_string(),
             ))
-        } else if !supported_item_context(function.syntax()) {
-            Some(AssertionContextRefusal::UnsupportedItemContext)
         } else {
-            None
+            item_context_refusal(function.syntax())
         };
         if let Some(refusal) = refusal {
             // Only test functions are queried (`#[test]`, `#[tokio::test]`);
@@ -775,6 +786,12 @@ fn insert_function(
 /// A libtest item cannot be nested in an executable body. Module/source
 /// attributes include inner attributes on ItemList, not only outer attrs.
 fn supported_item_context(item: &SyntaxNode) -> bool {
+    item_context_refusal(item).is_none()
+}
+
+/// Why `item` is not a plain item reachable from the file root under test
+/// builds: nested in an executable body, or under a gating attribute.
+fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
     let mut source_file = false;
     for (depth, node) in item.ancestors().enumerate() {
         if depth > 0
@@ -782,16 +799,18 @@ fn supported_item_context(item: &SyntaxNode) -> bool {
             && !ast::Module::can_cast(node.kind())
             && !ast::SourceFile::can_cast(node.kind())
         {
-            return false;
+            return Some(AssertionContextRefusal::NestedItem);
         }
-        if node.children().filter_map(ast::Attr::cast).any(|attr| {
+        if let Some(attr) = node.children().filter_map(ast::Attr::cast).find(|attr| {
             attribute_test_build_availability(&attr.syntax().text().to_string()) != Some(true)
         }) {
-            return false;
+            return Some(AssertionContextRefusal::GatedItem(
+                attr.syntax().text().to_string(),
+            ));
         }
         source_file |= ast::SourceFile::can_cast(node.kind());
     }
-    source_file
+    (!source_file).then_some(AssertionContextRefusal::NestedItem)
 }
 
 fn has_escape(
@@ -894,7 +913,7 @@ fn eager_path(
                 return Err("a context outside the test body");
             }
             if first_return.is_some_and(|position| position < execution_start) {
-                return Err("code after an earlier `return`");
+                return Err("a block that an earlier `return` can skip");
             }
             return Ok(());
         }

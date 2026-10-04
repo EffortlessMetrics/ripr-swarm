@@ -37,7 +37,7 @@ Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
 
 Next step
-  ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:23; the "assertion not credited" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
+  ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:23; the "not credited" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
 Drill in:
   ripr explain --root fixtures/error_path_oracle_execution_uncalled/input --diff fixtures/error_path_oracle_execution_uncalled/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root fixtures/error_path_oracle_execution_uncalled/input --diff fixtures/error_path_oracle_execution_uncalled/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836

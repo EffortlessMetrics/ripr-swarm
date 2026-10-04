@@ -40,7 +40,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:14; the "assertion not credited" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
+  ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:14; the "not credited" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
 Drill in:
   ripr explain --root fixtures/predicate_oracle_execution_false_branch/input --diff fixtures/predicate_oracle_execution_false_branch/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root fixtures/predicate_oracle_execution_false_branch/input --diff fixtures/predicate_oracle_execution_false_branch/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

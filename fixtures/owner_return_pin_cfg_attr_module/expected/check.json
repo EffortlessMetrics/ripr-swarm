@@ -33,7 +33,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"input * 3","line":2}
       ],
-      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: inner, smoke", "assertion not credited: `assert_eq!` in inner at tests/weight_tests.rs:2: the test or an enclosing module is gated by a `cfg` ripr cannot evaluate"],
+      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: inner, smoke", "assertion not credited: `assert_eq!` in inner at tests/weight_tests.rs:2: an enclosing module carries `#[r#cfg_attr(test, r#cfg_attr(all(), r#cfg(any())))]`, which ripr cannot evaluate for test builds"],
       "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "2": "assert_eq!(weight(4),12);",
@@ -107,8 +107,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:2; the \"assertion not credited\" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
-      "suggested_next_action": "ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:2; the \"assertion not credited\" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:2; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:2; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

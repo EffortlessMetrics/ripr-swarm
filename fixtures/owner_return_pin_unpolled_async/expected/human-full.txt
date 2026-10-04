@@ -37,7 +37,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:3; the "assertion not credited" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
+  ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:3; the "not credited" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
 Drill in:
   ripr explain --root fixtures/owner_return_pin_unpolled_async/input --diff fixtures/owner_return_pin_unpolled_async/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root fixtures/owner_return_pin_unpolled_async/input --diff fixtures/owner_return_pin_unpolled_async/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb

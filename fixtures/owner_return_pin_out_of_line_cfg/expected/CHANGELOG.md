@@ -38,3 +38,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_cfg (4)
+
+Reason:
+RIPR-SPEC-0197: refusal wording names nested versus cfg-gated tests and points at the not-credited note
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_cfg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
