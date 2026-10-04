@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Windows: `ripr agent card --json` now reports `selected_target.file`
+  with portable `/` separators for both existing and proposed targets,
+  instead of leaking native backslashes. `allowed_files` and
+  `forbidden_files` already used the shared normalized renderer and are
+  unchanged (#5440).
 - The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
   line, the `agent repair --phase before` next command (stdout and stderr) and
   the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
