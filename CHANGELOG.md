@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
+  line, the `agent repair --phase before` next command (stdout and stderr) and
+  the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
+  form when the path holds an apostrophe or typographic quote, so the command
+  pastes as one argument in PowerShell. A new advisory `printed-command-paste`
+  lane pastes every printed command into bash, zsh, sh and PowerShell on Linux,
+  macOS and Windows.
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
   commands they print, so `--root .` no longer yields a command that fails

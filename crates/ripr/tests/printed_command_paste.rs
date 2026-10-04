@@ -871,34 +871,10 @@ enum GapShells {
 
 const KNOWN_GAPS: &[KnownGap] = &[
     KnownGap {
-        source: "agent-card",
-        command: "ripr agent packet --root",
-        shells: GapShells::PowershellWithoutForm,
-        reason: "the card's closing `full packet:` line prints a Bash command only",
-    },
-    KnownGap {
-        source: "agent-repair-before",
-        command: "ripr agent repair --root",
-        shells: GapShells::PowershellWithoutForm,
-        reason: "`agent repair --phase before` prints the after-phase command, on stdout and stderr, in Bash only",
-    },
-    KnownGap {
-        source: "pilot",
-        command: "ripr agent repair --root",
-        shells: GapShells::PowershellWithoutForm,
-        reason: "the pilot terminal summary's `repair this seam:` line prints Bash only",
-    },
-    KnownGap {
         source: "start-here.md",
         command: "ripr first-pr --root",
         shells: GapShells::PowershellWithoutForm,
         reason: "the missing-base recovery sentence embeds a Bash command with no PowerShell form",
-    },
-    KnownGap {
-        source: "commands.md",
-        command: "ripr ",
-        shells: GapShells::PowershellWithoutForm,
-        reason: "the workflow packet's `Missing Inputs` sentences embed Bash commands with no PowerShell form",
     },
     KnownGap {
         source: "relative-root:check",
