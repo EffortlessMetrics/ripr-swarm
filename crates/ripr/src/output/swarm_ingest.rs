@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -70,10 +71,11 @@ struct SwarmIngestClassification {
 pub(crate) fn render_swarm_ingest_json(
     result_json: &str,
     result_path: &str,
+    root: &Path,
 ) -> Result<String, String> {
     let value: Value = serde_json::from_str(result_json)
         .map_err(|err| format!("failed to parse swarm ingest result JSON: {err}"))?;
-    let facts = swarm_ingest_facts(&value);
+    let facts = swarm_ingest_facts(&value, root);
     let classification = classify_swarm_result(&facts);
     let rendered = serde_json::json!({
         "schema_version": SWARM_INGEST_SCHEMA_VERSION,
@@ -138,7 +140,7 @@ pub(crate) fn render_swarm_ingest_json(
     super::json::render_pretty_with_newline(&rendered, "swarm ingest")
 }
 
-fn swarm_ingest_facts(value: &Value) -> SwarmIngestFacts {
+fn swarm_ingest_facts(value: &Value, root: &Path) -> SwarmIngestFacts {
     let forbidden_files = first_string_array(
         value,
         &[
@@ -161,7 +163,7 @@ fn swarm_ingest_facts(value: &Value) -> SwarmIngestFacts {
             &["changes", "edited_files"],
         ],
     );
-    let edited_forbidden_files = edited_forbidden_files(&edited_files, &forbidden_files);
+    let edited_forbidden_files = edited_forbidden_files(&edited_files, &forbidden_files, root);
     let verify_status = first_string(
         value,
         &[
@@ -474,15 +476,27 @@ fn receipt_presence_outcome(facts: &SwarmIngestFacts) -> &'static str {
     }
 }
 
-fn edited_forbidden_files(edited_files: &[String], forbidden_files: &[String]) -> Vec<String> {
+fn edited_forbidden_files(
+    edited_files: &[String],
+    forbidden_files: &[String],
+    root: &Path,
+) -> Vec<String> {
+    let root_key = lexical_path(&path_text(root));
     let forbidden: BTreeSet<_> = forbidden_files
         .iter()
-        .map(|file| normalize_path(file))
+        .filter_map(|file| comparison_key(file, &root_key))
         .collect();
+    let forbidden_listed = !forbidden_files.is_empty();
     dedup(
         edited_files
             .iter()
-            .filter(|file| forbidden.contains(&normalize_path(file)))
+            .filter(|file| match comparison_key(file, &root_key) {
+                Some(key) => forbidden.contains(&key),
+                // An edited path that cannot be placed inside `--root` cannot
+                // be proven distinct from a forbidden file. Fail closed rather
+                // than classifying the attempt `closed` / `resolved` (#5984).
+                None => forbidden_listed,
+            })
             .cloned()
             .collect(),
     )
@@ -555,8 +569,146 @@ fn dedup(values: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches("./").to_string()
+fn path_text(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Case-folded workspace-relative key for forbidden-edit comparison.
+///
+/// `None` means the path cannot be resolved inside `--root` (absolute outside
+/// the root, or `..` segments that escape it). Callers fail closed on `None`
+/// when the packet listed forbidden files.
+fn comparison_key(path: &str, root: &str) -> Option<String> {
+    let path = lexical_path(path);
+    let root = lexical_path(root);
+    let relative = strip_root_prefix(&path, &root)?;
+    if relative_escapes_root(&relative) {
+        return None;
+    }
+    Some(relative.to_ascii_lowercase())
+}
+
+fn lexical_path(path: &str) -> String {
+    let unified = path.replace('\\', "/");
+    collapse_dot_segments(strip_windows_verbatim_drive(&unified))
+}
+
+/// Canonical Windows roots may carry a `\\?\` drive prefix. After slash
+/// unification that looks like a Unix path and would fail to match the same
+/// file under `--root`. Strip only the drive-letter verbatim form; leave other
+/// verbatim prefixes unresolved so they fail closed.
+fn strip_windows_verbatim_drive(path: &str) -> &str {
+    let Some(rest) = path.strip_prefix("//?/") else {
+        return path;
+    };
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        rest
+    } else {
+        path
+    }
+}
+
+enum PathKind {
+    UnixRoot,
+    WindowsDrive(char),
+    Relative,
+}
+
+fn collapse_dot_segments(path: &str) -> String {
+    let trimmed = path.trim();
+    let (kind, rest) = split_path_kind(trimmed);
+    let mut parts: Vec<&str> = Vec::new();
+    let mut leading_parent = 0usize;
+    for component in rest.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." {
+            if parts.pop().is_none() && matches!(kind, PathKind::Relative) {
+                leading_parent += 1;
+            }
+            continue;
+        }
+        parts.push(component);
+    }
+    match kind {
+        PathKind::UnixRoot => {
+            if parts.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{}", parts.join("/"))
+            }
+        }
+        PathKind::WindowsDrive(drive) => {
+            if parts.is_empty() {
+                format!("{drive}:/")
+            } else {
+                format!("{drive}:/{}", parts.join("/"))
+            }
+        }
+        PathKind::Relative => {
+            let mut out = vec![".."; leading_parent];
+            out.extend(parts);
+            out.join("/")
+        }
+    }
+}
+
+fn split_path_kind(path: &str) -> (PathKind, &str) {
+    if path.starts_with('/') {
+        return (PathKind::UnixRoot, path.trim_start_matches('/'));
+    }
+    let mut chars = path.char_indices();
+    let Some((_, drive)) = chars.next() else {
+        return (PathKind::Relative, path);
+    };
+    if !drive.is_ascii_alphabetic() {
+        return (PathKind::Relative, path);
+    }
+    match chars.next() {
+        Some((_, ':')) => {
+            let rest = match chars.next() {
+                Some((index, '/')) => &path[index + '/'.len_utf8()..],
+                Some((index, _)) => &path[index..],
+                None => "",
+            };
+            (PathKind::WindowsDrive(drive.to_ascii_uppercase()), rest)
+        }
+        _ => (PathKind::Relative, path),
+    }
+}
+
+fn strip_root_prefix(path: &str, root: &str) -> Option<String> {
+    if root.is_empty() || root == "." || root == "./" {
+        if is_absolute_path(path) {
+            return None;
+        }
+        return Some(path.to_string());
+    }
+    let path_folded = path.to_ascii_lowercase();
+    let root_folded = root.trim_end_matches('/').to_ascii_lowercase();
+    if path_folded == root_folded {
+        return Some(String::new());
+    }
+    if let Some(rest) = path_folded.strip_prefix(&format!("{root_folded}/")) {
+        return Some(rest.to_string());
+    }
+    if is_absolute_path(path) {
+        return None;
+    }
+    Some(path_folded)
+}
+
+fn is_absolute_path(path: &str) -> bool {
+    matches!(
+        split_path_kind(path).0,
+        PathKind::UnixRoot | PathKind::WindowsDrive(_)
+    )
+}
+
+fn relative_escapes_root(path: &str) -> bool {
+    path == ".." || path.starts_with("../")
 }
 
 fn normalize_state(state: &str) -> String {
@@ -600,9 +752,175 @@ mod tests {
     use super::*;
 
     fn render_value(json: &str) -> Result<Value, String> {
-        let rendered = render_swarm_ingest_json(json, "agent-result.json")?;
+        render_value_at_root(json, Path::new("."))
+    }
+
+    fn render_value_at_root(json: &str, root: &Path) -> Result<Value, String> {
+        let rendered = render_swarm_ingest_json(json, "agent-result.json", root)?;
         serde_json::from_str(&rendered)
             .map_err(|err| format!("rendered ingest JSON should parse: {err}"))
+    }
+
+    fn closed_attempt_json(forbidden: &str, edited: &[&str]) -> String {
+        serde_json::json!({
+            "packet": {
+                "gap_id": "gap:python:pricing",
+                "allowed_files": ["tests/test_pricing.py"],
+                "forbidden_files": [forbidden]
+            },
+            "attempt": {
+                "status": "completed",
+                "edited_files": edited,
+                "verify": {"status": "passed", "exit_code": 0}
+            },
+            "receipt": {
+                "provenance": {
+                    "movement": "resolved",
+                    "before_artifact": {
+                        "sha256": "aabbcc0011223344aabbcc0011223344aabbcc0011223344aabbcc0011223344"
+                    },
+                    "after_artifact": {
+                        "sha256": "ddee55667788aaddddee55667788aaddddee55667788aaddddee55667788aadd"
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn assert_forbidden_edit(value: &Value, edited_forbidden: &str) -> Result<(), String> {
+        assert_eq!(value["classification"]["state"], "edited_forbidden_file");
+        assert_eq!(value["classification"]["outcome"], "unknown");
+        assert_eq!(value["attempt_outcome"], "unknown");
+        assert_ne!(value["classification"]["state"], "closed");
+        assert_ne!(value["attempt_outcome"], "resolved");
+        assert_eq!(
+            value["classification"]["reason"].as_str(),
+            Some(ingest_reason::FORBIDDEN_EDIT)
+        );
+        assert_eq!(value["safety"]["forbidden_edit_flagged"], true);
+        assert_eq!(
+            value["evidence"]["edited_forbidden_files"],
+            serde_json::json!([edited_forbidden])
+        );
+        Ok(())
+    }
+
+    fn assert_closed_not_forbidden(value: &Value) -> Result<(), String> {
+        assert_eq!(value["classification"]["state"], "closed");
+        assert_eq!(value["attempt_outcome"], "resolved");
+        assert_eq!(value["safety"]["forbidden_edit_flagged"], false);
+        assert_eq!(
+            value["evidence"]["edited_forbidden_files"],
+            serde_json::json!([])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_flags_exact_case_forbidden_edit_as_control() -> Result<(), String> {
+        let value = render_value(&closed_attempt_json(
+            "src/pricing.py",
+            &["tests/test_pricing.py", "src/pricing.py"],
+        ))?;
+        assert_forbidden_edit(&value, "src/pricing.py")
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_reported_with_different_case() -> Result<(), String> {
+        let value = render_value(&closed_attempt_json(
+            "src/pricing.py",
+            &["tests/test_pricing.py", "SRC/PRICING.py"],
+        ))?;
+        assert_forbidden_edit(&value, "SRC/PRICING.py")?;
+
+        let allowed_case = render_value(&closed_attempt_json(
+            "src/pricing.py",
+            &["TESTS/TEST_PRICING.py"],
+        ))?;
+        assert_closed_not_forbidden(&allowed_case)
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_reported_as_absolute_path() -> Result<(), String> {
+        let unix_root = Path::new("/tmp/scratch/app");
+        let unix_edited = "/tmp/scratch/app/src/pricing.py";
+        let unix_value = render_value_at_root(
+            &closed_attempt_json("src/pricing.py", &["tests/test_pricing.py", unix_edited]),
+            unix_root,
+        )?;
+        assert_forbidden_edit(&unix_value, unix_edited)?;
+
+        let unix_allowed = render_value_at_root(
+            &closed_attempt_json(
+                "src/pricing.py",
+                &["/tmp/scratch/app/tests/test_pricing.py"],
+            ),
+            unix_root,
+        )?;
+        assert_closed_not_forbidden(&unix_allowed)?;
+
+        // Drive-letter shapes are assembled so check-local-context never sees a
+        // contiguous drive-letter path literal in this file.
+        let drive = "F";
+        let windows_root = format!("{drive}:/Temp/r3-queue/scratch/app");
+        let windows_edited = format!("{windows_root}/src/pricing.py");
+        let windows_value = render_value_at_root(
+            &closed_attempt_json(
+                "src/pricing.py",
+                &["tests/test_pricing.py", windows_edited.as_str()],
+            ),
+            Path::new(&windows_root),
+        )?;
+        assert_forbidden_edit(&windows_value, &windows_edited)?;
+
+        let windows_allowed = format!("{windows_root}/tests/test_pricing.py");
+        let windows_allowed_value = render_value_at_root(
+            &closed_attempt_json("src/pricing.py", &[windows_allowed.as_str()]),
+            Path::new(&windows_root),
+        )?;
+        assert_closed_not_forbidden(&windows_allowed_value)?;
+
+        let verbatim_root = format!(r"\\?\{drive}:\Temp\r3-queue\scratch\app");
+        let verbatim_edited = format!(r"{verbatim_root}\src\pricing.py");
+        let verbatim_value = render_value_at_root(
+            &closed_attempt_json(
+                "src/pricing.py",
+                &["tests/test_pricing.py", verbatim_edited.as_str()],
+            ),
+            Path::new(&verbatim_root),
+        )?;
+        assert_forbidden_edit(&verbatim_value, &verbatim_edited)
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_reported_with_dot_dot_segments() -> Result<(), String> {
+        let value = render_value(&closed_attempt_json(
+            "src/pricing.py",
+            &["tests/../src/pricing.py"],
+        ))?;
+        assert_forbidden_edit(&value, "tests/../src/pricing.py")?;
+
+        let allowed_dot_dot = render_value(&closed_attempt_json(
+            "src/pricing.py",
+            &["src/../tests/test_pricing.py"],
+        ))?;
+        assert_closed_not_forbidden(&allowed_dot_dot)
+    }
+
+    #[test]
+    fn ingest_fails_closed_when_edited_path_cannot_resolve_inside_root() -> Result<(), String> {
+        let escaped = render_value_at_root(
+            &closed_attempt_json("src/pricing.py", &["../../outside.py"]),
+            Path::new("/tmp/scratch/app"),
+        )?;
+        assert_forbidden_edit(&escaped, "../../outside.py")?;
+
+        let outside_absolute = render_value_at_root(
+            &closed_attempt_json("src/pricing.py", &["/etc/passwd"]),
+            Path::new("/tmp/scratch/app"),
+        )?;
+        assert_forbidden_edit(&outside_absolute, "/etc/passwd")
     }
 
     #[test]
@@ -1002,7 +1320,8 @@ mod tests {
         let expected = include_str!(
             "../../../../fixtures/first_successful_pr/python-preview-gap/expected/swarm-ingest/closed.json"
         );
-        let rendered = render_swarm_ingest_json(input, "inputs/agent-results/closed.json")?;
+        let rendered =
+            render_swarm_ingest_json(input, "inputs/agent-results/closed.json", Path::new("."))?;
         let rendered: Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("rendered ingest JSON should parse: {err}"))?;
         let expected: Value = serde_json::from_str(expected)
@@ -1030,6 +1349,7 @@ mod tests {
         let rendered = render_swarm_ingest_json(
             input,
             "inputs/agent-results/movement_without_provenance.json",
+            Path::new("."),
         )?;
         let rendered: Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("rendered ingest JSON should parse: {err}"))?;

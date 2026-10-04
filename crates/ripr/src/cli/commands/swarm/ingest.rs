@@ -56,7 +56,13 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
 
 pub(super) fn run(options: Options) -> Result<(), String> {
     ensure_command_root(&options.root, "swarm ingest")?;
-    let result_path = validate_result_path(&options.root, &options.result)?;
+    let root = options.root.canonicalize().map_err(|err| {
+        format!(
+            "canonicalize swarm ingest root {} failed: {err}",
+            options.root.display()
+        )
+    })?;
+    let result_path = validate_result_path(&root, &options.result)?;
     let contents = crate::bounded_input::read_to_string(&result_path).map_err(|err| {
         format!(
             "read swarm ingest --result {} failed: {err}",
@@ -66,6 +72,7 @@ pub(super) fn run(options: Options) -> Result<(), String> {
     let rendered = output::swarm_ingest::render_swarm_ingest_json(
         &contents,
         &output::outcome::display_path(&options.result),
+        &root,
     )?;
     print!("{rendered}");
     Ok(())
