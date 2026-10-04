@@ -556,6 +556,35 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
 }
 
 #[test]
+fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
+    for attributes in [
+        "use serial_test::serial;\n#[test]\n#[serial]",
+        "use serial_test::serial;\n#[serial]\n#[test]",
+        "#[test]\n#[serial_test::serial(env)]",
+        "#[test]\n#[serial_test::file_serial]",
+        "use serial_test::parallel;\n#[test]\n#[parallel]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // A bare `serial` with no serial_test in the file may be any macro.
+        "#[test]\n#[serial]",
+        "#[test]\n#[other::serial]",
+        "#[test]\n#[ignore]",
+        "#[test]\n#[serial_test::serial]\n#[ignore]",
+        "#[test]\n#[serial_test::unknown_lock]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
 fn an_assertion_outside_the_test_body_is_not_its_pin() {
     // A harness trial's `body` is only its registration; an assertion the
     // index attributes to it from a helper does not see the helper's

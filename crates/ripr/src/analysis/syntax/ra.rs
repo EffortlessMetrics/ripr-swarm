@@ -1734,11 +1734,32 @@ pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
+    let macro_name = drop_in_assertion_leaf(macro_name).unwrap_or(macro_name);
     matches!(
         macro_name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
     ) || macro_name.starts_with("insta::assert")
         || macro_name.contains("snapshot")
+}
+
+/// Crates whose path-qualified assertion macros keep the std semantics:
+/// `pretty_assertions` and `similar_asserts` only change the failure diff,
+/// `std`/`core` are the built-ins, and `assert_matches` exports the
+/// std-shaped `assert_matches!`. Any other crate path stays unadmitted, so
+/// an unknown `other::assert_eq!` never gains assertion authority.
+const DROP_IN_ASSERTION_CRATES: &[&str] = &[
+    "std",
+    "core",
+    "pretty_assertions",
+    "similar_asserts",
+    "assert_matches",
+];
+
+/// The leaf of `crate::leaf` when `crate` is a known drop-in assertion crate.
+fn drop_in_assertion_leaf(macro_name: &str) -> Option<&str> {
+    let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
+    let (crate_name, leaf) = path.split_once("::")?;
+    (DROP_IN_ASSERTION_CRATES.contains(&crate_name) && !leaf.contains("::")).then_some(leaf)
 }
 
 pub(crate) struct LineIndex {
