@@ -418,6 +418,9 @@ fn source_build_detection_ignores_comments() {
     assert!(!builds_ripr_from_source(
         "      # an uncached `cargo install ripr` recompiles for minutes\n"
     ));
+    assert!(!builds_ripr_from_source(
+        "  url=\"https://github.com/o/ripr/releases/download/v1/a.tar.gz\"\n  cargo install ripr --version 1 --locked\n"
+    ));
 }
 
 #[test]
@@ -560,4 +563,48 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     let samples = parse_ingest(&receipt, &config)?;
     assert_eq!(samples.len(), 3);
     Ok(())
+}
+
+#[test]
+fn first_run_rows_map_to_gates_and_list_verdicts() {
+    let text = [
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"secs","value":0.5,"budget":5,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"verdict","value":"infection_unknown","budget":null,"better":"review_on_change"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"secs","value":1.0,"budget":30,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"exit","value":2,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"workflow_lines","value":2374,"budget":1500,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"friction_count","value":2,"budget":0,"better":"lower"}"#,
+    ]
+    .join("\n");
+    let value = parse_ingest_text(&text).unwrap_or_default();
+    let converted = first_run_rows_to_input(&value).unwrap_or_default();
+    let get = |id: &str| -> Vec<Value> {
+        converted["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["id"].as_str() == Some(id))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(get("first_run.failed_steps")[0]["value"], json!(1));
+    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(2));
+    assert_eq!(get("first_run.friction_events")[0]["value"], json!(2.0));
+    assert_eq!(get("first_run.unknown_verdicts")[0]["value"], json!(1));
+    assert_eq!(
+        get("first_run.unknown_verdicts")[0]["evidence"],
+        json!("verdicts: a=infection_unknown")
+    );
+    assert_eq!(get("first_run.walk_secs")[0]["value"], json!(13.5));
+    // install 40 + doctor 0.5 + check 12 = first useful result at 52.5 s
+    let first = &get("first_run.time_to_first_useful_result_s")[0];
+    assert_eq!(first["value"], json!(52.5));
+    assert_eq!(first["completed"], json!(true));
+    assert!(
+        parse_ingest_text("{\"schema\":\"other\"}\nnot json")
+            .is_err_and(|err| err.contains("line 1"))
+    );
 }

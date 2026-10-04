@@ -39,6 +39,10 @@ const FIRST_RUN_SCHEMA_VERSION: &str = "first_run.v1";
 /// Receipt written by the mutation spot-check (real cargo-mutants outcomes
 /// joined to ripr seams); converted on ingest.
 const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
+/// One JSON object per line from the first-run walk's scoreboard export.
+const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
+/// Row metrics that carry their own per-step `budget`.
+const FIRST_RUN_BUDGETED: [&str; 3] = ["secs", "stdout_lines", "workflow_lines"];
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
@@ -108,6 +112,10 @@ pub(crate) struct MetricDef {
     pub(crate) per_repo: bool,
     #[serde(default)]
     pub(crate) pending_reason: Option<String>,
+    /// List a change in the sample details against the baseline for review
+    /// without failing the gate (categorical evidence such as verdicts).
+    #[serde(default)]
+    pub(crate) review_on_change: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -374,8 +382,39 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
 /// Every metric id must exist and declare `ingest:<source>` for the file's
 /// `source`, so a harness cannot overwrite a number this command measures.
 pub(crate) fn load_ingest(path: &Path, config: &Config) -> Result<Vec<Sample>, String> {
-    let value = read_json(path)?;
+    let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let value = parse_ingest_text(&text).map_err(|err| format!("{}: {err}", path.display()))?;
     parse_ingest(&value, config).map_err(|err| format!("{}: {err}", path.display()))
+}
+
+/// Accept one JSON document, or JSON Lines whose every row is
+/// `first_run_row.v1`; rows are wrapped as `{schema_version, rows}`.
+pub(crate) fn parse_ingest_text(text: &str) -> Result<Value, String> {
+    let is_row = |value: &Value| value["schema"].as_str() == Some(FIRST_RUN_ROW_SCHEMA_VERSION);
+    if let Ok(value) = serde_json::from_str::<Value>(text)
+        && !is_row(&value)
+    {
+        return Ok(value);
+    }
+    let mut rows = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row: Value =
+            serde_json::from_str(line).map_err(|err| format!("parse line {}: {err}", index + 1))?;
+        if !is_row(&row) {
+            return Err(format!(
+                "line {} is not a `{FIRST_RUN_ROW_SCHEMA_VERSION}` row",
+                index + 1
+            ));
+        }
+        rows.push(row);
+    }
+    if rows.is_empty() {
+        return Err("ingest file is empty".to_string());
+    }
+    Ok(json!({"schema_version": FIRST_RUN_ROW_SCHEMA_VERSION, "rows": rows}))
 }
 
 pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>, String> {
@@ -385,6 +424,10 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
     }
     if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_SCHEMA_VERSION) {
         let converted = mutation_spot_check_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
+    if value["schema_version"].as_str() == Some(FIRST_RUN_ROW_SCHEMA_VERSION) {
+        let converted = first_run_rows_to_input(value)?;
         return parse_ingest(&converted, config);
     }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
@@ -509,6 +552,142 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
             if install_secs.is_some() { "" } else { "; no install step timed" }
         ),
         "metrics": rows,
+    }))
+}
+
+/// Convert `first_run_row.v1` rows (keyed by case, step and metric) into
+/// scoreboard rows. The walk's own gates map onto the scoreboard gate:
+///
+/// - failed steps: `exit` rows that are not 0;
+/// - over-budget steps: `secs`, `stdout_lines` and `workflow_lines` rows over
+///   the row's `budget`;
+/// - walk seconds per case (setup excluded), compared at 50% plus 0.5 s, the
+///   walk's 1.5x-plus-0.5 s rule applied to each case's total rather than to
+///   every step;
+/// - friction events: the sum of `friction_count`, gated on any rise;
+/// - unknown verdicts: `verdict` rows of an `*_unknown` class. The verdict
+///   list is the sample detail, so a change is listed for review and does not
+///   fail the gate;
+/// - time to first useful result per case, as for `first_run.v1`, only when
+///   the walk timed an install step.
+pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
+    let rows = value["rows"]
+        .as_array()
+        .ok_or("first_run_row.v1 input needs rows")?;
+    let ripr = rows
+        .first()
+        .and_then(|row| row["ripr"].as_str())
+        .unwrap_or("unknown ripr");
+    let number = |row: &Value| row["value"].as_f64().filter(|v| v.is_finite());
+    let label = |row: &Value| {
+        format!(
+            "{}/{}",
+            row["case"].as_str().unwrap_or("?"),
+            row["step"].as_str().unwrap_or("?")
+        )
+    };
+    let mut failed = Vec::new();
+    let mut over = Vec::new();
+    let mut friction = 0.0;
+    let mut verdicts = Vec::new();
+    let mut cases: Vec<String> = Vec::new();
+    let mut walk: BTreeMap<String, f64> = BTreeMap::new();
+    let mut install: Option<f64> = None;
+    for row in rows {
+        let case = row["case"].as_str().unwrap_or("case");
+        let step = row["step"].as_str().unwrap_or("step");
+        let metric = row["metric"].as_str().unwrap_or("");
+        if case != "_setup" && !cases.iter().any(|c| c == case) {
+            cases.push(case.to_string());
+        }
+        match metric {
+            "exit" if number(row).is_some_and(|v| v != 0.0) => failed.push(label(row)),
+            "friction_count" => friction += number(row).unwrap_or(0.0),
+            "verdict" => {
+                if let Some(class) = row["value"].as_str() {
+                    verdicts.push((case.to_string(), class.to_string()));
+                }
+            }
+            "secs" if case == "_setup" && step.contains("install") => {
+                install = Some(install.unwrap_or(0.0) + number(row).unwrap_or(0.0));
+            }
+            "secs" if case != "_setup" => {
+                *walk.entry(case.to_string()).or_default() += number(row).unwrap_or(0.0);
+            }
+            _ => {}
+        }
+        if FIRST_RUN_BUDGETED.contains(&metric)
+            && let (Some(v), Some(budget)) = (number(row), row["budget"].as_f64())
+            && v > budget
+        {
+            over.push(format!("{} {metric} {v} > {budget}", label(row)));
+        }
+    }
+    let list = |items: &[String]| {
+        if items.is_empty() {
+            "none".to_string()
+        } else {
+            items.join(", ")
+        }
+    };
+    let unknown = verdicts
+        .iter()
+        .filter(|(_, class)| class.ends_with("_unknown"))
+        .count();
+    let verdict_list: Vec<String> = verdicts
+        .iter()
+        .map(|(case, class)| format!("{case}={class}"))
+        .collect();
+    let mut out = vec![
+        json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
+        json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
+        json!({"id": "first_run.friction_events", "value": friction}),
+        json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdict_list))}),
+    ];
+    for (case, secs) in &walk {
+        out.push(json!({"id": "first_run.walk_secs", "repo": case, "value": secs}));
+    }
+    if let Some(install) = install {
+        for case in &cases {
+            let mut elapsed = install;
+            let mut reached = false;
+            let mut exit_ok = BTreeMap::new();
+            for row in rows
+                .iter()
+                .filter(|r| r["case"].as_str() == Some(case.as_str()))
+            {
+                let step = row["step"].as_str().unwrap_or("");
+                match row["metric"].as_str() {
+                    Some("exit") => {
+                        exit_ok.insert(step.to_string(), number(row) == Some(0.0));
+                    }
+                    Some("secs") if !reached => {
+                        elapsed += number(row).unwrap_or(0.0);
+                        if step == "check" {
+                            reached = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let completed = reached && exit_ok.get("check").copied().unwrap_or(false);
+            out.push(json!({
+                "id": "first_run.time_to_first_useful_result_s",
+                "repo": case,
+                "value": elapsed,
+                "completed": completed,
+            }));
+        }
+    }
+    Ok(json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "first-run",
+        "evidence": format!(
+            "first_run_row.v1 rows for {ripr}, {} case(s){}",
+            cases.len(),
+            if install.is_some() { "" } else { "; no install step timed" }
+        ),
+        "metrics": out,
     }))
 }
 
@@ -664,6 +843,17 @@ pub(crate) fn build_report(
         let mine: Vec<&Sample> = samples.iter().filter(|s| s.metric == def.id).collect();
         let mut row = metric_row(def, &mine);
         row["baseline"] = compare_with_baseline(def, &row, context, baseline);
+        if def.review_on_change {
+            // Categorical evidence is judged by a person, so a worse count
+            // is listed with the change and never trips the gate.
+            if row["baseline"]["regressed"].as_bool() == Some(true) {
+                row["baseline"]["regressed"] = json!(false);
+                row["baseline"]["worse"] = json!(true);
+            }
+            if let Some(change) = review_change(&row, baseline) {
+                row["baseline"]["review"] = change;
+            }
+        }
         metrics.push(row);
     }
 
@@ -696,6 +886,11 @@ pub(crate) fn build_report(
                 "allowed_worsening": row["baseline"]["allowed_worsening"],
             })
         })
+        .collect();
+    let review: Vec<Value> = metrics
+        .iter()
+        .filter(|row| !row["baseline"]["review"].is_null())
+        .map(|row| json!({"metric": row["id"], "change": row["baseline"]["review"]}))
         .collect();
     let failed: Vec<Value> = metrics
         .iter()
@@ -737,9 +932,29 @@ pub(crate) fn build_report(
             "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
             "regressions": regressions,
             "failed_instruments": failed,
+            "review": review,
         },
         "claim_boundary": "Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.",
     })
+}
+
+/// For a `review_on_change` metric, the sample details now and in the
+/// baseline when they differ. Listed for a person to judge; never a failure.
+fn review_change(row: &Value, baseline: Option<&Value>) -> Option<Value> {
+    let base_row = baseline?["metrics"]
+        .as_array()?
+        .iter()
+        .find(|r| r["id"] == row["id"])?;
+    let details = |r: &Value| -> Vec<String> {
+        r["samples"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|s| s["detail"].as_str().unwrap_or("").to_string())
+            .collect()
+    };
+    let (before, after) = (details(base_row), details(row));
+    (before != after).then(|| json!({"baseline": before, "current": after}))
 }
 
 /// Per-repository view: every per-repo sample for one corpus entry, so a
@@ -1049,6 +1264,22 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         rollup["regressed"],
         report["gate"]["status"].as_str().unwrap_or("not_run"),
     ));
+    let review = report["gate"]["review"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if !review.is_empty() {
+        out.push_str("**For review (does not fail the gate):**\n\n");
+        for item in review {
+            out.push_str(&format!(
+                "- `{}` changed: baseline {} → current {}\n",
+                item["metric"].as_str().unwrap_or("?"),
+                item["change"]["baseline"],
+                item["change"]["current"],
+            ));
+        }
+        out.push('\n');
+    }
     out.push_str("| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n");
     for board in report["boards"].as_array().into_iter().flatten() {
         out.push_str(&format!(
@@ -1171,6 +1402,8 @@ fn baseline_cell(baseline: &Value) -> String {
     if baseline["comparable"].as_bool() == Some(true) {
         let verdict = if baseline["regressed"].as_bool() == Some(true) {
             "**regressed**"
+        } else if baseline["worse"].as_bool() == Some(true) {
+            "worse, for review"
         } else {
             "ok"
         };

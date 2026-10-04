@@ -14,10 +14,10 @@ target, margin, or corpus pin is a reviewed edit to that file.
 | Board | What a developer feels | Metrics |
 |---|---|---|
 | `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, per corpus repository |
-| `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether it compiles ripr from source, install time (pending) |
+| `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, install time (pending) |
 | `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, self-contradicting findings, false-verdict rate on the hand-checked corpus, mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
-| `first_run` | The new-developer journey from install to first useful result | time to first useful result, friction events (both ingested) |
+| `first_run` | The new-developer journey from install to first useful result | time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
 
 The rollup counts metrics that meet their target, fall below it, are not
 measured, have a failed instrument, or regressed. A per-repository view groups
@@ -53,7 +53,9 @@ release ripr first, because developers run release builds.
 - **Peak memory.** `VmHWM` from `/proc/<pid>/status`, sampled in the same
   10 ms loop that enforces the deadline. Linux only; a lower bound.
 - **Workflow size.** `ripr init --root <tiny crate> --ci github`, then the
-  line count of `.github/workflows/ripr.yml`.
+  line count of `.github/workflows/ripr.yml`. The source-build flag is 1 only
+  when `cargo install ripr` is the workflow's sole route; a fallback behind a
+  prebuilt release download does not count.
 - **False clean on bad input.** Twelve commands pointed at a repository that
   does not exist, run from an unrelated directory. Each should exit nonzero.
 - **Self-contradictions.** Rules over the pilot `repo-exposure.json` and the
@@ -99,6 +101,14 @@ Two native receipts are also accepted as-is:
   result (install step plus steps through the first successful `check`; not
   emitted when no install step was timed), friction events, and `*_unknown`
   verdicts.
+- `first_run_row.v1` JSON Lines (one row per case, step and metric) from the
+  first-run walk. Its gates map onto scoreboard metrics: nonzero `exit` rows
+  are failed steps; `secs`, `stdout_lines` and `workflow_lines` rows over
+  their own `budget` are over-budget steps; `friction_count` sums to friction
+  events and any rise regresses; walk seconds per crate regress above 1.5x the
+  baseline plus 0.5 s (applied to each crate's total, not to every step).
+  `verdict` rows feed the `*_unknown` count, which is `review_on_change`: a
+  changed verdict list is printed under "For review" and never fails the gate.
 - `ripr-mutation-spot-check-v1` from the mutation spot-check: the agreement
   rate of the `claims_discriminator` and `claims_no_discriminator` families,
   and join coverage as `seam_precise` pairings over all mutants. These compare

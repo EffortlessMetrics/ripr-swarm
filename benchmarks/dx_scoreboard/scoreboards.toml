@@ -123,7 +123,7 @@ source = "measured"
 [[metric]]
 id = "ci.builds_ripr_from_source"
 board = "ci"
-title = "Generated workflow compiles ripr with `cargo install` (1 = yes)"
+title = "Generated workflow can only get ripr by compiling it (1 = yes)"
 unit = "flag"
 direction = "lower_is_better"
 target = 0
@@ -143,7 +143,7 @@ regression_pct = 50
 regression_floor = 15
 runner_dependent = true
 source = "pending"
-pending_reason = "needs a hosted run of the generated workflow; the prebuilt-install path lands with #5236"
+pending_reason = "needs a hosted run of the generated workflow; the prebuilt-install path landed with #5236 but no instrument times it yet"
 
 # ------------------------------------------------------------------ trust --
 
@@ -283,6 +283,9 @@ regression_pct = 0
 regression_floor = 0
 runner_dependent = false
 source = "ingest:first-run"
+# The verdict list is the sample detail: a changed verdict is listed for
+# review, because correctness needs the labeled corpus, not this walk.
+review_on_change = true
 
 [[metric]]
 id = "first_run.friction_events"
@@ -294,4 +297,42 @@ target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
+source = "ingest:first-run"
+
+[[metric]]
+id = "first_run.failed_steps"
+board = "first_run"
+title = "First-run steps that exit nonzero"
+unit = "steps"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
+
+[[metric]]
+id = "first_run.over_budget_steps"
+board = "first_run"
+title = "First-run steps over their own time, output-length or workflow-size budget"
+unit = "steps"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
+
+[[metric]]
+id = "first_run.walk_secs"
+board = "first_run"
+title = "Seconds for the scripted walk on one crate, setup excluded"
+unit = "s"
+direction = "lower_is_better"
+target = 10
+# The walk's own rule: fail above 1.5x the last accepted run plus 0.5 s.
+regression_pct = 50
+regression_floor = 0.5
+runner_dependent = true
+per_repo = true
 source = "ingest:first-run"

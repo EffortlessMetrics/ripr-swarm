@@ -539,9 +539,10 @@ fn measure_ci(binary: &Path, scratch: &Path) -> Vec<Sample> {
                 repo: None,
                 outcome: SampleOutcome::Value(if from_source { 1.0 } else { 0.0 }),
                 detail: if from_source {
-                    "workflow runs `cargo install ripr`".to_string()
+                    "workflow compiles ripr with `cargo install` and has no prebuilt download"
+                        .to_string()
                 } else {
-                    "workflow installs a prebuilt ripr".to_string()
+                    "workflow downloads a prebuilt ripr release (`cargo install` only as fallback, if at all)".to_string()
                 },
             },
         ],
@@ -557,11 +558,19 @@ fn measure_ci(binary: &Path, scratch: &Path) -> Vec<Sample> {
     }
 }
 
+/// True when the workflow's only route to ripr is compiling it. A
+/// `cargo install` kept as the fallback behind a prebuilt release download is
+/// not counted: developers on supported runners never pay for it.
 pub(crate) fn builds_ripr_from_source(workflow: &str) -> bool {
-    workflow.lines().any(|line| {
-        let line = line.trim_start();
-        !line.starts_with('#') && line.contains("cargo install ripr")
-    })
+    let code = || {
+        workflow
+            .lines()
+            .map(str::trim_start)
+            .filter(|line| !line.starts_with('#'))
+    };
+    let compiles = code().any(|line| line.contains("cargo install ripr"));
+    let downloads_prebuilt = code().any(|line| line.contains("/releases/download/"));
+    compiles && !downloads_prebuilt
 }
 
 // -------------------------------------------------------------- trust ----
