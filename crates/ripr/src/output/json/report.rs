@@ -1752,7 +1752,7 @@ mod harness_projection_tests {
 
     #[test]
     fn absent_without_registrations() -> TestResult {
-        let rendered = render_with_config(&output_with(Vec::new()), &RiprConfig::default());
+        let rendered = render_with_config(&output_with(Vec::new()), &RiprConfig::default(), None);
         let value = parse(&rendered)?;
         assert!(value.get("test_harnesses").is_none());
         Ok(())
@@ -1776,7 +1776,8 @@ mod harness_projection_tests {
                 detail: "trial name is not a simple string literal".to_string(),
             }],
         };
-        let rendered = render_with_config(&output_with(vec![projection]), &RiprConfig::default());
+        let rendered =
+            render_with_config(&output_with(vec![projection]), &RiprConfig::default(), None);
         let value = parse(&rendered)?;
         let harness = value
             .get("test_harnesses")
