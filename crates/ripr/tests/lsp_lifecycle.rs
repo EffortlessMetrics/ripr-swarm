@@ -523,7 +523,11 @@ fn collect_publishes_until_response(
     let response = loop {
         let message = session.await_message(deadline, what)?;
         record(&message);
-        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+        // Match responses only: a server-to-client request (its own id
+        // space) with a colliding id must not end the loop early, or the
+        // caller fails on a non-response and skips earlier notifications.
+        let is_response = message.get("result").is_some() || message.get("error").is_some();
+        if is_response && message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
             break message;
         }
     };
@@ -550,7 +554,8 @@ fn collect_publishes_until_response(
 
 /// `shutdown` clears every tracked URI on a push client: after a refresh
 /// that publishes diagnostics, the shutdown drain must carry an empty
-/// diagnostic set for each URI that received a nonempty one (#5202).
+/// diagnostic set for each URI that received a nonempty one (#5202,
+/// RIPR-SPEC-0124).
 /// Without the shutdown clear path this test observes no empty publishes
 /// and fails; it is the red half of the guarded-publish pair.
 #[test]
@@ -622,8 +627,9 @@ fn shutdown_publishes_empty_diagnostics_for_tracked_uris() -> Result<(), String>
 
 /// A pull client (`textDocument.diagnostic` negotiated) receives no pushed
 /// diagnostics at all: neither the refresh nor `shutdown` may publish
-/// (#5202). This is the guard half of the pair — an implementation that
-/// published unconditionally on shutdown would fail here.
+/// (#5202, RIPR-SPEC-0124). This is the guard half of the pair — an
+/// implementation that published unconditionally on shutdown would fail
+/// here.
 #[test]
 fn shutdown_publishes_nothing_for_pull_diagnostics_client() -> Result<(), String> {
     let base = unique_compat_fixture_root("shutdown-pull")?;
@@ -682,6 +688,48 @@ fn shutdown_publishes_nothing_for_pull_diagnostics_client() -> Result<(), String
     if !cleared.is_empty() {
         return Err(format!(
             "pull client must receive no pushed diagnostics on shutdown: {cleared:?}"
+        ));
+    }
+    exit_and_wait(&mut session)
+}
+
+/// `shutdown` with zero tracked URIs stays silent: no refresh ran, so no
+/// empty publishes are emitted and the handshake is unchanged (#5202,
+/// RIPR-SPEC-0124). Guards against a clear path that publishes for
+/// invented URIs instead of only previously published ones.
+#[test]
+fn shutdown_with_zero_tracked_uris_sends_no_publishes() -> Result<(), String> {
+    let base = unique_compat_fixture_root("shutdown-zero")?;
+    let root = build_native_root_fixture(&base.path, "repo")?;
+    let root_uri = editor_file_uri(&root)?;
+    let mut session = LspSession::spawn()?;
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {
+                "baseRef": "HEAD~1",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {},
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+
+    // No refresh: nothing was ever published, so nothing is tracked.
+    let shutdown_id = fire(&mut session, "shutdown", serde_json::Value::Null)?;
+    let (cleared, shutdown) =
+        collect_publishes_until_response(&mut session, shutdown_id, "shutdown response")?;
+    let result = expect_result(&shutdown, "shutdown")?;
+    if !result.is_null() {
+        return Err(format!("shutdown must answer null, got: {shutdown}"));
+    }
+    if !cleared.is_empty() {
+        return Err(format!(
+            "shutdown with zero tracked URIs must publish nothing: {cleared:?}"
         ));
     }
     exit_and_wait(&mut session)
