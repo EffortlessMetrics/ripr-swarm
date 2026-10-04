@@ -916,7 +916,7 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         })
         .count();
     page.line(format!(
-        "- **Narrow coverage.** The speed scoreboard measured {} repositories and the first-run walk {cases_now} crates. The corpus manifest pins {} repositories; {on_manifest} of the scoreboard's repositories appear in it at the same revision, so the two sets are not the same measurement.",
+        "- **Narrow coverage.** The speed scoreboard measured {} repositories and the first-run walk {cases_now} crates. The corpus manifest pins {} repositories; {on_manifest} of the scoreboard's repositories appear in it at the same revision; the others were measured at a different revision or are not in the manifest.",
         dx_repos.len(),
         manifest.len(),
     ));

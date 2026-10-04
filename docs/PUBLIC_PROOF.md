@@ -67,7 +67,7 @@ Each line below is computed from the receipts above. Detail sections follow.
 - **Warm `ripr check` on the last commit.** Worst repository: ripr-swarm at 11.5 s; the bar is at most 2.0 s.
 - **Warm `ripr check` peak memory.** Worst repository: ripr-swarm at 1187 MB; the bar is at most 512 MB.
 - **First-run verdicts are unresolved.** 3 of 3 first-run crates ended in an `*_unknown` verdict on ripr 0.11.0 (a7a089e); 1 of 3 did on ripr 0.10.0.
-- **Narrow coverage.** The speed scoreboard measured 4 repositories and the first-run walk 3 crates. The corpus manifest pins 34 repositories; 0 of the scoreboard's repositories appear in it at the same revision, so the two sets are not the same measurement.
+- **Narrow coverage.** The speed scoreboard measured 4 repositories and the first-run walk 3 crates. The corpus manifest pins 34 repositories; 0 of the scoreboard's repositories appear in it at the same revision; the others were measured at a different revision or are not in the manifest.
 
 ## Mutation agreement
 
