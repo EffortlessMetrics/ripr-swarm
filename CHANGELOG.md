@@ -11,6 +11,16 @@ are scoped or reviewed.
 
 ### Added
 
+- `ripr check --format json` caps the rendered `findings` array at
+  `RIPR_CHECK_FINDINGS_BYTES` emitted bytes (default 1,000,000; `0` removes
+  the cap). A bounded document renders the deterministic first-finding prefix
+  with full `summary` counts and a `run_limitations[]` entry
+  (`limited_findings_bound`, `downstream_consumable: false`) so it never
+  presents as complete; the gate refuses bounded inputs with a `config_error`
+  naming the budget repair (#5203). Gap ledgers generated from a bounded
+  check document propagate `run_limitations[]` so the gate refuses them like
+  the bounded check itself, and `pr-evidence` renders its internal check
+  input unbounded so routing counts the full finding set.
 - `ripr help --json` now projects a typed per-command `exit` object for the
   0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
   `check` findings still completing with 0, `gate evaluate` `config_error`=2
@@ -29,6 +39,21 @@ are scoped or reviewed.
   `mkdir` repair. The redirect stays — it protects full system temp drives —
   and the constraint is now documented in
   `docs/agent-context/validation.md` (#5280).
+- Repair attempts: concurrent `ripr agent repair --phase after` invocations
+  against one attempt no longer lose a verdict to a last-writer-wins
+  manifest replace. Manifest commits serialize on a short-held exclusive
+  OS lock with base revalidation, so exactly one after phase commits and
+  the loser gets a typed retry refusal instead of a silent overwrite
+  (#5287).
+- `ripr pilot`, repo exposure and the editor no longer report a seam as
+  `ungripped` (the top-ranked gap, "No detected test grip") when ripr only
+  failed to trace the path to it. A seam with no related test now reads
+  `opaque`, with the limit and a witness named in its reach evidence, when a
+  test may reach it through an unresolved helper chain, macro, or trait
+  dispatch (`to_string()` running `Display::fmt`). At semver `280ebcb6edac`
+  `ungripped` falls from 505 seams to 1, and all 12 seams the mutation spot
+  check (#5295) found caught by real mutants now read `opaque`. A seam no
+  test path reaches stays `ungripped` (RIPR-SPEC-0230, #5411).
 - Preview-language refusals (parse budget, read caps, walk cap) no longer
   downgrade a diff that touches none of that language. A Rust-only change in a
   repository with an unrelated, deeply nested Python fixture (found trialing
