@@ -220,8 +220,18 @@ pub(crate) fn build_issue_lifecycle_scorecard(
             .cmp(&(&right.lifecycle_id, &right.observation_key))
     });
     rejected.sort_by(|left, right| {
-        (&left.lifecycle_id, &left.observation_key, left.synthetic, &left.reasons)
-            .cmp(&(&right.lifecycle_id, &right.observation_key, right.synthetic, &right.reasons))
+        (
+            &left.lifecycle_id,
+            &left.observation_key,
+            left.synthetic,
+            &left.reasons,
+        )
+            .cmp(&(
+                &right.lifecycle_id,
+                &right.observation_key,
+                right.synthetic,
+                &right.reasons,
+            ))
     });
     let implementation_success_rate = if real_lifecycles == 0 {
         IssueLifecycleRateV1 {
