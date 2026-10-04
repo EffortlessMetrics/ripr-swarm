@@ -11,10 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
-- GitHub: `ripr check --format github` omits the `line=` property when a
-  finding's probe location is line 0, emitting a file-level annotation instead
-  of out-of-contract `line=0`. Findings with `line >= 1` still emit
-  `,line={n}`. JSON, SARIF, and human text are unchanged (#5089).
+- GitHub: `ripr check --format github` omits `,line=` when a finding's probe
+  location is line 0, instead of emitting out-of-contract `line=0`. Findings
+  with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are
+  unchanged. GitHub documents omitted `line` as defaulting to 1; this does not
+  claim file-level UI placement (#5089).
 
 - LSP: `session_value_sources` reports `initialization` only for applied
   initialization options. A malformed value such as `checkMode: "Deep"` keeps

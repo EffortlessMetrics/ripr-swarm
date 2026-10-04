@@ -161,11 +161,11 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str("` (preview advisory; no repair packet).");
         }
         *per_level.entry(annotation_level).or_default() += 1;
-        // GitHub workflow-command `line` is 1-indexed. A line-0 probe is
-        // unlocated — the same class SARIF already omits `region` for
-        // (#2407). Omit `,line=` entirely so the annotation is file-level
-        // instead of emitting out-of-contract `line=0` (#5089). Do not
-        // promote 0 to 1.
+        // GitHub workflow-command `line` is 1-indexed (documented default 1).
+        // A line-0 probe is unlocated — the same class SARIF already omits
+        // `region` for (#2407). Omit `,line=` so the command does not emit
+        // out-of-contract `line=0` (#5089). This does not claim GitHub UI
+        // file-level placement; omitted `line` may still default to 1.
         let line_property = match finding.probe.location.line {
             0 => String::new(),
             line => format!(",line={line}"),
@@ -627,11 +627,11 @@ mod tests {
         let properties = annotation_properties(commands[0]);
         assert!(
             commands[0].starts_with("::notice file=src/lib.rs,title=ripr static_unknown::"),
-            "line-0 probe must emit a file-level annotation: {rendered}"
+            "line-0 probe must omit `,line=` from the command: {rendered}"
         );
         assert!(
             !properties.contains("line="),
-            "line-0 probe must omit `,line=` entirely, not emit line=0 or promote to line=1: {rendered}"
+            "line-0 command properties must not contain `line=` (neither `line=0` nor `,line=1`): {rendered}"
         );
         assert_eq!(
             properties, "file=src/lib.rs,title=ripr static_unknown",
@@ -686,7 +686,7 @@ mod tests {
         );
         assert!(
             !annotation_properties(commands[1]).contains("line="),
-            "unlocated finding is file-level: {rendered}"
+            "unlocated finding omits `line=` from the command: {rendered}"
         );
     }
 
