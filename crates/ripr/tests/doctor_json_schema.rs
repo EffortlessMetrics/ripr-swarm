@@ -369,6 +369,20 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
     }
     assert_rejected("missing required cache", &missing_required, &schema)?;
 
+    // #5214 review (B2): `cache` is always an object in a released document, so
+    // a null here is a shape the contract must refuse. Accepting it would let a
+    // producer that dropped the cache assignment keep validating, which is the
+    // mirror image of the dead `sections` array this change removes.
+    let mut null_cache = base.clone();
+    null_cache["cache"] = Value::Null;
+    assert_rejected("null cache", &null_cache, &schema)?;
+
+    // The same argument for `binary`: `probe_binary_identity` has no unknown
+    // state, so the key is present-and-an-object or absent, never null.
+    let mut null_binary = base.clone();
+    null_binary["binary"] = Value::Null;
+    assert_rejected("null binary identity", &null_binary, &schema)?;
+
     let mut unlisted_check_status = base.clone();
     unlisted_check_status["checks"][0]["status"] = Value::String("maybe".to_string());
     assert_rejected("unlisted check status", &unlisted_check_status, &schema)?;

@@ -764,6 +764,14 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p target/ripr/reports
+          # `ripr doctor --json` reports the same environment facts the human
+          # doctor screen prints, so it also probes on the JSON path. On a root
+          # with Perl markers (Makefile.PL, *.pm, cpanfile) that means up to
+          # four deadline-bounded exporter probes at [perl].timeout_ms (30s by
+          # default) per invocation, and this step invokes doctor up to twice,
+          # plus PATH lookups for the Perl test runners. Every probe is bounded
+          # and none can change doctor's status or exit code. See
+          # docs/OUTPUT_SCHEMA.md, "Doctor environment fields (schema 0.4)".
           preview_languages="$(
             ripr doctor --root . --json 2>/dev/null \
               | jq -r '.languages[]?' 2>/dev/null \

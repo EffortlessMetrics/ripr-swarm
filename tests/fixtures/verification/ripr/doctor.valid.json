@@ -22,7 +22,7 @@
   "detected_languages": [
     { "language": "rust", "status": "stable", "adapter_available": true, "enabled": true },
     { "language": "python", "status": "preview", "adapter_available": true, "enabled": false },
-    { "language": "perl", "status": "preview", "adapter_available": false, "enabled": false }
+    { "language": "perl", "status": "preview", "adapter_available": true, "enabled": false }
   ],
   "unanalyzed_source_languages": [{ "language": "Go", "file_count": 2 }],
   "preview_language_gaps": [
@@ -51,8 +51,8 @@
     "pm_files": 1,
     "pl_files": 0,
     "t_files": 1,
-    "adapter_compiled": false,
-    "producer": "perllsp",
+    "adapter_compiled": true,
+    "producer": null,
     "ignored_configured_executable": null,
     "exporter": { "state": "incompatible", "executable": "bin/perllsp", "version": "perllsp 0.17.0" },
     "expected_schema": "ripr-perl-facts-v1",

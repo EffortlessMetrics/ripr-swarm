@@ -248,12 +248,11 @@ fn preview_language_gaps(
         return Vec::new();
     };
     enablement
-        .missing
+        .gaps
         .iter()
-        .zip(&enablement.labels)
-        .map(|(entry, label)| output::doctor::DoctorPreviewLanguageGap {
-            config_entry: entry.as_str().to_string(),
-            detected_language: label.clone(),
+        .map(|gap| output::doctor::DoctorPreviewLanguageGap {
+            config_entry: gap.entry.as_str().to_string(),
+            detected_language: gap.label.clone(),
         })
         .collect()
 }
@@ -467,9 +466,9 @@ fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> O
     // Name the config entries here: this line says what to write in
     // ripr.toml, while the Tip names the detected source.
     let names = enablement?
-        .missing
+        .gaps
         .iter()
-        .map(|id| id.as_str())
+        .map(|gap| gap.entry.as_str())
         .collect::<Vec<_>>()
         .join(" and ");
     Some(format!(
@@ -876,31 +875,30 @@ fn suggest_preview_language_enablement(environment: &DoctorEnvironment) {
 /// `PreviewEnablement` becomes the typed `preview_language_gaps` field, so the
 /// tip and the JSON document name the same languages.
 fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -> Vec<String> {
-    let Some(PreviewEnablement {
-        enabled,
-        missing,
-        labels,
-    }) = enablement
-    else {
+    let Some(PreviewEnablement { enabled, gaps }) = enablement else {
         return Vec::new();
     };
-    // One snippet for every missing language, built on the languages already
+    // One snippet for every language to add, built on the languages already
     // enabled: a per-language `["rust", "<lang>"]` snippet would disable the
     // other preview language in a mixed repository, so following one tip
     // would produce the other.
     let mut target: Vec<&str> = enabled.iter().map(|id| id.as_str()).collect();
-    for id in missing {
-        if !target.contains(&id.as_str()) {
-            target.push(id.as_str());
+    for gap in gaps {
+        if !target.contains(&gap.entry.as_str()) {
+            target.push(gap.entry.as_str());
         }
     }
-    let names = labels.join(" and ");
+    let names = gaps
+        .iter()
+        .map(|gap| gap.label.as_str())
+        .collect::<Vec<_>>()
+        .join(" and ");
     let quoted = target
         .iter()
         .map(|name| format!("\"{name}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    let javascript_note = if labels.iter().any(|label| label == "javascript") {
+    let javascript_note = if gaps.iter().any(|gap| gap.label == "javascript") {
         " (the `typescript` entry also analyzes JavaScript)"
     } else {
         ""
@@ -937,7 +935,10 @@ fn preview_languages_to_enable(
     }
     let config = config.as_ref().ok()?;
     let enabled = config.languages().enabled().to_vec();
-    let missing: Vec<LanguageId> = preview_detected
+    // One pass builds each (config entry, detected source) pair together, so the
+    // count and the pairing are the same fact the tip prints and the JSON
+    // document serializes (#5214 review).
+    let gaps: Vec<PreviewLanguageGap> = preview_detected
         .into_iter()
         // Perl detects as a preview language (see language_status). In a
         // default build, `LanguageId::Perl.is_available()` is
@@ -953,39 +954,47 @@ fn preview_languages_to_enable(
         // bridge. TypeScript/Python are real preview adapters and remain
         // Tip-eligible.
         .filter(|id| id.is_available() && !enabled.contains(id) && !matches!(id, LanguageId::Perl))
-        .collect();
-    if missing.is_empty() {
-        return None;
-    }
-    let labels = missing
-        .iter()
-        .map(|id| {
-            let javascript_only = *id == LanguageId::TypeScript
+        .map(|entry| {
+            let javascript_only = entry == LanguageId::TypeScript
                 && !detected.contains(&LanguageId::TypeScript)
                 && detected.contains(&LanguageId::JavaScript);
-            if javascript_only {
-                "javascript".to_string()
-            } else {
-                id.as_str().to_string()
+            PreviewLanguageGap {
+                entry,
+                label: if javascript_only {
+                    "javascript".to_string()
+                } else {
+                    entry.as_str().to_string()
+                },
             }
         })
         .collect();
-    Some(PreviewEnablement {
-        enabled,
-        missing,
-        labels,
-    })
+    if gaps.is_empty() {
+        return None;
+    }
+    Some(PreviewEnablement { enabled, gaps })
 }
 
-/// The `[languages].enabled` entries a doctor tip may add, and how to name
-/// them to the user.
+/// The `[languages].enabled` entries a doctor tip may add, each paired with the
+/// detected source it turns on.
+///
+/// The pair is built once and stored together, so the human tip and the typed
+/// `preview_language_gaps` can never disagree about how many entries there are
+/// or which label belongs to which entry (#5214 review: two parallel vectors
+/// zipped together truncate silently the moment they diverge, which would drop a
+/// gap from JSON while the screen still printed it).
 struct PreviewEnablement {
     /// Languages already enabled in `ripr.toml` (or the default).
     enabled: Vec<LanguageId>,
-    /// Config entries to add, each a value `parse_languages_enabled` accepts.
-    missing: Vec<LanguageId>,
-    /// One user-facing name per `missing` entry, naming the detected source.
-    labels: Vec<String>,
+    /// One (config entry, detected source name) pair per language to add.
+    gaps: Vec<PreviewLanguageGap>,
+}
+
+/// One `[languages].enabled` entry and the detected source it analyzes.
+struct PreviewLanguageGap {
+    /// The config entry to add, a value `parse_languages_enabled` accepts.
+    entry: LanguageId,
+    /// The user-facing name of the detected source that entry analyzes.
+    label: String,
 }
 
 /// The `[languages].enabled` entry that turns on analysis of `id`.
@@ -2769,6 +2778,112 @@ mod tests {
     #[test]
     fn doctor_accepts_default_root() {
         assert_eq!(doctor(&args(&[])), Ok(()));
+    }
+
+    /// #5214 review (B1): the registered verification subject
+    /// `tests/fixtures/verification/ripr/doctor.valid.json` must describe a
+    /// state the producer can actually emit, not merely a shape the schema
+    /// tolerates. Replaying the fixture's declared `adapter_compiled`,
+    /// `producer` and `exporter.state` through the producer's own branch is
+    /// what establishes that. The first draft of the fixture paired
+    /// `adapter_compiled: false` with the packet-mode `next_command`, which
+    /// `perl_next_command` can never return.
+    #[test]
+    fn registered_doctor_fixture_perl_state_is_reachable_from_the_producer() -> Result<(), String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/verification/ripr/doctor.valid.json");
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let fixture: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse {}: {error}", path.display()))?;
+        let preview = fixture
+            .get("perl_preview")
+            .ok_or_else(|| format!("fixture carries no perl_preview: {fixture}"))?;
+
+        let adapter_compiled = preview["adapter_compiled"].as_bool().ok_or_else(|| {
+            format!("fixture perl_preview.adapter_compiled is not a bool: {preview}")
+        })?;
+        let producer = preview["producer"].as_str().map(str::to_string);
+        // `PerlExporterProbe::compatible_bin` is the producer's own answer per
+        // exporter state; replay it rather than restating the rule here.
+        let exporter_state = preview["exporter"]["state"]
+            .as_str()
+            .ok_or_else(|| format!("fixture exporter.state is not a string: {preview}"))?;
+        let compatible_bin = match exporter_state {
+            "compatible" => Some(
+                preview["exporter"]["executable"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        format!("a compatible exporter must name its executable: {preview}")
+                    })?
+                    .to_string(),
+            ),
+            "incompatible" | "not_found" => None,
+            other => {
+                return Err(format!(
+                    "fixture declares an unknown exporter state `{other}`"
+                ));
+            }
+        };
+        let expected = preview["next_command"].as_str().ok_or_else(|| {
+            format!("fixture perl_preview.next_command is not a string: {preview}")
+        })?;
+        let produced = perl_next_command(
+            adapter_compiled,
+            producer.as_deref(),
+            compatible_bin.as_deref(),
+        );
+        if produced != expected {
+            return Err(format!(
+                "the registered fixture's perl_preview is not producible: adapter_compiled={adapter_compiled} \
+                 producer={producer:?} exporter.state={exporter_state} makes the producer emit \
+                 {produced:?}, but the fixture declares {expected:?}"
+            ));
+        }
+
+        // Cross-field coherence: `adapter_available` on the detected-language
+        // entry and `perl_preview.adapter_compiled` read the same build
+        // constant, so a fixture that disagrees with itself describes no build.
+        let perl_detected = fixture["detected_languages"]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|entry| entry["language"] == "perl"))
+            .ok_or_else(|| format!("fixture must declare perl as detected: {fixture}"))?;
+        if perl_detected["adapter_available"] != preview["adapter_compiled"] {
+            return Err(format!(
+                "the fixture's detected_languages[perl].adapter_available ({}) disagrees with \
+                 perl_preview.adapter_compiled ({}); both read the same lang-perl build constant",
+                perl_detected["adapter_available"], preview["adapter_compiled"]
+            ));
+        }
+
+        // Every branch the producer can take must be one of the states this
+        // document vocabulary names, or the fixture asserts a state space the
+        // producer does not have.
+        for compiled in [false, true] {
+            for configured in [
+                None,
+                Some("perl-ripr-facts"),
+                Some("perllsp"),
+                Some("custom"),
+            ] {
+                for found in [None, Some("perl-ripr-facts")] {
+                    let command = perl_next_command(compiled, configured, found);
+                    let classified = command == LanguageId::Perl.unavailable_adapter_recovery()
+                        || command
+                            == "add \"perl\" to [languages] enabled in ripr.toml, then: ripr check"
+                        || command.starts_with("install a compatible Perl fact exporter")
+                        || command
+                            == "ripr check --perl-facts <packet.json> --diff <diff.patch> --json";
+                    if !classified {
+                        return Err(format!(
+                            "perl_next_command produced an unclassified state for compiled={compiled} \
+                             producer={configured:?} exporter={found:?}: {command}"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

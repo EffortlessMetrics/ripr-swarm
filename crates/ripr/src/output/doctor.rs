@@ -710,7 +710,13 @@ pub(crate) struct DoctorReport {
     #[serde(default)]
     pub(crate) config_defaults: Option<DoctorConfigDefaults>,
     /// Where the seam cache is and how large it is (additive in schema `0.4`).
-    #[serde(default)]
+    /// The command adapter always fills it, so a released document never carries
+    /// `null` here and the published schema forbids it. `None` is only the
+    /// pre-adapter state of a report core evaluation produced; it serializes as
+    /// an absent key rather than a null, so no caller can read "not measured" as
+    /// a measurement, and a producer that stopped reporting the cache fails the
+    /// contract's `required` list instead of passing it (#5214 review).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cache: Option<DoctorCacheStatus>,
     /// The detected test surface per language (additive in schema `0.4`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -3044,6 +3050,23 @@ mod tests {
         assert_eq!(parsed["status"], "pass");
         assert_eq!(parsed["checks"][0]["name"], "root_directory");
         assert_eq!(parsed["checks"][0]["status"], "pass");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unfilled_report_omits_the_cache_rather_than_emitting_a_null() -> Result<(), String> {
+        // Core evaluation alone produces a report with no cache measurement. The
+        // published schema forbids `cache: null`, so the unfilled state must
+        // serialize as an absent key: a consumer cannot read "not measured" as a
+        // measurement, and that absence is what the `required` list then catches
+        // (#5214 review).
+        let report = DoctorReport::new("/workspace");
+        let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
+            .map_err(|e| format!("invalid JSON: {e}"))?;
+        assert!(
+            parsed.get("cache").is_none(),
+            "an unfilled report must omit the cache key, not null it: {parsed}"
+        );
         Ok(())
     }
 

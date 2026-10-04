@@ -167,8 +167,8 @@
       }
     },
     "cache_status": {
-      "description": "Where the seam cache lives for this root and how large it is. `size_bytes` is 0 when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement.",
-      "type": ["object", "null"],
+      "description": "Where the seam cache lives for this root and how large it is. `size_bytes` is 0 when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. Never null: a released document always carries the cache the run resolved, so a producer that stopped reporting it fails this contract instead of passing it.",
+      "type": "object",
       "additionalProperties": false,
       "required": ["cache_dir", "relocated_by_env", "size_bytes", "size_display"],
       "properties": {
@@ -192,8 +192,8 @@
       }
     },
     "binary_identity": {
-      "description": "The running binary and the `ripr` on PATH (schema 0.2). Advisory: its warnings never change `status` or the exit code.",
-      "type": ["object", "null"],
+      "description": "The running binary and the `ripr` on PATH (schema 0.2). Advisory: its warnings never change `status` or the exit code. Never null when present, and absent rather than null when the command adapter has not filled it: `probe_binary_identity` has no unknown state, so a null here would be a shape the producer cannot emit.",
+      "type": "object",
       "additionalProperties": false,
       "required": [
         "version",

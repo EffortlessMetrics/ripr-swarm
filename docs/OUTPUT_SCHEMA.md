@@ -304,7 +304,7 @@ document.
 | `unanalyzed_source_languages[]` | Source in languages no adapter reads: `language` and `file_count`. A non-coverage disclosure, never a finding. Omitted when no such source exists. |
 | `preview_language_gaps[]` | Detected preview languages `ripr check` skips until they are enabled: `config_entry` (what `[languages] enabled` accepts) and `detected_language` (the source it analyzes). The two differ for a JavaScript-only workspace, which the `typescript` entry analyzes. Omitted when there is no such gap. |
 | `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`. The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
-| `cache` | `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, and `size_display`. `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. |
+| `cache` | Always an object in a released document, never `null`: `cache_dir`, `relocated_by_env` (whether `RIPR_CACHE_DIR` relocated it), `size_bytes`, and `size_display`. `size_bytes` is `0` when the directory does not exist or cannot be read, which is a legitimate state, not a failed measurement. A producer that stopped reporting the cache fails the published schema instead of validating. |
 | `test_surfaces[]` | The detected test surface per language: `language`, `framework` (`null` when no framework marker was confirmed), and `evidence` (the exact `<language>: …` fragment the human screen prints). |
 | `perl_preview` | `null` when the marker scan found no Perl project. Otherwise `pm_files`, `pl_files`, `t_files`, `adapter_compiled`, `producer`, `ignored_configured_executable`, `exporter` (`state` of `compatible` / `incompatible` / `not_found`, plus `executable` and `version`), `expected_schema`, `test_roots[]`, `frameworks[]`, `runners[]`, and `next_command`. |
 
@@ -316,12 +316,43 @@ document.
 the human screen's enablement tip exists to warn about. Conflating the two would
 tell a consumer that `ripr check` analyzes source it skips.
 
-Schema `0.4` also **removes** the top-level `sections` array that `0.3`
-published. Its only mutator and only reader were `#[cfg(test)]`, so every
-released document carried `"sections": []` — a field structurally incapable of
-carrying information. Populating it would have meant giving a text blob a
-production writer that the typed fields above now replace; removing it breaks no
-consumer, because the array never held anything.
+Schema `0.4` **breaks** one field and adds the rest: the top-level `sections`
+array that `0.3` published is **removed**. Its only mutator and only reader were
+`#[cfg(test)]`, so every released document carried `"sections": []` — a field
+structurally incapable of carrying information, and therefore a field whose
+removal cannot lose data a consumer could have read. Populating it instead would
+have meant giving a text blob a production writer duplicating what the typed
+fields above now carry.
+
+Because the key disappears, `0.3` to `0.4` is **not** an additive minor for a
+consumer that reads `sections`: code doing `report.get("sections")`, or a
+strictly typed client decoding into a struct with a `sections` field under a
+closed shape, must be updated before it accepts a `0.4` document. Every `0.3`
+field keeps its meaning, and every field this version adds is additive for a
+consumer that ignores unknown keys. Reverting the change restores `0.3`
+exactly, so a revert is the migration path for a consumer that cannot yet adapt.
+
+### What `--json` now probes, and where that shows up
+
+Both surfaces read one probe per run, so `ripr doctor --json` performs the
+filesystem walks the human screen already performed — the seam-cache size walk
+and the unanalyzed-source discovery walk — on every root. On a root with Perl
+markers (`Makefile.PL`, `*.pm`, `cpanfile`, or a `t/` test) it additionally
+probes for a Perl fact exporter, which the JSON surface previously did not:
+
+- up to **four deadline-bounded subprocess probes** per `ripr doctor --json`
+  invocation — `--version` and `ripr-facts --help` for each of at most two
+  candidate binaries — each bounded by `[perl].timeout_ms` (30s by default), so
+  up to ~120s in the worst case;
+- up to **seven PATH lookups** for the Perl runners and the resolved exporter
+  path. These are `which`/`where` and, unlike the probes above, carry no
+  deadline; that is a pre-existing property of doctor's PATH lookup, unchanged by
+  schema `0.4`.
+
+None of this can change a check's status, the top-level `status`, or the exit
+code. The generated GitHub workflow's "Render RIPR preview promotion packets" step
+invokes `ripr doctor --root . --json` up to twice, and carries this disclosure in
+a comment beside that invocation.
 
 Known limitations and the start-here guidance block remain human-only. They are
 static product prose and a rendered recommendation, not observations of this
