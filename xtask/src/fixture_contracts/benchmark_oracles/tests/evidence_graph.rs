@@ -62,7 +62,7 @@ fn expect_rejection(actual: Result<&str, String>, label: &str, failures: &mut Ve
 #[test]
 fn benchmark_semantic_graph_requires_every_native_input_fence() -> Result<(), String> {
     let mut failures = Vec::new();
-    for index in 0..PAIRS.len() {
+    for (index, pair) in PAIRS.iter().enumerate() {
         for field in [
             "full_workspace_inputs_before",
             "full_workspace_inputs_after",
@@ -89,7 +89,7 @@ fn benchmark_semantic_graph_requires_every_native_input_fence() -> Result<(), St
                 }
                 expect_rejection(
                     fixture.validate(),
-                    &format!("{} {field} {mode}", PAIRS[index].0),
+                    &format!("{} {field} {mode}", pair.0),
                     &mut failures,
                 );
             }
