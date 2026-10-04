@@ -97,15 +97,11 @@ fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>>
         .chars()
         .filter(|ch| !ch.is_whitespace())
         .collect::<String>();
-    if ![
-        macro_name.to_string(),
-        format!("std::{macro_name}"),
-        format!("core::{macro_name}"),
-        format!("::std::{macro_name}"),
-        format!("::core::{macro_name}"),
-    ]
-    .contains(&path)
-    {
+    let matches_path = path == macro_name
+        || ["std::", "core::", "::std::", "::core::"]
+            .into_iter()
+            .any(|prefix| path.strip_prefix(prefix) == Some(macro_name));
+    if !matches_path {
         return None;
     }
     let contents = delimited_contents_at(text, open)?;
