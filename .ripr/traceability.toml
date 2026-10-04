@@ -10609,6 +10609,8 @@ spec = "docs/specs/RIPR-SPEC-0190-help-json-machine-discovery.md"
 tests = [
   "crates/ripr/src/cli/help_json.rs::tests::help_command_reports_json_support_in_the_machine_catalog",
   "crates/ripr/src/cli/help.rs::tests::help_overview_routes_to_first_actions_and_full_reference",
+  "crates/ripr/src/cli/help.rs::tests::help_overview_more_block_names_the_machine_catalog",
+  "crates/ripr/src/cli/help.rs::tests::help_all_header_names_the_machine_catalog",
   "crates/ripr/src/cli/help_json.rs::tests::production_document_is_valid_and_nonempty",
   "crates/ripr/src/cli/help_json.rs::tests::output_is_byte_stable_and_explicitly_ordered",
   "crates/ripr/src/cli/help_json.rs::tests::reordered_source_rows_normalize_to_the_same_document",
