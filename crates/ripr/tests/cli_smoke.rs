@@ -13129,8 +13129,10 @@ fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), Stri
     assert_eq!(currentness["status"], "not_evaluated", "{packet}");
     let reason = currentness["reason"].as_str().unwrap_or_default();
     assert!(
-        reason.contains("repair_route") && !reason.contains("repo-exposure"),
-        "the blocked reason must name the usable route, not the Rust-only one: {reason}"
+        reason.contains("repair_route")
+            && reason.contains("--diff")
+            && !reason.contains("repo-exposure"),
+        "the blocked reason must name the usable route and the unreplayable --diff scope, not the Rust-only route: {reason}"
     );
     let refresh: Vec<String> = currentness["refresh_commands"]
         .as_array()

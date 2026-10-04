@@ -184,7 +184,7 @@ pub(crate) fn evaluate_gap_record_source_currentness(
         // refresh replays the same route instead of steering to the Rust-only
         // repo-exposure route, which would drop the preview records.
         return GapRecordSourceCurrentness::not_evaluated(
-            "gap ledger source kind check_output has no live snapshot authority, so this packet cannot be assigned; the ledger record's repair_route stays usable as advisory guidance, and refresh_commands rebuild the check output and ledger after the checkout changes",
+            "gap ledger source kind check_output has no live snapshot authority, so this packet cannot be assigned; the ledger record's repair_route stays usable as advisory guidance, and refresh_commands rebuild the check output and ledger after the checkout changes; they replay the recorded Git base, so a check run from --diff must instead be rerun with the same --diff",
             refresh_commands,
             source_kind_owned,
             source_path_owned,
@@ -438,7 +438,9 @@ fn refresh_commands(
     if check_output {
         // Replay the base the existing check output recorded, so the refresh
         // compares the same diff; without one, `ripr check` resolves its
-        // default base as the original first-pr route would.
+        // default base as the original first-pr route would. Check output
+        // does not record whether its scope came from `--diff`, so that case
+        // cannot be replayed here; the blocked reason names it instead.
         let base_arg = recorded_check_base(&source_path)
             .map(|base| format!(" --base {}", shell_arg(&base)))
             .unwrap_or_default();

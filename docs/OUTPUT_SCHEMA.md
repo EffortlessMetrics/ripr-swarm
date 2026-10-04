@@ -13846,6 +13846,8 @@ repo-exposure ledger gets `ripr check --format repo-exposure-json` and
 Python/TypeScript preview route) gets `ripr check --json` with the base its
 check output recorded and `ripr reports gap-ledger --check-output`; it stays
 `not_evaluated` because check output carries no producer snapshot identity.
+Check output does not record a `--diff` scope, so a check run from a diff file
+must be rerun with the same `--diff`; the blocked reason says so.
 
 `staleness_status = "not_evaluated"` is a stop-and-refresh state, not freshness
 proof. Stale or mismatched sources use `queue_state = "blocked_stale"`, while
