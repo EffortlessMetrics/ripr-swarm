@@ -9,8 +9,22 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Changed
+
+- MCP wire names unified on `canonical_id` (same spelling the evidence
+  documents emit): tool inputs `ripr_get_gap`, `ripr_prepare_repair`, and
+  `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
+  resource templates are `ripr://gap/{canonical_id}` and
+  `ripr://repair-card/{canonical_id}`. Clients re-reading `tools/list` and
+  `resources/templates/list` adapt automatically; in-flight callers passing `gap_id`
+  get `invalid params` (#5209).
 ### Added
 
+- `ripr check --help` now chooses one `--format` per task (eye review,
+  drill-in listing, machine JSON, Actions annotations, code scanning,
+  README badge, PR/CI badge, repo inventory, agent packets) above the
+  full group list, so a newcomer maps their job to a format without
+  re-reading the 22 values (#5211).
 - `ripr check --format json` caps the rendered `findings` array at
   `RIPR_CHECK_FINDINGS_BYTES` emitted bytes (default 1,000,000; `0` removes
   the cap). A bounded document renders the deterministic first-finding prefix
@@ -35,6 +49,16 @@ are scoped or reviewed.
   #5410. File-fact generation 1.21 invalidates favorable predecessor facts
   (RIPR-SPEC-0001, #5713).
 
+- CLI: `ripr doctor --profile source-build` warns when the workspace's
+  `.cargo/config.toml` redirects linker temp variables (`TEMP`, `TMP`,
+  `TMPDIR`) into a workspace-relative directory that does not exist. ripr's
+  own config force-redirects them into `target/` (PR #397), so a fresh
+  `git worktree add` building with an isolated `CARGO_TARGET_DIR` failed
+  MSVC linking with an opaque `LNK1104 ... target\lnk{GUID}.tmp` until the
+  directory was hand-created; the advisory names the redirect and the
+  `mkdir` repair. The redirect stays — it protects full system temp drives —
+  and the constraint is now documented in
+  `docs/agent-context/validation.md` (#5280).
 - Repair attempts: concurrent `ripr agent repair --phase after` invocations
   against one attempt no longer lose a verdict to a last-writer-wins
   manifest replace. Manifest commits serialize on a short-held exclusive
@@ -204,6 +228,17 @@ are scoped or reviewed.
   new before phase. Retained typed packet routes remain available only for a
   current after continuation; a restart display never supplies typed command
   authority. Retained receipts and freshness refusals are unchanged (#5413).
+- Gap findings name every related test ripr examined and say why each one
+  misses the change: no call path, no assertion, an assertion that does not
+  observe the changed value, an assertion ripr could not credit, a weak
+  assertion, a missing boundary input, or an assertion that never names the
+  changed expression. A finding no longer says "Related tests were found", or
+  reports `reach: yes`, while listing none (#5344, #5329). JSON, the context
+  packet and MCP carry `related_tests[].miss` and `why`; LSP hover shows the
+  reason and diagnostics link the examined tests. `ripr explain` adds a "Why
+  this verdict" section: each examined test with the assertion it was judged
+  by, what a test would need to change the verdict, and what each stop reason
+  means (#5356). No verdict changes.
 
 ### Changed
 
@@ -390,6 +425,16 @@ are scoped or reviewed.
   actionable and 0 of 14 false exposed. For a changed `let`, the projection can
   follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
   current case exercises it (RIPR-SPEC-0219).
+- Verdict corpus: 47 more authored cases fill test shapes that other RIPR
+  specs define and no corpus case exercised: assertions that never run
+  (uncalled closure, `if false`, unpolled async, `cfg(any())`), guarded
+  Result matches, `matches!` and `return Err` oracles, self-computed
+  expected values, named-constant and split-test boundaries, macro and
+  helper-chain reach, scanner and recursive helpers, cross-crate tests,
+  same-name owners, fail-closed sinks, and a `#[cfg(test)]` helper (the
+  corpus's first silent verdict). Two changed-`let` cases exercise the
+  retarget projection. Authored rates now read 23 of 36 false actionable
+  and 4 of 34 false exposed; upstream rates are unchanged (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline
