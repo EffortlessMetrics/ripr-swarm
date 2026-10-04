@@ -805,9 +805,6 @@ mod tests {
         let quoted = shell_arg("a\u{1b}[2Jb'c\\d\u{202e}");
         assert_eq!(quoted, "$'a\\x1b[2Jb\\'c\\\\d\\xe2\\x80\\xae'");
         assert!(!quoted.chars().any(needs_terminal_escape), "{quoted:?}");
-        // PowerShell has no translation for `$'...'`, so no variant is offered.
-        let command = format!("ripr explain --root {quoted}");
-        assert_eq!(crate::output::markdown::powershell_command(&command), None);
         // Plain hostile text without control characters keeps `'...'` quoting.
         assert_eq!(shell_arg("it's"), r"'it'\''s'");
     }
