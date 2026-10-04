@@ -3,6 +3,41 @@
 use super::*;
 
 #[test]
+fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
+    for value in [
+        "true",
+        "\"known defect\"",
+        "/ERR_ASSERTION/",
+        "{ code: 'ERR_ASSERTION' }",
+        "(error) => true",
+        "{ label: 'defect', match: /failed/ }",
+        "configuredMatcher",
+    ] {
+        let callback = "() => { assert.strictEqual(isAdult(18), true); }";
+        for source in [
+            format!("test('qualified', {{ expectFailure: {value} }}, {callback});"),
+            format!("test({{ expectFailure: {value} }}, {callback});"),
+            format!("test('qualified', {callback}, {{ expectFailure: {value} }});"),
+            format!(
+                "suite('qualified', {{ expectFailure: {value} }}, () => {{ test('child', {callback}); }});"
+            ),
+        ] {
+            let file = Path::new("tests/qualified.test.ts");
+            let tests = extract_tests(file, &source);
+            assert!(tests.is_empty(), "{source}: {tests:?}");
+        }
+    }
+    for value in ["false", "undefined"] {
+        let source = format!(
+            "test('ordinary', {{ expectFailure: {value} }}, () => {{ assert.strictEqual(isAdult(18), true); }});"
+        );
+        let tests = extract_tests(Path::new("tests/ordinary.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert_eq!(tests[0].assertions.len(), 1);
+    }
+}
+
+#[test]
 fn extracts_active_test_modifiers_with_assertions() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
