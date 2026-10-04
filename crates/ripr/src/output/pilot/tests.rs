@@ -298,7 +298,7 @@ fn pilot_ranking_takes_one_seam_per_owner_before_a_second() {
     ];
 
     assert_eq!(
-        ranked_places(&top_actionable_seams(&entries, 3)),
+        ranked_places(&top_actionable_seams(&entries, 3, None)),
         [
             ("a::clone".to_string(), 10),
             ("a::as_str".to_string(), 40),
@@ -307,7 +307,7 @@ fn pilot_ranking_takes_one_seam_per_owner_before_a_second() {
     );
     // Past one round, the owner's remaining seams follow in location order.
     assert_eq!(
-        ranked_places(&top_actionable_seams(&entries, 5))[3..],
+        ranked_places(&top_actionable_seams(&entries, 5, None))[3..],
         [("a::clone".to_string(), 11), ("a::clone".to_string(), 12)]
     );
 }
@@ -322,7 +322,7 @@ fn pilot_ranking_spreads_owners_without_crossing_class_order() {
         classified_in_owner(SeamGripClass::WeaklyGripped, "src/c.rs", "fmt", 1),
     ];
 
-    let ranked = top_actionable_seams(&entries, 4);
+    let ranked = top_actionable_seams(&entries, 4, None);
     assert_eq!(
         ranked
             .iter()
@@ -349,7 +349,7 @@ fn pilot_ranking_counts_owner_rounds_across_classes() {
     ];
 
     assert_eq!(
-        ranked_places(&top_actionable_seams(&entries, 4)),
+        ranked_places(&top_actionable_seams(&entries, 4, None)),
         [
             ("z::fmt".to_string(), 1),
             ("b::parse".to_string(), 1),
