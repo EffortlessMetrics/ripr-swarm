@@ -879,113 +879,53 @@ fn weight_refusal(tests: &str, others: &[(&str, &str)]) -> Option<AssertionRefus
 }
 
 #[test]
-fn a_pass_through_wrapper_that_only_invokes_assert_eq_binds_nothing() {
+fn any_mention_in_another_macros_arguments_stays_ambiguous() {
     let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
-    // ripgrep's `rgtest!(name, |dir, cmd| { assert_eq!(..) })` and friends:
-    // every definition of the wrapper only re-emits its input and invokes
-    // standard macros.
-    let rgtest = "macro_rules! rgtest { ($name:ident, $fun:expr) => { #[test] fn $name() { let (dir, cmd) = setup(stringify!($name)); $fun(dir, cmd); if cfg!(feature = \"pcre2\") { $fun(dir, cmd); } } }; }";
-    let wrap = "macro_rules! wrap { ($($t:tt)*) => { $($t)* }; }";
-    for (definition, invocation) in [
-        (rgtest, "rgtest!(f, |dir, cmd| { assert_eq!(1, 1); });"),
-        (wrap, "wrap! { assert_eq![1, 1] }"),
-        (wrap, "wrap!(assert_eq!{1, 1});"),
-    ] {
-        assert_eq!(
-            weight_refusal(
-                tests,
-                &[("src/macros.rs", definition), ("src/other.rs", invocation)]
-            ),
-            None,
-            "{definition} / {invocation}"
-        );
-    }
-    // The invocation is only tokens to the wrapper:
-    // `define!(assert_eq!(mod tests;))` can expand to `macro_rules! assert_eq
-    // { .. } mod tests;`, and that module's tests see the new macro. So a
-    // wrapper ripr cannot see, or one whose expansion may define, import, or
-    // hand the tokens to an unexamined macro or attribute, keeps the name
-    // ambiguous.
-    let refused = |others: &[(&str, &str)]| {
+    let refused = |other: &str| {
         matches!(
-            weight_refusal(tests, others),
+            weight_refusal(tests, &[("src/other.rs", other)]),
             Some(AssertionRefusal::Syntax(
                 AssertionContextRefusal::MacroBinding(_)
             ))
         )
     };
-    let invoke = "wrap!(assert_eq!(1, 1));";
-    for definition in [
-        "",
-        "macro_rules! wrap { ($name:ident ! ($($rest:tt)*)) => { macro_rules! $name { ($a:expr, $b:expr) => {{ let _ = ($a, $b); }} } $($rest)* }; }",
-        "macro_rules! wrap { ($name:ident ! $($rest:tt)*) => { use other::$name; }; }",
-        "macro_rules! wrap { ($($t:tt)*) => { other!($($t)*); }; }",
-        "macro_rules! wrap { ($($t:tt)*) => { other::defines!($($t)*); }; }",
-        "macro_rules! wrap { ($m:ident $($t:tt)*) => { $m!($($t)*); }; }",
-        "macro_rules! wrap { ($($t:tt)*) => { #[other::attr] fn f() { $($t)* } }; }",
-        "macro_rules! wrap { ($($t:tt)*) => { mod m { $($t)* } }; }",
-        "macro wrap($($t:tt)*) { $($t)* }",
-        // A second, unsafe definition, a foreign import or a rename onto the
-        // wrapper's name, or a foreign glob may make `wrap!` something else.
-        "macro_rules! wrap { ($($t:tt)*) => { $($t)* }; }\nmod b { macro_rules! wrap { ($n:ident $($t:tt)*) => { use other::$n; }; } }",
-        "macro_rules! wrap { ($($t:tt)*) => { $($t)* }; }\nuse other::wrap;",
-        "macro_rules! wrap { ($($t:tt)*) => { $($t)* }; }\nuse crate::elsewhere as wrap;",
-        "macro_rules! wrap { ($($t:tt)*) => { $($t)* }; }\nmod g { use other::*; }",
-    ] {
-        assert!(
-            refused(&[("src/macros.rs", definition), ("src/other.rs", invoke)]),
-            "{definition}"
-        );
-    }
-    // A qualified wrapper path does not name the visible definition.
-    assert!(refused(&[
-        ("src/macros.rs", wrap),
-        ("src/other.rs", "other::wrap!(assert_eq!(1, 1));")
-    ]));
-    // `macro_use` or `no_implicit_prelude` in any macro's arguments is only
-    // tokens to the parser, but the expansion may apply it to an item.
-    for hidden in [
-        "wrap! { #[no_implicit_prelude] mod tests; }",
-        "wrap! { #[macro_use] extern crate other; }",
-    ] {
-        assert!(
-            refused(&[("src/macros.rs", wrap), ("src/other.rs", hidden)]),
-            "{hidden}"
-        );
-    }
-    // A definition the expansion may create stays ambiguous.
+    // To the macro a plain invocation is only tokens: `define!(assert_eq!(mod
+    // tests;))` can emit `macro_rules! assert_eq` and the module whose tests
+    // use it, so ripgrep's `rgtest!(name, |dir, cmd| { assert_eq!(..) })`
+    // stays ambiguous too.
     for other in [
+        "rgtest!(f, |dir, cmd| { assert_eq!(1, 1); });",
+        "wrap! { assert_eq![1, 1] }",
+        "wrap!(assert_eq!{1, 1});",
         "make!(assert_eq);",
         "make! { macro_rules! assert_eq { () => {} } }",
         "make! { macro assert_eq() {} }",
         "make!($assert_eq!(1, 1));",
         "make!(assert_eq ! );",
     ] {
-        assert!(refused(&[("src/other.rs", other)]), "{other}");
+        assert!(refused(other), "{other}");
     }
-}
-
-#[test]
-fn an_unproven_wrapper_refusal_names_the_wrapper() {
-    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
-    let probe_index = index(&[
-        (LIB, WEIGHT_LIB),
-        (TESTS, tests),
-        ("src/other.rs", "\nwrap!(assert_eq!(1, 1));"),
-    ]);
-    let test = probe_index.tests().at(0);
-    let probe = return_probe(owner(&probe_index, "weight"), "x * 3");
-    let refusal = OwnerPinSyntax::default().equality_assertion_refusal(
-        &probe,
-        test,
-        &test.assertions[0],
-        &probe_index,
-    );
+    // `macro_use` or `no_implicit_prelude` in a macro's arguments is only
+    // tokens to the parser, but the expansion may apply it to an item.
+    for hidden in [
+        "wrap! { #[no_implicit_prelude] mod tests; }",
+        "wrap! { #[macro_use] extern crate other; }",
+    ] {
+        let refusal = weight_refusal(tests, &[("src/other.rs", hidden)]);
+        assert!(
+            matches!(
+                refusal,
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{hidden}"
+        );
+    }
+    // A macro whose arguments name no trusted macro binds nothing.
     assert_eq!(
-        refusal.as_ref().map(AssertionRefusal::describe).as_deref(),
-        Some(
-            "`wrap!` at src/other.rs:2 receives `assert_eq!(..)` as tokens, and ripr could not establish that every `wrap!` only passes its input through"
-        )
+        weight_refusal(tests, &[("src/other.rs", "wrap!(1 + 1);")]),
+        None
     );
 }
 
@@ -1314,8 +1254,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         ),
     ] {
         let index = index(&files);
-        let (ambiguous, _, _) =
-            trusted_macro_sites_in(&index, &unresolved, &WrapperFacts::default());
+        let (ambiguous, _) = trusted_macro_sites_in(&index, &unresolved);
         assert_eq!(ambiguous, full_scan(&index), "{files:?}");
         assert_eq!(
             ambiguous.len() == NON_RETURNING_MACROS.len(),

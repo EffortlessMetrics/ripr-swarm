@@ -138,14 +138,7 @@ pub(crate) fn trusted_macro_binding_sites(
     trusted: &[&str],
     module_resolved: &dyn Fn(usize, &str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
-    macro_binding_ambiguities(
-        source,
-        packages,
-        trusted,
-        &BTreeSet::new(),
-        module_resolved,
-        &mut WrapperFacts::default(),
-    )
+    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), module_resolved)
 }
 
 /// Apply the same binding/import/opaque-expansion authority to candidate empty
@@ -156,7 +149,6 @@ pub(crate) fn empty_macro_binding_ambiguities(
     names: &BTreeSet<String>,
     declaring_file: bool,
     module_resolved: &dyn Fn(usize, &str) -> bool,
-    passes_through: &dyn Fn(&str) -> bool,
 ) -> BTreeSet<String> {
     let trusted: Vec<_> = names.iter().map(String::as_str).collect();
     let allowed = if declaring_file {
@@ -164,21 +156,10 @@ pub(crate) fn empty_macro_binding_ambiguities(
     } else {
         BTreeSet::new()
     };
-    macro_binding_ambiguities(
-        source,
-        packages,
-        &trusted,
-        &allowed,
-        module_resolved,
-        &mut WrapperFacts::default(),
-    )
-    .into_iter()
-    .filter(|(_, site)| match &site.kind {
-        MacroBindingKind::WrapperArgument(wrapper) => !passes_through(wrapper),
-        _ => true,
-    })
-    .map(|(name, _)| name)
-    .collect()
+    macro_binding_ambiguities(source, packages, &trusted, &allowed, module_resolved)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
 }
 
 /// Where a file may rebind a trusted macro name, and how.
@@ -211,10 +192,6 @@ pub(crate) enum MacroBindingKind {
     /// Another macro's arguments mention the name, so its expansion may
     /// define it.
     MacroArgument(String),
-    /// Another macro's arguments only invoke the name (`assert_eq!(..)`).
-    /// It binds nothing when [`WrapperFacts::passes_through`] holds for
-    /// that macro, which the caller checks across the workspace.
-    WrapperArgument(String),
     /// Another macro's arguments carry `macro_use` or `no_implicit_prelude`,
     /// which its expansion may apply to an item.
     ArgumentAttribute { wrapper: String, attribute: String },
@@ -243,162 +220,11 @@ pub(crate) fn macro_binding_scan(
     source: &str,
     packages: &BTreeSet<String>,
     trusted: &[&str],
-    facts: &mut WrapperFacts,
 ) -> Vec<(String, MacroBindingSite)> {
-    macro_binding_ambiguities(
-        source,
-        packages,
-        trusted,
-        &BTreeSet::new(),
-        &|_, _| false,
-        facts,
-    )
-    .into_iter()
-    .filter(|(_, site)| site.scope.is_none())
-    .collect()
-}
-
-/// [`trusted_macro_binding_sites`] plus the file's [`WrapperFacts`], from
-/// one parse.
-pub(crate) fn trusted_macro_binding_sites_with_wrappers(
-    source: &str,
-    packages: &BTreeSet<String>,
-    trusted: &[&str],
-    module_resolved: &dyn Fn(usize, &str) -> bool,
-) -> (Vec<(String, MacroBindingSite)>, WrapperFacts) {
-    let mut facts = WrapperFacts::default();
-    let sites = macro_binding_ambiguities(
-        source,
-        packages,
-        trusted,
-        &BTreeSet::new(),
-        module_resolved,
-        &mut facts,
-    );
-    (sites, facts)
-}
-
-/// What the workspace's files say about macros whose arguments invoke a
-/// trusted macro (`rgtest!(f, |dir, cmd| { assert_eq!(..) })`). To the
-/// wrapper that invocation is only tokens: `define!(assert_eq!(mod tests;))`
-/// can expand to `macro_rules! assert_eq { .. } mod tests;`, and the test
-/// module then sees the new macro. So the invocation binds nothing only
-/// when every definition of the wrapper passes its input through
-/// ([`passes_input_through`]) and nothing may bring a different wrapper of
-/// that name into scope.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct WrapperFacts {
-    /// Names with a `macro_rules!` definition that passes input through.
-    pass_through: BTreeSet<String>,
-    /// Names with any other definition, a foreign import or a rename.
-    hazards: BTreeSet<String>,
-    /// Some file may bring any macro into scope (a foreign glob, an
-    /// unresolved `#[macro_use]`, an unparsed file).
-    opaque: bool,
-}
-
-impl WrapperFacts {
-    pub(crate) fn extend(&mut self, other: &Self) {
-        self.pass_through.extend(other.pass_through.iter().cloned());
-        self.hazards.extend(other.hazards.iter().cloned());
-        self.opaque |= other.opaque;
-    }
-
-    /// Whether every visible definition of `name` passes its input through.
-    pub(crate) fn passes_through(&self, name: &str) -> bool {
-        !self.opaque && self.pass_through.contains(name) && !self.hazards.contains(name)
-    }
-}
-
-/// Standard macros a pass-through wrapper may invoke besides the trusted
-/// ones: none can define or import a macro.
-const PASS_THROUGH_STANDARD_MACROS: &[&str] = &[
-    "concat",
-    "env",
-    "file",
-    "format",
-    "format_args",
-    "include_bytes",
-    "include_str",
-    "line",
-    "matches",
-    "module_path",
-    "option_env",
-    "panic",
-    "print",
-    "println",
-    "stringify",
-    "todo",
-    "unimplemented",
-    "unreachable",
-    "vec",
-    "write",
-    "writeln",
-];
-
-/// Attributes a pass-through wrapper may put on what it expands to.
-const PASS_THROUGH_ATTRIBUTES: &[&str] = &[
-    "allow",
-    "cfg",
-    "deny",
-    "doc",
-    "ignore",
-    "inline",
-    "must_use",
-    "should_panic",
-    "test",
-    "track_caller",
-    "warn",
-];
-
-/// Whether a `macro_rules!` body can only re-emit its input and invoke
-/// standard macros: no `macro_rules`, `macro`, `use`, `extern`, `mod` or
-/// `include` token, no invocation through a `$` metavariable or of a
-/// non-standard macro (whose expansion is unexamined), and no attribute
-/// outside a fixed inert set (a proc-macro attribute sees the tokens).
-/// Matcher tokens count too: `($name:ident !())` reads as an invocation of
-/// `ident` and refuses, which is what keeps `define!(assert_eq!())`
-/// ambiguous. Input re-emitted as is was scanned at the call site.
-fn passes_input_through(rules: &ast::MacroRules, trusted: &[&str]) -> bool {
-    let Some(tree) = rules.token_tree() else {
-        return false;
-    };
-    let tokens: Vec<_> = tree
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| !token.kind().is_trivia())
-        .collect();
-    let text = |offset: usize| tokens.get(offset).map(|token| token.text());
-    let allowed =
-        |name: &str| trusted.contains(&name) || PASS_THROUGH_STANDARD_MACROS.contains(&name);
-    (0..tokens.len()).all(|position| {
-        let word = tokens[position].text().trim_start_matches("r#");
-        if matches!(
-            word,
-            "macro_rules" | "macro" | "use" | "extern" | "mod" | "include"
-        ) {
-            return false;
-        }
-        if word == "!" && matches!(text(position + 1), Some("(" | "[" | "{")) {
-            let invoked = position.checked_sub(1).and_then(text);
-            let metavariable = position.checked_sub(2).and_then(text) == Some("$");
-            return !metavariable
-                && invoked.is_some_and(|name| allowed(name.trim_start_matches("r#")));
-        }
-        if word == "#" {
-            let mut next = position + 1;
-            if text(next) == Some("!") {
-                next += 1;
-            }
-            if text(next) == Some("[") {
-                return text(next + 1).is_some_and(|name| {
-                    PASS_THROUGH_ATTRIBUTES.contains(&name.trim_start_matches("r#"))
-                });
-            }
-        }
-        true
-    })
+    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), &|_, _| false)
+        .into_iter()
+        .filter(|(_, site)| site.scope.is_none())
+        .collect()
 }
 
 fn macro_binding_ambiguities(
@@ -407,7 +233,6 @@ fn macro_binding_ambiguities(
     trusted: &[&str],
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
-    facts: &mut WrapperFacts,
 ) -> Vec<(String, MacroBindingSite)> {
     let mut ambiguous = Vec::new();
     if !source.contains("macro")
@@ -433,7 +258,6 @@ fn macro_binding_ambiguities(
             .collect()
     };
     let Some(parse) = parse_clean_source_file(source) else {
-        facts.opaque = true;
         return all(0, MacroBindingKind::Unparsed);
     };
     // Built only when a binding site is found, which most files lack.
@@ -479,13 +303,6 @@ fn macro_binding_ambiguities(
         if let Some(name) = definition {
             let name = name.text().to_string();
             let name = name.trim_start_matches("r#");
-            if ast::MacroRules::cast(node.clone())
-                .is_some_and(|rules| passes_input_through(&rules, trusted))
-            {
-                facts.pass_through.insert(name.to_string());
-            } else {
-                facts.hazards.insert(name.to_string());
-            }
             let admitted_declaration = allowed_empty.contains(name)
                 && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
             if trusted.contains(&name) && !admitted_declaration {
@@ -540,7 +357,6 @@ fn macro_binding_ambiguities(
                         .syntax()
                         .parent()
                         .map_or_else(|| line_of(&node), |parent| item_line(&parent, source));
-                    facts.opaque = true;
                     return all(line, MacroBindingKind::MacroUse(item));
                 }
             }
@@ -556,7 +372,6 @@ fn macro_binding_ambiguities(
                 .filter_map(|element| element.into_token())
                 .filter(|token| !token.kind().is_trivia())
                 .collect();
-            let wrapper = path.syntax().text().to_string();
             // An attribute in the arguments is only tokens to the parser,
             // but the expansion may apply it to an item (`wrap! {
             // #[no_implicit_prelude] mod tests; }`).
@@ -564,39 +379,27 @@ fn macro_binding_ambiguities(
                 let word = token.text().trim_start_matches("r#");
                 matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
             }) {
-                facts.opaque = true;
                 return all(
                     line_of(&node),
                     MacroBindingKind::ArgumentAttribute {
-                        wrapper,
+                        wrapper: path.syntax().text().to_string(),
                         attribute: attribute.to_string(),
                     },
                 );
             }
-            let single = path.qualifier().is_none()
-                && path
-                    .segment()
-                    .and_then(|segment| segment.name_ref())
-                    .is_some();
-            for (position, token) in tokens.iter().enumerate() {
+            // Every mention counts, a plain `assert_eq!(..)` included: to the
+            // macro it is only tokens, and `define!(assert_eq!(mod tests;))`
+            // can emit `macro_rules! assert_eq` together with the module whose
+            // tests then use it.
+            for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
-                    // A plain invocation binds nothing only through a
-                    // wrapper whose every definition passes it through;
-                    // the caller decides that from the workspace's facts.
-                    let kind = if single && is_plain_invocation(&tokens, position) {
-                        MacroBindingKind::WrapperArgument(
-                            wrapper.trim_start_matches("r#").to_string(),
-                        )
-                    } else {
-                        MacroBindingKind::MacroArgument(wrapper.clone())
-                    };
                     let line = line_of(&node);
                     ambiguous.push((
                         name.to_string(),
                         MacroBindingSite {
                             line,
-                            kind,
+                            kind: MacroBindingKind::MacroArgument(path.syntax().text().to_string()),
                             scope: None,
                         },
                     ));
@@ -605,7 +408,6 @@ fn macro_binding_ambiguities(
         }
         if let Some(import) = ast::Use::cast(node.clone()) {
             let Some(tree) = import.use_tree() else {
-                facts.opaque = true;
                 return all(line_of(&node), MacroBindingKind::Unparsed);
             };
             let root = tree
@@ -625,7 +427,6 @@ fn macro_binding_ambiguities(
                     .any(|package| package.replace('-', "_") == root);
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some() && !own {
-                    facts.opaque = true;
                     let path = import.syntax().text().to_string();
                     let Some(scope) = scope_of(import_scope(&import)) else {
                         return all(line_of(&node), MacroBindingKind::ForeignGlob(path));
@@ -655,11 +456,6 @@ fn macro_binding_ambiguities(
                 };
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
-                    // A foreign import or any rename may put a different
-                    // macro behind a wrapper's name.
-                    if !own || item.rename().is_some() {
-                        facts.hazards.insert(name.to_string());
-                    }
                     if trusted.contains(&name)
                         && (!is_drop_in_assertion(&item, name) || drop_in_shadowed(root, external))
                     {
@@ -782,26 +578,6 @@ fn import_scope(import: &ast::Use) -> Option<SyntaxNode> {
         return None;
     }
     Some(scope)
-}
-
-/// Whether the trusted name at `position` in another macro's arguments is
-/// only invoked there (`assert_eq!(..)`), as in a test-wrapping macro such as
-/// `rgtest!(name, |dir, cmd| { assert_eq!(..) })`. A name after
-/// `macro_rules!`/`macro`, or a `$` metavariable, can name a definition the
-/// expansion creates, so it stays ambiguous. Even a plain invocation is a
-/// token pattern to the wrapper, so it binds nothing only through a
-/// pass-through wrapper ([`WrapperFacts`]).
-fn is_plain_invocation(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
-    let text = |offset: usize| tokens.get(offset).map(|token| token.text());
-    let defines = position
-        .checked_sub(1)
-        .is_some_and(|before| matches!(text(before), Some("macro" | "$")))
-        || position.checked_sub(2).is_some_and(|before| {
-            text(before) == Some("macro_rules") && text(before + 1) == Some("!")
-        });
-    !defines
-        && text(position + 1) == Some("!")
-        && matches!(text(position + 2), Some("(" | "[" | "{"))
 }
 
 /// The item's text without attributes, doc comments or body: `mod name;` or
