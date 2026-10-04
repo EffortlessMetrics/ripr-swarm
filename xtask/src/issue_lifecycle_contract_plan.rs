@@ -1292,7 +1292,12 @@ mod tests {
                 "the rejected-campaign control must land on one_pr with its rationale".to_string(),
             );
         }
-        if !campaign_rejected.row.planning.shape_rationale.contains("rejected") {
+        if !campaign_rejected
+            .row
+            .planning
+            .shape_rationale
+            .contains("rejected")
+        {
             return Err(
                 "the rejected-campaign control must record the rejection rationale".to_string(),
             );
@@ -1303,7 +1308,12 @@ mod tests {
                 "the rejected-one-PR control must land on campaign with its rationale".to_string(),
             );
         }
-        if !one_pr_rejected.row.planning.shape_rationale.contains("rejected") {
+        if !one_pr_rejected
+            .row
+            .planning
+            .shape_rationale
+            .contains("rejected")
+        {
             return Err(
                 "the rejected-one-PR control must record the rejection rationale".to_string(),
             );
