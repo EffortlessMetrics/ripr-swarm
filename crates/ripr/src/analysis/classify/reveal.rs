@@ -15,6 +15,10 @@ use crate::domain::*;
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// RIPR-SPEC-0094 Part D: whether an effect observer can carry the state
+    /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
+    /// only for effect families after `effect_observer_confirms`.
+    pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
 }
 
 #[cfg(test)]
@@ -32,6 +36,7 @@ fn reveal_evidence(
         &ReturnOracleAdmission {
             owner_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
+            effect_state_carried: &|_, _| true,
         },
     );
     (observe, discriminate, related)
@@ -460,7 +465,8 @@ fn analyze_related_assertions(
                     || (direct_collection_mutation_receiver(&probe.expression).is_none()
                         && (has_token_match
                             || (is_effect_family(&probe.family)
-                                && effect_observer_confirms(assertion))));
+                                && effect_observer_confirms(assertion)
+                                && (return_admission.effect_state_carried)(test, assertion))));
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
                     // references the changed sub-expression. For value families
@@ -2695,6 +2701,7 @@ mod tests {
                 &ReturnOracleAdmission {
                     owner_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
+                    effect_state_carried: &|_, _| true,
                 },
             )
             .1
@@ -3041,6 +3048,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
         assert_eq!(total, 9);
@@ -3105,6 +3113,7 @@ mod tests {
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
         assert_eq!(total, 9, "every examined test is counted");
@@ -4622,6 +4631,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
 
@@ -4671,6 +4681,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
         assert_eq!(
@@ -4691,6 +4702,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
         assert_eq!(
@@ -4730,6 +4742,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
         assert_eq!(
@@ -4771,6 +4784,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
 
@@ -4937,6 +4951,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
         assert_eq!(
@@ -4960,6 +4975,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
         assert_eq!(
@@ -5546,6 +5562,7 @@ return Err(\"typed pin\".into());
             &ReturnOracleAdmission {
                 owner_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
+                effect_state_carried: &|_, _| true,
             },
         );
 
