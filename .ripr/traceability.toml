@@ -12074,6 +12074,8 @@ tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_direct_strong_row_without_sink_alignment_is_observation_unconfirmed",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_rows_without_an_established_defect_keep_no_miss",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_unconfirmed_observation_stays_on_its_own_row",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_advisory_row_with_strong_oracle_keeps_no_miss",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_actionability_blocked_packet_explains_no_row",
 ]
 code = [
   "crates/ripr/src/domain/probe.rs",

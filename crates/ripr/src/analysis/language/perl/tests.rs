@@ -4156,3 +4156,88 @@ fn perl_unconfirmed_observation_stays_on_its_own_row() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// An advisory row is never explained, even when its relation is reachable
+/// and links a strong exact oracle on the changed owner in its own test.
+#[test]
+fn perl_advisory_row_with_strong_oracle_keeps_no_miss() -> Result<(), String> {
+    let fixture = include_str!(
+        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
+    );
+    let strong_helper_oracle = r#""oracles": [
+    {
+      "oracle_id": "oracle:t/app_helper.t:8:is",
+      "test_id": "test:t/app_helper.t:helper_indirection",
+      "kind": "exact_return_assertion",
+      "strength": "strong_exact",
+      "target_owner_id": "perl:lib/My/App.pm::My::App::discount",
+      "expression": "is(My::App::discount(100), 10, 'helper discount')",
+      "range": {"start_line": 8, "start_column": 1, "end_line": 8, "end_column": 52},
+      "confidence": "medium",
+      "provenance_refs": ["prov:relation:return"]
+    },"#;
+    let reachable_proximity = r#""relations": [
+    {
+      "relation_id": "relation:return:helper-proximity",
+      "change_id": "change:lib/My/App.pm:8:return",
+      "owner_id": "perl:lib/My/App.pm::My::App::discount",
+      "test_id": "test:t/app_helper.t:helper_indirection",
+      "oracle_id": "oracle:t/app_helper.t:8:is",
+      "relation_kind": "file_proximity",
+      "reachability_hint": "reachable",
+      "confidence": "medium",
+      "provenance_refs": [
+        "prov:relation:return"
+      ]
+    },"#;
+    let packet = fixture
+        .replacen("\"oracles\": [", strong_helper_oracle, 1)
+        .replacen("\"relations\": [", reachable_proximity, 1);
+    let findings = findings_from_packet(&packet)?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.family == crate::domain::ProbeFamily::ReturnValue)
+        .ok_or("the return change should project a finding")?;
+    assert_eq!(finding.class, crate::domain::ExposureClass::WeaklyExposed);
+    let mut rows = finding
+        .related_tests
+        .iter()
+        .map(|test| (test.name.as_str(), test.miss))
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|(name, _)| *name);
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "discount_smoke",
+                Some(RelatedTestMiss::ObservationUnconfirmed)
+            ),
+            ("helper_indirection", None),
+        ]
+    );
+    Ok(())
+}
+
+/// A limitation that blocks actionability but not the class keeps the
+/// finding weakly exposed and explains no row.
+#[test]
+fn perl_actionability_blocked_packet_explains_no_row() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let packet = EXACT_RETURN_PACKET.replace(
+        "\"limitations\": [],",
+        r#""limitations": [
+    {
+      "limitation_id": "limitation:missing-runner",
+      "kind": "missing_test_runner",
+      "message": "no test runner was found",
+      "evidence_refs": []
+    }
+  ],"#,
+    );
+    assert_ne!(packet, EXACT_RETURN_PACKET);
+    assert_eq!(
+        first_finding_misses(&packet)?,
+        (ExposureClass::WeaklyExposed, vec![None])
+    );
+    Ok(())
+}

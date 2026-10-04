@@ -2861,6 +2861,22 @@ struct SinkAlignedObservation {
     oracle_shape: String,
 }
 
+/// Whether this row's own evidence earned the finding's weak exposure (a
+/// direct, reachable owner call whose linked oracle is strong, exact, in the
+/// same test and targets the changed owner) while the shared sink-alignment
+/// check establishes no alignment for it. Unequal sink text is only
+/// unconfirmed, never proof that the oracle observes another sink (#5498).
+fn perl_row_observation_unconfirmed(
+    packet: &PerlFactPacket,
+    change: &ChangeFact,
+    ev: &PerlRelatedTestEvidence,
+) -> bool {
+    ev.relation_kind == RelationKind::DirectOwnerCall
+        && ev.reachability_hint == ReachabilityHint::Reachable
+        && ev.class == ExposureClass::WeaklyExposed
+        && sink_aligned_observation(std::slice::from_ref(ev), change, packet).is_none()
+}
+
 /// H2 (Campaign 31): determine whether a related test's oracle observes the
 /// *specific changed sink*, not merely the same owner.
 ///
@@ -2879,22 +2895,6 @@ struct SinkAlignedObservation {
 /// one is a recognized trivial aliasing of the other (e.g. the observable is
 /// `return <expr>` and the sink is `<expr>`). Any uncertainty fails closed to
 /// `WeaklyExposed` (caller's responsibility — this returns `None`).
-/// Whether this row's own evidence earned the finding's weak exposure (a
-/// direct, reachable owner call whose linked oracle is strong, exact, in the
-/// same test and targets the changed owner) while the shared sink-alignment
-/// check establishes no alignment for it. Unequal sink text is only
-/// unconfirmed, never proof that the oracle observes another sink (#5498).
-fn perl_row_observation_unconfirmed(
-    packet: &PerlFactPacket,
-    change: &ChangeFact,
-    ev: &PerlRelatedTestEvidence,
-) -> bool {
-    ev.relation_kind == RelationKind::DirectOwnerCall
-        && ev.reachability_hint == ReachabilityHint::Reachable
-        && ev.class == ExposureClass::WeaklyExposed
-        && sink_aligned_observation(std::slice::from_ref(ev), change, packet).is_none()
-}
-
 fn sink_aligned_observation(
     related_evidence: &[PerlRelatedTestEvidence],
     change: &ChangeFact,
