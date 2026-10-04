@@ -11,6 +11,7 @@ Advanced and compatibility workflows:
   brief      Rank a working-set brief for the agent-active router.
   packet     Expand one visible seam into the existing agent seam packet JSON.
   card       Hand off one visible seam as the compact default repair card.
+  stub       Write a compiling Rust test stub for one gap, ready to fill and run.
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
              Execute one validated producer-owned direct verify route.
@@ -22,6 +23,9 @@ Ordinary repair path:
   ripr agent repair --seam-id ID --phase before
   # edit one focused test outside RIPR
   ripr agent repair --attempt ID --phase after
+
+From a `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
+the finding prints) gives a ready-to-run test for that gap in one step.
 
 Seam IDs come from `ripr pilot --root .` (or `ripr agent status`), which
 prints the exact `--phase before` command. The `probe:...` finding IDs that
@@ -126,6 +130,30 @@ failures (an unreadable config or a failed probe) stay exit `2` with human
 prose only, like the sibling verify and repair commands.
 "#;
 
+pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run.
+
+Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE) [--write] [--json]
+
+Options:
+  --root PATH      Workspace root. Defaults to current directory.
+  --seam-id ID     Select one visible seam by ID.
+  --at FILE:LINE   Select the gap at a `ripr check` finding location.
+  --write          Apply the stub: insert it into the owner file's inline
+                   `#[cfg(test)]` module (or a new one), or create the
+                   proposed `tests/` file. Refuses when the file changed
+                   since the stub was computed or the new file exists.
+  --json           Emit one `rust_test_stub` JSON document (schema_version
+                   `0.1`) with the placement, test name, exact text, the
+                   `todo!()` fill-ins, derived inputs, and run command.
+
+The stub calls the changed function with its real receiver and parameters,
+fills a boundary input when the changed comparison names one, and stops at a
+labelled `todo!()` for the value the behavior should produce. It compiles and
+fails until that value is written; ripr never invents the expected value.
+Side-effect and call-presence gaps, async, unsafe, and generic owners are
+refused with a named reason (exit `3`); stdout stays empty on a refusal.
+"#;
+
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
 
 Usage: ripr agent verify [--root PATH] --before PATH --after PATH --json
@@ -208,13 +236,22 @@ change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact state and the next command to run.
 
-Usage: ripr agent status [--root PATH] [--store PATH] [--json] [--out PATH]
+Usage: ripr agent status [--root PATH] [--store PATH] [--attempt ID] [--json] [--out PATH]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
   --store PATH     Explicit repair-attempt store, resolved against --root.
                    Defaults to `target/ripr/repair-attempts`. Missing explicit
                    stores do not fall back to the default.
+  --attempt ID     Select exactly one repair attempt by ID and report its
+                   typed state, currentness posture, and one exact next or
+                   recovery action. Without it, status lists every attempt in
+                   the store and selects a next command only when that choice
+                   is unambiguous; several active attempts are never resolved
+                   by newest, first, same seam, or most recently modified. A
+                   malformed or unbound attempt is reported as the typed
+                   corrupt_or_unavailable result, never as another attempt's
+                   state.
   --json           Emit the machine-readable status report. Human Markdown is the default.
   --out PATH       Must resolve to the default workflow directory
                    (target/ripr/workflow); any other path fails closed
@@ -224,8 +261,9 @@ The status command reads existing agent-loop artifacts under target/ripr only
 and reports which before snapshot, after snapshot, brief, packet, verify, and
 receipt files are present or missing. It may recover a seam_id from those
 artifacts and emits the next command to run for missing inputs. It remains
-advisory and static; it does not run analysis, mutation testing, generate
-tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
+advisory, static, and read-only; it does not run analysis, mutation testing,
+generate tests, edit files, finish or restart repair attempts, change cache
+behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_REVIEW_SUMMARY_HELP: &str = r#"Summarize agent-loop artifacts into a compact review packet.
 
