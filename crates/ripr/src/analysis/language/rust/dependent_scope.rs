@@ -856,12 +856,25 @@ impl NarrowedScope {
     }
 
     fn over(&self, reached: &BTreeSet<PathBuf>) -> Closure {
-        Closure::Over(self.main_files.len() + reached.len())
+        Closure::Over(self.selected_count(reached.iter()))
+    }
+
+    /// Files the widened index would load for the main files plus
+    /// `reached`, counting the module parents it adds (#5450).
+    fn selected_count<'a>(&self, reached: impl Iterator<Item = &'a PathBuf>) -> usize {
+        let selected = self
+            .main_files
+            .iter()
+            .cloned()
+            .chain(reached.cloned())
+            .collect::<Vec<_>>();
+        crate::analysis::workspace::with_module_context_files(&self.all_files, selected).len()
     }
 
     /// Index the withheld files not yet admitted that spell one of `names`,
     /// with the `macro_rules!` names they define. `None` when they would
-    /// take the main files plus the closure past `limit`: they are counted
+    /// take the main files plus the closure, with the module parents the
+    /// widened index loads, past `limit`: they are counted
     /// into `admitted_now` but never parsed (#5450).
     fn admit_spelling(
         &mut self,
@@ -888,7 +901,7 @@ impl NarrowedScope {
         if new_files.is_empty() {
             return Ok(Some((None, macros)));
         }
-        if self.main_files.len() + admitted_now.len() + new_files.len() > limit {
+        if self.selected_count(admitted_now.iter().chain(&new_files)) > limit {
             admitted_now.extend(new_files);
             return Ok(None);
         }

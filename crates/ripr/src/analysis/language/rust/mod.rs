@@ -3245,6 +3245,51 @@ mod tests {
         Ok(())
     }
 
+    /// #5450: the admission count includes the module parents the widened
+    /// index loads. `c`'s caller sits in `c/src/hop.rs`, whose parent
+    /// `c/src/lib.rs` spells no caller name, so only the module context
+    /// brings it in. A limit equal to the raw closure is one short of the
+    /// loaded files: the crossing level must stop before it is parsed.
+    #[test]
+    fn dependent_scope_over_limit_counts_module_parents() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-over-limit-module-parent")?;
+        write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
+        write(&root.join("c/src/lib.rs"), "pub mod hop;\n")?;
+        write(
+            &root.join("c/src/hop.rs"),
+            "pub fn forward(flag: bool) -> bool {\n    scope_b::relay(flag)\n}\n",
+        )?;
+        write(
+            &root.join("c/tests/forward_tests.rs"),
+            "#[test]\nfn forward_holds() {\n    assert!(scope_c::hop::forward(true));\n}\n",
+        )?;
+        let unsearched = "did not search dependent packages";
+
+        let searched = dependent_scope::with_forced_reach_limit(100, || {
+            scoped_findings(&root, DependentScopeMode::NameAdmitted)
+        })?;
+        let full_parses = dependent_scope::observed_reach_parses();
+        let reach = slash_paths(&searched.2);
+        assert!(
+            !searched.0.contains(unsearched)
+                && reach.contains(&"c/src/hop.rs".to_string())
+                && !reach.contains(&"c/src/lib.rs".to_string()),
+            "fixture premise: the closure reaches hop.rs but not its parent: {reach:?}"
+        );
+        let main_files = searched.1.ok_or("the named mode must narrow")?.len();
+        let raw = dependent_scope::with_forced_reach_limit(main_files + full_parses, || {
+            scoped_findings(&root, DependentScopeMode::NameAdmitted)
+        })?;
+        let partial = dependent_scope::observed_reach_parses();
+        assert!(
+            raw.0.contains(unsearched) && partial < full_parses,
+            "the module parent must count before the crossing level is parsed: \
+             {partial} of {full_parses}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn open_files_already_selected_count_once() {
         use std::collections::BTreeSet;
