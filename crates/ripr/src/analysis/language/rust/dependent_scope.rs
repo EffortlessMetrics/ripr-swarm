@@ -174,6 +174,11 @@ pub(super) struct AdmissionQuery {
     /// Receiver types whose one inherent constructor pins a test binding:
     /// another `impl <type>` block changes the count.
     impl_types: BTreeSet<String>,
+    /// Self types of the `impl <trait> for` blocks seen so far for
+    /// `implemented_traits`. Each is a default-method receiver once
+    /// declared, and its inherent constructors pin bindings, so a file that
+    /// declares one or opens an `impl` block for it joins the index.
+    trait_receivers: BTreeSet<String>,
     /// Local empty-macro names the changed packages declare: a file that
     /// spells one can make that macro ambiguous for the owner pin.
     empty_macro_names: BTreeSet<String>,
@@ -223,7 +228,28 @@ impl AdmissionQuery {
                 query.insert_owner(owner, index);
             }
         }
+        for facts in index.files().values() {
+            query.note_trait_receivers(&facts.source);
+        }
         query
+    }
+
+    /// Record the self types `source` implements an owner's trait for.
+    fn note_trait_receivers(&mut self, source: &str) {
+        for trait_name in &self.implemented_traits {
+            self.trait_receivers
+                .extend(classify::trait_impl_self_type_names(source, trait_name));
+        }
+    }
+
+    /// The admission test for files that declare or open an `impl` block
+    /// for a trait receiver.
+    fn trait_receiver_query(&self) -> Option<Self> {
+        (!self.trait_receivers.is_empty()).then(|| Self {
+            declared_types: self.trait_receivers.clone(),
+            impl_types: self.trait_receivers.clone(),
+            ..Self::default()
+        })
     }
 
     fn insert_owner(&mut self, owner: &FunctionSummary, index: &RustIndex) {
@@ -508,6 +534,7 @@ pub(super) fn admit_dependents(
                     .empty_macro_names
                     .extend(crate::analysis::syntax::local_empty_macro_names(&source));
             }
+            query.note_trait_receivers(&source);
             admitted.push(file.clone());
         }
     }
@@ -525,6 +552,9 @@ pub(super) fn admit_dependents(
             .iter()
             .any(|registration| registration.target == *file);
         if !core_only && (harness_target || query.admits(&bytes)) {
+            if !query.implemented_traits.is_empty() {
+                query.note_trait_receivers(&String::from_utf8_lossy(&bytes));
+            }
             admitted.push(file.clone());
         } else {
             let id = u32::try_from(withheld.len())
@@ -534,6 +564,21 @@ pub(super) fn admit_dependents(
             if !bindings_saturated {
                 bindings_saturated = withheld_macro_bindings
                     .absorb(&String::from_utf8_lossy(&bytes), &query.package_names);
+            }
+        }
+    }
+    // A trait receiver's declaration or inherent constructor can sit in a
+    // file that never spells the trait. Every file that implements the
+    // trait spells it and is admitted above, so the receivers are complete
+    // here and one pass over the withheld files that spell them suffices.
+    if let Some(receivers) = query.trait_receiver_query().filter(|_| !core_only) {
+        for id in tokens.spelling(&receivers.declared_types) {
+            cancellation::checkpoint()?;
+            let Some(file) = withheld.get(id as usize) else {
+                continue;
+            };
+            if read_source(root, file)?.is_some_and(|bytes| receivers.admits(&bytes)) {
+                admitted.push(file.clone());
             }
         }
     }

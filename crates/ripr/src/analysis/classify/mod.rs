@@ -34,6 +34,7 @@ pub(in crate::analysis) use helper_transfer::resolve_chain;
 pub(in crate::analysis) use infection::infection_evidence;
 pub(in crate::analysis) use owner_pin::{
     OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, pin_scope_needs,
+    trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{

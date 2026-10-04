@@ -185,6 +185,12 @@ fn repo_index_file_limit_from_env(
 /// (`--base`/`--diff`) or raising the limit. A "narrower mode" is NOT
 /// offered — repo-scoped analysis does not select files by mode, so that
 /// retry would hit the same guard.
+/// How many files the full selection indexes once the admitted open files
+/// join it: an open file the selection already holds counts once.
+fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> usize {
+    selected.len() + open.iter().filter(|file| !selected.contains(file)).count()
+}
+
 fn enforce_repo_index_file_limit(file_count: usize, scope_limit: usize) -> Result<(), String> {
     if file_count <= scope_limit {
         return Ok(());
@@ -1349,10 +1355,18 @@ impl RustAdapter {
         let mut dependent_scope = None;
         let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
         let scope_limit = diff_index_file_limit()?;
+        // Open saved Rust documents are index-only inputs. They do not seed
+        // changed-file probes, package expansion, or findings. Admit only
+        // discovered, analyzable files, then apply the ordinary index budget.
+        let open_index_files = if options.open_rust_index_paths.is_empty() {
+            BTreeSet::new()
+        } else {
+            tracked_open_rust_index_paths(options, &analyzable_rust_files, scope_limit)?
+        };
         if !dependent_package_roots.is_empty()
             && index_files.len() < analyzable_rust_files.len()
             && dependent_scope::DependentScopeMode::from_env()?.narrows(
-                index_files.len() + options.open_rust_index_paths.len(),
+                selection_with_open_files(&index_files, &open_index_files),
                 scope_limit,
             )
         {
@@ -1401,15 +1415,8 @@ impl RustAdapter {
                 }
             }
         }
-        // Open saved Rust documents are index-only inputs. They do not seed
-        // changed-file probes, package expansion, or findings. Admit only
-        // discovered, analyzable files, then apply the ordinary index budget.
-        if !options.open_rust_index_paths.is_empty() {
-            index_files.extend(tracked_open_rust_index_paths(
-                options,
-                &analyzable_rust_files,
-                scope_limit,
-            )?);
+        if !open_index_files.is_empty() {
+            index_files.extend(open_index_files);
             index_files.sort();
             index_files.dedup();
         }
@@ -2155,8 +2162,8 @@ mod tests {
         limitations_for_absent_changed_files, macro_reach_limit_kind,
         partial_diff_budgets_from_env, partition_canonical_form,
         replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
-        select_partial_diff_partition, select_partial_diff_partition_with_identity, sha256_hex,
-        transitive_reach_limit_kind,
+        select_partial_diff_partition, select_partial_diff_partition_with_identity,
+        selection_with_open_files, sha256_hex, transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -2768,6 +2775,12 @@ mod tests {
     /// witness runs through two dependent packages. `e` depends on `a` and
     /// carries `e_source`. `d` depends on nothing, so the full selection
     /// stays short of the workspace and narrowing applies.
+    const GAUGE_TRAIT_SOURCE: &str = "pub trait Gauge {\n    fn base(&self) -> usize;\n\n    \
+                                      fn tally(&self) -> usize {\n        self.base() + 1\n    }\n}\n\n\
+                                      pub struct Meter;\n\nimpl Meter {\n    pub fn new() -> Self {\n        \
+                                      Meter\n    }\n}\n\nimpl Gauge for Meter {\n    \
+                                      fn base(&self) -> usize {\n        0\n    }\n}\n";
+
     fn write_dependent_scope_workspace(root: &Path, e_source: &str) -> Result<(), String> {
         let manifest = |name: &str, deps: &[&str]| {
             let mut text = format!(
@@ -3018,6 +3031,108 @@ mod tests {
             "name-admitted findings must equal the full closure's"
         );
         Ok(())
+    }
+
+    /// #5320: a default trait method's receivers come from every
+    /// `impl <trait> for` block, and a test binding `let x = T::new()` pins
+    /// `T` only when exactly one inherent `T::new` exists (see
+    /// `a_trait_receiver_pins_only_through_its_one_constructor`). `c`
+    /// declares a second `Meter::new` without spelling the trait or the
+    /// owner, so only the trait receiver `Meter` admits it.
+    #[test]
+    fn dependent_scope_admits_trait_receiver_constructors() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let write_workspace = |root: &Path| -> Result<(), String> {
+            let manifest = |name: &str, dep: Option<&str>| {
+                let mut text = format!(
+                    "[package]\nname = \"scope_{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+                );
+                if let Some(dep) = dep {
+                    text.push_str(&format!(
+                        "\n[dependencies]\nscope_{dep} = {{ path = \"../{dep}\" }}\n"
+                    ));
+                }
+                text
+            };
+            write(
+                &root.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"a\", \"b\", \"c\", \"e\"]\nresolver = \"2\"\n",
+            )?;
+            write(&root.join("a/Cargo.toml"), &manifest("a", None))?;
+            write(&root.join("b/Cargo.toml"), &manifest("b", Some("a")))?;
+            write(&root.join("c/Cargo.toml"), &manifest("c", Some("a")))?;
+            write(&root.join("e/Cargo.toml"), &manifest("e", None))?;
+            write(&root.join("e/src/lib.rs"), UNRELATED_E_SOURCE)?;
+            write(&root.join("a/src/lib.rs"), GAUGE_TRAIT_SOURCE)?;
+            write(
+                &root.join("b/src/lib.rs"),
+                "pub fn island() -> u8 {\n    2\n}\n",
+            )?;
+            write(
+                &root.join("a/tests/meter_tests.rs"),
+                "use scope_a::{Gauge, Meter};\n\n#[test]\nfn meter_tallies() {\n    \
+                 let meter = Meter::new();\n    assert_eq!(meter.tally(), 1);\n}\n",
+            )?;
+            write(
+                &root.join("c/src/lib.rs"),
+                "pub struct Meter;\n\nimpl Meter {\n    pub fn new() -> Self {\n        Meter\n    }\n}\n",
+            )
+        };
+        let diff = diff::parse_unified_diff(&format!(
+            "diff --git a/a/src/lib.rs b/a/src/lib.rs\nnew file mode 100644\n--- /dev/null\n\
+             +++ b/a/src/lib.rs\n@@ -0,0 +1,{} @@\n{}",
+            GAUGE_TRAIT_SOURCE.lines().count(),
+            GAUGE_TRAIT_SOURCE
+                .lines()
+                .map(|line| format!("+{line}\n"))
+                .collect::<String>()
+        ));
+        let run = |root: &Path, mode| {
+            dependent_scope::with_forced_mode(mode, || {
+                RustAdapter
+                    .analyze_diff(
+                        &diff_options(root.to_path_buf(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &diff,
+                    )
+                    .map(|result| {
+                        (
+                            format!("{:?}", result.findings),
+                            dependent_scope::observed_main_files(),
+                        )
+                    })
+            })
+        };
+
+        let root = temp_root("dependent-scope-trait-receiver")?;
+        write_workspace(&root)?;
+        let (full, _) = run(&root, DependentScopeMode::Full)?;
+        let (named, named_main) = run(&root, DependentScopeMode::NameAdmitted)?;
+        assert_eq!(
+            named, full,
+            "name-admitted findings must equal the full closure's"
+        );
+        let main = slash_paths(&named_main.ok_or("the named mode must narrow")?);
+        assert!(
+            main.contains(&"c/src/lib.rs".to_string()),
+            "the colliding constructor must be admitted: {main:?}"
+        );
+        assert!(
+            !main.contains(&"b/src/lib.rs".to_string()),
+            "a dependent file without the receiver stays withheld: {main:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn open_files_already_selected_count_once() {
+        use std::collections::BTreeSet;
+        let selected = [PathBuf::from("a/src/lib.rs"), PathBuf::from("b/src/lib.rs")];
+        let open = [PathBuf::from("b/src/lib.rs"), PathBuf::from("c/src/lib.rs")]
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(selection_with_open_files(&selected, &open), 3);
+        assert_eq!(selection_with_open_files(&selected, &BTreeSet::new()), 2);
     }
 
     /// #5320: the owner-pin macro-binding union spans every indexed file, so

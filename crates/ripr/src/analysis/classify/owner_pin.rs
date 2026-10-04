@@ -1096,24 +1096,8 @@ fn declared_receiver(self_ty: &str, index: &RustIndex) -> Option<ReceiverType> {
 fn trait_impl_receivers(trait_name: &str, index: &RustIndex) -> Vec<ReceiverType> {
     let mut receivers = Vec::new();
     for facts in index.files().values() {
-        if whole_word_offsets(&facts.source, trait_name).is_empty() {
-            continue;
-        }
-        let masked = mask_comments_and_strings(&facts.source);
-        for offset in whole_word_offsets(&masked, "impl") {
-            let Some(header_end) = masked[offset..].find(['{', ';']) else {
-                continue;
-            };
-            let header = collapse_whitespace(&masked[offset + "impl".len()..offset + header_end]);
-            let header = strip_leading_generics(&header);
-            let Some((trait_path, self_ty)) = header.split_once(" for ") else {
-                continue;
-            };
-            let self_ty = self_ty.split(" where ").next().unwrap_or(self_ty).trim();
-            if path_base_name(trait_path.trim()) != Some(trait_name) {
-                continue;
-            }
-            if let Some(receiver) = declared_receiver(self_ty, index)
+        for self_ty in trait_impl_self_types(&facts.source, trait_name) {
+            if let Some(receiver) = declared_receiver(&self_ty, index)
                 && !receivers.contains(&receiver)
             {
                 receivers.push(receiver);
@@ -1121,6 +1105,44 @@ fn trait_impl_receivers(trait_name: &str, index: &RustIndex) -> Vec<ReceiverType
         }
     }
     receivers
+}
+
+/// The base names of the self types `source` implements `trait_name` for:
+/// the names whose declarations and inherent constructors decide a default
+/// method's receivers (#5320).
+pub(in crate::analysis) fn trait_impl_self_type_names(
+    source: &str,
+    trait_name: &str,
+) -> BTreeSet<String> {
+    trait_impl_self_types(source, trait_name)
+        .iter()
+        .filter_map(|self_ty| path_base_name(self_ty).map(str::to_string))
+        .collect()
+}
+
+/// The self types of the `impl .. <trait_name> for <type>` headers in
+/// `source`.
+fn trait_impl_self_types(source: &str, trait_name: &str) -> Vec<String> {
+    let mut self_types = Vec::new();
+    if whole_word_offsets(source, trait_name).is_empty() {
+        return self_types;
+    }
+    let masked = mask_comments_and_strings(source);
+    for offset in whole_word_offsets(&masked, "impl") {
+        let Some(header_end) = masked[offset..].find(['{', ';']) else {
+            continue;
+        };
+        let header = collapse_whitespace(&masked[offset + "impl".len()..offset + header_end]);
+        let header = strip_leading_generics(&header);
+        let Some((trait_path, self_ty)) = header.split_once(" for ") else {
+            continue;
+        };
+        let self_ty = self_ty.split(" where ").next().unwrap_or(self_ty).trim();
+        if path_base_name(trait_path.trim()) == Some(trait_name) {
+            self_types.push(self_ty.to_string());
+        }
+    }
+    self_types
 }
 
 fn strip_leading_generics(header: &str) -> &str {
