@@ -391,11 +391,11 @@ pub(super) struct NarrowedScope {
     withheld: Vec<PathBuf>,
     /// The identifiers each withheld file spells, read once at admission.
     tokens: WithheldTokens,
-    /// Withheld files the reach closure has admitted so far.
-    reach_files: BTreeSet<PathBuf>,
-    /// Owners whose reach closure is already admitted.
-    reached_owners: BTreeSet<String>,
-    reach_index: Option<RustIndex>,
+    /// Each searched owner's caller closure: the withheld files it admits.
+    closures: std::collections::BTreeMap<String, BTreeSet<PathBuf>>,
+    /// The last widened index and the files it holds; owners whose closure
+    /// selects the same files reuse it.
+    reach_index: Option<(Vec<PathBuf>, RustIndex)>,
     test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Bytes the reach widening read, for the run's consumed sources.
     consumed: ConsumedRustSources,
@@ -570,8 +570,7 @@ pub(super) fn admit_dependents(
             main_files,
             withheld,
             tokens,
-            reach_files: BTreeSet::new(),
-            reached_owners: BTreeSet::new(),
+            closures: std::collections::BTreeMap::new(),
             reach_index: None,
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
@@ -613,39 +612,57 @@ impl NarrowedScope {
         if !self.widen {
             return Ok(ReachIndex::Main);
         }
-        if self.reached_owners.insert(owner.to_string()) {
-            self.extend_reach(owner, main_index)?;
+        if !self.closures.contains_key(owner) {
+            let closure = self.extend_reach(owner, main_index)?;
+            self.closures.insert(owner.to_string(), closure);
+            #[cfg(test)]
+            OBSERVED_REACH_FILES.with(|files| {
+                *files.borrow_mut() = self
+                    .closures
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+            });
         }
-        if self.reach_files.is_empty() {
+        let Some(closure) = self
+            .closures
+            .get(owner)
+            .filter(|closure| !closure.is_empty())
+        else {
             return Ok(ReachIndex::Main);
-        }
-        let total = self.main_files.len() + self.reach_files.len();
-        if total > limit {
+        };
+        // This owner's closure only: another owner's wider closure must not
+        // push this one over the limit, and the count includes the module
+        // parents the widened index loads.
+        let selected = self
+            .main_files
+            .iter()
+            .cloned()
+            .chain(closure.iter().cloned())
+            .collect::<Vec<_>>();
+        let files =
+            crate::analysis::workspace::with_module_context_files(&self.all_files, selected);
+        if files.len() > limit {
             return Ok(ReachIndex::OverLimit {
-                files: total,
+                files: files.len(),
                 limit,
             });
         }
-        if self.reach_index.is_none() {
-            let selected = self
-                .main_files
-                .iter()
-                .cloned()
-                .chain(self.reach_files.iter().cloned())
-                .collect::<Vec<_>>();
-            let files =
-                crate::analysis::workspace::with_module_context_files(&self.all_files, selected);
-            self.reach_index = Some(build_index(
-                &self.root,
-                &files,
-                &self.test_harnesses,
-                &mut self.consumed,
-            )?);
+        if self
+            .reach_index
+            .as_ref()
+            .is_none_or(|(indexed, _)| *indexed != files)
+        {
+            let index = build_index(&self.root, &files, &self.test_harnesses, &mut self.consumed)?;
+            self.reach_index = Some((files, index));
         }
         Ok(self
             .reach_index
             .as_ref()
-            .map_or(ReachIndex::Main, ReachIndex::Widened))
+            .map_or(ReachIndex::Main, |(_, index)| ReachIndex::Widened(index)))
     }
 
     /// The bytes the reach widening read.
@@ -653,7 +670,12 @@ impl NarrowedScope {
         self.consumed
     }
 
-    fn extend_reach(&mut self, owner: &str, main_index: &RustIndex) -> Result<(), String> {
+    /// The withheld files `owner`'s caller closure admits.
+    fn extend_reach(
+        &mut self,
+        owner: &str,
+        main_index: &RustIndex,
+    ) -> Result<BTreeSet<PathBuf>, String> {
         let mut admitted = Vec::new();
         let mut admitted_now = BTreeSet::new();
         let mut names = HashSet::from([owner.to_string()]);
@@ -704,15 +726,7 @@ impl NarrowedScope {
             let (index, _) = self.admit_spelling(&callers, &mut admitted_now)?;
             admitted.extend(index);
         }
-        if !admitted_now.is_empty() {
-            self.reach_files.extend(admitted_now);
-            self.reach_index = None;
-            #[cfg(test)]
-            OBSERVED_REACH_FILES.with(|files| {
-                *files.borrow_mut() = self.reach_files.iter().cloned().collect();
-            });
-        }
-        Ok(())
+        Ok(admitted_now)
     }
 
     /// Index the withheld files not yet admitted that spell one of `names`,
@@ -728,7 +742,9 @@ impl NarrowedScope {
             let Some(file) = self.withheld.get(id as usize) else {
                 continue;
             };
-            if self.reach_files.contains(file) || admitted_now.contains(file) {
+            // A file an earlier owner's closure admitted is parsed again
+            // here (a cache hit): its callers belong to this closure too.
+            if admitted_now.contains(file) {
                 continue;
             }
             if let Some(defined) = self.tokens.macros.get(id as usize) {

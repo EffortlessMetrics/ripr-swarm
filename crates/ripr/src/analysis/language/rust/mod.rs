@@ -2936,6 +2936,90 @@ mod tests {
         Ok(())
     }
 
+    /// #5320: each owner's reach closure takes caller facts from every file
+    /// it reaches, including files an earlier owner's closure admitted. Here
+    /// `alpha`'s closure admits `c/src/lib.rs` first; `beta`'s witness runs
+    /// through `hub_beta` in that same file to the test in `d`.
+    #[test]
+    fn dependent_scope_reach_closures_are_per_owner() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("dependent-scope-per-owner")?;
+        let manifest = |name: &str, dep: Option<&str>| {
+            let mut text = format!(
+                "[package]\nname = \"scope_{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+            );
+            if let Some(dep) = dep {
+                text.push_str(&format!(
+                    "\n[dependencies]\nscope_{dep} = {{ path = \"../{dep}\" }}\n"
+                ));
+            }
+            text
+        };
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\", \"b\", \"c\", \"d\", \"e\"]\nresolver = \"2\"\n",
+        )?;
+        // `e` does not depend on `a`, so the selection is not the whole
+        // workspace and narrowing applies.
+        write(&root.join("e/Cargo.toml"), &manifest("e", None))?;
+        write(&root.join("e/src/lib.rs"), UNRELATED_E_SOURCE)?;
+        write(&root.join("a/Cargo.toml"), &manifest("a", None))?;
+        write(&root.join("b/Cargo.toml"), &manifest("b", Some("a")))?;
+        write(&root.join("c/Cargo.toml"), &manifest("c", Some("b")))?;
+        write(&root.join("d/Cargo.toml"), &manifest("d", Some("c")))?;
+        let a_source = "pub fn alpha(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n\n\
+                        pub fn beta(flag: bool) -> bool {\n    if flag { false } else { true }\n}\n";
+        write(&root.join("a/src/lib.rs"), a_source)?;
+        write(
+            &root.join("b/src/lib.rs"),
+            "pub fn relay_alpha(flag: bool) -> bool {\n    scope_a::alpha(flag)\n}\n\n\
+             pub fn relay_beta(flag: bool) -> bool {\n    scope_a::beta(flag)\n}\n",
+        )?;
+        write(
+            &root.join("c/src/lib.rs"),
+            "pub fn hub(flag: bool) -> bool {\n    scope_b::relay_alpha(flag)\n}\n\n\
+             pub fn hub_beta(flag: bool) -> bool {\n    scope_b::relay_beta(flag)\n}\n",
+        )?;
+        write(
+            &root.join("d/tests/hub_tests.rs"),
+            "#[test]\nfn hub_beta_holds() {\n    assert!(scope_c::hub_beta(true) || true);\n}\n",
+        )?;
+        write(
+            &root.join("d/src/lib.rs"),
+            "pub fn island() -> u8 {\n    2\n}\n",
+        )?;
+        let diff = diff::parse_unified_diff(&format!(
+            "diff --git a/a/src/lib.rs b/a/src/lib.rs\nnew file mode 100644\n--- /dev/null\n\
+             +++ b/a/src/lib.rs\n@@ -0,0 +1,7 @@\n{}",
+            a_source
+                .lines()
+                .map(|line| format!("+{line}\n"))
+                .collect::<String>()
+        ));
+        let run = |mode| {
+            dependent_scope::with_forced_mode(mode, || {
+                RustAdapter
+                    .analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &diff,
+                    )
+                    .map(|result| format!("{:?}", result.findings))
+            })
+        };
+        let full = run(DependentScopeMode::Full)?;
+        assert!(
+            full.contains("hub_beta_holds"),
+            "fixture premise: the full index names the beta witness: {full}"
+        );
+        let named = run(DependentScopeMode::NameAdmitted)?;
+        assert_eq!(
+            named, full,
+            "name-admitted findings must equal the full closure's"
+        );
+        Ok(())
+    }
+
     /// #5320: the owner-pin macro-binding union spans every indexed file, so
     /// a dependent file's foreign glob import makes `assert_eq!` ambiguous
     /// for the changed package's tests too. The narrowed scope withholds that
