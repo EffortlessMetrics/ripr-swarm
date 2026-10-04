@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 132.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 131.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 41/132 | 0.3106 |
-| False actionable (of discriminated) | 37/73 | 0.5068 |
+| False verdicts (all cases) | 41/131 | 0.3130 |
+| False actionable (of discriminated) | 37/72 | 0.5139 |
 | False exposed (of not fully discriminated) | 4/59 | 0.0678 |
 | False silent (of not fully discriminated) | 0/59 | 0.0000 |
-| Ideal verdict | 39/132 | 0.2955 |
-| Abstained (limited or silent where acceptable) | 52/132 | 0.3939 |
-| Findings with a contradiction | 2/171 | 0.0117 |
+| Ideal verdict | 38/131 | 0.2901 |
+| Abstained (limited or silent where acceptable) | 52/131 | 0.3969 |
+| Findings with a contradiction | 2/170 | 0.0118 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 98 | 31/98 | 27/53 | 4/45 | 0/45 | 34/98 | 33/98 |
+| authored | 97 | 31/97 | 27/52 | 4/45 | 0/45 | 33/97 | 33/97 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -135,7 +135,6 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `old-surcharge-call-expression-input` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `old-net-self-equality` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `old-tip-duplicative-tests` | authored | discriminated | credited | credited | exposed | ideal | no | none |
-| `old-rounded-format-only` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `old-ratio-assert-only-owner` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `old-share-assert-owner-with-caller` | authored | partially_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `old-rate-macro-arg-no-mention` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |

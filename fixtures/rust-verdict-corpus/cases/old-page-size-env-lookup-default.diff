@@ -8,5 +8,5 @@ diff --git a/src/settings.rs b/src/settings.rs
 -pub const DEFAULT_PAGE_SIZE: usize = 50;
 +pub const DEFAULT_PAGE_SIZE: usize = 25 * 2;
  
- fn lookup(key: &str) -> Option<usize> {
+ fn env_lookup(key: &str) -> Option<usize> {
      std::env::var(key).ok()?.parse().ok()

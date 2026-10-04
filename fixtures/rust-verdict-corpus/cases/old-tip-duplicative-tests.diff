@@ -9,4 +9,4 @@ diff --git a/src/fees.rs b/src/fees.rs
 +    amount * 15 / (20 * 5)
  }
  
- /// Cents rounded to the nearest whole unit of 100.
+ #[cfg(test)]

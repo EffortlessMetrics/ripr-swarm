@@ -1,5 +1,5 @@
-//! Fees tested through call-expression inputs, duplicative tests, a
-//! self-equality and a formatting-only edit.
+//! Fees tested through call-expression inputs, duplicative tests and a
+//! self-equality.
 
 /// A flat surcharge on orders of at least 1000.
 pub fn surcharge(amount: u64) -> u64 {
@@ -18,11 +18,6 @@ pub fn net(gross: u64) -> u64 {
 /// A fifteen percent tip.
 pub fn tip(amount: u64) -> u64 {
     amount * 15 / 100
-}
-
-/// Cents rounded to the nearest whole unit of 100.
-pub fn rounded(cents: u64) -> u64 {
-    (cents+50)/100*100
 }
 
 #[cfg(test)]
@@ -57,11 +52,5 @@ mod tests {
     #[test]
     fn tip_on_two_hundred_again() {
         assert_eq!(tip(200), 30);
-    }
-
-    #[test]
-    fn rounding_halves_up() {
-        assert_eq!(rounded(150), 200);
-        assert_eq!(rounded(149), 100);
     }
 }
