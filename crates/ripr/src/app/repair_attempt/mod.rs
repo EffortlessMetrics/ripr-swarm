@@ -44,7 +44,8 @@ const CARGO_WORKSPACE_LOCKFILE: &str = "Cargo.lock";
 
 pub(crate) use store::{
     RepairAttemptStoreAccess, RepairAttemptStoreCurrentness, RepairAttemptStoreIdentity,
-    RepairAttemptStoreRef, quoted_store_flag, quoted_store_flag_from_identity, resolve_store,
+    RepairAttemptStoreLocationClass, RepairAttemptStoreRef, quoted_store_flag,
+    quoted_store_flag_from_identity, resolve_store,
 };
 
 static ATTEMPT_NONCE: AtomicU64 = AtomicU64::new(0);

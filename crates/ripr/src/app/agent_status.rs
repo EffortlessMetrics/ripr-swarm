@@ -12,10 +12,10 @@ use crate::agent::loop_commands::{
 };
 use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, DivergedHeadRecovery,
-    REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry,
-    RepairAttemptManifest, RepairAttemptState, RepairAttemptStoreAccess,
-    RepairAttemptStoreCurrentness, RepairAttemptStoreLocationClass, after_phase_head_admission,
-    diverged_head_recovery, inventory_repair_attempts_from, load_attempt_terminal_receipt,
+    REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest,
+    RepairAttemptState, RepairAttemptStoreAccess, RepairAttemptStoreCurrentness,
+    RepairAttemptStoreLocationClass, after_phase_head_admission, diverged_head_recovery,
+    inventory_repair_attempts_from, load_attempt_terminal_receipt,
     load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_state_label,
     resolve_store,
 };
@@ -1624,7 +1624,10 @@ pub(crate) const AGENT_ATTEMPT_STATUS_SCHEMA_VERSION: &str = "0.1";
 /// stronger than the receipt the attempt actually retained.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the class list is the published vocabulary; tests pin it")
+    expect(
+        dead_code,
+        reason = "the class list is the published vocabulary; tests pin it"
+    )
 )]
 pub(crate) const ATTEMPT_STATUS_CLASSES: &[&str] = &[
     "awaiting_edit",
@@ -1641,7 +1644,8 @@ pub(crate) const ATTEMPT_STATUS_CLASSES: &[&str] = &[
 
 /// Read-only non-claim every one-attempt status carries: inspecting an
 /// attempt never mutates it.
-const ATTEMPT_STATUS_READ_ONLY_NON_CLAIM: &str = "status is read-only: inspecting this attempt did not finish, restart, rewrite, or delete it";
+const ATTEMPT_STATUS_READ_ONLY_NON_CLAIM: &str =
+    "status is read-only: inspecting this attempt did not finish, restart, rewrite, or delete it";
 
 /// The store view of a one-attempt status report: the same typed identity
 /// the #4797 resolver produced, not a re-derived path.
@@ -1913,9 +1917,7 @@ fn attempt_status_class(
                     // no receipt state can be read at all: the attempt
                     // finished but this status cannot claim more than that.
                     AgentStatusAttemptReceipt::Issued { .. } => "limited",
-                    AgentStatusAttemptReceipt::Unavailable { .. } => {
-                        "corrupt_or_unavailable"
-                    }
+                    AgentStatusAttemptReceipt::Unavailable { .. } => "corrupt_or_unavailable",
                     _ => "limited",
                 }
             }
@@ -2686,7 +2688,10 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let result = (|| {
             run_git(&root, &["init"])?;
-            run_git(&root, &["config", "user.email", "ripr-test@example.invalid"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
             run_git(&root, &["config", "user.name", "RIPR Test"])?;
             write_file(&root.join("README.md"), "# test\n")?;
             run_git(&root, &["add", "."])?;
@@ -2709,7 +2714,9 @@ mod tests {
                 || !next.command.contains("--attempt")
                 || !next.command.contains(attempt_id.as_str())
             {
-                return Err(format!("next action was not the retained after command: {next:?}"));
+                return Err(format!(
+                    "next action was not the retained after command: {next:?}"
+                ));
             }
 
             let rendered = render_agent_attempt_status_json(&report)?;
@@ -2764,7 +2771,10 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let result = (|| {
             run_git(&root, &["init"])?;
-            run_git(&root, &["config", "user.email", "ripr-test@example.invalid"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
             run_git(&root, &["config", "user.name", "RIPR Test"])?;
             write_file(&root.join("README.md"), "# test\n")?;
             run_git(&root, &["add", "."])?;
@@ -2814,7 +2824,10 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let result = (|| {
             run_git(&root, &["init"])?;
-            run_git(&root, &["config", "user.email", "ripr-test@example.invalid"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
             run_git(&root, &["config", "user.name", "RIPR Test"])?;
             write_file(&root.join("README.md"), "# test\n")?;
             run_git(&root, &["add", "."])?;
@@ -2864,7 +2877,10 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let result = (|| {
             run_git(&root, &["init"])?;
-            run_git(&root, &["config", "user.email", "ripr-test@example.invalid"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
             run_git(&root, &["config", "user.name", "RIPR Test"])?;
             write_file(&root.join("README.md"), "# test\n")?;
             run_git(&root, &["add", "."])?;
@@ -2893,9 +2909,10 @@ mod tests {
                     report.attempt
                 ));
             }
-            let next = report.next_action.as_ref().ok_or_else(|| {
-                "a stale attempt must name its recovery action".to_string()
-            })?;
+            let next = report
+                .next_action
+                .as_ref()
+                .ok_or_else(|| "a stale attempt must name its recovery action".to_string())?;
             if next.step != "repair_attempt_before" || !next.command.contains("--phase before") {
                 return Err(format!("stale recovery was not a restart: {next:?}"));
             }
@@ -2915,7 +2932,10 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let result = (|| {
             run_git(&root, &["init"])?;
-            run_git(&root, &["config", "user.email", "ripr-test@example.invalid"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
             run_git(&root, &["config", "user.name", "RIPR Test"])?;
             write_file(&root.join("README.md"), "# test\n")?;
             run_git(&root, &["add", "."])?;
@@ -2923,8 +2943,10 @@ mod tests {
             prepare_attempt_fixture(&root, "seam:stable-a")?;
             prepare_attempt_fixture(&root, "seam:stable-b")?;
 
-            let inventory_first = render_agent_status_json(&build_agent_status_report(&root, &root))?;
-            let inventory_second = render_agent_status_json(&build_agent_status_report(&root, &root))?;
+            let inventory_first =
+                render_agent_status_json(&build_agent_status_report(&root, &root))?;
+            let inventory_second =
+                render_agent_status_json(&build_agent_status_report(&root, &root))?;
             if inventory_first != inventory_second {
                 return Err("inventory status JSON was not byte-stable across reads".to_string());
             }
@@ -2932,7 +2954,8 @@ mod tests {
                 let RepairAttemptInventoryEntry::Valid(manifest) = entry else {
                     return Err("a fixture attempt was refused".to_string());
                 };
-                let report = build_agent_attempt_status(&root, &root, None, &manifest.repair_attempt_id)?;
+                let report =
+                    build_agent_attempt_status(&root, &root, None, &manifest.repair_attempt_id)?;
                 let first = render_agent_attempt_status_json(&report)?;
                 let second = render_agent_attempt_status_json(&report)?;
                 if first != second {

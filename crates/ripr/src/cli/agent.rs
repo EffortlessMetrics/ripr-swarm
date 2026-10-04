@@ -983,7 +983,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
     let mut json = false;
     let mut out_dir = None;
     let mut store: Option<PathBuf> = None;
-    let mut attempt_id = None;
+    let mut attempt_id: Option<String> = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -1013,7 +1013,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
                         "agent status --attempt requires a non-empty repair attempt ID".to_string(),
                     );
                 }
-                attempt_id = Some(value);
+                attempt_id = Some(value.to_string());
             }
             other => return Err(unknown_argument("agent status", other)),
         }

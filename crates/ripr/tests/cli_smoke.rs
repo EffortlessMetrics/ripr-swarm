@@ -19169,7 +19169,9 @@ fn agent_status_attempt_resumes_and_finishes_one_attempt_across_fresh_processes(
         resumed["claim_boundary"]
             .as_array()
             .is_some_and(|claims| claims.iter().any(|claim| {
-                claim.as_str().is_some_and(|claim| claim.contains("read-only"))
+                claim
+                    .as_str()
+                    .is_some_and(|claim| claim.contains("read-only"))
             })),
         "{resumed:#}"
     );
@@ -19194,7 +19196,8 @@ fn agent_status_attempt_resumes_and_finishes_one_attempt_across_fresh_processes(
         "{finished:#}"
     );
     assert_eq!(
-        finished["next_action"], serde_json::Value::Null,
+        finished["next_action"],
+        serde_json::Value::Null,
         "a terminal current attempt names no next action: {finished:#}"
     );
     assert_eq!(
@@ -19203,7 +19206,14 @@ fn agent_status_attempt_resumes_and_finishes_one_attempt_across_fresh_processes(
     );
 
     // The same state in the human rendering, from the same DTO.
-    let human = run_ripr(&["agent", "status", "--root", &root_arg, "--attempt", &attempt]);
+    let human = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_arg,
+        "--attempt",
+        &attempt,
+    ]);
     assert_success(&human);
     let rendered = String::from_utf8_lossy(&human.stdout);
     assert!(rendered.contains("finished_current"), "{rendered}");
@@ -19243,7 +19253,8 @@ fn agent_status_attempt_reports_historical_after_head_moves()
         "{historical:#}"
     );
     assert_eq!(
-        historical["next_action"], serde_json::Value::Null,
+        historical["next_action"],
+        serde_json::Value::Null,
         "{historical:#}"
     );
     assert!(
@@ -19277,7 +19288,8 @@ fn agent_status_attempt_keeps_same_seam_attempts_distinct_by_id()
     // inventory surface names the ambiguity instead.
     let report = repair_route_status(&root)?;
     assert_eq!(
-        report["next_command"], serde_json::Value::Null,
+        report["next_command"],
+        serde_json::Value::Null,
         "{report:#}"
     );
     assert!(
@@ -19292,7 +19304,8 @@ fn agent_status_attempt_keeps_same_seam_attempts_distinct_by_id()
             "{selected:#}"
         );
         assert_eq!(
-            selected["next_action"]["command"], command.as_str(),
+            selected["next_action"]["command"],
+            command.as_str(),
             "each same-seam attempt resumes its own recorded command: {selected:#}"
         );
         assert_eq!(
@@ -19310,8 +19323,7 @@ fn agent_status_attempt_keeps_same_seam_attempts_distinct_by_id()
 /// attempt, the explicit store resumes it, and the next action repeats
 /// `--store`.
 #[test]
-fn agent_status_attempt_round_trips_an_explicit_store()
--> Result<(), Box<dyn std::error::Error>> {
+fn agent_status_attempt_round_trips_an_explicit_store() -> Result<(), Box<dyn std::error::Error>> {
     let root = repair_route_workspace("status attempt store")?;
     let root_arg = root.to_string_lossy().into_owned();
     let store = "target/ripr/alt-attempts";
