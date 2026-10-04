@@ -811,3 +811,114 @@ fn field_of_the_returned_struct_literal_asserts_the_whole_return_value() -> Resu
     );
     Ok(())
 }
+
+#[test]
+fn feature_gated_test_modules_are_never_chosen() -> Result<(), String> {
+    // Review of #5477: `cargo test` does not build a feature-gated module, so
+    // a stub there would never compile or run.
+    let gated_first = "pub fn early(x: u32) -> u32 { if x > 40 { 1 } else { 0 } }
+
+#[cfg(all(test, feature = \"slow\"))]
+mod slow_tests {
+    #[test]
+    fn s() {}
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn smoke() {}
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        gated_first,
+        "x > 40",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    match rust_test_stub(&seam, None, gated_first).map_err(|r| r.as_str().to_string())? {
+        RustTestStub {
+            placement: TestStubPlacement::ExistingInlineModule { module_name, .. },
+            ..
+        } => assert_eq!(module_name, "tests"),
+        other => return Err(format!("unexpected placement {:?}", other.placement)),
+    }
+    for only_gated in [
+        "pub fn early(x: u32) -> u32 { if x > 40 { 1 } else { 0 } }
+
+#[cfg(all(test, feature = \"slow\"))]
+mod slow_tests {
+    #[test]
+    fn s() {}
+}
+",
+        "pub fn early(x: u32) -> u32 { if x > 40 { 1 } else { 0 } }
+
+#[cfg(test)]
+mod slow_tests {
+    #![cfg(feature = \"slow\")]
+    #[test]
+    fn s() {}
+}
+",
+    ] {
+        let seam = seam_at(
+            "src/lib.rs",
+            only_gated,
+            "x > 40",
+            SeamKind::PredicateBoundary,
+            boundary(""),
+        )?;
+        assert_eq!(
+            rust_test_stub(&seam, None, only_gated).map(|stub| stub.test_name),
+            Err(TestStubRefusal::AmbiguousTestModule),
+            "{only_gated}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn impls_local_to_a_block_are_refused() -> Result<(), String> {
+    // Review of #5477: names inside a fn body or `const _` block are out of
+    // the test module's reach.
+    for source in [
+        "pub struct X(pub u8);
+const _: () = {
+    use std::fmt::Display;
+    impl Display for X {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            if self.0 > 31 { write!(f, \"a\") } else { write!(f, \"b\") }
+        }
+    }
+};
+",
+        "pub fn outer() {
+    struct L(u8);
+    impl<'a> L {
+        fn m2(&self, n: u8) -> u8 { if n > 31 { 1 } else { 0 } }
+    }
+}
+",
+    ] {
+        let needle = if source.contains("self.0 > 31") {
+            "self.0 > 31"
+        } else {
+            "n > 31"
+        };
+        let seam = seam_at(
+            "src/lib.rs",
+            source,
+            needle,
+            SeamKind::PredicateBoundary,
+            boundary(""),
+        )?;
+        assert_eq!(
+            rust_test_stub(&seam, None, source).map(|stub| stub.test_name),
+            Err(TestStubRefusal::OwnerUnsupported),
+            "{source}"
+        );
+    }
+    Ok(())
+}

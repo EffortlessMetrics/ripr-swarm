@@ -161,7 +161,7 @@ impl TestStubRefusal {
                 "the owner's tests live in an out-of-line `mod tests;` file"
             }
             Self::AmbiguousTestModule => {
-                "the owner's inline test module has no body the stub can insert into"
+                "the owner file has no inline test module gated by plain `cfg(test)` to insert into"
             }
             Self::OwnerInNestedModule => {
                 "the owner is in a nested module with no inline test module of its own"
@@ -339,7 +339,17 @@ fn inline_placement<'a>(
     if siblings.iter().any(|module| !module.is_inline) {
         return Err(TestStubRefusal::OutOfLineTestModule);
     }
-    let chosen = match inline.as_slice() {
+    // A module gated by more than `cfg(test)` (a feature, a target) may not
+    // be built by `cargo test`, so a stub there could never compile or run.
+    if !inline.is_empty() && !inline.iter().any(|module| module.enabled_in_test_build) {
+        return Err(TestStubRefusal::AmbiguousTestModule);
+    }
+    let plain = inline
+        .iter()
+        .copied()
+        .filter(|module| module.enabled_in_test_build)
+        .collect::<Vec<_>>();
+    let chosen = match plain.as_slice() {
         [] => None,
         [module] => Some(*module),
         several => Some(

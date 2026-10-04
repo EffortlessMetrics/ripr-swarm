@@ -315,7 +315,14 @@ pub(crate) fn field_init_is_returned(source: &str, byte_offset: usize) -> Option
             let in_closure = parent
                 .ancestors()
                 .take_while(|ancestor| ancestor != owner.syntax())
-                .any(|ancestor| ast::ClosureExpr::can_cast(ancestor.kind()));
+                .any(|ancestor| {
+                    // A closure, `async` block or `const` block scopes its
+                    // own `return`.
+                    ast::ClosureExpr::can_cast(ancestor.kind())
+                        || ast::BlockExpr::cast(ancestor).is_some_and(|block| {
+                            block.async_token().is_some() || block.const_token().is_some()
+                        })
+                });
             return Some(!in_closure);
         }
         let Some(list) = ast::StmtList::cast(parent) else {
@@ -421,6 +428,17 @@ fn container_of(function: &ast::Fn) -> OwnerContainer {
             return OwnerContainer::Unsupported("owner is a trait default method");
         }
         if let Some(item) = ast::Impl::cast(ancestor.clone()) {
+            // An impl inside a fn body or a `const _` block sees names a
+            // test module cannot reach.
+            let at_module_level = item.syntax().parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind())
+                    || parent
+                        .parent()
+                        .is_some_and(|grand| ast::Module::can_cast(grand.kind()))
+            });
+            if !at_module_level {
+                return OwnerContainer::Unsupported("owner impl is local to a block");
+            }
             let has_generics = item.generic_param_list().is_some_and(|list| {
                 list.generic_params()
                     .any(|param| !matches!(param, ast::GenericParam::LifetimeParam(_)))
@@ -630,6 +648,8 @@ mod tests {
         assert_eq!(at(inner, "a: n, b: 5"), Some(false));
         let closure = "fn f(n: u8) -> u8 { let g = || { return S { a: n, b: 6 }; }; 0 }";
         assert_eq!(at(closure, "a: n, b: 6"), Some(false));
+        let async_block = "fn f(n: u8) -> u8 { let g = async { return S { a: n, b: 8 }; }; 0 }";
+        assert_eq!(at(async_block, "a: n, b: 8"), Some(false));
         let branch = "fn f(n: u8) -> S { if n > 1 { S { a: n, b: 7 } } else { S { a: 0, b: 0 } } }";
         assert_eq!(at(branch, "a: n, b: 7"), Some(false));
         assert_eq!(at(tail, "fn f"), None);
