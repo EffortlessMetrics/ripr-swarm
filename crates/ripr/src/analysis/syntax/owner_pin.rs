@@ -244,20 +244,24 @@ fn macro_binding_ambiguities(
             )
         })
     };
-    // A workspace package or a module of this file that takes a drop-in
-    // crate's name can export a different `assert_eq!` under that path. A
-    // leading `::` names an external crate, which no module can shadow.
+    // A workspace package, a module of this file, or an alias (`use x as ..`,
+    // `extern crate x as ..`) that takes a drop-in crate's name can export a
+    // different `assert_eq!` under that path. A leading `::` names an extern
+    // crate, which no module can shadow; an `extern crate` alias still can.
     let drop_in_shadowed = |root: &str, external: bool| {
+        let named = |name: ast::Name| name.text().trim_start_matches("r#") == root;
         packages
             .iter()
             .any(|package| package.replace('-', "_") == root)
-            || !external
-                && parse
-                    .tree()
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::Module::cast)
-                    .any(|module| module.name().is_some_and(|name| name.text() == root))
+            || parse.tree().syntax().descendants().any(|node| {
+                ast::Rename::cast(node.clone())
+                    .and_then(|rename| rename.name())
+                    .is_some_and(named)
+                    || !external
+                        && ast::Module::cast(node)
+                            .and_then(|module| module.name())
+                            .is_some_and(named)
+            })
     };
     for node in parse.tree().syntax().descendants() {
         let definition = ast::MacroRules::cast(node.clone())

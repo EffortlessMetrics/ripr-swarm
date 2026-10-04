@@ -1057,6 +1057,9 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() {
         // A local module named after the crate owns that path instead.
         "mod pretty_assertions;\nuse pretty_assertions::assert_eq;",
         "mod pretty_assertions {}\nuse pretty_assertions::assert_eq;",
+        "mod r#pretty_assertions {}\nuse pretty_assertions::assert_eq;",
+        "use other as pretty_assertions;\nuse pretty_assertions::assert_eq;",
+        "extern crate other as pretty_assertions;\nuse ::pretty_assertions::assert_eq;",
     ] {
         assert!(
             matches!(
