@@ -314,11 +314,7 @@ mod tests {
         let byte = probe(ProbeFamily::Predicate, "digit > b'9'");
         let evidence = infection_evidence(&byte, &[&chars], &ActivationEvidence::default());
         assert_eq!(evidence.state, StageState::Weak);
-        assert!(
-            evidence.summary.contains("[b',']"),
-            "{}",
-            evidence.summary
-        );
+        assert!(evidence.summary.contains("[b',']"), "{}", evidence.summary);
     }
 
     #[test]
