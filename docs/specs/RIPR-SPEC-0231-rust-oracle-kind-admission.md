@@ -148,7 +148,8 @@ Two pattern terms are used below.
   `name @ p`, `&p` or `box p` where `p` is irrefutable; a tuple pattern,
   or a struct or tuple-struct pattern whose path is shown to name a struct
   type, whose every sub-pattern is irrefutable or `..` (`(_, _)`,
-  `S { .. }`); the slice patterns `[..]` and `[name @ ..]` (other slice
+  `S { .. }`); the sole variant of an enum shown to have one variant,
+  with irrefutable sub-patterns; the slice patterns `[..]` and `[name @ ..]` (other slice
   patterns check a length); and an or-pattern whose alternatives
   together cover every constructor of the type (`Some(_) | None`,
   `Ok(_) | Err(_)`). `name @ E::X` and `name @ Some(_)` are read through
@@ -174,7 +175,8 @@ Two pattern terms are used below.
    assertion takes rule 1 before rules 2 and 3.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is
-   irrefutable or `..` assigns `broad_error` / weak, guard or not.
+   irrefutable, `..` or pins no value (rule 3's test) assigns
+   `broad_error` / weak, guard or not.
    `Err(E::X)`, `Err(E::X(..))` and `Err(E::X { .. })` stay
    `exact_error_variant`. `assert_eq!` against `Err(value)` with any
    expression stays `exact_error_variant`, because equality pins the value.
