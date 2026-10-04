@@ -21,4 +21,7 @@ revision and runner class.
 Child runs pin `RIPR_REPO_EXPOSURE_SEAM_LIMIT=10000` (the product default),
 and each sample records the child `run_status`, so a capped run cannot pass
 silently as an uncapped baseline. Within each size, format samples interleave
-in alternating order and each sample records its execution order.
+in alternating order and each sample records its execution order. A sample
+whose run exits successfully but reports a missing or zero inventory is
+recorded as `empty_inventory`, which makes the report `inconclusive` instead
+of a silent pass.
