@@ -8773,6 +8773,7 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::real_git_stderr_timeout_words_do_not_convert_to_a_snapshot",
   "crates/ripr/src/lsp/tests.rs::typed_worktree_timeout_recovers_origins_and_consumed_sources_for_open_paths",
   "crates/ripr/src/lsp/tests.rs::framed_lsp_zero_git_timeout_commits_limited_once_and_recovers",
+  "crates/ripr/src/lsp/tests.rs::unresolvable_base_refresh_keeps_the_no_snapshot_error_route",
   "crates/ripr/src/lsp/git_inputs.rs::tests::timed_out_probe_fails_closed_as_unresolved",
   "crates/ripr/src/analysis/diff/load.rs::tests::zero_deadline_diff_load_fails_with_the_named_timeout_error",
   "crates/ripr/src/analysis/diff/load.rs::tests::zero_deadline_base_probes_fail_closed_instead_of_hanging",

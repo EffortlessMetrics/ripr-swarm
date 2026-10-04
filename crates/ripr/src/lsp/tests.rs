@@ -21305,6 +21305,40 @@ fn typed_worktree_timeout_recovers_origins_and_consumed_sources_for_open_paths()
 
 #[test]
 #[serial]
+fn unresolvable_base_refresh_keeps_the_no_snapshot_error_route() -> Result<(), String> {
+    let fixture = boundary_gap_git_fixture_root("unresolvable-base-refresh")?;
+    let root = fixture.path();
+    let lib = root.join("src/lib.rs");
+    let baseline = std::fs::read_to_string(&lib).map_err(|error| error.to_string())?;
+    let edited = baseline.replace(">=", ">");
+    assert_ne!(
+        edited, baseline,
+        "the fixture must contain a changed boundary"
+    );
+    std::fs::write(&lib, edited).map_err(|error| error.to_string())?;
+
+    let mut config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+    config.git_timeout = Duration::from_secs(30);
+    let healthy = workspace_diagnostics_with_config(root, &config, true)?;
+    assert!(
+        !healthy.snapshot.findings.is_empty(),
+        "the valid base must analyze the nonempty changed subject"
+    );
+
+    config.base_ref = Some("ripr-err1-no-such-base".to_string());
+    let error = match workspace_diagnostics_with_config(root, &config, true) {
+        Err(error) => error,
+        Ok(_) => return Err("an unresolvable base must not produce a snapshot".to_string()),
+    };
+    assert!(
+        error.contains("the base `ripr-err1-no-such-base` does not resolve to a commit"),
+        "the error must identify the unresolvable base, got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(), String> {
     work_done_progress_runtime()?.block_on(async {
         let fixture = boundary_gap_git_fixture_root("framed-typed-git-timeout")?;
@@ -21437,7 +21471,7 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }
         })
         .await
-        .map_err(|_| "normal-timeout recovery did not finish".to_string())??;
+        .map_err(|error| format!("normal-timeout recovery did not finish: {error}"))??;
         write_lsp_message(
             &mut client_write,
             serde_json::json!({

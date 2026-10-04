@@ -43,9 +43,13 @@ landed behavior. Committed-source reads retain the typed family through context.
 Control placement matters: wrapped timeout and lookalike Message tests invoke
 the production LSP error decision before the renderer. The framed server control
 uses numeric `gitTimeoutMs = 0` with explicit base `HEAD`, then restores the normal
-deadline and requires a nonempty recovery. Fixed root-probe guidance, bounded
-cat-file session deadlines, cancellation Display, and terminate/reap behavior
-remain independent compatibility obligations. Source inspection and a patch
+deadline and requires a nonempty recovery. Preserve spawned-timeout repair
+guidance: `--git-timeout SECS` or `RIPR_GIT_TIMEOUT=<seconds>` for CLI runs
+(`0 disables it`), and the editor session `gitTimeoutMs` initialization option.
+Editor zero remains the explicit fail-fast stimulus in the framed control.
+Fixed root-probe guidance has its own escape hatch; bounded cat-file session
+deadlines, cancellation Display, and terminate/reap behavior remain independent
+compatibility obligations. Source inspection and a patch
 application receipt establish bytes, not compilation or behavioral execution.
 
 ## 2026-10-02: property macro spelling is not execution provenance (#4789)
