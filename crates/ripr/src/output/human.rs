@@ -18,7 +18,10 @@ unstaged tracked edits (for example `ripr check --worktree`).\n";
 /// real repair — staging — instead of sending the reader through a second
 /// empty `no_scope` run. Fires whenever untracked routed files exist in an
 /// unanalyzed working-tree state; it also states what `--worktree` does add,
-/// so a mixed tracked-plus-untracked tree keeps one accurate note.
+/// so a mixed tracked-plus-untracked tree keeps one accurate note. Paths are
+/// control-escaped (`escape_terminal_display`) before display: a crafted
+/// filename cannot forge report lines or inject terminal control (#2142
+/// review, #5398 review).
 fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
     let untracked = &output.untracked_working_tree_source_paths;
     if untracked.is_empty() {
@@ -28,7 +31,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
     let named = untracked
         .iter()
         .take(NAMED_PATHS)
-        .cloned()
+        .map(|path| escape_terminal_display(path))
         .collect::<Vec<_>>();
     let more = untracked.len().saturating_sub(NAMED_PATHS);
     let listing = if more > 0 {
@@ -889,6 +892,42 @@ mod tests {
         assert!(
             !rendered.contains("add `--worktree` to include staged and unstaged tracked edits"),
             "the tracked-only remedy must not stand in for the staging repair: {rendered}"
+        );
+    }
+
+    /// #5398 review: named untracked paths are control-escaped for terminal
+    /// display, so a crafted filename cannot forge report lines or inject
+    /// terminal control into the note.
+    #[test]
+    fn untracked_note_escapes_control_bytes_in_named_paths() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: true,
+            untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("src/\\u{1b}[31mevil.rs"),
+            "ESC must render as its escaped spelling: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains('\u{1b}'),
+            "a raw control byte must not reach the terminal: {rendered:?}"
         );
     }
 

@@ -301,8 +301,13 @@ fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
                  `--diff PATH`. An empty result here does NOT mean those changes are covered."
             )
         };
+        // #5398 review: the message carries repository-supplied path names,
+        // so it is workflow-command-escaped like the no-scope warning below —
+        // a path containing a newline or `%` sequence must not start another
+        // workflow command.
         warnings.push(format!(
-            "::warning title=ripr unanalyzed working tree::{message}\n"
+            "::warning title=ripr unanalyzed working tree::{}\n",
+            escape_data(&message)
         ));
     }
     if output.no_scope_provided {
@@ -1059,6 +1064,30 @@ mod tests {
                 "../../../../fixtures/github_unanalyzed_states/expected/untracked_working_tree.txt"
             )
         );
+    }
+
+    #[test]
+    fn render_escapes_workflow_commands_in_untracked_paths() {
+        // #5398 review: untracked path names are repository-supplied, so a
+        // name carrying a workflow-command payload must not break out of the
+        // warning; the message is escape_data-encoded.
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.unanalyzed_working_tree = true;
+        output.untracked_working_tree_source_paths =
+            vec!["evil%0A::warning title=pwned::injected".to_string()];
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("evil%250A::warning title=pwned::injected"),
+            "the percent must be encoded so the payload stays inert: {rendered}"
+        );
+        assert!(
+            !rendered.contains("evil%0A::"),
+            "a raw newline payload must not survive: {rendered}"
+        );
+        assert_eq!(rendered.lines().count(), 1, "{rendered}");
     }
 
     #[test]

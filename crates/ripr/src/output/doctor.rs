@@ -937,14 +937,26 @@ fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
 /// Call only after [`work_tree_probe`] reported `Inside`: there, a
 /// `rev-parse --verify` that exits nonzero is git answering "no such
 /// revision", which is the unborn state. `false` when git could not answer
-/// (missing or timed-out git proves nothing, so doctor claims nothing).
+/// (missing or timed-out git proves nothing, so doctor claims nothing) —
+/// the probe's absence must not read as "unborn" (#5398 review).
 fn unborn_head(root: &Path) -> bool {
-    !crate::git::run_git_output_with_deadline(
-        root,
-        &["rev-parse", "--verify", "--quiet", "HEAD"],
-        Some(DOCTOR_TOOL_TIMEOUT),
+    probe_says_unborn(
+        crate::git::run_git_output_with_deadline(
+            root,
+            &["rev-parse", "--verify", "--quiet", "HEAD"],
+            Some(DOCTOR_TOOL_TIMEOUT),
+        )
+        .ok()
+        .map(|output| output.status.success()),
     )
-    .is_ok_and(|output| output.status.success())
+}
+
+/// Pure three-arm verdict for [`unborn_head`]: `Some(true)` is git running
+/// and resolving HEAD (born), `Some(false)` is git running and refusing the
+/// revision (unborn), and `None` is a probe that never answered (spawn
+/// failure or deadline). Only the second arm claims unborn.
+fn probe_says_unborn(head_resolves: Option<bool>) -> bool {
+    head_resolves == Some(false)
 }
 
 /// Evaluate the doctor core checks and also return the raw config load
@@ -3519,6 +3531,26 @@ mod tests {
             return Err(format!("expected UnbornHead, got {first:?}"));
         }
         Ok(())
+    }
+
+    /// #5259 review: only a probe that RAN and answered "no" may claim
+    /// unborn; a probe that never answered (spawn failure, deadline) must
+    /// claim nothing, or a slow host would add a false `git_head` advisory
+    /// and reroute the first command in a healthy repository.
+    #[test]
+    fn unborn_head_verdict_claims_nothing_when_the_probe_never_answered() {
+        assert!(
+            !probe_says_unborn(Some(true)),
+            "a resolving HEAD is born, not unborn"
+        );
+        assert!(
+            probe_says_unborn(Some(false)),
+            "git refusing the revision is the unborn state"
+        );
+        assert!(
+            !probe_says_unborn(None),
+            "a probe that never answered must not claim unborn"
+        );
     }
 
     /// #5259: the UnbornHead recommendation names the commit-first repair
