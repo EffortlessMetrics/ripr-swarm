@@ -128,8 +128,8 @@ large_workspace, wasm_target, async_no_std, and loom_model_tests.
 ## Known gaps
 
 `known_gaps` in the manifest lists one shape the corpus does not yet
-represent: a crate whose tests live in a separate test crate of another
-repository. Two of the three gaps the first version listed now have
+represent: a crate whose tests live exclusively in a separate test crate of
+another repository. Two of the three gaps the first version listed now have
 subjects: nextest (`nextest_only`) and winreg (`windows_only`). html5ever
 (`external_test_data`) is a related but different shape. Its test code is
 local; only the html5lib-tests and xml5lib-tests data comes from git
