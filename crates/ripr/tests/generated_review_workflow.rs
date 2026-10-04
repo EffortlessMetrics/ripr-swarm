@@ -3382,7 +3382,7 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
         "{rendered}"
     );
     assert!(
-        rendered.contains("ripr is not installed (Install ripr step: failure), so this run produced no RIPR reports."),
+        rendered.contains("the pinned ripr is not installed (Install ripr step: failure), so this run produced no RIPR reports."),
         "{rendered}"
     );
     assert!(
@@ -3390,9 +3390,23 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
         "{rendered}"
     );
     assert!(
-        after_out.contains("::error::ripr is not installed (Install ripr step: failure)"),
+        after_out
+            .contains("::error::the pinned ripr is not installed (Install ripr step: failure)"),
         "{after_out}"
     );
+
+    // Alternate: an older ripr already on the runner's PATH does not stand
+    // in for the failed pinned install.
+    fs::write(&summary, "")?;
+    let stale = replay::bash(&root, &summary_step, &runner("Linux", &with_cargo))?;
+    let stale_out = String::from_utf8_lossy(&stale.stdout);
+    assert_eq!(stale.status.code(), Some(1), "{stale_out}");
+    let rendered = fs::read_to_string(&summary)?;
+    assert!(
+        rendered.contains("the pinned ripr is not installed (Install ripr step: failure)"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains(&format!("ripr {version}")), "{rendered}");
 
     fs::remove_dir_all(base)?;
     Ok(())

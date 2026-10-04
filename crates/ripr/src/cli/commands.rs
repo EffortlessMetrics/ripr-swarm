@@ -7253,7 +7253,9 @@ language = "rust"
         let (guard, render) = summary
             .split_once("          ripr reports ci-summary")
             .unwrap_or_default();
-        assert!(guard.contains("if ! command -v ripr >/dev/null 2>&1; then"));
+        assert!(guard.contains(
+            "if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ] || ! command -v ripr >/dev/null 2>&1; then"
+        ));
         assert!(guard.contains("Next: open the Install ripr step log."));
         // The guard only echoes fixed text; the summary itself is rendered
         // by the command, not by shell.

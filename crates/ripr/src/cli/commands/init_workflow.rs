@@ -488,7 +488,7 @@ mod template_pin_tests {
     /// and artifact paths, which the `generated_workflow_*` tests pin at the
     /// rendered level.
     const TEMPLATE_SHA256: &str =
-        "d1c1398cbb0ba512fa8b1fc0db5874181d658d87ced745ff811488f1a40f4382";
+        "efc8bd1758800e351436e27cba2c22f51d7b91e8b2295748c6da19e418dca098";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

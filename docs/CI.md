@@ -1059,7 +1059,7 @@ that run after the test edit.
 The workflow also writes a `RIPR advisory summary` step summary with one
 command, `ripr reports ci-summary --root . >> "$GITHUB_STEP_SUMMARY"`, which
 reads the artifacts earlier steps wrote and prints a regeneration route for any
-that are missing or malformed instead of failing. When ripr never installed,
+that are missing or malformed instead of failing. When the pinned ripr did not install (even if an older one is on PATH),
 the step writes a short summary saying so and pointing at the install step's
 log instead of leaving the summary empty. The summary starts with
 the `start-here` first-run packet when `ripr first-pr` can compose one from
