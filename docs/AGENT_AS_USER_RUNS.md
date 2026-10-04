@@ -36,7 +36,7 @@ Gap patches (apply with `git apply`, then commit on a branch named `gap`):
 @@ -252,6 +252,15 @@ impl ByteSize {
          self.0
      }
- 
+
 +    /// Returns how many whole `unit`s this size holds, or `None` when `unit`
 +    /// is zero or the size is not an exact multiple of `unit`.
 +    pub const fn as_whole_units(&self, unit: u64) -> Option<u64> {
@@ -52,7 +52,7 @@ Gap patches (apply with `git apply`, then commit on a branch named `gap`):
 @@ -527,6 +536,11 @@ where
  mod core_tests {
      use super::*;
- 
+
 +    #[test]
 +    fn test_as_whole_units() {
 +        assert!(ByteSize::kib(2).as_whole_units(KIB).is_some());
@@ -105,7 +105,7 @@ Gap patches (apply with `git apply`, then commit on a branch named `gap`):
 @@ -474,6 +478,11 @@ mod test {
      use super::Error;
      use super::{format_duration, parse_duration};
- 
+
 +    #[test]
 +    fn test_fortnight() {
 +        assert!(parse_duration("2fortnights").is_ok());
@@ -126,7 +126,7 @@ Gap patches (apply with `git apply`, then commit on a branch named `gap`):
 @@ -396,6 +396,19 @@ impl Version {
          }
      }
- 
+
 +    /// Returns the next minor release: increments `minor`, resets `patch` to
 +    /// zero and clears pre-release and build metadata.
 +    #[must_use]
