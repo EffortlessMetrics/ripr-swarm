@@ -11,9 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
-- CLI: `ripr check` with no `--base` warns on stderr when the resolved default
-  base is HEAD's own commit (for example `origin/HEAD` tracking the checked-out
-  branch in a clone of a feature branch). The empty range is not evidence
+- CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when the
+  resolved default base is HEAD's own commit (for example `origin/HEAD`
+  tracking the checked-out branch in a clone of a feature branch). An explicit
+  `--base`, `--diff`, `--candidate-tree` or `--worktree` skips it. The empty
+  range is not evidence
   about the change, and the warning names `--base <ref>`. The stdout note and
   JSON are unchanged.
 - `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). No exit code changes; an unknown command of 5 to 7 characters now needs to be within two edits (and four or fewer within one) to get a suggestion (#5340).
