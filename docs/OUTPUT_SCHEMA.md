@@ -2701,10 +2701,14 @@ Field contract:
 - `line` — 1-based start line for human display only. Not part of the seam ID
   hash; `byte_offset` is the canonical position field internally.
 - `column`, `end_line`, `end_column` — 1-based parser-owned span geometry
-  (columns count bytes from the line start plus one; the end is exclusive),
+  (columns count Unicode scalar values from the line start plus one; the
+  end is exclusive),
   matching cargo-mutants span columns for calibration joins. Present only when
   span geometry was available; absent on legacy or span-less entries, which
-  consumers must treat as line-only. Not part of the seam ID hash.
+  consumers must treat as line-only. Match-arm seams are span-less by policy:
+  the parser records the `match`/`=>` token range while the seam describes a
+  wider construct, so no span is emitted rather than a misleading one. Not
+  part of the seam ID hash.
 - `owner` — fully-qualified module/symbol path of the enclosing function.
   Backslashes from native paths are normalized to forward slashes before
   hashing. Test functions (e.g., `#[test] fn` inside `#[cfg(test)] mod tests`)
@@ -3317,7 +3321,7 @@ Field contract:
   `activation_unknown`, `propagation_unknown`, `observation_unknown`,
   `discrimination_unknown`, `opaque`, `intentional`, `suppressed`.
 - `seams[].column`, `seams[].end_line`, `seams[].end_column` — same span
-  contract as `repo-seams.json` (1-based, byte columns, end-exclusive,
+  contract as `repo-seams.json` (1-based, character columns, end-exclusive,
   present only when geometry was available). Added in `0.4` (#5336).
 - `seams[].evidence` — per-stage `StageState` strings: `yes`, `weak`,
   `no`, `unknown`, `opaque`, `not_applicable`.

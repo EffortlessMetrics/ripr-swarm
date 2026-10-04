@@ -261,11 +261,12 @@ impl SeamGripClass {
 /// not assemble seams via field literals at call sites, because that would
 /// allow constructing a seam whose `id` does not match its fields.
 /// Parser-owned source span of a seam's expression, 1-based line and column
-/// with an end-exclusive end. Columns count bytes from the line start plus
-/// one, matching cargo-mutants span columns for calibration joins (#5336).
-/// `None` on a seam means span geometry was unavailable (legacy cache or a
-/// test fixture); consumers must fall back to line-only behavior, never to
-/// zero coordinates.
+/// with an end-exclusive end. Columns count Unicode scalar values from the
+/// line start plus one, matching cargo-mutants span columns for calibration
+/// joins (#5336). `None` on a seam means span geometry was unavailable
+/// (legacy cache, a test fixture, or a shape kind whose parser range does
+/// not cover its expression); consumers must fall back to line-only
+/// behavior, never to zero coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SeamSpan {
     pub(crate) start_line: usize,
@@ -274,18 +275,9 @@ pub(crate) struct SeamSpan {
     pub(crate) end_column: usize,
 }
 
-/// Derive 1-based line/column geometry for a parser byte range. Returns
-/// `None` (fail closed: the seam keeps line-only behavior) when the range
-/// is inverted, empty, or outside `source`.
-pub(crate) fn byte_span_to_lines(
-    source: &str,
-    start_line: usize,
-    start_byte: usize,
-    end_byte: usize,
-) -> Option<SeamSpan> {
-    if start_byte >= end_byte || end_byte > source.len() {
-        return None;
-    }
+/// Line-start byte offsets for `source`, so callers deriving many spans
+/// from one file pay the scan once instead of once per shape.
+pub(crate) fn build_line_starts(source: &str) -> Vec<usize> {
     let bytes = source.as_bytes();
     let mut line_starts = vec![0usize];
     for (index, byte) in bytes.iter().enumerate() {
@@ -293,13 +285,49 @@ pub(crate) fn byte_span_to_lines(
             line_starts.push(index + 1);
         }
     }
+    line_starts
+}
+
+/// Derive 1-based line/column geometry for a parser byte range. Returns
+/// `None` (fail closed: the seam keeps line-only behavior) when the range
+/// is inverted, empty, outside `source`, or not on character boundaries.
+/// Test-only single-shot form; production reuses one per-file index via
+/// `byte_span_to_lines_with_starts`.
+#[cfg(test)]
+pub(crate) fn byte_span_to_lines(
+    source: &str,
+    start_line: usize,
+    start_byte: usize,
+    end_byte: usize,
+) -> Option<SeamSpan> {
+    byte_span_to_lines_with_starts(
+        source,
+        &build_line_starts(source),
+        start_line,
+        start_byte,
+        end_byte,
+    )
+}
+
+/// `byte_span_to_lines` against a caller-owned per-file line index.
+pub(crate) fn byte_span_to_lines_with_starts(
+    source: &str,
+    line_starts: &[usize],
+    start_line: usize,
+    start_byte: usize,
+    end_byte: usize,
+) -> Option<SeamSpan> {
+    if start_byte >= end_byte || end_byte > source.len() {
+        return None;
+    }
     let line_col = |offset: usize| -> Option<(usize, usize)> {
         let line_idx = line_starts.partition_point(|start| *start <= offset);
         if line_idx == 0 {
             return None;
         }
         let line_start = line_starts[line_idx - 1];
-        Some((line_idx, offset - line_start + 1))
+        let column = source.get(line_start..offset)?.chars().count() + 1;
+        Some((line_idx, column))
     };
     let (actual_start_line, start_column) = line_col(start_byte)?;
     if actual_start_line != start_line {
@@ -513,7 +541,7 @@ mod tests {
     }
 
     #[test]
-    fn byte_span_derives_one_based_line_and_byte_columns() -> Result<(), String> {
+    fn byte_span_derives_one_based_line_and_columns() -> Result<(), String> {
         let source = "pub fn f() { a + b }\nlet z = 1;\n";
         // "a + b" occupies bytes 13..18 on line 1.
         let span =
@@ -537,17 +565,51 @@ mod tests {
     }
 
     #[test]
-    fn byte_span_columns_count_bytes_not_chars() -> Result<(), String> {
+    fn byte_span_columns_count_chars_not_bytes() -> Result<(), String> {
         // Greek alpha is two bytes in UTF-8; cargo-mutants columns are
-        // 1-based byte columns, so the seam projection matches that unit.
+        // 1-based character columns (measured against cargo-mutants 26.1.2
+        // list output), so the seam projection matches that unit. The plus
+        // sits after the multibyte char, where byte and char columns differ.
         let source = "fn f() { α + β }\n";
         let plus_at = source
             .find('+')
             .ok_or_else(|| "plus must exist".to_string())?;
         let span = byte_span_to_lines(source, 1, plus_at, plus_at + 1)
             .ok_or_else(|| "span must derive".to_string())?;
-        assert_eq!(span.start_column, plus_at + 1);
-        assert_eq!(span.end_column, plus_at + 2);
+        // Byte column would be plus_at + 1 = 13; the character column is 12.
+        assert_eq!(span.start_column, 12);
+        assert_eq!(span.end_column, 13);
+        Ok(())
+    }
+
+    #[test]
+    fn byte_span_with_shared_starts_matches_single_shot() -> Result<(), String> {
+        let source = "fn f() {\n    a + b\n}\n";
+        let starts = build_line_starts(source);
+        let (shared, single) = (
+            byte_span_to_lines_with_starts(source, &starts, 2, 13, 18),
+            byte_span_to_lines(source, 2, 13, 18),
+        );
+        assert_eq!(shared, single);
+        let span = shared.ok_or_else(|| "span must derive".to_string())?;
+        assert_eq!((span.start_line, span.start_column), (2, 5));
+        assert_eq!((span.end_line, span.end_column), (2, 10));
+        Ok(())
+    }
+
+    #[test]
+    fn byte_span_refuses_mid_character_offsets() -> Result<(), String> {
+        // Splitting the two-byte alpha is not a character boundary, so both
+        // endpoints fail closed instead of emitting shifted columns.
+        let source = "fn f() { α }\n";
+        let alpha_at = source
+            .find('α')
+            .ok_or_else(|| "alpha must exist".to_string())?;
+        assert_eq!(
+            byte_span_to_lines(source, 1, alpha_at + 1, alpha_at + 3),
+            None
+        );
+        assert_eq!(byte_span_to_lines(source, 1, alpha_at, alpha_at + 1), None);
         Ok(())
     }
 

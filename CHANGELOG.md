@@ -165,7 +165,7 @@ are scoped or reviewed.
 
 - Calibration: `repo-exposure-json` seams (schema `0.4`) and `repo-seams`
   seams (schema `0.2`) now carry the parser-owned span coordinates
-  `column`, `end_line`, and `end_column` (1-based byte columns, exclusive
+  `column`, `end_line`, and `end_column` (1-based character columns, exclusive
   end) when span geometry is available, matching cargo-mutants span columns
   for calibration joins. Seam IDs are unchanged; span-less entries omit the
   fields and consumers must treat them as line-only. `agent verify`
