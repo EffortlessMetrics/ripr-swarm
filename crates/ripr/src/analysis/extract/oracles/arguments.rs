@@ -122,6 +122,58 @@ fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>>
     Some(arguments)
 }
 
+/// A complete standalone, let-bound or assigned matcher computes a boolean without
+/// asserting its pattern. Its scrutinee may still contain an actual observer.
+pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, usize)> {
+    let original = statement;
+    let statement = statement.trim().trim_end_matches(';').trim();
+    let masked = mask_comments_and_strings(statement);
+    let mut depth = 0usize;
+    let assignment = masked.char_indices().find_map(|(index, character)| {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0
+                && !masked[..index].ends_with(['=', '!', '<', '>'])
+                && !masked[index + 1..].starts_with(['=', '>']) =>
+            {
+                return Some(index);
+            }
+            _ => {}
+        }
+        None
+    });
+    let mut expression = match assignment {
+        Some(index) if masked[..index].trim_start().starts_with("let ") => {
+            statement[index + 1..].trim()
+        }
+        Some(index)
+            if masked[..index].chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || character.is_whitespace()
+                    || matches!(character, '_' | ':' | '.')
+            }) =>
+        {
+            statement[index + 1..].trim()
+        }
+        _ => statement,
+    };
+    while let Some(inner) = parenthesized_contents(expression) {
+        expression = inner.trim();
+    }
+    let scrutinee = complete_macro_arguments(expression, "matches!")?
+        .into_iter()
+        .next()?;
+    let open = mask_comments_and_strings(expression).find(['(', '[', '{'])?;
+    let scrutinee_start =
+        original.find(expression)? + open + 1 + expression[open + 1..].find(&scrutinee)?;
+    let preceding_lines = original[..scrutinee_start]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    Some((scrutinee, preceding_lines))
+}
+
 /// The new scalar predicate credit requires an entire outer assertion. The
 /// older argument helper deliberately recognizes macro calls inside a line;
 /// that is not sufficient authority for this narrower classification.

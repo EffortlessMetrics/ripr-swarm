@@ -25,6 +25,7 @@ fn trials() -> Vec<libtest_mimic::Trial> {
             matches!(value, _);
             matches!(value, 2);
             let matched = matches!(value, 2);
+            let expected_match = matches!(value, 2);
             Ok(())
         }),
         libtest_mimic::Trial::test("asserted", || {

@@ -101,7 +101,10 @@ test. Discarded expression statements and unconsumed bindings therefore
 provide no assertion oracle, whether the pattern is wildcard, exact or
 guarded (#5713). Parser, lexical and registered-harness admission share this
 boundary. Actual asserting wrappers retain their existing classification;
-the dedicated terminal Result-guard scanner still recognizes matchers that
+an unrelated observer on the same line cannot acquire the discarded
+matcher's pattern. The lexical extractor retains a recognized observer
+within its scrutinee, such as smoke credit for `result.unwrap()`.
+The dedicated terminal Result-guard scanner still recognizes matchers that
 participate in its failure decision. This rule does not infer boolean
 dataflow across bindings.
 
@@ -257,6 +260,7 @@ Fixture coverage:
 - `fixtures/smoke_assertion_only`
 - `fixtures/no_static_path`
 - `discarded_matches_are_not_lexical_oracles`
+- `discarded_matchers_cannot_supply_an_unrelated_observers_pattern`
 - `discarded_matches_in_a_parsed_owner_test_are_not_oracles`
 - `registered_trials_do_not_credit_discarded_matcher_computations`
 - `asserting_wrappers_keep_consumed_pattern_oracles`

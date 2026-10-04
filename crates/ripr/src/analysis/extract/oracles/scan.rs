@@ -1,6 +1,7 @@
 use crate::analysis::facts::OracleFact;
 use crate::domain::{OracleKind, OracleStrength};
 
+use super::arguments::{assertion_oracle_text, discarded_matcher_scrutinee};
 use super::classify::classify_assertion;
 use super::patterns::{
     contains_macro_invocation, contains_named_enum_variant, is_custom_assertion_helper,
@@ -28,6 +29,12 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         }
         if is_assertion_line(&trimmed) {
             collect_multiline_assertion(&mut trimmed, &mut lines);
+            trimmed = without_discarded_matcher_computations(&trimmed);
+            if trimmed.trim().is_empty() {
+                continue;
+            }
+            let preceding_lines = leading_blank_lines(&trimmed);
+            trimmed = trimmed.trim().to_string();
             let mut classification = classify_assertion(&trimmed);
             // RIPR-SPEC-0106: upgrade exact assertions on unwrap_err-bound
             // variables to ExactErrorVariant so the ErrorVariant seam can credit
@@ -44,7 +51,7 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
             }
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
-                line: start_line + offset,
+                line: start_line + offset + preceding_lines,
                 text: trimmed,
                 kind: classification.kind,
                 strength: classification.strength,
@@ -2074,9 +2081,15 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
             continue;
         }
         collect_multiline_assertion(&mut statement, &mut lines);
+        statement = without_discarded_matcher_computations(&statement);
+        if statement.trim().is_empty() {
+            continue;
+        }
+        let preceding_lines = leading_blank_lines(&statement);
+        statement = statement.trim().to_string();
         let classification = classify_assertion(&statement);
         out.push(OracleFact {
-            line: start_line + offset,
+            line: start_line + offset + preceding_lines,
             text: statement.clone(),
             kind: classification.kind,
             strength: classification.strength,
@@ -2085,6 +2098,65 @@ pub(crate) fn extract_line_scanned_oracles(body: &str, start_line: usize) -> Vec
         });
     }
     out
+}
+
+/// Other observers on the same line, or an `expect_` name inside a matcher,
+/// must not admit its discarded pattern as an assertion operand (#5713).
+/// Split only complete top-level statements; wrappers and failure guards stay
+/// intact. A nested scrutinee assertion/unwrap retains its own observer text.
+fn without_discarded_matcher_computations(text: &str) -> String {
+    let masked = mask_comments_and_strings(text);
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut output = String::new();
+    for (index, character) in masked.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => {
+                append_matcher_free_statement(&text[start..=index], &mut output);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    append_matcher_free_statement(&text[start..], &mut output);
+    output
+}
+
+fn leading_blank_lines(text: &str) -> usize {
+    text.chars()
+        .take_while(|character| character.is_whitespace())
+        .filter(|character| *character == '\n')
+        .count()
+}
+
+fn append_matcher_free_statement(statement: &str, output: &mut String) {
+    let Some((scrutinee, preceding_lines)) = discarded_matcher_scrutinee(statement) else {
+        output.push_str(statement);
+        return;
+    };
+    let scrutinee = without_discarded_matcher_computations(&scrutinee);
+    let masked = mask_comments_and_strings(&scrutinee);
+    let has_observer = assertion_oracle_text(&scrutinee).is_some()
+        || masked.contains(".unwrap(")
+        || masked.contains(".expect(")
+        || (masked.contains('(')
+            && (is_custom_assertion_helper(&masked)
+                || is_side_effect_observer_assertion(&masked)
+                || is_mock_expectation_line(&masked)));
+    let lines = statement.bytes().filter(|byte| *byte == b'\n').count();
+    let remaining_lines = if has_observer {
+        output.extend(std::iter::repeat_n('\n', preceding_lines));
+        output.push_str(&scrutinee);
+        output.push(';');
+        lines.saturating_sub(
+            preceding_lines + scrutinee.bytes().filter(|byte| *byte == b'\n').count(),
+        )
+    } else {
+        lines
+    };
+    output.extend(std::iter::repeat_n('\n', remaining_lines));
 }
 
 fn is_assertion_line(line: &str) -> bool {

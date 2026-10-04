@@ -10,6 +10,14 @@ const DISCARDED: &[&str] = &[
     "std::matches!(value, 2);",
     "let matched = matches!(value, 2);",
     "let _ = matches!(value, 2);",
+    "matches!(expected_value, 2);",
+    "let expected_match = matches!(value, 2);",
+    "let expected_match: bool = (core::matches! { value, 2 });",
+    "let expected_match = matches!(\nvalue,\n2\n);",
+    "matches!(expected_metric_value, 2);",
+    "expected_match = matches!(value, 2);",
+    "let /* binder */ mut expected_match: bool = matches!(value, 2);",
+    "matches!(matches!(expected_value, 2), true);",
 ];
 
 #[test]
@@ -21,6 +29,73 @@ fn discarded_matches_are_not_lexical_oracles() -> Result<(), String> {
                 "discarded computation became an oracle: {statement}: {facts:?}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn discarded_matchers_cannot_supply_an_unrelated_observers_pattern() -> Result<(), String> {
+    for (statement, kind, strength) in [
+        (
+            "matches!(value, 2); unrelated.unwrap();",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "let expected_match = matches!(value, 2); unrelated.expect(\"present\");",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "matches!(value, 2); assert!(true);",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        ),
+        (
+            "matches!(value, 2); insta::assert_snapshot!(unrelated);",
+            OracleKind::Snapshot,
+            OracleStrength::Medium,
+        ),
+        (
+            "matches!(result.unwrap(), 2);",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+    ] {
+        let facts = extract_assertions(statement, 10);
+        let [fact] = facts.as_slice() else {
+            return Err(format!(
+                "expected the actual observer: {statement}: {facts:?}"
+            ));
+        };
+        if fact.kind != kind
+            || fact.strength != strength
+            || fact.text.contains("matches!")
+            || fact.observed_tokens.contains(&"value".to_string())
+            || fact.observed_tokens.contains(&"expected_match".to_string())
+        {
+            return Err(format!(
+                "discarded pattern contaminated observer: {statement}: {fact:?}"
+            ));
+        }
+    }
+    let multiline = extract_assertions(
+        "let expected_match = matches!(\nvalue,\n2); unrelated.unwrap();",
+        10,
+    );
+    let [fact] = multiline.as_slice() else {
+        return Err(format!(
+            "expected one surviving multiline observer: {multiline:?}"
+        ));
+    };
+    if fact.line != 12
+        || fact.text != "unrelated.unwrap();"
+        || fact.kind != OracleKind::SmokeOnly
+        || fact.strength != OracleStrength::Smoke
+    {
+        return Err(format!(
+            "surviving observer lost its actual line or grip: {fact:?}"
+        ));
     }
     Ok(())
 }
