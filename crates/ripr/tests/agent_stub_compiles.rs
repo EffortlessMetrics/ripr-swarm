@@ -357,8 +357,28 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     let stub = written
                         .find(&format!("fn {test_name}("))
                         .ok_or_else(|| format!("{needle}: the stub is written"))?;
+                    // The closing brace of `mod tests`, so a top-level test
+                    // written between the two modules does not pass.
+                    let open = module("tests")? + "mod tests ".len();
+                    let mut depth = 0usize;
+                    let close = written[open..]
+                        .char_indices()
+                        .find_map(|(offset, ch)| {
+                            match ch {
+                                '{' => depth += 1,
+                                '}' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        return Some(open + offset);
+                                    }
+                                }
+                                _ => {}
+                            }
+                            None
+                        })
+                        .ok_or_else(|| format!("{needle}: `mod tests` closes"))?;
                     assert!(
-                        module("tests")? < stub && stub < module("more_tests")?,
+                        open < stub && stub < close && close < module("more_tests")?,
                         "{needle}: the stub goes in `tests`:\n{written}"
                     );
                 }
