@@ -33,7 +33,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | CI adoption | Generated workflow can only get ripr by compiling it (1 = yes) | no | <= no | meets the bar | changed since a7a089e (was yes) |
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
-| Trust | Findings or seams whose own evidence contradicts itself | **1 findings** | <= 0 findings | below the bar | unchanged since a7a089e (1 findings) |
+| Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
 | Trust | Wrong verdicts on the hand-checked verdict corpus | **31.2%** | <= 5.0% | below the bar | first receipt |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt |
@@ -60,7 +60,7 @@ Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On the labeled corpus ripr reported a gap on 10 of 20 changes whose tests caught every listed mutant (50.0%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`.
 - **Mostly unsure.** It abstained on 18 of 32 corpus cases (56.2%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
-- **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The recorded examples are all in: semver.
+- **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 174 of 1745 mutants (10.0%) join a ripr seam precisely enough to score, so the agreement figures rest on a small slice.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
 - **Cold `ripr pilot` peak memory.** Worst repository: ripr-swarm at 3467 MB; the bar is at most 1024 MB.
@@ -75,8 +75,8 @@ Agreement is scored only on seam_precise joins (operator mutants whose original 
 
 | Verdict class | Seams | Mutants | Agree | Overclaim | False gap | Agreement |
 | --- | --- | --- | --- | --- | --- | --- |
-| ripr says a test would notice (`strongly_gripped`) | 8 | 14 | 14 | 0 | 0 | 100.0% |
-| ripr says no test would notice (`ungripped`) | 12 | 23 | 1 | 0 | 22 | 4.3% |
+| ripr found a discriminator (`strongly_gripped`) | 8 | 14 | 14 | 0 | 0 | 100.0% |
+| ripr found no discriminator (`ungripped`) | 12 | 23 | 1 | 0 | 22 | 4.3% |
 
 An overclaim is a mutant ripr said a test would catch that no test caught. A false gap is a mutant ripr said nothing would catch that the tests did catch.
 
@@ -256,10 +256,9 @@ Repositories the speed scoreboard ran on:
 
 ```bash
 cargo xtask dx-scoreboard --clone            # speed, memory, CI size, pasted commands
-cargo xtask mutation-spot-check              # agreement with real mutation runs
 cargo xtask first-run                        # the new-developer walk
 cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then render
 cargo xtask public-proof --check             # fail if this page is stale
 ```
 
-Receipts live in `metrics/public-proof/`. `dx-scoreboard.json` and `verdict-corpus.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json` and `fixtures/rust-verdict-corpus/expected/report.json`; the check fails when either source moves ahead of its copy. The mutation, first-run and agent receipts are copied from the harness outputs named in their sections.
+Receipts live in `metrics/public-proof/`. `dx-scoreboard.json` and `verdict-corpus.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json` and `fixtures/rust-verdict-corpus/expected/report.json`; the check fails when either source moves ahead of its copy. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.

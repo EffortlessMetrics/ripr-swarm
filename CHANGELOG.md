@@ -16,8 +16,9 @@ are scoped or reviewed.
   agreement per verdict class, verdict-corpus rates, speed and memory on the
   pinned corpus, first-run results, and a computed list of where ripr falls
   short. `public-proof --check` and an xtask unit test fail when the page no
-  longer matches its receipts, and when a receipt differs from its canonical
-  in-repo source once that source exists.
+  longer matches its receipts, and when the scoreboard or verdict-corpus
+  receipt differs from its in-repo source. The other receipts have no in-repo
+  source and are committed harness output.
 
 ### Fixed
 
