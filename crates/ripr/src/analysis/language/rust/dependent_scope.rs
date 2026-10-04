@@ -305,9 +305,13 @@ impl AdmissionQuery {
         let tokens = identifier_runs(bytes).collect::<Vec<_>>();
         let spells = |names: &BTreeSet<String>| {
             !names.is_empty()
-                && tokens
+                && (tokens
                     .iter()
                     .any(|token| names.iter().any(|name| name.as_bytes() == *token))
+                    || names
+                        .iter()
+                        .filter(|name| !name.is_ascii())
+                        .any(|name| spells_at_ascii_boundary(bytes, name.as_bytes())))
         };
         let declares = |keywords: &[&[u8]], names: &BTreeSet<String>| {
             !names.is_empty()
@@ -447,19 +451,20 @@ pub(super) struct NarrowedScope {
 #[derive(Default)]
 struct WithheldTokens {
     postings: std::collections::HashMap<Box<[u8]>, Vec<u32>>,
-    /// Files with a non-ASCII identifier run. A non-ASCII name can sit
-    /// inside such a run at an ASCII word boundary the runs do not split
-    /// at, so every one of these files may spell it.
+    /// Files with any non-ASCII byte. A non-ASCII name can sit at an ASCII
+    /// word boundary the identifier runs do not split at (or inside a run
+    /// they drop for its leading digit), so every one of these files may
+    /// spell it.
     unicode: Vec<u32>,
     macros: Vec<Vec<String>>,
 }
 
 impl WithheldTokens {
     fn insert(&mut self, id: u32, bytes: &[u8]) {
-        let unique = identifier_runs(bytes).collect::<HashSet<_>>();
-        if unique.iter().any(|token| !token.is_ascii()) {
+        if !bytes.is_ascii() {
             self.unicode.push(id);
         }
+        let unique = identifier_runs(bytes).collect::<HashSet<_>>();
         for token in unique {
             self.postings.entry(token.into()).or_default().push(id);
         }
@@ -1085,6 +1090,8 @@ mod tests {
         assert!(spells_any("/// “größe”".as_bytes(), &set));
         assert!(spells_any("let s = \"→größe\";".as_bytes(), &set));
         assert!(!spells_any("/// “größe_x”".as_bytes(), &set));
+        assert!(spells_any("/// 1→größe".as_bytes(), &set));
+        assert!(spells_any("let xgröße = größe;".as_bytes(), &set));
     }
 
     #[test]
@@ -1092,11 +1099,12 @@ mod tests {
         let mut tokens = WithheldTokens::default();
         tokens.insert(0, "/// “größe”".as_bytes());
         tokens.insert(1, b"fn plain() {}");
+        tokens.insert(2, "/// 1→größe".as_bytes());
         let wanted = |list: &[&str]| list.iter().map(|name| (*name).to_owned()).collect();
-        assert_eq!(tokens.spelling(&wanted(&["größe"])), BTreeSet::from([0]));
+        assert_eq!(tokens.spelling(&wanted(&["größe"])), BTreeSet::from([0, 2]));
         assert!(tokens.spelling(&wanted(&["plain_x"])).is_empty());
-        tokens.retain(&[None, Some(0)]);
-        assert!(tokens.spelling(&wanted(&["größe"])).is_empty());
+        tokens.retain(&[None, Some(0), Some(1)]);
+        assert_eq!(tokens.spelling(&wanted(&["größe"])), BTreeSet::from([1]));
     }
 
     #[test]
@@ -1127,6 +1135,14 @@ mod tests {
         assert!(definition.admits(b"fn parse"));
         assert!(!definition.admits(b"let x = parse(1);"));
         assert!(!definition.admits(b"fn parser() {}"));
+    }
+
+    #[test]
+    fn admission_reads_a_unicode_mention_at_ascii_boundaries() {
+        let mention = AdmissionQuery::for_names(&["größe"], &[]);
+        assert!(mention.admits("/// see “größe”".as_bytes()));
+        assert!(mention.admits("/// 1→größe".as_bytes()));
+        assert!(!mention.admits("/// “größer”".as_bytes()));
     }
 
     #[test]
