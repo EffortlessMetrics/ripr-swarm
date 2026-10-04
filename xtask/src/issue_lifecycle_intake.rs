@@ -449,13 +449,13 @@ fn verify_retrieval_step_bytes(
         if !step.command.ends_with(&suffix) {
             continue;
         }
-        if let IssueLifecycleIntakeBytesV1::Measured(bytes) = step.bytes {
-            if bytes as usize != committed_len {
-                return Err(format!(
-                    "intake row `{}` retrieval step `{}` claims {bytes} bytes, committed bytes measure {committed_len}",
-                    row.id, step.command
-                ));
-            }
+        if let IssueLifecycleIntakeBytesV1::Measured(bytes) = step.bytes
+            && bytes as usize != committed_len
+        {
+            return Err(format!(
+                "intake row `{}` retrieval step `{}` claims {bytes} bytes, committed bytes measure {committed_len}",
+                row.id, step.command
+            ));
         }
     }
     Ok(())
