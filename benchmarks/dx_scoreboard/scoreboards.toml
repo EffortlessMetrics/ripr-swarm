@@ -16,8 +16,9 @@
 
 schema_version = "ripr-dx-scoreboards-v1"
 
-# The shared Rust corpus (`benchmarks/rust_corpus/manifest.json`, #5288) can
-# replace the inline list below once it is on main:
+# The shared Rust corpus (`benchmarks/rust_corpus/manifest.json`, #5288, now on
+# main) can replace the inline list below; switching needs a new baseline
+# because its pins differ:
 #   corpus_manifest = "benchmarks/rust_corpus/manifest.json"
 # Its `fast` tier then runs by default and `full` with --include-heavy.
 
