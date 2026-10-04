@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Added
 
+- `ripr check --help` now chooses one `--format` per task (eye review,
+  drill-in listing, machine/gate JSON, Actions annotations, code scanning,
+  badges, repo inventory, agent packets) above the full group list, so a
+  newcomer maps their job to a format without re-reading the 22 values
+  (#5211).
 - `ripr help --json` now projects a typed per-command `exit` object for the
   0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
   `check` findings still completing with 0, `gate evaluate` `config_error`=2

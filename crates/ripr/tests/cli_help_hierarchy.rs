@@ -543,6 +543,28 @@ fn check_and_diff_help_state_the_real_base_default() -> Result<(), String> {
     Ok(())
 }
 
+/// #5211 direction B: `check --help` keeps every format but chooses one
+/// per task, so a newcomer maps their job to a format without re-reading
+/// the group list. Each task below must keep exactly its recommended path.
+#[test]
+fn check_help_chooses_one_format_per_task() -> Result<(), String> {
+    let check = normalized(&rendered_help(&["check", "--help"])?);
+    for needle in [
+        "Choose by task:",
+        "eye review -> human",
+        "every finding with drill-in commands -> human-full",
+        "machine consumer or gate input -> json",
+        "file annotations in Actions logs -> github",
+        "code scanning upload -> sarif",
+        "badge-shields (diff) or repo-badge-shields",
+        "whole-repo inventory -> repo-exposure-json",
+        "agent repair evidence -> agent-seam-packets-json",
+    ] {
+        assert_contains("check help (`ripr check --help`)", &check, needle)?;
+    }
+    Ok(())
+}
+
 /// Validate the command cell of each task row, not mentions elsewhere in the
 /// document. The result prose can change without changing the command's job.
 fn assert_doc_command_routes(doc: &str) -> Result<(), String> {

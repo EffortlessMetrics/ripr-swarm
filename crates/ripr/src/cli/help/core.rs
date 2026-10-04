@@ -169,6 +169,14 @@ Options:
                                repo-exposure-md, repo-sarif
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
+                           Choose by task: eye review -> human (the default);
+                           every finding with drill-in commands -> human-full;
+                           machine consumer or gate input -> json (--json);
+                           file annotations in Actions logs -> github; code
+                           scanning upload -> sarif; README badge ->
+                           badge-shields (diff) or repo-badge-shields (repo
+                           ledger); whole-repo inventory -> repo-exposure-json;
+                           agent repair evidence -> agent-seam-packets-json.
                            badge-plus-* and repo-badge-plus-* formats read
                            target/ripr/reports/test-efficiency.json when present;
                            missing input renders a neutral "needs test-efficiency"
