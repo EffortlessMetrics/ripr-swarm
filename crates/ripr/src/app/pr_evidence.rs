@@ -421,11 +421,8 @@ fn ensure_root_inside_invocation_repo(repo: &Path, root: &str) -> Result<(), Str
     if same_directory {
         return Ok(());
     }
-    let toplevel = |dir: &Path| {
-        run_git_output(dir, &["rev-parse", "--show-toplevel"])
-            .ok()
-            .and_then(|top| fs::canonicalize(top.trim_end_matches(['\r', '\n'])).ok())
-    };
+    let toplevel =
+        |dir: &Path| crate::git::discovered_work_tree_toplevel(dir, PR_EVIDENCE_GIT_DEADLINE);
     match (toplevel(repo), toplevel(&root_path)) {
         (Some(invocation), Some(selected)) if invocation == selected => Ok(()),
         _ => Err(format!(

@@ -20192,6 +20192,38 @@ fn pr_evidence_refuses_root_outside_invocation_repository() -> Result<(), String
             ));
         }
     }
+    // An inherited repository selector (as a Git hook exports) must not make
+    // both top-level probes answer for the invocation repository.
+    let selected_arg = selected.to_string_lossy().into_owned();
+    let git_dir = invocation.join(".git").to_string_lossy().into_owned();
+    let work_tree = invocation.to_string_lossy().into_owned();
+    let output = run_command_with_env(
+        bin,
+        &invocation,
+        &[
+            "pr-evidence",
+            "--root",
+            &selected_arg,
+            "--base",
+            "master",
+            "--head",
+            "HEAD",
+        ],
+        &[("GIT_DIR", &git_dir), ("GIT_WORK_TREE", &work_tree)],
+    )
+    .map_err(|err| format!("spawn ripr pr-evidence with GIT_DIR: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let written =
+        invocation.join("target/ripr/pr").exists() || selected.join("target/ripr/pr").exists();
+    if output.status.code() != Some(2)
+        || !stderr.contains("is not inside the Git work tree")
+        || written
+    {
+        failures.push(format!(
+            "foreign root under inherited GIT_DIR/GIT_WORK_TREE must still refuse; status {:?}, written {written}, stderr:\n{stderr}",
+            output.status.code()
+        ));
+    }
     ignore_remove_dir_all(&selected);
     ignore_remove_dir_all(&invocation);
     if failures.is_empty() {
