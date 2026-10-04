@@ -52,10 +52,16 @@ fn shadowed_undefined_cannot_disable_test_qualification_options() {
             format!("const {{ flag: undefined }} = config; {registration}"),
             format!("import {{ flag as undefined }} from './config'; {registration}"),
             format!("export const undefined = true; {registration}"),
+            format!("export default function undefined() {{ return true; }} {registration}"),
+            format!("export default class undefined {{ }} {registration}"),
             format!("suite('outer', () => {{ const undefined = true; {registration} }});"),
             format!("suite.each([true])('outer', (undefined) => {{ {registration} }});"),
             format!("for (const undefined of [true]) {{ {registration} }}"),
             format!("[true].forEach((undefined) => {{ {registration} }});"),
+            format!("[true].forEach((...[undefined]) => {{ {registration} }});"),
+            format!(
+                "[true].forEach(function undefined(flag) {{ if (flag !== true) return true; {registration} }});"
+            ),
             format!(
                 "const undefined = true; suite('qualified', {{ {key}: undefined }}, () => {{ test('child', {callback}); }});"
             ),
@@ -67,7 +73,12 @@ fn shadowed_undefined_cannot_disable_test_qualification_options() {
     }
     for source in [
         format!("function unrelated(undefined) {{ return undefined; }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("export {{ flag as undefined }} from './config'; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("import type {{ Flag as undefined }} from './config'; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("import {{ type Flag as undefined }} from './config'; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
         "test('ordinary', { expectFailure: undefined }, (undefined) => { assert.strictEqual(isAdult(18), true); });".to_string(),
+        "test('ordinary', { expectFailure: undefined }, (...[undefined]) => { assert.strictEqual(isAdult(18), true); });".to_string(),
+        "test('ordinary', { expectFailure: undefined }, function undefined() { assert.strictEqual(isAdult(18), true); });".to_string(),
         format!("const undefined = true; test('ordinary', {{ expectFailure: false }}, {callback});"),
     ] {
         let source = format!("{imports}{source}");

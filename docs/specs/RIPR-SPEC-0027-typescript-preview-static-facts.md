@@ -138,10 +138,14 @@ Test discovery:
   ordinary active test retains its evidence. Runner execution, selection and
   expected-failure matcher evaluation are not performed by this adapter.
 - A registration's `undefined` option is refused when an explicit import,
-  declaration or enclosing suite/loop parameter shadows that identifier.
+  supported declaration (including named default exports) or enclosing
+  suite/loop callback parameter or function name shadows that identifier.
   The bounded declaration walk conservatively includes block names; unrelated
   function bodies and the test callback's own parameters do not shadow options
   evaluated before that callback runs. Literal `false` remains admitted.
+  Runtime TypeScript enum/namespace/import-alias transformations and dynamic
+  rebinding remain outside this bounded declaration check; native Node type
+  stripping rejects those runtime TypeScript forms before test execution.
 - a `describe` / `context` / `suite` whose title is not a string literal
   (`describe(Div.name, fn)`, a template literal): its body is walked and the
   suite is named by the computed-title placeholder `<computed title, line N>`

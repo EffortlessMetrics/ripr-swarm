@@ -666,12 +666,11 @@ pub(crate) fn collect_tests_from_statements(
     }
     scope.levels.push(level);
     scope.iterables.push(iterables);
-    let unshadowed_undefined = !imports.iter().any(|import| import.local == "undefined")
-        && !scope
-            .levels
-            .iter()
-            .flatten()
-            .any(|(name, _, _)| name == "undefined");
+    let unshadowed_undefined = !scope
+        .levels
+        .iter()
+        .flatten()
+        .any(|(name, _, _)| name == "undefined");
     for stmt in statements {
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
@@ -1425,6 +1424,37 @@ fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<Stri
 
 fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<String>) {
     match statement {
+        Statement::ImportDeclaration(import) if import.import_kind != ImportOrExportKind::Type => {
+            for specifier in import.specifiers.iter().flatten() {
+                match specifier {
+                    ImportDeclarationSpecifier::ImportSpecifier(specifier)
+                        if specifier.import_kind != ImportOrExportKind::Type =>
+                    {
+                        out.push(specifier.local.name.to_string())
+                    }
+                    ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                        out.push(specifier.local.name.to_string())
+                    }
+                    ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                        out.push(specifier.local.name.to_string())
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+            oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                if let Some(identifier) = &function.id {
+                    out.push(identifier.name.to_string());
+                }
+            }
+            oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                if let Some(identifier) = &class.id {
+                    out.push(identifier.name.to_string());
+                }
+            }
+            _ => {}
+        },
         Statement::ExportNamedDeclaration(export) => match &export.declaration {
             Some(oxc_ast::ast::Declaration::VariableDeclaration(declaration)) => {
                 out.extend(declaration_binding_names(declaration));
@@ -1523,10 +1553,21 @@ fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String
         oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
         _ => return Vec::new(),
     };
+    let function_name = match argument {
+        oxc_ast::ast::Argument::FunctionExpression(function) => function.id.as_ref(),
+        _ => None,
+    };
     params
         .items
         .iter()
         .flat_map(|param| param.pattern.get_binding_identifiers())
+        .chain(
+            params
+                .rest
+                .iter()
+                .flat_map(|rest| rest.argument.get_binding_identifiers()),
+        )
+        .chain(function_name)
         .map(|identifier| identifier.name.to_string())
         .collect()
 }
