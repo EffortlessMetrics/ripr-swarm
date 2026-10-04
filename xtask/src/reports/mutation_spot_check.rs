@@ -52,8 +52,8 @@ const HARNESS_OWNED_MUTANTS_ARGS: &[&str] = &[
     "--output",
     "--jobs",
     "--timeout",
-    // cargo-mutants ignores these when --timeout is given, and the harness
-    // always gives it, so the receipt would record a no-op.
+    // The harness always passes --timeout: cargo-mutants rejects the
+    // multiplier alongside it and ignores the minimum, so neither can apply.
     "--timeout-multiplier",
     "--minimum-test-timeout",
     "--manifest-path",
@@ -1164,6 +1164,14 @@ mod tests {
                     "--mutants-arg",
                     "hex=--minimum-test-timeout=5",
                 ],
+                "would override how the harness runs",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex=-dfoo"],
+                "would override how the harness runs",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex=-o=/tmp/x"],
                 "would override how the harness runs",
             ),
             (

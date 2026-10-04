@@ -38,8 +38,9 @@ arguments, so the run can be reproduced, and the scoreboard marks rates from
 runs with extra arguments.
 Each value is one argument (`--re=decode`, not `--re decode`). Options the
 harness owns or that would stop it writing outcomes, such as `--output`,
-`--jobs` (also bundled, as in `-vj8`), `--timeout-multiplier`, `--in-place`,
-`--manifest-path` or `--list-files`, are refused.
+`--jobs`, `--timeout-multiplier`, `--in-place`, `--manifest-path` or
+`--list-files`, are refused, as are their short forms, including bundles such
+as `-vj8`.
 
 Package selection follows cargo-mutants. In a workspace whose root is a
 package, it mutates only that package unless given `--workspace` or
