@@ -376,6 +376,10 @@ struct StaleCleanup {
 /// concurrent run sharing the target directory, so it is left in place
 /// (#5307). The stamp check and the removal are not atomic: a write landing
 /// between them can still be removed, which narrows the race to that window.
+/// The stamp is size plus modification time, so on a filesystem with coarse
+/// timestamps (FAT, some network mounts) a same-size rewrite within one tick,
+/// or any same-size rewrite where the platform reports no mtime, also reads
+/// as unchanged and is removed.
 fn discard_stale_outputs(repo: &Path, previous: &[Option<OutputStamp>; 2]) -> StaleCleanup {
     let mut cleanup = StaleCleanup::default();
     for (relative, before) in OUTPUTS.into_iter().zip(previous) {
@@ -415,9 +419,15 @@ fn refuse_with_stale_cleanup(
         message.push_str(&format!(" Removed stale {}.", removed.join(" and ")));
     }
     if !left.is_empty() {
+        let (pronoun, verb) = if left.len() == 1 {
+            ("it", "was")
+        } else {
+            ("they", "were")
+        };
         message.push_str(&format!(
-            " Left {} in place: another run wrote it after this run started, so it does not describe this refused run.",
-            left.join(" and ")
+            " Left {} in place: {pronoun} {verb} written after this run started, so {pronoun} {} not describe this refused run.",
+            left.join(" and "),
+            if left.len() == 1 { "does" } else { "do" }
         ));
     }
     if !failed.is_empty() {
