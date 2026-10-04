@@ -25,3 +25,4 @@ xtask/src/no_panic.rs|expect(clippy::unwrap_used)|1|no-panic test module (extrac
 xtask/src/product_gate_plan.rs|allow(dead_code)|1|Canonical product-gate authority is introduced before workflow consumers migrate; the next slice will consume it for observational parity.
 xtask/src/types.rs|allow(dead_code)|4|Test-only types (CheckStatus/CheckViolation/CheckReport/AutoFixable) used via super::* glob in tests.rs; dead in non-test builds
 crates/ripr/src/config.rs|expect(clippy::expect_used)|1|Test module: asserts expected config diagnostics via `.expect_err("why")`; the failure mode stays part of the assertion message.
+fixtures/rust-verdict-corpus/subjects/semver/tests/util/mod.rs|allow(dead_code)|1|Retained upstream semver 1.0.23 test helper, byte-identical to upstream and pinned by sha256 in the verdict corpus (RIPR-SPEC-0217); editing it would break the excerpt digest.

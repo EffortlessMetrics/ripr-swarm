@@ -1173,3 +1173,11 @@ path = "docs/specs/RIPR-SPEC-0216-matched-ripr-intervention-study-preregistratio
 status = "proposed"
 owner = "product-eval"
 standalone_reason = "Issue #4649 records the matched RIPR intervention-study preregistration: a frozen protocol names study identity, assignment, equal budgets, the named RIPR evidence surface, leakage controls, retries, stopping, non-compensating outcome axes, and claim ceiling before outcomes exist, without executing agents, adjudicating repairs, or publishing a pilot. Renumbered from RIPR-SPEC-0185, RIPR-SPEC-0205 and RIPR-SPEC-0215 after main landed other specs under those numbers first."
+
+[[artifact]]
+id = "RIPR-SPEC-0217"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0217-labeled-rust-verdict-corpus.md"
+status = "proposed"
+owner = "product-eval"
+standalone_reason = "Records the labeled Rust verdict corpus: one-line edits in pinned real crates labeled by running mutants against each crate's own tests, a fixed truth-to-verdict table, and cargo xtask verdict-corpus, which scores ripr's anchored verdicts and reports false-verdict and contradiction rates without running mutation testing or network access."
