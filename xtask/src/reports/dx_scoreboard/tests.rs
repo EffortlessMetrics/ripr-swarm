@@ -1366,3 +1366,17 @@ fn the_gate_message_reports_the_compared_value_not_a_new_repos_worst() -> Result
     assert_eq!(regression["current"].as_f64(), Some(3000.0), "{regression}");
     Ok(())
 }
+
+#[test]
+fn a_slower_fail_closed_repo_is_not_a_time_regression() -> Result<(), String> {
+    let base = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 40)]);
+    let current = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 9000)]);
+    let report = corpus_gate(&base, &current)?;
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        report["gate"]
+    );
+    Ok(())
+}

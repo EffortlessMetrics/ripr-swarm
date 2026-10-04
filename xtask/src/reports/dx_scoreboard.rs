@@ -885,9 +885,11 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
             true,
             status.to_string(),
         ));
+        // Only an analyzed run's time is comparable; a fail-closed run's time
+        // stays in the evidence so it cannot regress (or mask) the aggregate.
         rows.push(row(
             "corpus.check_ms",
-            ms,
+            if analyzed { ms } else { 0.0 },
             analyzed,
             if analyzed {
                 format!("`ripr check --base <pinned base>` in {ms:.0} ms")
