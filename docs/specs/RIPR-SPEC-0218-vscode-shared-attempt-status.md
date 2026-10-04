@@ -91,7 +91,9 @@ The VS Code extension consumes the shared DTO; it invents no state.
   a dead session cannot repaint the status bar.
 - The per-root explicit selection persists in `workspaceState`
   (`ripr.activeAttemptSelection.v1`) across extension restart and
-  deactivation. In-memory presentation is discarded when the server session
+  deactivation — including an explicit id that names no current inventory
+  row, once its document reads back with the matching identity.
+  In-memory presentation is discarded when the server session
   stops; a stale remembered id is deleted, never resurrected.
 - Presentation maps each class to exactly one tone:
   `finished_current` → pass; `awaiting_edit`/`prepared` → info;

@@ -1884,7 +1884,10 @@ export class RiprClientController {
       );
       return;
     }
-    if (resolution.kind === 'selected' && resolution.via === 'explicit') {
+    if (explicit) {
+      // An explicit id is user intent: remember it even when the id is not a
+      // current inventory row (it may name a historical/ended attempt the
+      // inventory no longer lists). The picker path remembers its own pick.
       this.rememberAttempt(root, resolution.attemptId);
     }
     const presentation = presentAttemptStatus(status);

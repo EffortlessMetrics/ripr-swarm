@@ -211,6 +211,8 @@ suite('Show Repair Attempt Status command (#4643)', () => {
     trusted?: boolean;
     inventory: unknown;
     selected: unknown;
+    /** Per-attempt status payloads so a `--attempt <id>` read returns the document for that exact id. */
+    selectedByAttempt?: Record<string, unknown>;
     remembered?: Record<string, unknown>;
     pickIndex?: number;
     onRunRipr?: () => Promise<void>;
@@ -252,7 +254,10 @@ suite('Show Repair Attempt Status command (#4643)', () => {
         if (options.onRunRipr) {
           await options.onRunRipr();
         }
-        const payload = args.includes('--attempt') ? options.selected : options.inventory;
+        const attemptFlag = args.indexOf('--attempt');
+        const payload = attemptFlag >= 0
+          ? options.selectedByAttempt?.[args[attemptFlag + 1] ?? ''] ?? options.selected
+          : options.inventory;
         if (typeof payload === 'string') {
           return payload;
         }
@@ -368,18 +373,26 @@ suite('Show Repair Attempt Status command (#4643)', () => {
   test('several current attempts require an explicit pick and the pick is remembered per root', async () => {
     const inventory = await loadFixture('inventory.json');
     const selected = await loadFixture('status-stale.json');
-    const h = harness({ inventory, selected, pickIndex: 2 });
+    const pickedId = 'repair-attempt-0bbb2222bbbb2222bbbb2222bbbb2222bbbb2222';
+    // The document for the picked attempt must carry the picked identity, or
+    // the identity-binding refusal (correctly) rejects the render.
+    const pickedDoc = { ...(selected as Record<string, unknown>), attempt_id: pickedId };
+    const h = harness({ inventory, selected, selectedByAttempt: { [pickedId]: pickedDoc }, pickIndex: 2 });
     const controller = controllerFor(h);
 
     await controller.showAttemptStatus();
 
-    const pickedId = 'repair-attempt-0bbb2222bbbb2222bbbb2222bbbb2222bbbb2222';
     assert.deepStrictEqual(h.runRiprCalls[1], ['agent', 'status', '--root', '/workspace', '--attempt', pickedId, '--json']);
     const stored = h.memento.get('ripr.activeAttemptSelection.v1') as Record<string, string>;
     assert.strictEqual(stored['/workspace'], pickedId, 'the explicit pick must be remembered for the root');
 
     // Second run: the remembered selection resolves without a pick.
-    const h2 = harness({ inventory, selected, remembered: { 'ripr.activeAttemptSelection.v1': { '/workspace': pickedId } } });
+    const h2 = harness({
+      inventory,
+      selected,
+      selectedByAttempt: { [pickedId]: pickedDoc },
+      remembered: { 'ripr.activeAttemptSelection.v1': { '/workspace': pickedId } }
+    });
     const controller2 = controllerFor(h2);
     await controller2.showAttemptStatus();
     assert.strictEqual(h2.quickPickCalls, 0, 'no quick pick expected when the remembered selection is valid');
@@ -404,7 +417,7 @@ suite('Show Repair Attempt Status command (#4643)', () => {
     const inventory = await loadFixture('inventory.json');
     const selected = await loadFixture('status-awaiting_edit.json');
     const explicitId = 'repair-attempt-0123456789abcdef01234567';
-    const h = harness({ inventory, selected });
+    const h = harness({ inventory, selected, selectedByAttempt: { [explicitId]: selected } });
     const controller = controllerFor(h);
 
     await controller.showAttemptStatus(explicitId);
