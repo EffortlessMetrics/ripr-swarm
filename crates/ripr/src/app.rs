@@ -77,7 +77,7 @@ pub(crate) use check::check_with_progress;
 pub(crate) use check::check_workspace_repo_with_origins;
 #[cfg(test)]
 pub(crate) use check::check_workspace_worktree_with_origins;
-pub(crate) use check::check_workspace_worktree_with_sources_and_open_rust_paths;
+pub(crate) use check::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
 pub(crate) use check::is_managed_perl_producer;
 pub use check::{
     check_workspace_repo_with_config, check_workspace_with_config,
@@ -85,6 +85,7 @@ pub use check::{
 };
 pub(crate) use context::collect_context_from_artifact;
 pub use context::collect_context_with_config;
+pub(crate) use context::collect_context_with_config_and_worktree;
 pub use context::{collect_context, collect_context_with_input};
 #[cfg(test)]
 pub(crate) use explain::explain_finding_from_artifact;
@@ -94,7 +95,9 @@ pub(crate) use explain::{
     explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_and_navigation_mode,
 };
-pub(crate) use navigation::{FindingDrillIn, FindingNavigation, finding_navigation};
+pub(crate) use navigation::{
+    FindingDrillIn, FindingNavigation, finding_navigation, finding_navigation_with_worktree,
+};
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
     repo_inventory_with_progress,

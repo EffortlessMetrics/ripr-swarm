@@ -9,7 +9,46 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Fixed
+
+- LSP: `session_value_sources` reports `initialization` only for applied
+  initialization options. A malformed value such as `checkMode: "Deep"` keeps
+  the session up, discloses the `repo` or `default` fallback, and emits one
+  `window/logMessage` warning naming the rejected key (#5092).
+
+- Source-subject stamps keep whitespace-bearing path identity, so a check JSON
+  stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
+  tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
+  prefix components stay rejected (#5128).
+
 ### Changed
+
+- LSP: the actionable-profile line-findings hover names the editor-neutral
+  `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
+  `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
+  instead of telling every client to set the VS Code-only name (#5094).
+- Rust finding output preserves the matched related-test/oracle count before
+  bounded packing. JSON, SARIF, and human totals agree while retained rows and
+  exposure classification remain unchanged. (#5146)
+
+- Evidence output: retained lexical and statically derived values are described
+  as source values in both human and JSON evidence paths, including values in
+  refused assertions. Typed facts, provenance, classes and admitted oracle
+  stages stay unchanged. (#5027)
+- Rust analysis: a proved-empty local macro cannot contribute discarded owner
+  calls or boundary arguments through a mixed-line call fact. A genuine far
+  assertion retains its strength and observation, while a real boundary test
+  still discriminates. Original source bytes remain authoritative; producer
+  build identity separates predecessor caches without reusing their facts. (#5027)
+- Rust analysis: ordinary turbofish calls remain eligible beside unresolved
+  property macros. Opaque declarations cannot supply owner reach, and discarded
+  property bodies cannot supply raw-scanned assertion oracles. These boundaries
+  preserve ordinary source authority without assuming macro expansion. (#5131)
+- Python: a changed source path missing from the working tree now carries an
+  exact-path `changed_file_absent_from_worktree` limitation and checkout recovery.
+  It is excluded from analyzed-file counts and preview samples; available findings
+  remain visible and shared outcome/badge projections report incomplete analysis
+  instead of a complete green zero (#5110).
 
 - Human output: a selected `no_static_path` finding without a typed limitation
   asks readers to review the unresolved static path and existing tests, rather
@@ -84,6 +123,20 @@ are scoped or reviewed.
 
 ### Added
 
+- LSP: the accepted refresh's work-done progress now consumes the shared
+  producer stage vocabulary — the blocking analysis runs through the shared
+  progress-bearing entry point and a best-effort bridge forwards
+  `loading input`, `analyzing workspace`, and `building output` as bounded
+  message-only `$/progress` reports on the existing
+  `ripr-analysis-{generation}` token. Reports never carry percentages or
+  terminal stages; cancellation, deadline, supersession, failure, and
+  disclosed limited/deferred states keep their outcome-derived terminal
+  messages, and clients without `window/workDoneProgress` see no traffic.
+  The post-analysis stage drain is bounded, so a stalled client can delay
+  diagnostics handling by at most twice the drain budget, never block it. A
+  cross-surface parity oracle pins CLI and LSP stage identity, ordering,
+  denominator honesty, and terminal disposition against one normalized
+  producer trace (RIPR-SPEC-0208, #4811).
 - CLI: `ripr pilot` now projects the shared analysis progress stream on
   stderr — `ripr progress: <stage> [repo]` stage lines and throttled
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
@@ -221,6 +274,23 @@ are scoped or reviewed.
   (#4796).
 
 ### Fixed
+
+- Rust: bare equality oracles for error-path and predicate probes now share the
+  existing execution/collectability/macro-binding admission (#5027). Uncalled,
+  false-branch and shadowed assertions retain their test relation without
+  observation or oracle credit; direct and invoked positives remain supported.
+  Family-selected runtime/honesty controls preserve static-only confidence.
+  Boundary pairing now consumes that same admission decision, so refused
+  boundary assertions cannot borrow a far oracle to restore exposure.
+  A bounded statement-prefix refinement preserves earlier synchronous equality
+  before a later return and ignores returns owned by nested helpers/futures.
+  Independent ordinary equality also survives a uniquely bound local empty
+  catch-all macro; imported, shadowed and nonempty expansions remain unsupported.
+  Updated inherited human denominator/base-side labels and precise boundary
+  guidance without changing classification, oracle strength or stage states.
+  Async/test-macro execution remains unsupported: the
+  real Tokio fixture keeps discovery but loses strong static oracle credit, an
+  explicit conservative usefulness tradeoff tracked by #5040.
 
 - File-policy coverage arrays preserve valid TOML comments and decoded string
   values for common, Unix, and Windows selectors. Parser-owned spans retain
@@ -480,6 +550,15 @@ are scoped or reviewed.
   JavaScript too. `PreviewLanguageAdvisory` gains the public field
   `javascript_file_count`; code that builds the struct with a literal must
   set it (#4555).
+- `ripr check --worktree` now prints executable drill-in commands, and
+  `ripr explain` and `ripr context` accept `--worktree`. Before, a worktree
+  run without `--write-artifact` printed only a note pointing at the artifact
+  route, `explain --worktree` was an unknown argument, and `explain
+  file:line` analyzed committed history, where a finding from uncommitted
+  edits does not exist. A selector miss, or a missing selector under
+  `--worktree`, now names a `ripr check ... --json` listing with the same
+  root, base and `--worktree`, and a `--worktree` drill-in without `--root`
+  resolves the project root from a subdirectory the way `ripr check` does.
 - Python: a changed dunder method now relates to the tests that use its class.
   `LowerBound.__init__` relates to tests that construct `LowerBound(...)`,
   instead of tests that define their own helper class with `def __init__`.

@@ -908,7 +908,14 @@ The evidence-first fields are additive in schema `0.2`:
 
 - `evidence_path` is an ordered, human-readable summary of reachability,
   infection, propagation, observation, discrimination, local flow, related test
-  oracles, observed values, and missing discriminator evidence.
+  oracles, source values, and missing discriminator evidence.
+- `observed_values` retains its historical field name for values found or
+  statically derived from test source. A value, its `context`, and retained
+  provenance do not establish assertion execution or an admitted oracle. Facts
+  from refused assertions can remain useful source evidence. Human and JSON
+  evidence-path prose therefore says `source ... value`; the separate admitted
+  `ripr.observe` and `ripr.discriminate` stages retain their own meaning. Field
+  names, typed values, provenance, ordering and caps are unchanged.
 - `identity.git_candidate_subject` (additive, no `schema_version` bump,
   #3278) appears in the `analysis_outcome.outcome.identity` object
   as a non-null object exactly when the run analyzed an immutable Git
@@ -964,6 +971,13 @@ The evidence-first fields are additive in schema `0.2`:
   `oracle_kind`/`oracle_strength` summary — those use the full pre-cap vector.
   Mirrors the `related_tests_total` + cap pattern already in
   `seams[].related_tests_total` for the `repo-exposure.json` format.
+  For Rust diff findings this preserves the existing post-dedup test/oracle
+  row count before unique-first packing, rather than counting the eight
+  retained rows or introducing a new distinct-test count unit. The packed
+  evidence vector, ranking, exposure and repair selection are unchanged.
+  Finding-level human and SARIF totals project the same count. Older internal
+  Finding artifacts without producer count metadata preserve their known
+  retained-vector count; an omitted field cannot recover discarded matches.
 - `related_tests[].relation_reason` — (optional, additive, no `schema_version`
   bump) the highest-priority static signal that caused this test to be
   included. Values: `direct_owner_call`, `helper_owner_call`,
@@ -1691,15 +1705,19 @@ Enabled example carries `"enabled": true`, `"analyzed": true`, and a
 `"why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"`.
 
 - `language` — stable wire string; one of `typescript`, `javascript`, `python`
-- `file_count` — number of files in scope routed to this adapter (real, never fabricated)
+- `file_count` — enabled adapters count admitted files; generated/excluded paths
+  and Python paths carrying `changed_file_absent_from_worktree` are omitted.
+  Disabled adapters retain the raw routed count (RIPR-SPEC-0082).
 - `sample_paths` — up to three normalized (forward-slash) file paths
 - `enabled` — whether the preview adapter was enabled (ran) for this analysis
-- `analyzed` — whether the files were analyzed (mirrors `enabled`)
+- `analyzed` — whether the admitted files reached adapter completion; requires
+  an enabled adapter, a nonzero count and no non-success `language_runs` entry
 - `category` — always `"preview_language_advisory"` for machine filtering
 - `why` — advisory rationale string (case-specific)
 
-An empty or absent `preview_languages` array means only stable (Rust) content
-was in scope. A non-empty array is an honesty signal: either the listed
+An empty or absent `preview_languages` array can also mean every enabled
+preview path was withheld. Consult `analysis_outcome` for skipped or missing
+source limitations; absence of an advisory is not a completeness claim. A non-empty array is an honesty signal: either the listed
 preview-language files were not analyzed at all (`enabled == false`) or were
 analyzed under advisory preview support that may be incomplete
 (`enabled == true`). In neither case is an empty result a Rust-grade clean
@@ -16436,7 +16454,11 @@ top-level `source_subject`:
   by `path`. `path` is repo-relative with `/` separators and no `.` or `..`
   segments; a `path::test_name` selector contributes its file part, and a
   string whose last segment has no extension (a bare test or observer name) is
-  not a file. An absolute path counts when it lies under the root, which is
+  not a file. Whitespace in a filename or directory is identity, not padding:
+  ` leading.py` stays distinct from `leading.py`, and a Git-quoted path is not
+  trimmed or omitted. Parent, root, and prefix components stay rejected, so a
+  drive-relative or rooted spelling cannot collapse onto a workspace-relative
+  stamp. An absolute path counts when it lies under the root, which is
   resolved to an absolute path first. `digest` is `"sha256:<hex>"` of the file
   bytes, or `null` when the file did not exist.
 
@@ -16976,7 +16998,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.17",
+    "schema_version": "1.18",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -16987,7 +17009,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.27",
+      "schema_version": "1.29",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

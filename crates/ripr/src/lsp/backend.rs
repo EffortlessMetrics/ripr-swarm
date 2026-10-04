@@ -21,6 +21,7 @@ use super::payload_bounds::{
     check_list_actionable_items_params, check_previous_result_ids,
 };
 use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
+use super::progress_stages::{STAGE_DRAIN_BUDGET, StageReportBridge, drain_stage_reports};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScheduler,
     RefreshScope,
@@ -471,6 +472,19 @@ impl Backend {
             tokio::time::sleep(deadline).await;
             deadline_token.cancel(AnalysisAbortKind::DeadlineExceeded);
         }));
+        // #4811: bridge the producer-owned stage boundaries onto this
+        // attempt's work-done token while the blocking analysis runs. The
+        // sink side only queues events; a drain task on the async runtime
+        // forwards them as bounded `$/progress` reports. Best-effort: the
+        // bridge can never change the analysis result, and the drain budget
+        // bounds how long a stalled client may delay result handling.
+        let stage_bridge = Arc::new(StageReportBridge::new());
+        let stage_drain = {
+            let bridge = Arc::clone(&stage_bridge);
+            let tracker = Arc::clone(&self.progress);
+            tokio::spawn(async move { drain_stage_reports(&bridge, &tracker, generation).await })
+        };
+        let bridge_for_blocking = Arc::clone(&stage_bridge);
         let diagnostics_result = tokio::task::spawn_blocking(move || {
             let _execution = match execution_gate.lock() {
                 Ok(guard) => guard,
@@ -485,10 +499,28 @@ impl Backend {
                 defer_seam_inventory,
                 &cancellation,
                 &open_rust_index_paths,
+                Some(bridge_for_blocking.as_ref() as &dyn crate::app::AnalysisProgressSink),
             )
         })
         .await;
         drop(deadline_timer);
+        // The producer has returned: finish the bridge and let the drain
+        // task forward everything queued. The drain is bounded: a stalled
+        // client may delay, never block, diagnostics handling or the next
+        // refresh. Stage reports always precede the outcome-derived end
+        // emitted by the refresh loop after this request resolves.
+        stage_bridge.finish();
+        let _ = stage_drain.await;
+        // Defensive final forward under the same budget (the tracker
+        // suppresses consecutive duplicates, so a double forward is a
+        // no-op). Only runs when the drain task could not cover the queue.
+        let progress = &self.progress;
+        let _ = tokio::time::timeout(STAGE_DRAIN_BUDGET, async {
+            while let Some(event) = stage_bridge.pop() {
+                progress.report_stage(generation, event.stage).await;
+            }
+        })
+        .await;
         let diagnostics = match diagnostics_result {
             Ok(Ok(mut diagnostics)) => {
                 diagnostics.snapshot.input_identity = Some(request.input_identity.clone());
@@ -1720,6 +1752,18 @@ impl Backend {
         self.disclose_blocked_root(&root).await;
     }
 
+    /// Emit one bounded `window/logMessage` per recognized initialization
+    /// option that was present but ignored (#5092). The session stays up;
+    /// `session_value_sources` already attributes the effective fallback.
+    async fn disclose_ignored_initialization_options(&self) {
+        let Some(config) = self.analysis_config() else {
+            return;
+        };
+        for warning in config.ignored_initialization_option_warnings() {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
+    }
+
     /// The warning always goes to the log; clients without the `riprEditor`
     /// integration also get `window/showMessage`, because `ripr/analysisStatus`
     /// is the only other place the blocked state appears and generic editors
@@ -2370,7 +2414,16 @@ impl Backend {
         if next == current {
             return;
         }
+        let previous_warnings = current.ignored_initialization_option_warnings();
+        let new_warnings: Vec<String> = next
+            .ignored_initialization_option_warnings()
+            .into_iter()
+            .filter(|warning| !previous_warnings.contains(warning))
+            .collect();
         self.set_analysis_config(next);
+        for warning in new_warnings {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
             // configuration remains broken. The stored session override is
@@ -4455,6 +4508,11 @@ impl LanguageServer for Backend {
         }
         self.diagnostics_input_watch.lock().await.armed = true;
         self.sync_diagnostics_input_watch().await;
+        // Emit ignored-initialization warnings before the first
+        // `workspace/configuration` pull (#5092). The pull awaits the client
+        // with no timeout; a pull-mode client that never answers must not
+        // suppress the bounded disclosure that a default is in effect.
+        self.disclose_ignored_initialization_options().await;
         // First configuration pull (#2031). This runs in `initialized`, not
         // `initialize`: tower-lsp-server rejects client requests with -32002
         // before the session is initialized.

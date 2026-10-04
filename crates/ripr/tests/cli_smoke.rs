@@ -13,8 +13,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod advisory_write_safety;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+#[path = "cli_smoke/check_artifact_stdin.rs"]
+mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(feature = "lang-python")]
+#[path = "cli_smoke/implicit_git_root.rs"]
+mod implicit_git_root;
+#[cfg(feature = "lang-python")]
+#[path = "cli_smoke/python_source_admission.rs"]
+mod python_source_admission;
+#[path = "cli_smoke/related_test_count.rs"]
+mod related_test_count;
 
 // All plain fixture-setup git invocations below route through the shared
 // hardened helper (deadline + one idempotent retry + commit reconcile,
@@ -7194,7 +7205,14 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         run_command(env!("CARGO_BIN_EXE_ripr"), Some(root), &args)
     }
 
+    struct ReceiptScratch(PathBuf);
+    impl Drop for ReceiptScratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
     let root = unbuilt_repair_fixture("agent-receipt-attempt-selection")?;
+    let _root_cleanup = ReceiptScratch(root.clone());
 
     // Attempt A: prepared, then failed by a committed production-only edit.
     // The gap stays open (no test was added), so a fresh attempt for the same
@@ -7356,6 +7374,179 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         attempt_b.as_str(),
         "{receipt}"
     );
+    // The installed journeys use authored synthetic seam identities. This
+    // control projects their committed command grammar onto this genuine Rust
+    // repair attempt; it does not execute the three installed-language fixtures.
+    let corpus: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        workspace_root().join("fixtures/blind_journey_execute/corpus.json"),
+    )?)?;
+    let scenarios = corpus["scenarios"].as_array().ok_or("corpus scenarios")?;
+    let launch = unique_temp_workspace("installed-receipt-command-launch");
+    let _launch_cleanup = ReceiptScratch(launch.clone());
+    std::fs::create_dir_all(&launch)?;
+    let out = root.join("target/ripr/reports/agent-receipt.json");
+    let mut positive_rows = 0usize;
+    for (language, authored_seam) in [
+        ("rust", "seam-tier-boundary-equality"),
+        ("python", "seam-discount-boundary-equality"),
+        ("typescript", "seam-pricing-threshold-equality"),
+    ] {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(workspace_root().join(format!(
+                "fixtures/blind_journey_installed_{language}/manifest.json"
+            )))?)?;
+        assert_eq!(manifest["journey"]["eligible_items"][0], authored_seam);
+        let template = manifest["journey"]["printed_command_templates"]["agent_receipt"]
+            .as_str()
+            .ok_or("receipt template")?;
+        let tokens: Vec<&str> = template.split_whitespace().collect();
+        let prefix = tokens
+            .get(..3)
+            .ok_or_else(|| format!("{language} receipt template has fewer than three tokens"))?;
+        assert_eq!(prefix, &["ripr", "agent", "receipt"], "{language}");
+        let seam_position = tokens
+            .iter()
+            .position(|token| *token == "--seam-id")
+            .ok_or("template seam flag")?;
+        assert_eq!(
+            tokens.get(seam_position + 1),
+            Some(&authored_seam),
+            "{language} receipt template seam value",
+        );
+        let mut language_rows = 0usize;
+        for row in scenarios.iter().filter(|row| {
+            row["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with(&format!("installed_{language}_")))
+                && row["expected"]["terminal"] == "passed_blind_journey"
+        }) {
+            let actions = row["journey"]["actions"]
+                .as_array()
+                .ok_or("journey actions")?;
+            let commands: Vec<&str> = actions
+                .iter()
+                .filter_map(|action| {
+                    action["input_bytes"]
+                        .as_str()
+                        .filter(|input| input.starts_with("argv:ripr agent receipt "))
+                })
+                .collect();
+            assert_eq!(commands.len(), 1, "{}", row["id"]);
+            let (authored_root, tail) = commands[0]
+                .strip_prefix("argv:ripr agent receipt --root '")
+                .ok_or("literal receipt root")?
+                .split_once("' --attempt ")
+                .ok_or("literal receipt attempt")?;
+            let (authored_attempt, _) = tail.split_once(' ').ok_or("attempt value")?;
+            let expected = format!(
+                "argv:{}",
+                template
+                    .replace("<selected-root>", &format!("'{authored_root}'"))
+                    .replace("<repair-attempt-id>", authored_attempt)
+            );
+            assert_eq!(commands[0], expected, "{}", row["id"]);
+            language_rows += 1;
+        }
+        assert_eq!(language_rows, 3, "{language} positive rows");
+        positive_rows += language_rows;
+        // Tokenize before substituting paths: no shell, help shortcut, or
+        // scripted executor stands in for the actual public CLI below.
+        let args: Vec<String> = tokens[1..]
+            .iter()
+            .map(|token| match *token {
+                "<selected-root>" => root.display().to_string(),
+                "<repair-attempt-id>" => attempt_b.clone(),
+                value if value == authored_seam => BOUNDARY_GAP_SEAM_ID.to_string(),
+                value => value.to_string(),
+            })
+            .collect();
+        let invoke = |args: &[String]| {
+            let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+            spawn_command(
+                env!("CARGO_BIN_EXE_ripr"),
+                Some(&launch),
+                &borrowed,
+                &[],
+                None,
+                Some(&[]),
+            )
+        };
+        let accepted = invoke(&args)?;
+        assert_success(&accepted);
+        // --out deliberately writes the JSON file instead of printing JSON.
+        assert!(accepted.stdout.is_empty(), "{language} --out stdout");
+        let bound: serde_json::Value = serde_json::from_slice(&std::fs::read(&out)?)?;
+        assert_eq!(bound["status"], "advisory");
+        assert_eq!(
+            bound["provenance"]["verify_artifact"]["sha256"]
+                .as_str()
+                .ok_or("bound verify digest")?,
+            receipt["provenance"]["verify_artifact"]["sha256"]
+                .as_str()
+                .ok_or("control verify digest")?,
+        );
+        assert_eq!(bound["repair_attempt"]["attempt_id"], attempt_b);
+        assert_eq!(bound["seam"]["seam_id"], BOUNDARY_GAP_SEAM_ID);
+        assert_eq!(
+            bound["provenance"]["repo_root"]
+                .as_str()
+                .ok_or("bound receipt root")?,
+            receipt["provenance"]["repo_root"]
+                .as_str()
+                .ok_or("control receipt root")?,
+        );
+        assert!(
+            !launch
+                .join("target/ripr/reports/agent-receipt.json")
+                .exists()
+        );
+        std::fs::remove_file(&out)?;
+        for (omitted, diagnostic) in [
+            ("all", "agent receipt requires --verify-json <path>"),
+            (
+                "--verify-json",
+                "agent receipt requires --verify-json <path>",
+            ),
+            ("--seam-id", "agent receipt requires --seam-id"),
+            (
+                "--json",
+                "agent receipt requires --json (the supported output for this subcommand)",
+            ),
+        ] {
+            let mut incomplete = Vec::new();
+            let mut index = 0usize;
+            while index < args.len() {
+                let token = args[index].as_str();
+                let remove = token == omitted
+                    || (omitted == "all"
+                        && matches!(token, "--verify-json" | "--seam-id" | "--json"));
+                if remove {
+                    index += if token == "--json" { 1 } else { 2 };
+                } else {
+                    incomplete.push(args[index].clone());
+                    index += 1;
+                }
+            }
+            let refused = invoke(&incomplete)?;
+            assert_failure(&refused);
+            assert!(
+                String::from_utf8_lossy(&refused.stderr).contains(diagnostic),
+                "{language} {omitted}: {}",
+                String::from_utf8_lossy(&refused.stderr)
+            );
+            assert!(
+                !out.exists(),
+                "{language} {omitted} must not write a receipt"
+            );
+            assert!(
+                !launch
+                    .join("target/ripr/reports/agent-receipt.json")
+                    .exists()
+            );
+        }
+    }
+    assert_eq!(positive_rows, 9);
+    std::fs::remove_dir_all(launch)?;
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -7485,6 +7676,12 @@ fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::
     ]);
     assert_failure(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("canonical repo-exposure artifact"));
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("legacy or unknown producer"));
+    assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
+    assert!(diagnostic.contains("recovered.repo-exposure.json"));
+    assert!(diagnostic.contains("Replace this input"));
+    assert!(!diagnostic.contains("missing field"));
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -10299,6 +10496,107 @@ fn doctor_outside_git_or_on_a_missing_root_recommends_a_command_that_can_run() -
     {
         return Err(format!(
             "a missing root must not blame the tools\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+fn json_skip_reason(parsed: &serde_json::Value, name: &str, reason: &str) -> bool {
+    parsed["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|check| check["name"] == name)
+        .is_some_and(|check| {
+            check["status"].as_str() == Some("skipped")
+                && check["evidence"]
+                    .as_str()
+                    .is_some_and(|evidence| evidence.ends_with(reason))
+        })
+}
+
+#[test]
+fn doctor_file_root_is_not_reported_as_missing() -> Result<(), String> {
+    // #5101: passing an existing file as --root (Cargo.toml is the common
+    // slip) used to print "root directory does not exist" on the human
+    // path, skip reasons, first-command guidance, and doctor --json.
+    let dir = unique_temp_workspace("doctor-file-root");
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let file = dir.join("Cargo.toml");
+    std::fs::write(
+        &file,
+        "[package]\nname = \"file-root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    if !file.is_file() || file.is_dir() {
+        ignore_remove_dir_all(&dir);
+        return Err(format!(
+            "file-root fixture must be a regular file: {}",
+            file.display()
+        ));
+    }
+    let root = file.display().to_string();
+    let output = run_ripr(&["doctor", "--root", &root]);
+    assert_failure(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let resolved = file
+        .canonicalize()
+        .map_err(|err| format!("canonicalize file root: {err}"))?;
+    let resolved_display = resolved.display().to_string();
+    let physical = resolved_display
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&resolved_display)
+        .to_string();
+    let human_ok = stdout.contains("is not a directory")
+        && !stdout.contains("root directory does not exist")
+        && stdout.contains("- cargo check skipped: the root is not a directory")
+        && stdout.contains("- rustc check skipped: the root is not a directory")
+        && stdout.contains("- Git work tree check skipped: the root is not a directory")
+        && stdout.contains(&format!(
+            "- Recommended first command: {}",
+            first_command_at(&physical, "")
+        ))
+        && stdout.contains(
+            "- The selected root exists but is not a directory; rerun with `--root <path>` naming the repository directory, not a file inside it",
+        )
+        && !stdout.contains("- The selected root does not exist;")
+        && !stderr.contains("working-tree change probe failed");
+
+    let json_output = run_ripr(&["doctor", "--root", &root, "--json"]);
+    assert_failure(&json_output);
+    let json_stdout = String::from_utf8_lossy(&json_output.stdout);
+    let parsed: serde_json::Value = match serde_json::from_str(&json_stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            ignore_remove_dir_all(&dir);
+            return Err(format!(
+                "doctor --json did not parse: {error}\nstdout:\n{json_stdout}"
+            ));
+        }
+    };
+    let json_evidence = parsed["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|check| check["name"] == "root_directory")
+        .and_then(|check| check["evidence"].as_str())
+        .unwrap_or("");
+    let json_ok = json_evidence.contains("is not a directory")
+        && !json_evidence.contains("does not exist")
+        && json_skip_reason(&parsed, "git_repository", "the root is not a directory")
+        && json_skip_reason(&parsed, "tool_cargo", "the root is not a directory")
+        && json_skip_reason(&parsed, "tool_rustc", "the root is not a directory");
+
+    ignore_remove_dir_all(&dir);
+    if !human_ok {
+        return Err(format!(
+            "a file root must not be reported as missing\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
+    if !json_ok {
+        return Err(format!(
+            "doctor --json must split file-root from missing: evidence={json_evidence:?}\n{json_stdout}"
         ));
     }
     Ok(())
@@ -16568,6 +16866,373 @@ fn check_worktree_base_head_analyzes_uncommitted_tracked_edit() -> Result<(), St
         return Err(format!(
             "--worktree must count as an explicit analysis scope:\n{stdout}"
         ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// The argv of a printed `ripr ...` command, without the program name.
+/// Printed commands quote with POSIX single quotes (`shell_arg`).
+fn printed_ripr_args(command: &str) -> Result<Vec<String>, String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut in_token = false;
+    let mut chars = command.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => {
+                in_token = true;
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(inner) => token.push(inner),
+                        None => return Err(format!("unterminated quote in `{command}`")),
+                    }
+                }
+            }
+            ch if ch.is_whitespace() => {
+                if in_token {
+                    tokens.push(std::mem::take(&mut token));
+                    in_token = false;
+                }
+            }
+            ch => {
+                in_token = true;
+                token.push(ch);
+            }
+        }
+    }
+    if in_token {
+        tokens.push(token);
+    }
+    match tokens.first().map(String::as_str) {
+        Some("ripr") => Ok(tokens.split_off(1)),
+        _ => Err(format!(
+            "printed command must start with `ripr`: `{command}`"
+        )),
+    }
+}
+
+/// `listing` with its root token spelled as `ripr` prints it (quoted only
+/// when the path needs it).
+fn printed_ripr_command_text(listing: &str, root: &str) -> String {
+    let needs_quotes = root
+        .chars()
+        .any(|ch| !(ch.is_ascii_alphanumeric() || "/._-:@%+=,".contains(ch)));
+    if needs_quotes {
+        listing.replacen(root, &format!("'{root}'"), 1)
+    } else {
+        listing.to_string()
+    }
+}
+
+fn first_finding_id(stdout: &[u8]) -> Result<String, String> {
+    let report: serde_json::Value =
+        serde_json::from_slice(stdout).map_err(|err| format!("parse check JSON: {err}"))?;
+    report
+        .pointer("/findings/0/id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("check --json must list a finding: {report}"))
+}
+
+/// `check --worktree` lists findings from uncommitted edits. Its drill-in
+/// commands must carry `--worktree`, and `explain` / `context` must accept it:
+/// without it they analyze committed history, where the finding does not
+/// exist, and the user has no route from the listing to the explanation.
+#[test]
+fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<(), String> {
+    let root = unique_temp_workspace("worktree-drill-in");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"worktree-drill-in-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let listed = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--worktree",
+        "--json",
+    ]);
+    assert_success(&listed);
+    let finding_id = first_finding_id(&listed.stdout)?;
+
+    let listing = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--worktree"]);
+    assert_success(&listing);
+    let human = String::from_utf8_lossy(&listing.stdout).into_owned();
+    let printed = |prefix: &str| {
+        human
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(prefix))
+            .map(str::to_string)
+            .ok_or_else(|| format!("check --worktree must print a `{prefix}` command:\n{human}"))
+    };
+    let printed_explain = printed("ripr explain ")?;
+    let printed_context = printed("ripr context ")?;
+
+    // The printed commands are the subject: run them verbatim from a decoy
+    // directory, so a wrong selector, flag or root fails here rather than in
+    // a hand-built argv.
+    let decoy = unique_temp_workspace("worktree-drill-in-decoy");
+    std::fs::create_dir_all(&decoy).map_err(|err| format!("create decoy: {err}"))?;
+    let run_printed = |command: &str| -> Result<Output, String> {
+        let args = printed_ripr_args(command)?;
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_command(bin, Some(&decoy), &args).map_err(|err| format!("run `{command}`: {err}"))
+    };
+
+    let explained = run_printed(&printed_explain)?;
+    assert_success(&explained);
+    let explanation = String::from_utf8_lossy(&explained.stdout).into_owned();
+    if !explanation.contains(&format!("id: {finding_id}")) || !explanation.contains("--worktree") {
+        return Err(format!(
+            "the printed explain must render finding {finding_id} and a context command that keeps --worktree:\n{explanation}"
+        ));
+    }
+
+    let context = run_printed(&printed_context)?;
+    assert_success(&context);
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|err| format!("parse context JSON: {err}"))?;
+    if packet
+        .pointer("/probe/id")
+        .and_then(serde_json::Value::as_str)
+        != Some(finding_id.as_str())
+    {
+        return Err(format!(
+            "the printed context must select finding {finding_id}: {packet}"
+        ));
+    }
+    let explain_command = packet
+        .pointer("/witness/explain_command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !explain_command.contains("--worktree") {
+        return Err(format!(
+            "context --worktree must point back at explain with --worktree: {packet}"
+        ));
+    }
+
+    // Negative controls on the printed command itself: dropping `--worktree`
+    // replays committed history, where the finding does not exist, and a
+    // corrupted selector misses.
+    let committed = run_printed(&printed_explain.replace(" --worktree", ""))?;
+    if committed.status.success() {
+        return Err(
+            "the printed explain without --worktree must miss the uncommitted finding".to_string(),
+        );
+    }
+    let corrupted = run_printed(&printed_explain.replace(&finding_id, "probe:no-such-finding"))?;
+    if corrupted.status.success() {
+        return Err("a corrupted printed selector must miss".to_string());
+    }
+
+    // Recovery keeps the selected scope: the unmatched miss and the missing
+    // selector both name a listing with the explicit root, base and
+    // `--worktree`, and that listing, run from the decoy, lists the finding.
+    let expected_listing = printed_ripr_command_text(
+        &format!("ripr check --root {root_str} --base HEAD --worktree --json"),
+        &root_str,
+    );
+    let mut recoveries = vec![(
+        "unmatched explain",
+        String::from_utf8_lossy(&corrupted.stderr).into_owned(),
+    )];
+    for (label, args) in [
+        (
+            "selector-less explain",
+            vec![
+                "explain",
+                "--root",
+                &root_str,
+                "--base",
+                "HEAD",
+                "--worktree",
+            ],
+        ),
+        (
+            "selector-less context",
+            vec![
+                "context",
+                "--root",
+                &root_str,
+                "--base",
+                "HEAD",
+                "--worktree",
+            ],
+        ),
+    ] {
+        let missing =
+            run_command(bin, Some(&decoy), &args).map_err(|err| format!("run {label}: {err}"))?;
+        if missing.status.success() {
+            return Err(format!("{label} must fail"));
+        }
+        recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
+    }
+    for (label, stderr) in recoveries {
+        if !stderr.contains(&format!("`{expected_listing}`")) {
+            return Err(format!(
+                "{label} must name the scoped listing `{expected_listing}`:\n{stderr}"
+            ));
+        }
+    }
+    let relisted = run_printed(&expected_listing)?;
+    assert_success(&relisted);
+    if first_finding_id(&relisted.stdout)? != finding_id {
+        return Err("the recovery listing must list the worktree finding".to_string());
+    }
+
+    // A manual `--worktree` drill-in from a project subdirectory resolves the
+    // project root like `check` does.
+    let nested = root.join("src");
+    for args in [
+        vec![
+            "explain",
+            "--base",
+            "HEAD",
+            "--worktree",
+            finding_id.as_str(),
+        ],
+        vec![
+            "context",
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--at",
+            finding_id.as_str(),
+        ],
+    ] {
+        let from_nested = run_command(bin, Some(&nested), &args)
+            .map_err(|err| format!("run nested {}: {err}", args[0]))?;
+        if !from_nested.status.success() {
+            return Err(format!(
+                "nested `{}` --worktree must find {finding_id}:\n{}",
+                args[0],
+                String::from_utf8_lossy(&from_nested.stderr)
+            ));
+        }
+    }
+    // An explicit `--mode draft` overriding a config mode must survive into
+    // context's navigation: the explain witness and the selector-less listing
+    // both keep it, or they would replay under the config's mode.
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+        .map_err(|err| format!("write ripr.toml: {err}"))?;
+    let draft_context = run_command(
+        bin,
+        Some(&decoy),
+        &[
+            "context",
+            "--root",
+            &root_str,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--mode",
+            "draft",
+            "--at",
+            &finding_id,
+        ],
+    )
+    .map_err(|err| format!("run draft context: {err}"))?;
+    assert_success(&draft_context);
+    let draft_packet: serde_json::Value = serde_json::from_slice(&draft_context.stdout)
+        .map_err(|err| format!("parse draft context JSON: {err}"))?;
+    let draft_explain = draft_packet
+        .pointer("/witness/explain_command")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if !draft_explain.contains("--mode draft") {
+        return Err(format!(
+            "context must keep an explicit --mode draft in its explain command: {draft_packet}"
+        ));
+    }
+    let draft_missing = run_command(
+        bin,
+        Some(&decoy),
+        &[
+            "context",
+            "--root",
+            &root_str,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--mode",
+            "draft",
+        ],
+    )
+    .map_err(|err| format!("run selector-less draft context: {err}"))?;
+    if !String::from_utf8_lossy(&draft_missing.stderr).contains("--worktree --mode draft") {
+        return Err(format!(
+            "selector-less context must keep --mode draft in its listing:\n{}",
+            String::from_utf8_lossy(&draft_missing.stderr)
+        ));
+    }
+    ignore_remove_dir_all(&decoy);
+
+    let conflict = run_ripr(&[
+        "explain",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--diff",
+        "x.patch",
+        "src/lib.rs:2",
+    ]);
+    if conflict.status.success()
+        || !String::from_utf8_lossy(&conflict.stderr)
+            .contains("explain --worktree cannot be combined with --diff")
+    {
+        return Err("explain --worktree --diff must fail with the named conflict".to_string());
+    }
+    // An artifact from `--from` already fixes the diff scope, so `--worktree`
+    // beside it is refused by both drill-in commands, before any read.
+    for (command, selector) in [("explain", "src/lib.rs:2"), ("context", "--at")] {
+        let mut args = vec![
+            command,
+            "--root",
+            &root_str,
+            "--worktree",
+            "--from",
+            "missing-artifact.json",
+            selector,
+        ];
+        if command == "context" {
+            args.push("src/lib.rs:2");
+        }
+        let conflict = run_ripr(&args);
+        let expected = format!("{command} --worktree cannot be combined with --from");
+        if conflict.status.success()
+            || !String::from_utf8_lossy(&conflict.stderr).contains(&expected)
+        {
+            return Err(format!(
+                "{command} --worktree --from must fail with the named conflict:\n{}",
+                String::from_utf8_lossy(&conflict.stderr)
+            ));
+        }
     }
 
     ignore_remove_dir_all(&root);

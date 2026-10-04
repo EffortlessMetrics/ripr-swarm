@@ -71,13 +71,25 @@ async fn sdk_session(
                 .list_tools(None)
                 .await
                 .map_err(|error| error.to_string())?;
-            if tools.tools.len() != 1
-                || tools
-                    .tools
-                    .first()
-                    .is_none_or(|tool| tool.name != "ripr_workspace_status")
-            {
-                return Err("SDK did not discover exactly the read-only status tool".into());
+            let tool_names = tools
+                .tools
+                .iter()
+                .map(|tool| tool.name.as_ref())
+                .collect::<Vec<_>>();
+            for expected in [
+                "ripr_workspace_status",
+                "ripr_refresh",
+                "ripr_list_gaps",
+                "ripr_get_gap",
+                "ripr_prepare_repair",
+                "ripr_get_repair_attempt",
+                "ripr_get_receipt_status",
+            ] {
+                if !tool_names.contains(&expected) {
+                    return Err(format!(
+                        "SDK did not discover the read-only tool {expected}: {tool_names:?}"
+                    ));
+                }
             }
             let resources = client
                 .list_resources(None)
@@ -96,6 +108,36 @@ async fn sdk_session(
             {
                 return Err("SDK did not discover exactly the read-only status resource".into());
             }
+            let templates = client
+                .list_resource_templates(None)
+                .await
+                .map_err(|error| error.to_string())?;
+            let templates = serde_json::to_value(templates).map_err(|error| error.to_string())?;
+            let template_uris = templates
+                .pointer("/resourceTemplates")
+                .and_then(Value::as_array)
+                .map(|templates| {
+                    templates
+                        .iter()
+                        .filter_map(|template| {
+                            template.pointer("/uriTemplate").and_then(Value::as_str)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .ok_or_else(|| "SDK omitted resourceTemplates".to_string())?;
+            for expected in [
+                "ripr://snapshot/{snapshot_id}",
+                "ripr://gap/{canonical_item_id}",
+                "ripr://repair-attempt/{attempt_id}",
+                "ripr://receipt/{receipt_id}",
+                "ripr://repair-card/{canonical_item_id}",
+            ] {
+                if !template_uris.contains(&expected) {
+                    return Err(format!(
+                        "SDK did not discover the resource template {expected}: {template_uris:?}"
+                    ));
+                }
+            }
             let tool = client
                 .call_tool(CallToolRequestParams::new("ripr_workspace_status"))
                 .await
@@ -113,6 +155,29 @@ async fn sdk_session(
                 != Some("ready")
             {
                 return Err("SDK status did not reach the actual workspace".into());
+            }
+            if status
+                .pointer("/session/attempt_state")
+                .and_then(Value::as_str)
+                != Some("no_snapshot")
+            {
+                return Err("SDK status session block drifted".into());
+            }
+            if status
+                .pointer("/mcp/tools")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                != Some(8)
+            {
+                return Err("SDK status surface block lost the eight-tool contract".into());
+            }
+            if status
+                .pointer("/mcp/resource_templates")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                != Some(5)
+            {
+                return Err("SDK status surface block lost the five-template contract".into());
             }
             for authority in [
                 "source_edit_capability",

@@ -940,6 +940,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         flow_sinks: Vec::new(),
         activation: ActivationEvidence::default(),
         stop_reasons: Vec::new(),
+        related_tests_matched_total: None,
         related_tests: vec![RelatedTest {
             name: "test_discounts".to_string(),
             file: std::path::PathBuf::from("tests/lib.rs"),
@@ -13361,6 +13362,7 @@ pub(super) fn sample_finding() -> Finding {
         flow_sinks: Vec::new(),
         activation: crate::domain::ActivationEvidence::default(),
         stop_reasons: Vec::new(),
+        related_tests_matched_total: None,
         related_tests: Vec::new(),
         recommended_next_step: Some("Add an exact boundary assertion.".to_string()),
         language: None,
@@ -17852,10 +17854,38 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
             .iter()
             .filter_map(|message| message["params"]["value"]["kind"].as_str())
             .collect();
-        if kinds != vec!["begin", "end"] {
+        // #4811: producer stage reports now sit between begin and end. The
+        // terminal contract is begin -> ordered stage reports -> exactly
+        // one end; a failed run must never emit completed.
+        if kinds.first().copied() != Some("begin") || kinds.last().copied() != Some("end") {
             return Err(format!(
-                "failed refresh must begin then end exactly once: {progress:?}"
+                "failed refresh must begin, report stages, then end exactly once: {progress:?}"
             ));
+        }
+        if kinds.iter().filter(|kind| **kind == "end").count() != 1 {
+            return Err(format!(
+                "failed refresh must end exactly once: {progress:?}"
+            ));
+        }
+        if kinds
+            .iter()
+            .any(|kind| !matches!(*kind, "begin" | "report" | "end"))
+        {
+            return Err(format!(
+                "only begin/report/end records are allowed: {progress:?}"
+            ));
+        }
+        let reports: Vec<&str> = progress
+            .iter()
+            .filter(|message| message["params"]["value"]["kind"] == "report")
+            .filter_map(|message| message["params"]["value"]["message"].as_str())
+            .collect();
+        for report in &reports {
+            if report.contains("complete") {
+                return Err(format!(
+                    "a failed run must never report a completed stage: {progress:?}"
+                ));
+            }
         }
         let begin = &progress[0]["params"];
         if begin["token"].as_str() != Some(token.as_str())
@@ -17873,14 +17903,20 @@ fn work_done_progress_failed_end_through_real_refresh_on_broken_workspace() -> R
                 "begin must announce the analyzing phase: {begin_message}"
             ));
         }
-        if !begin["value"]["percentage"].is_null()
-            || !progress[1]["params"]["value"]["percentage"].is_null()
-        {
-            return Err(format!(
-                "no fabricated percentages may be emitted: {progress:?}"
-            ));
+        for message in &progress {
+            if message["params"]["token"].as_str() != Some(token.as_str()) {
+                return Err(format!("progress drifted to another token: {progress:?}"));
+            }
+            if !message["params"]["value"]["percentage"].is_null() {
+                return Err(format!(
+                    "no fabricated percentages may be emitted: {progress:?}"
+                ));
+            }
         }
-        let end = &progress[1]["params"];
+        let Some(end_message) = progress.last() else {
+            return Err("progress journey must not be empty".to_string());
+        };
+        let end = &end_message["params"];
         let end_message = end["value"]["message"]
             .as_str()
             .ok_or_else(|| "end carried no terminal message".to_string())?;
@@ -17913,6 +17949,218 @@ fn work_done_progress_capability_absent_refresh_emits_no_traffic() -> Result<(),
             ));
         }
         drop(root);
+        Ok(())
+    })
+}
+
+/// Drive one real refresh over the wire against a healthy fixture
+/// workspace, answering `window/workDoneProgress/create`, and collect every
+/// `$/progress` notification. The exact measured-journey identity (fixture,
+/// transport, server build) is the built test binary driven through the
+/// in-process duplex server, mirroring the framed LSP journeys.
+async fn run_wire_refresh_collecting_stage_progress(
+    root: &Path,
+) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut client_read, mut client_write) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let backend_root = root.to_path_buf();
+    let (service, socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+
+    let root_uri = file_uri_for_path(root)?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": null,
+                "rootUri": root_uri.as_str(),
+                "initializationOptions": {
+                    "baseRef": "HEAD",
+                    "checkMode": "instant",
+                    "diagnosticProfile": "full"
+                },
+                "capabilities": {
+                    "window": {"workDoneProgress": true}
+                }
+            }
+        }),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 1).await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+    )
+    .await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "workspace/executeCommand",
+            "params": {"command": REFRESH_COMMAND, "arguments": []}
+        }),
+    )
+    .await?;
+
+    let mut creates = Vec::new();
+    let mut progress = Vec::new();
+    tokio::time::timeout(Duration::from_mins(1), async {
+        loop {
+            let message = read_lsp_message(&mut client_read).await?;
+            if message.get("id").and_then(serde_json::Value::as_u64) == Some(2)
+                && message.get("method").is_none()
+            {
+                return Ok::<(), String>(());
+            }
+            match message.get("method").and_then(serde_json::Value::as_str) {
+                Some("window/workDoneProgress/create") => {
+                    let id = message
+                        .get("id")
+                        .cloned()
+                        .ok_or_else(|| "create request carried no id".to_string())?;
+                    creates.push(message.clone());
+                    write_lsp_message(
+                        &mut client_write,
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null}),
+                    )
+                    .await?;
+                }
+                Some("$/progress") => progress.push(message.clone()),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .map_err(|_elapsed| {
+        format!("refresh timed out; creates={creates:?} progress={progress:?}")
+    })??;
+
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": null}),
+    )
+    .await?;
+    read_lsp_response(&mut client_read, 3).await?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
+    )
+    .await?;
+    tokio::time::timeout(Duration::from_secs(10), server_task)
+        .await
+        .map_err(|_elapsed| "server did not stop after exit".to_string())?
+        .map_err(|err| format!("server task failed: {err}"))?;
+    Ok((creates, progress))
+}
+
+#[test]
+fn work_done_progress_stage_reports_through_real_refresh_journey() -> Result<(), String> {
+    // #4811 measured journey: one real long-running-shaped refresh over the
+    // wire demonstrates bounded visible stage activity (begin -> ordered
+    // stage reports -> exactly one end) with honest denominators (no
+    // percentages) and no path or source leakage.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("progress-stage-journey")?;
+        let (creates, progress) = run_wire_refresh_collecting_stage_progress(temp.path()).await?;
+
+        if creates.len() != 1 {
+            return Err(format!(
+                "accepted refresh must create exactly one progress token: {creates:?}"
+            ));
+        }
+        let token = creates[0]["params"]["token"]
+            .as_str()
+            .ok_or_else(|| "create request carried no token".to_string())?
+            .to_string();
+        if !token.starts_with("ripr-analysis-") {
+            return Err(format!("unexpected progress token: {token}"));
+        }
+        if progress.is_empty() {
+            return Err("capable client received no $/progress traffic".to_string());
+        }
+        for message in &progress {
+            if message["params"]["token"].as_str() != Some(token.as_str()) {
+                return Err(format!("progress drifted to another token: {progress:?}"));
+            }
+            if !message["params"]["value"]["percentage"].is_null() {
+                return Err(format!(
+                    "no fabricated percentages may be emitted: {progress:?}"
+                ));
+            }
+        }
+
+        let kinds: Vec<&str> = progress
+            .iter()
+            .filter_map(|message| message["params"]["value"]["kind"].as_str())
+            .collect();
+        if kinds.first().copied().unwrap_or("") != "begin" {
+            return Err(format!("journey must open with begin: {progress:?}"));
+        }
+        if kinds.last().copied().unwrap_or("") != "end" {
+            return Err(format!("journey must close with end: {progress:?}"));
+        }
+        let ends = kinds.iter().filter(|kind| **kind == "end").count();
+        if ends != 1 {
+            return Err(format!("exactly one terminal end is required: {progress:?}"));
+        }
+        // Bounded visible activity: begin + at most three stage reports +
+        // the publishing boundary + end. No heartbeat flood exists: the
+        // producer vocabulary is closed and consecutive duplicates collapse.
+        if progress.len() > 6 {
+            return Err(format!(
+                "progress records exceeded the declared ceiling: {progress:?}"
+            ));
+        }
+
+        let messages: Vec<&str> = progress
+            .iter()
+            .filter(|message| message["params"]["value"]["kind"] == "report")
+            .filter_map(|message| message["params"]["value"]["message"].as_str())
+            .collect();
+        for stage_message in ["loading input", "building output"] {
+            if !messages.iter().any(|message| message.contains(stage_message)) {
+                return Err(format!(
+                    "stage report {stage_message:?} missing from the journey: {progress:?}"
+                ));
+            }
+        }
+        for message in messages {
+            if message.contains(temp.path().to_string_lossy().as_ref())
+                || message.contains('/')
+                || message.contains('\\')
+                || message.contains('%')
+            {
+                return Err(format!(
+                    "stage report leaked a path or percentage: {message}"
+                ));
+            }
+        }
+
+        let Some(last) = progress.last() else {
+            return Err("progress journey must not be empty".to_string());
+        };
+        let end_message = last["params"]["value"]["message"]
+            .as_str()
+            .ok_or_else(|| "end carried no terminal message".to_string())?;
+        let success_family = [
+            "analysis complete",
+            "analysis completed with limited evidence",
+        ];
+        if !success_family.iter().any(|phrase| end_message.contains(phrase)) {
+            return Err(format!(
+                "healthy fixture journey must end successfully or disclosed-limited, never failed/cancelled: {end_message}"
+            ));
+        }
         Ok(())
     })
 }
@@ -20785,7 +21033,6 @@ fn hover_describes_unpublished_snapshot_findings_on_the_line() -> Result<(), Str
         "`no_static_path` predicate `weight_grams > 2_000`",
         "* reach no: No static test path found for the changed owner",
         "`probe:pricing:14:predicate`",
-        "Set `ripr.diagnosticProfile` to `full`",
     ] {
         assert!(
             markup.value.contains(expected),
@@ -20793,6 +21040,7 @@ fn hover_describes_unpublished_snapshot_findings_on_the_line() -> Result<(), Str
             markup.value
         );
     }
+    assert_actionable_line_hover_names_existing_full_profile_routes(&markup.value);
     // Editor users cannot run a server executeCommand with JSON arguments.
     for unexpected in ["ripr.collectContext", "finding_id"] {
         assert!(
@@ -20811,6 +21059,95 @@ fn hover_describes_unpublished_snapshot_findings_on_the_line() -> Result<(), Str
     // generic hover (no fabricated finding text).
     let generic = backend.hover_for_position(&hover_params(uri, 30, 0));
     assert!(generic.is_none(), "unexpected hover: {generic:?}");
+    Ok(())
+}
+
+fn actionable_line_hover_route_defects(markdown: &str) -> Vec<&'static str> {
+    // The server key must appear as its own markdown span. `ripr.diagnosticProfile`
+    // contains the substring `diagnosticProfile` but not the span `` `diagnosticProfile` ``.
+    let mut defects = Vec::new();
+    if !markdown.contains("`diagnosticProfile`") {
+        defects.push("missing LSP server key `diagnosticProfile`");
+    }
+    if !markdown.contains("[lsp] diagnostic_profile = \"full\"") {
+        defects.push("missing editor-neutral ripr.toml `[lsp] diagnostic_profile` route");
+    }
+    if !markdown.contains("`ripr.toml`") {
+        defects.push("missing `ripr.toml`");
+    }
+    if !markdown.contains("VS Code setting `ripr.diagnosticProfile`") {
+        defects.push("VS Code settings-UI name is missing or not labeled as VS Code");
+    }
+    if markdown.contains("Set `ripr.diagnosticProfile` to `full` to publish") {
+        defects.push("still presents the VS Code-only setting as the exclusive route");
+    }
+    defects
+}
+
+fn assert_actionable_line_hover_names_existing_full_profile_routes(markdown: &str) {
+    let defects = actionable_line_hover_route_defects(markdown);
+    assert!(
+        defects.is_empty(),
+        "line hover route defects {defects:?}:\n{markdown}"
+    );
+}
+
+fn line_findings_hover_markdown(
+    findings: &[&Finding],
+    profile: crate::config::LspDiagnosticProfile,
+) -> Result<String, String> {
+    match super::hover::line_findings_hover_response(findings, profile).contents {
+        HoverContents::Markup(markup) => Ok(markup.value),
+        _ => Err("expected markup hover".to_string()),
+    }
+}
+
+#[test]
+fn actionable_line_hover_names_editor_neutral_full_profile_routes() -> Result<(), String> {
+    let finding = sample_finding();
+    let markdown =
+        line_findings_hover_markdown(&[&finding], crate::config::LspDiagnosticProfile::Actionable)?;
+    assert_actionable_line_hover_names_existing_full_profile_routes(&markdown);
+    Ok(())
+}
+
+#[test]
+fn exclusive_vscode_setting_route_is_rejected_as_insufficient() {
+    // Pre-fix wording from origin/main: the VS Code settings-UI name as the
+    // only instruction. A non-VS Code user following it has no such setting.
+    let exclusive_vscode_route = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing discriminator and a fix site), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them with their Inspect finding quick fix.";
+    let defects = actionable_line_hover_route_defects(exclusive_vscode_route);
+    assert!(
+        defects.contains(&"missing LSP server key `diagnosticProfile`"),
+        "{defects:?}"
+    );
+    assert!(
+        defects.contains(&"missing editor-neutral ripr.toml `[lsp] diagnostic_profile` route"),
+        "{defects:?}"
+    );
+    assert!(defects.contains(&"missing `ripr.toml`"), "{defects:?}");
+    assert!(
+        defects.contains(&"still presents the VS Code-only setting as the exclusive route"),
+        "{defects:?}"
+    );
+}
+
+#[test]
+fn full_profile_line_hover_does_not_instruct_a_profile_switch() -> Result<(), String> {
+    // Alternate control: under `full`, unpublished findings are a severity
+    // configuration issue, not a missing `diagnosticProfile` setting.
+    let finding = sample_finding();
+    let markdown =
+        line_findings_hover_markdown(&[&finding], crate::config::LspDiagnosticProfile::Full)?;
+    if markdown.contains("Set `diagnosticProfile`") || markdown.contains("ripr.diagnosticProfile") {
+        return Err(format!(
+            "full-profile line hover must not instruct switching the diagnostic profile:\n{markdown}"
+        ));
+    }
+    assert!(
+        markdown.contains("current severity configuration"),
+        "{markdown}"
+    );
     Ok(())
 }
 

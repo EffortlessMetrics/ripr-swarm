@@ -165,7 +165,7 @@ Runs the static exposure analysis and renders findings.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
-| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else the git top level. The walk stays inside the git work tree, and the chosen root and the manifest that chose it are printed on stderr. |
+| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. |
 | `--base REV` | resolved per repository | Git revision used as the diff base when `--diff` is not given. With no `--base`, ripr resolves the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists; when none does, it says so rather than analyzing nothing. An explicit `--base` is used as given and is never substituted. |
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
@@ -290,7 +290,7 @@ into full repo truth.
 Renders a single finding in human format.
 
 ```text
-ripr explain [--root PATH] [--base REV | --diff PATH] [--from PATH]
+ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH] <finding-id | file:line>
 ```
@@ -301,12 +301,20 @@ The trailing positional argument selects the finding. Either form works:
 - A `file:line` location, where the file matches the finding's path by exact
   match or path-suffix match.
 
+`--worktree` analyzes staged and unstaged tracked edits, like
+`ripr check --worktree`, so a finding listed from uncommitted edits can be
+selected. `ripr check --worktree` prints drill-in commands that carry the
+flag. It cannot be combined with `--diff` or `--from`; `context` accepts it
+the same way. Without `--root`, a `--worktree` lookup resolves the project
+root from a subdirectory the way `ripr check` does, and a selector miss
+names a `ripr check ... --worktree --json` listing for the same root and base.
+
 ### `ripr context`
 
 Emits a compact JSON context packet for one finding.
 
 ```text
-ripr context [--root PATH] [--base REV | --diff PATH] [--from PATH]
+ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
@@ -417,8 +425,13 @@ reads seven keys; everything else is ignored. The schema lives in
 | `refreshDeadlineMs` | number | `600000` | Physical deadline in milliseconds for one whole refresh analysis attempt. An attempt that exceeds the deadline is cancelled cooperatively at analysis checkpoints and dropped fail-closed with the named `deadline_exceeded` outcome and an "analysis deadline exceeded" progress end — no limited snapshot is committed. A deadline cancel loses to an earlier supersede or client cancel (first-cancel-wins). Malformed initialization values are ignored (the default stays). No `ripr.toml` slot. |
 
 Initialization options are treated as explicit LSP settings and override
-`ripr.toml`. Defaults match `CheckInput::default()` when no repo config is
-present, except that LSP diagnostics render JSON-shaped data internally.
+`ripr.toml` when the value is successfully applied. A recognized key with
+the wrong JSON type or an unknown literal is ignored without aborting the
+session; `session_value_sources` discloses the effective `repo` or
+`default` fallback rather than `initialization`, and the server emits one
+`window/logMessage` warning naming the rejected key. Defaults match
+`CheckInput::default()` when no repo config is present, except that LSP
+diagnostics render JSON-shaped data internally.
 
 ## LSP configuration pull
 

@@ -22,6 +22,32 @@ deterministic executor in `xtask/src/blind_journey_execute.rs`; the executor
 stamps every emitted packet through the RIPR-SPEC-0200 producer, so a
 hand-edited expectation cannot make a wrong journey emit.
 
+The `installed_rust_*` scenarios are the retained literal installed Rust
+repair journey of #4516 (fixture authority RIPR-SPEC-0207,
+`fixtures/blind_journey_installed_rust/`): the positive row and its ten
+failure controls script only public docs/help and literal product-emitted
+commands over the bounded tier-boundary Cargo fixture, recorded from a
+foreign launch directory against the selected root. The `installed_python_*`
+scenarios are the retained literal installed Python repair journey of #4518
+(fixture authority RIPR-SPEC-0209,
+`fixtures/blind_journey_installed_python/`): the positive row and its ten
+failure controls script only public docs/help and literal product-emitted
+commands over the bounded flat-layout discount-boundary fixture, where the
+module-form verification command discriminates the bare-command defect in
+the clean shape. They exist alongside the
+generic executor scenarios and obey the same derived-terminal law. The
+`installed_typescript_*` scenarios are the retained literal installed
+TypeScript repair journey of #4519 (fixture authority RIPR-SPEC-0210,
+`fixtures/blind_journey_installed_typescript/`): the positive row, its
+failure controls and one scripted row per retained negative binding/reach
+variant (rebindable `let`, reassignment, shadowing, imported constant,
+object/namespace write, enum or computed initializer, nonliteral arithmetic
+and the accepted control-flow reach barrier) script only public docs/help
+and literal product-emitted commands over the bounded npm/Vitest
+threshold fixture, recorded from a foreign launch directory against the
+selected root. They exist alongside the generic executor scenarios and
+obey the same derived-terminal law.
+
 ## When
 
 An offline executor run loads `corpus.json`, builds the event chain (sequence

@@ -171,7 +171,7 @@ pub(crate) struct BlindJourneyExecuteCorpusV1 {
 /// The executor fixture scenarios RIPR-SPEC-0205 requires; the committed
 /// corpus must cover all of them and the live executor decides each outcome
 /// independently of the committed expectation.
-pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 24] = [
+pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 61] = [
     "executor_positive_journey_emits_receipt",
     "executor_positive_second_eligible_item_selects_b",
     "executor_instrument_watchdog_stays_positive",
@@ -196,6 +196,43 @@ pub(crate) const REQUIRED_BLIND_JOURNEY_EXECUTE_SCENARIO_IDS: [&str; 24] = [
     "executor_refuses_contradictory_static_output",
     "executor_refuses_receipt_not_applicable_with_execution",
     "executor_refuses_unbound_accepted_review",
+    "installed_rust_positive_journey_emits_receipt",
+    "installed_rust_no_ignore_rule_stops_before_edit",
+    "installed_rust_notes_file_edit_refused",
+    "installed_rust_production_edit_refused",
+    "installed_rust_failing_focused_test_visible",
+    "installed_rust_verification_skipped_visible",
+    "installed_rust_deleted_before_artifact_names_recovery",
+    "installed_rust_workspace_binary_rejected",
+    "installed_rust_interrupted_receipt_write_recovers",
+    "installed_rust_second_root_portable_identity",
+    "installed_python_positive_journey_emits_receipt",
+    "installed_python_bare_pytest_import_failure_visible",
+    "installed_python_no_environment_stops_before_edit",
+    "installed_python_production_edit_refused",
+    "installed_python_receipt_path_mismatch_refused",
+    "installed_python_failing_focused_test_visible",
+    "installed_python_verification_skipped_visible",
+    "installed_python_deleted_before_artifact_names_recovery",
+    "installed_python_historical_bare_form_accepted_at_documented_strength",
+    "installed_python_decoy_interpreter_rejected",
+    "installed_python_interrupted_receipt_write_recovers",
+    "installed_typescript_positive_journey_emits_receipt",
+    "installed_typescript_imported_constant_variant_unresolved",
+    "installed_typescript_let_binding_variant_unresolved",
+    "installed_typescript_reassignment_variant_unresolved",
+    "installed_typescript_shadowing_variant_unresolved",
+    "installed_typescript_object_namespace_write_variant_unresolved",
+    "installed_typescript_enum_computed_initializer_variant_unresolved",
+    "installed_typescript_nonliteral_arithmetic_variant_unresolved",
+    "installed_typescript_reach_barrier_variant_unresolved",
+    "installed_typescript_failing_vitest_visible",
+    "installed_typescript_verification_skipped_visible",
+    "installed_typescript_cyclic_route_discoverability_failure",
+    "installed_typescript_deleted_before_artifact_names_recovery",
+    "installed_typescript_workspace_binary_rejected",
+    "installed_typescript_interrupted_receipt_write_recovers",
+    "installed_typescript_second_root_portable_identity",
 ];
 
 /// Required scenario ids absent from one committed executor corpus id set.

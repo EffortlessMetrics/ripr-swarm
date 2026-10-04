@@ -1070,6 +1070,20 @@ status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #5015 records the batched candidate-tree materialization: one streaming git cat-file --batch session materializes an arbitrary-size candidate tree (two git spawns total with the ls-tree listing, O(1) in tree size, down from one spawn per file), a single overall deadline bounds the whole phase incrementally through the shared named git_invocation_timeout classification instead of N x git_timeout, blob bytes stream to disk in bounded chunks under a whole-tree byte cap, fail-closed behavior and raw blob-byte identity (#3548) are preserved, and the spawn-count delta is structural while wall-clock magnitude stays a measurement-pending design_question."
 [[artifact]]
+id = "RIPR-SPEC-0207"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0207-installed-rust-journey-fixture.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #4516 records the installed Rust journey fixture: fixtures/blind_journey_installed_rust retains a digest-bound two-source Cargo repository (committed inclusive equality-boundary change, related test missing exactly the boundary, no-ignore variant, reproducible git identities) whose ten scripted installed_rust_* journeys execute through the unchanged RIPR-SPEC-0205 executor — positive row from a foreign CWD with decoy, second-root portable-identity repeat, and the no-ignore / cage / failing-test / skipped-verification / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal — while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+[[artifact]]
+id = "RIPR-SPEC-0209"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0209-installed-python-journey-fixture.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #4518 records the installed Python journey fixture: fixtures/blind_journey_installed_python retains a digest-bound flat-layout package (pyproject.toml, pricing/__init__.py, pricing/core.py, tests/test_pricing.py; committed inclusive equality-boundary change, related test missing exactly the boundary, reproducible git identities) whose module-form python -m pytest verify command discriminates the bare-command import defect in the clean shape, and whose eleven scripted installed_python_* journeys execute through the unchanged RIPR-SPEC-0205 executor — positive row from a foreign CWD with decoy, and the bare-command / no-environment / cage / receipt-path-parity / failing-test / skipped-verification / deleted-artifact / historical-form / decoy-interpreter / interrupted-receipt controls each keeping its own derived non-positive terminal — while a dedicated check-fixture-contracts validator recomputes snapshot digests, pins the environment-binding invariant and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+[[artifact]]
 id = "RIPR-SPEC-0201"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0201-python-same-class-transitive-reach-limitation.md"
@@ -1097,3 +1111,57 @@ path = "docs/specs/RIPR-SPEC-0204-shared-behavior-evidence-witness.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #4790 records the shared behavior-evidence witness adapters and paired parity corpus: one internal BehaviorEvidenceWitnessV1 projects existing Rust Finding and ClassifiedSeam facts without recomputing public classes, and a deterministic report distinguishes equal, explained_scope_difference, contradiction, and not_comparable. Renumbered three times: from RIPR-SPEC-0181 (inline test-module region cage landed first), from RIPR-SPEC-0202 (agent card typed refusals), and from RIPR-SPEC-0203 (global verbose flag contract), each after main landed that spec under the number first."
+[[artifact]]
+id = "RIPR-SPEC-0208"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0208-lsp-work-done-stage-mapping.md"
+status = "proposed"
+owner = "product-lsp"
+standalone_reason = "Issue #4811 records the LSP work-done stage mapping and cross-surface parity slice of #2608: the accepted refresh's blocking analysis runs the shared producer contract and a best-effort sync/async bridge forwards loading_input/analyzing/building_output as bounded message-only $/progress reports on the existing ripr-analysis-{generation} token (no percentages, terminal stages never reported, consecutive duplicates collapsed); the terminal disposition stays outcome-derived so cancellation, deadline, supersession, failure, and disclosed limited/deferred states never read as plain completion; a parity DTO oracle pins CLI and LSP stage identity, ordering, denominator honesty, and terminal disposition against one normalized producer trace and fails when the shared mapping is removed even though legacy begin/end still emits; the post-analysis stage drain is bounded so a stalled client can delay diagnostics handling by at most the drain budget, never block it; a framed wire journey over a healthy git fixture pins create -> begin -> ordered stage reports within the declared ceiling -> exactly one end, and the capability-absent journey emits nothing. Renumbered from RIPR-SPEC-0207 after main landed the installed Rust journey fixture spec under that number first."
+[[artifact]]
+id = "RIPR-SPEC-0210"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0210-installed-typescript-journey-fixture.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #4519 records the installed TypeScript journey fixture: fixtures/blind_journey_installed_typescript retains a digest-bound npm/Vitest threshold-boundary repository (committed inclusive equality change, related test missing exactly the boundary, lockfile-backed runner selection, reproducible git identities) plus eight digest-bound negative snapshots (rebindable let, reassignment, shadowing, imported constant, object/namespace write, enum or computed initializer, nonliteral arithmetic, control-flow reach barrier) whose sixteen scripted installed_typescript_* journeys execute through the unchanged RIPR-SPEC-0205 executor — positive row from a foreign CWD with decoy naming the owner, equality input and executable vitest run command, second-root portable-identity repeat, and the fail-closed variants / failing-command / skipped-verification / cyclic-route / deleted-artifact / workspace-binary / interrupted-receipt controls each keeping its own derived non-positive terminal — while a dedicated check-fixture-contracts validator recomputes snapshot digests and cross-references the corpus; the real candidate-bound run stays residual on the frozen #1609 candidate and the #4510 harness."
+
+[[artifact]]
+id = "RIPR-SPEC-0211"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
+status = "proposed"
+owner = "mcp"
+standalone_reason = "Issue #3089 records the MCP slice B workspace session evidence contract on the ADR 0022 bounded read-only projection: ripr_refresh runs one bounded static analysis through the shared app::check_workspace authority and commits an immutable snapshot with a portable snapshot:sha256: identity (cancelled, superseded, unsupported, or failed attempts never become snapshots and never replace the last-known-good one); ripr_list_gaps serves the stored shared lsp::diagnostic_budget selection with disclosed omissions and no re-ranking; ripr_get_gap and the ripr://snapshot/{snapshot_id} and ripr://gap/{canonical_item_id} resource templates serve bounded evidence documents whose readiness block this slice pinned as a hard repair_packet_ready: false negative (RIPR-SPEC-0214, slice C #3090, later replaced the pin with the committed producer repair-readiness evaluation and owns binding the repair boundary and repair-attempt link), keeping the repair boundary none_declared and the repair-attempt link an explicit null until a session transaction binds it; typed fail-closed states (no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, result_too_large, unsupported_profile, analysis_failed, workspace_unavailable) travel as isError structured content with reserved vocabulary named for later slices; project-local configuration stays detected-not-loaded and the server never edits source, executes verification or mutation commands, or loads provider configuration."
+
+[[artifact]]
+id = "RIPR-SPEC-0212"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0212-npm-native-launcher-boundary.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Source-package contract for exact native package selection, six-hook lifecycle denial, executable confinement, literal spawn semantics, non-duplicating POSIX signal handling, first-signal retention, and executed named controls; no registry or support-tier claim."
+
+[[artifact]]
+id = "RIPR-SPEC-0213"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0213-orchestration-attempt-receipts.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #4925 freezes the governed orchestration attempt receipts contract (ORCH-D1) before any real attempt is counted: one versioned agent-neutral DTO family (OrchestrationAttemptV1, OrchestrationCorpusV1, OrchestrationScorecardV1, AttemptStrategyV1, AttemptDispositionV1, AttemptComparisonV1) binds repository/source/selected-work/portfolio/base/head identity, task family and accepted contract, client and role configuration, planned/actual waves, packet/result/synthesis/overflow identities and bytes, claims with worktree/edit cage/resources, command denominators, independent verification, contradictions and rejected claims, changed-path boundary status, PR/review/CI/merge state, cleanup and residue, limitations and non-claims; a fail-closed counting law downgrades (never upgrades) claimed completed rows on forbidden paths, contradictions, stale verification bindings, zero-subject or failed verification, missing required overflow, rejected claims and cleanup residue, and verified_fact claims require a matching independent receipt; synthetic mechanics rows never enter real denominators, duplicate observations deduplicate by observation_key, equivalent worktree roots share one portable identity, and one deterministic JSON/Markdown scorecard reports an honest not_measured completion rate with zero real attempts; the contract is the shared attempt authority the issue-lifecycle family (#4929-#4933) references without copying."
+
+[[artifact]]
+id = "RIPR-SPEC-0214"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0214-mcp-repair-transaction-projection.md"
+status = "proposed"
+owner = "mcp"
+standalone_reason = "Issue #3090 records the MCP slice C repair transaction projection on the ADR 0022 bounded read-only projection: ripr_prepare_repair evaluates the committed producer repair-readiness facts (candidate actionability, an established discriminator, and a strong directly-related test fix site on a shared edit-cage test-surface path; fail-closed with typed first-failing-gate reasons) and creates one deterministic root-bound in-memory session transaction per ready snapshot/item/root carrying the fix-site bounded packet, an empty command_routes list with the typed limitation, and the shared non-claims, while ineligible items return an honest negative document and no attempt; ripr_get_repair_attempt / ripr://repair-attempt/{attempt_id} and ripr_get_receipt_status / ripr://receipt/{receipt_id} read session transactions and the durable CLI attempt store read-only through the shared repair-attempt authority, projecting typed CommandSpec routes only when they validate (the human display is never execution authority) and the receipt-status vocabulary (awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, invalid) over digest-bound producer bytes re-validated on every read; the wire gains attempt_not_found and attempt_invalid and makes the reserved superseded code reachable for non-current session transactions; MCP creates no durable attempt (the CLI before phase owns that), performs no verification, issues no receipt, and never edits source, launches a process, or executes anything a returned route names."
+
+[[artifact]]
+id = "RIPR-SPEC-0215"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0215-repair-card-mcp-projection.md"
+status = "proposed"
+owner = "mcp"
+standalone_reason = "Issue #4668 records the MCP repair card projection on the ADR 0022 bounded read-only projection: ripr_get_repair_card and the ripr://repair-card/{canonical_item_id} resource template project the same versioned repair_card.v1 the CLI `ripr agent card` handoff (#4667) and the standard-LSP projection (RIPR-SPEC-0198) consume, assembled by the shared app::repair_card_handoff::assemble_repair_card authority from producer-bound facts — the MCP layer never re-derives readiness, identity, currentness, or route state; the analyzed repository head and the diff-scoped classified seam inventory (owner-discriminated bound to snapshot canonical items by the seam readiness canonical gap id plus the finding producer-recorded gap owner, each binding with its evidence-scope dirty-state currentness probe) bind at ripr_refresh commit time because the adapter never launches git per read, and any binding failure fails the whole attempt with analysis_failed so the snapshot commits complete or not at all; the durable attempt store is re-read live at card-read time through the shared inventory so the card attempt block matches `ripr agent status` at that moment; refusal kinds travel under their CLI-pinned wire spellings (seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow) so one machine state names one refusal on every transport, the next-action display binds the portable root . (never the host-local path, never execution authority), and the card binds the analyzed head and commit-time currentness of its snapshot as disclosed limitations; MCP creates no durable attempt, projects no in-memory session transaction, loads no project-local policy, and never edits source, launches a process, or executes anything a returned route names."

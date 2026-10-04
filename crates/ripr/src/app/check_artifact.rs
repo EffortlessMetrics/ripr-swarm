@@ -340,6 +340,14 @@ fn verify_scope_assertions(
 ) -> Result<(), String> {
     let mut mismatched: Vec<&str> = Vec::new();
     if let Some(asserted_diff) = input.diff_file.as_ref() {
+        // The stdin sentinel is not an assertion about a file named '-'.
+        // Do not accept that unrelated file as evidence for supplied stdin.
+        if asserted_diff == Path::new("-") {
+            return Err(
+                "--from cannot be combined with --diff -: stdin cannot verify a recorded diff-file identity; save stdin to a named diff file and pass --diff <path> when creating and reusing the artifact"
+                    .to_string(),
+            );
+        }
         let asserted = std::fs::canonicalize(asserted_diff).map_err(|err| {
             format!(
                 "asserted --diff {} cannot be resolved: {err}",
@@ -577,6 +585,7 @@ mod raw_path_tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: vec![StopReason::NoChangedRustLine],
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: "nearby".to_string(),
                 file: raw,
