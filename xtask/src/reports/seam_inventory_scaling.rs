@@ -12,7 +12,9 @@
 //! Child runs pin `RIPR_REPO_EXPOSURE_SEAM_LIMIT` to the product default so
 //! caller environment cannot silently change the measured quantity, and each
 //! sample records the child `run_status` so a capped run cannot pass as an
-//! uncapped baseline.
+//! uncapped baseline. Within each size, format samples interleave in
+//! alternating order and each sample records its execution order, so gradual
+//! runner drift cannot systematically favor one format's selected timing.
 
 use crate::run::{capture_output_with_timeout, run, run_output, run_output_owned};
 use serde_json::{Value, json};
@@ -94,24 +96,57 @@ fn collect_sizes(
     let mut sizes = Vec::new();
     for files in &options.sizes {
         let workspace = generate_workspace(scratch, *files)?;
-        let seams = run_format_series(
-            binary,
-            &workspace,
-            SEAMS_FORMAT,
-            envs,
-            timeout,
-            options.samples,
-            parse_seams_count,
-        )?;
-        let exposure = run_format_series(
-            binary,
-            &workspace,
-            EXPOSURE_FORMAT,
-            envs,
-            timeout,
-            options.samples,
-            parse_exposure_count,
-        )?;
+        let mut seams = Vec::new();
+        let mut exposure = Vec::new();
+        let mut order = 0;
+        for sample_index in 0..options.samples {
+            // Interleave the formats and alternate which runs first so
+            // gradual runner drift cannot systematically favor one
+            // format's selected timing.
+            if sample_index % 2 == 0 {
+                seams.push(run_one_sample(
+                    binary,
+                    &workspace,
+                    SEAMS_FORMAT,
+                    envs,
+                    timeout,
+                    parse_seams_count,
+                    order,
+                )?);
+                order += 1;
+                exposure.push(run_one_sample(
+                    binary,
+                    &workspace,
+                    EXPOSURE_FORMAT,
+                    envs,
+                    timeout,
+                    parse_exposure_count,
+                    order,
+                )?);
+                order += 1;
+            } else {
+                exposure.push(run_one_sample(
+                    binary,
+                    &workspace,
+                    EXPOSURE_FORMAT,
+                    envs,
+                    timeout,
+                    parse_exposure_count,
+                    order,
+                )?);
+                order += 1;
+                seams.push(run_one_sample(
+                    binary,
+                    &workspace,
+                    SEAMS_FORMAT,
+                    envs,
+                    timeout,
+                    parse_seams_count,
+                    order,
+                )?);
+                order += 1;
+            }
+        }
         sizes.push(SizeReport {
             files: *files,
             seams,
@@ -271,6 +306,7 @@ struct Sample {
     stdout_bytes: usize,
     detail: Option<String>,
     run_status: Option<String>,
+    order: usize,
 }
 
 struct SizeReport {
@@ -279,52 +315,63 @@ struct SizeReport {
     exposure: Vec<Sample>,
 }
 
-fn run_format_series(
+/// One cold child run. `order` is the sample's global execution sequence
+/// within its size; the caller interleaves formats so gradual runner drift
+/// cannot systematically favor one format's selected timing.
+fn run_one_sample(
     binary: &Path,
     root: &Path,
     format: &str,
     envs: &[(&str, String)],
     timeout: Duration,
-    samples: usize,
     parse_count: fn(&Value) -> Option<u64>,
-) -> Result<Vec<Sample>, String> {
+    order: usize,
+) -> Result<Sample, String> {
     let owned: Vec<(&str, &str)> = envs
         .iter()
         .map(|(name, value)| (*name, value.as_str()))
         .collect();
-    let mut out = Vec::new();
-    for _ in 0..samples {
-        clear_env_cache(envs)?;
-        let args = [
-            "check".to_string(),
-            "--root".to_string(),
-            root.display().to_string(),
-            "--format".to_string(),
-            format.to_string(),
-        ];
-        let output = capture_output_with_timeout(
-            &binary.display().to_string(),
-            &args,
-            &owned,
-            timeout,
-            "seam inventory scaling benchmark",
-        )?;
-        let mut status = if output.timed_out {
-            "timeout"
-        } else if output.status.is_some_and(|status| status.success()) {
-            "pass"
-        } else {
-            "fail"
-        };
-        let stdout_bytes = output.stdout.len();
-        let (seam_count, detail, run_status) = if status == "pass" {
-            match serde_json::from_str::<Value>(&output.stdout) {
-                Ok(value) => {
-                    let child_status = value
-                        .pointer("/run_status")
-                        .and_then(|node| node.as_str())
-                        .map(str::to_string);
-                    let count = parse_count(&value);
+    clear_env_cache(envs)?;
+    let args = [
+        "check".to_string(),
+        "--root".to_string(),
+        root.display().to_string(),
+        "--format".to_string(),
+        format.to_string(),
+    ];
+    let output = capture_output_with_timeout(
+        &binary.display().to_string(),
+        &args,
+        &owned,
+        timeout,
+        "seam inventory scaling benchmark",
+    )?;
+    let mut status = if output.timed_out {
+        "timeout"
+    } else if output.status.is_some_and(|status| status.success()) {
+        "pass"
+    } else {
+        "fail"
+    };
+    let stdout_bytes = output.stdout.len();
+    let (seam_count, detail, run_status) = if status == "pass" {
+        match serde_json::from_str::<Value>(&output.stdout) {
+            Ok(value) => {
+                let child_status = value
+                    .pointer("/run_status")
+                    .and_then(|node| node.as_str())
+                    .map(str::to_string);
+                let count = parse_count(&value);
+                if child_status.as_deref() == Some("seam_limit_applied") {
+                    status = "capped";
+                    (
+                        count,
+                        Some(format!(
+                            "{format} applied the seam limit; capped timing excluded from slope"
+                        )),
+                        child_status,
+                    )
+                } else {
                     match require_nonempty_inventory(format, count) {
                         Ok(count) => (Some(count), None, child_status),
                         Err(detail) => {
@@ -333,28 +380,28 @@ fn run_format_series(
                         }
                     }
                 }
-                Err(err) => {
-                    status = "invalid_receipt";
-                    (
-                        None,
-                        Some(format!("{format} JSON parse failed: {err}")),
-                        None,
-                    )
-                }
             }
-        } else {
-            (None, Some(summarize_output(&output.stderr)), None)
-        };
-        out.push(Sample {
-            status: status.to_string(),
-            duration_ms: output.duration.as_millis(),
-            seam_count,
-            stdout_bytes,
-            detail,
-            run_status,
-        });
-    }
-    Ok(out)
+            Err(err) => {
+                status = "invalid_receipt";
+                (
+                    None,
+                    Some(format!("{format} JSON parse failed: {err}")),
+                    None,
+                )
+            }
+        }
+    } else {
+        (None, Some(summarize_output(&output.stderr)), None)
+    };
+    Ok(Sample {
+        status: status.to_string(),
+        duration_ms: output.duration.as_millis(),
+        seam_count,
+        stdout_bytes,
+        detail,
+        run_status,
+        order,
+    })
 }
 
 fn parse_seams_count(value: &Value) -> Option<u64> {
@@ -424,6 +471,7 @@ fn series_json(samples: &[Sample]) -> Value {
         "p95_ms": series_p95(samples),
         "samples": samples.iter().map(|sample| json!({
             "status": sample.status,
+            "order": sample.order,
             "duration_ms": sample.duration_ms,
             "seam_count": sample.seam_count,
             "run_status": sample.run_status,
@@ -483,6 +531,7 @@ fn build_report(options: &Options, sizes: &[SizeReport], binary: &Path) -> Value
             "seams_slope_ms_per_file": slope_ms_per_file(sizes, |size| &size.seams),
             "exposure_slope_ms_per_file": slope_ms_per_file(sizes, |size| &size.exposure),
             "slope_samples_per_size": options.samples,
+            "sample_order": "interleaved_alternating",
         },
         "claim_boundary": "Static cold-inventory wall time on synthetic workspaces for the recorded revision and runner class only; not peak memory, not a gate, not universal latency. Compare runs only on the same runner class."
     })
@@ -585,6 +634,7 @@ mod tests {
             stdout_bytes: 10,
             detail: None,
             run_status: Some("complete".to_string()),
+            order: 0,
         }
     }
 
@@ -653,6 +703,35 @@ mod tests {
     fn all_pass_rejects_empty_inventory_status() {
         assert!(!all_pass(&[sample("empty_inventory", 5)]));
         assert!(all_pass(&[sample("pass", 5)]));
+    }
+
+    #[test]
+    fn all_pass_rejects_capped_status() {
+        let mut capped = sample("capped", 5);
+        capped.run_status = Some("seam_limit_applied".to_string());
+        assert!(!all_pass(&[capped]));
+    }
+
+    #[test]
+    fn series_json_records_sample_order() -> Result<(), String> {
+        let mut first = sample("pass", 100);
+        first.order = 0;
+        let mut second = sample("pass", 120);
+        second.order = 3;
+        let document = series_json(&[first, second]);
+        let samples = document
+            .get("samples")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "series_json must render samples".to_string())?;
+        let orders: Vec<u64> = samples
+            .iter()
+            .map(|sample| sample.get("order").and_then(Value::as_u64))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| "series_json samples must carry order".to_string())?;
+        if orders != vec![0, 3] {
+            return Err(format!("expected sample orders [0, 3], got {orders:?}"));
+        }
+        Ok(())
     }
 
     fn temp_root(label: &str) -> Result<PathBuf, String> {
