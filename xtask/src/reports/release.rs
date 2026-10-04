@@ -3165,6 +3165,8 @@ fn run_command_path(program: &Path, args: &[&str]) -> Result<CommandResult, Stri
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::ci_summary_first_run_missing;
     use super::{
         EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, create_external_doctor_fixture,
