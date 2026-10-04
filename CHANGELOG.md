@@ -18,6 +18,12 @@ are scoped or reviewed.
   identity refusal now carry `--root` at all; the card's typed command args and
   detail routes stay portable (#3999).
 
+- GitHub: `ripr check --format github` omits `,line=` when a finding's probe
+  location is line 0, instead of emitting out-of-contract `line=0`. Findings
+  with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are
+  unchanged. GitHub documents omitted `line` as defaulting to 1; this does not
+  claim file-level UI placement (#5089).
+
 - LSP: `session_value_sources` reports `initialization` only for applied
   initialization options. A malformed value such as `checkMode: "Deep"` keeps
   the session up, discloses the `repo` or `default` fallback, and emits one
@@ -2066,6 +2072,27 @@ are scoped or reviewed.
   `run ripr check` recovery that could not help. One trailing redirect into
   the workspace's `target/ripr/` is accepted; every other redirect is still
   refused.
+- Rust: a test that asserts through a helper in its own file no longer reads
+  as "no assertion". With `fn check(x, want) { assert!(gate(x) == want) }`
+  in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
+  a changed `gate` was `reachable_unrevealed`; it now reads
+  `weakly_exposed`. The test carries the helper's owner call and assertion,
+  one hop, only for a uniquely named helper in the test's own
+  `#[cfg(test)]` module that the test calls directly, outside any closure,
+  and that is not shadowed, `async`, or cfg-gated. The caller's arguments
+  are not credited as the owner's inputs, and the helper's assertion is
+  admitted by the same rules as one written in the test. (#4574)
+- Rust: rstest `#[case(..)]` rows now count as inputs to the owner. The
+  parameter parser read `#[case] x: u32` as a malformed name and bound no
+  case values, so a test passing the boundary value through a case row was
+  reported as never reaching the boundary. Case columns map to the
+  `#[case]` parameters only; a `mut` parameter, one bound again anywhere
+  in the parsed test, a test that does not parse, or any test with a
+  nested `fn` binds nothing. (#4601)
+- Rust: a changed line with no resolved owner, such as a line inside a
+  `macro_rules!` template, is no longer `no_static_path` just because the
+  only related tests are same-file neighbours. With no owner name, nothing
+  can rule reach out, so it stays weak. (#4613)
 - Upgrading from 0.10: a `.ripr/suppressions.toml` `finding_id` written
   under 0.10 no longer matches, because Rust finding ids now hash the parsed
   expression (`amount >= threshold`) instead of the whole changed line
