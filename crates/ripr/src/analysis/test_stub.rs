@@ -25,7 +25,9 @@ use super::syntax::fn_signature::{
     OwnerContainer, OwnerParam, OwnerReceiver, OwnerSignature, owner_signature_at,
     single_comparison,
 };
-use super::syntax::{GovernedCfgTestModule, governed_cfg_test_modules};
+use super::syntax::{GovernedCfgTestModule, governed_cfg_test_modules, parse_clean_source_file};
+use ra_ap_syntax::AstNode;
+use ra_ap_syntax::ast::{self, HasName};
 use std::path::{Path, PathBuf};
 
 /// Where the stub text goes.
@@ -603,6 +605,8 @@ fn boundary_inputs(seam: &RepoSeam, signature: &OwnerSignature) -> Vec<(String, 
 
 /// True when `name` is a crate-root `pub const` in `source`. Nested-module,
 /// `pub(crate)`, and private constants are not visible from a `tests/` file.
+/// Parse-backed: braces inside strings and comments cannot promote a nested
+/// item. An unparseable file fails closed (fill-in).
 fn crate_public_const_declared(source: &str, name: &str) -> bool {
     if name.is_empty()
         || !name.starts_with(|c: char| c.is_ascii_uppercase())
@@ -612,19 +616,24 @@ fn crate_public_const_declared(source: &str, name: &str) -> bool {
     {
         return false;
     }
-    let mut depth = 0usize;
-    source.lines().any(|line| {
-        let trimmed = line.trim();
-        let found = depth == 0
-            && trimmed.strip_prefix("pub const ").is_some_and(|rest| {
-                rest.strip_prefix(name)
-                    .is_some_and(|after| after.starts_with(|c: char| c == ':' || c.is_whitespace()))
-            });
-        depth = depth
-            .saturating_add(trimmed.chars().filter(|&c| c == '{').count())
-            .saturating_sub(trimmed.chars().filter(|&c| c == '}').count());
-        found
-    })
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    parse
+        .tree()
+        .syntax()
+        .children()
+        .filter_map(ast::Const::cast)
+        .any(|constant| {
+            crate_root_pub_visibility(constant.syntax())
+                && constant.name().is_some_and(|bound| bound.text() == name)
+        })
+}
+
+fn crate_root_pub_visibility(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    node.children()
+        .find_map(ast::Visibility::cast)
+        .is_some_and(|vis| vis.syntax().text() == "pub")
 }
 
 fn boundary_value(operand: &str, ty: &str) -> Option<String> {
