@@ -152,7 +152,20 @@ fn collect_targets(
     for target in targets {
         let mut samples = Vec::new();
         for command in &options.commands {
-            samples.push(run_sample(binary, scratch, &target, *command, options)?);
+            // A spawn or capture error is a measurement outcome, not a reason
+            // to discard the samples already collected.
+            samples.push(
+                run_sample(binary, scratch, &target, *command, options).unwrap_or_else(|err| {
+                    Sample {
+                        command: command.name(),
+                        status: "fail".to_string(),
+                        duration_ms: 0,
+                        peak_rss_kib: None,
+                        findings: None,
+                        detail: Some(err),
+                    }
+                }),
+            );
         }
         reports.push(TargetReport {
             label: target.label,
