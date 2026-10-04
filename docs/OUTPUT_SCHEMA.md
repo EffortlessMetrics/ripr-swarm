@@ -12938,7 +12938,10 @@ Field contract:
   recorded command for `awaiting_edit`, a typed restart (or head-recovery)
   command for `stale`, `incomparable`, `failed`, `prepared`, and the
   recovery routes, and `null` for terminal classes and for states where no
-  honest action names itself.
+  honest action names itself. Commands bind the selected repository root
+  (an invocation spelling like `--root .` becomes the bound absolute root),
+  so a pasted command resumes the selected attempt from any working
+  directory; the report's own `root` field keeps the invocation spelling.
 - `claim_boundary`, `limitations`, and `non_claims` carry the read-only
   non-claim, the retained-evidence non-claim (a finished result does not
   establish the repair is correct or that any project test ran), the

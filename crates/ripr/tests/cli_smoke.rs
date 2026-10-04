@@ -19514,6 +19514,61 @@ fn agent_status_attempt_never_reconstructs_a_tampered_result()
     Ok(())
 }
 
+/// Deleting a finished attempt's retained verify artifact makes the whole
+/// terminal record unavailable: the gap-closing receipt alone never reads
+/// `finished_*` while the verify half it was issued over is gone.
+#[test]
+fn agent_status_attempt_types_a_deleted_verify_artifact_as_corrupt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt verify deleted")?;
+    let before = repair_route_before(&root)?;
+    let attempt = repair_route_attempt_id(&before)?;
+    let focused_test = format!(
+        "{REPAIR_ROUTE_WEAK_TEST}\n#[test]\nfn at_threshold_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    std::fs::write(root.join("tests/pricing.rs"), focused_test)?;
+    assert_success(&repair_route_after(&root, &attempt));
+
+    let manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt)
+        .join("attempt.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    let verify_path = manifest["terminal_artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_verify")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("finished attempt retained no agent_verify artifact")?;
+    let finished = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        finished["attempt"]["status_class"], "finished_current",
+        "the retained pair reads finished before the delete: {finished:#}"
+    );
+
+    std::fs::remove_file(root.join(verify_path))?;
+    let corrupt = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        corrupt["attempt"]["status_class"], "corrupt_or_unavailable",
+        "{corrupt:#}"
+    );
+    assert_eq!(
+        corrupt["attempt"]["receipt"]["unavailable"], true,
+        "{corrupt:#}"
+    );
+    assert!(
+        corrupt["attempt"]["receipt"]["movement"].is_null(),
+        "a missing verify half must not leave a movement reading: {corrupt:#}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// A legacy manifest (finished before attempt-local terminal retention
 /// existed) is visible only at its earned compatibility strength: the class
 /// is `legacy_compatibility_only` even when the one-slot projection still

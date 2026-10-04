@@ -1756,9 +1756,14 @@ pub(crate) fn build_agent_attempt_status(
     let current_head = crate::agent::artifact::current_git_head(root).ok();
     let workflow_receipt = read_workflow_receipt(root);
     let store_flag = resolved.quoted_store_flag();
+    // #3999: restart and recovery commands bind the selected repository, not
+    // the invocation spelling, so a command pasted from any working directory
+    // resumes this attempt. The report's `root` field keeps the user's
+    // spelling.
+    let command_root = bound_root(&root_display);
     let view = status_repair_attempt(
         root,
-        &root_display,
+        &command_root,
         resolved.locator(),
         &store_flag,
         &manifest,
@@ -1770,7 +1775,7 @@ pub(crate) fn build_agent_attempt_status(
         &manifest,
         &view,
         status_class,
-        &root_display,
+        &command_root,
         &manifest_label,
         &store_flag,
     );
@@ -1996,11 +2001,14 @@ fn attempt_next_action(
             "repair attempt `{id}` for seam `{seam}` ended failed; start a new attempt while the gap is still open"
         )),
         "limited" => match &view.receipt {
-            AgentStatusAttemptReceipt::Issued { reading, .. } => restart(format!(
-                "the receipt for repair attempt `{id}` reports movement `{}`, which does not show the gap closed; start a new attempt for seam `{seam}` and strengthen the focused test before its after phase",
-                reading.movement.as_deref().unwrap_or("unknown")
-            )),
-            // HEAD unknown: no honest action names itself.
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
+                restart(format!(
+                    "the receipt for repair attempt `{id}` reports movement `{}`, which leaves the gap open; start a new attempt for seam `{seam}` and strengthen the focused test before its after phase",
+                    reading.movement.as_deref().unwrap_or("unknown")
+                ))
+            }
+            // HEAD unknown, or the receipt does not confirm the gap either
+            // way: no honest action names itself.
             _ => None,
         },
         "corrupt_or_unavailable" => restart(format!(

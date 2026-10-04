@@ -867,6 +867,18 @@ pub(crate) fn load_attempt_terminal_receipt(
             }
         };
     };
+    // The retained verify artifact is part of the bound terminal evidence,
+    // not decoration: a declared artifact that is missing or digest-mismatched
+    // makes the whole terminal record unavailable, so status never reads
+    // `finished_*` from a receipt whose verify half was deleted or replaced.
+    if let Some(verify_artifact) = find_terminal_artifact_by_role(manifest, TERMINAL_VERIFY_ROLE) {
+        if let Err(reason) = read_terminal_artifact_bytes(root, manifest, verify_artifact) {
+            return AttemptTerminalReceipt::Unavailable {
+                path: Some(verify_artifact.path.clone()),
+                reason,
+            };
+        }
+    }
     match read_bound_terminal_receipt(root, manifest, receipt_artifact) {
         Ok((path, value)) => AttemptTerminalReceipt::Issued { path, value },
         Err(reason) => AttemptTerminalReceipt::Unavailable {

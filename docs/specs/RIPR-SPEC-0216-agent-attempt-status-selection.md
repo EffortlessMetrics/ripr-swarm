@@ -143,9 +143,9 @@ execution or mutation authority.
   same-seam attempts staying distinct by ID, an explicit non-default store
   across processes, one malformed row keeping the store listing fail-closed
   while valid rows stay resumable by exact selection, tampered terminal
-  evidence never falling back to another
-  attempt's projection, and a legacy manifest reporting at compatibility
-  strength only.
+  evidence never falling back to another attempt's projection, a deleted
+  retained verify artifact making the whole terminal record unavailable, and
+  a legacy manifest reporting at compatibility strength only.
 - `cargo xtask check-output-contracts`, `check-fixture-contracts`,
   `check-static-language`, `check-capabilities`, and `check-traceability`
   pass on the candidate.
