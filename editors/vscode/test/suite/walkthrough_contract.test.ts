@@ -38,13 +38,33 @@ const EXPECTED_FLOW: Array<{ id: string; media: string; completionEvents: string
   }
 ];
 
-function onContextKey(event: string): string | undefined {
+function onContextKeys(event: string): string[] | undefined {
   if (!event.startsWith('onContext:')) {
     return undefined;
   }
   const expression = event.slice('onContext:'.length).trim();
-  const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(expression);
-  return match?.[0];
+  if (expression.length === 0) {
+    return [];
+  }
+  return expression.split(/\s*(?:&&|\|\|)\s*/).flatMap((clause) => {
+    const clean = clause.trim().replace(/^!+/, '').trim();
+    const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(clean);
+    return match === null ? [] : [match[0]];
+  });
+}
+
+function assertDocumentedOnContextKeys(event: string, label: string): void {
+  const keys = onContextKeys(event);
+  if (keys === undefined) {
+    return;
+  }
+  assert.ok(keys.length > 0, `${label} has empty onContext expression: ${event}`);
+  for (const key of keys) {
+    assert.ok(
+      DOCUMENTED_ON_CONTEXT_KEYS.has(key),
+      `${label} names undocumented key ${key}: ${event}`
+    );
+  }
 }
 
 suite('Walkthrough Contribution Contract', () => {
@@ -71,15 +91,29 @@ suite('Walkthrough Contribution Contract', () => {
     assert.deepStrictEqual(actual, EXPECTED_FLOW);
   });
 
-  test('bare onContext completion events name documented VS Code context keys', () => {
+  test('onContext events reject empty expressions and undocumented keys in every clause', () => {
     assert.ok(
       !DOCUMENTED_ON_CONTEXT_KEYS.has('workspaceTrusted'),
       'workspaceTrusted must not be treated as a documented VS Code context key'
     );
-    assert.strictEqual(onContextKey('onContext:workspaceTrusted'), 'workspaceTrusted');
-    assert.strictEqual(onContextKey('onContext:isWorkspaceTrusted'), 'isWorkspaceTrusted');
-    assert.strictEqual(onContextKey('onContext:resourceLangId == rust'), 'resourceLangId');
-    assert.strictEqual(onContextKey('onCommand:ripr.showStatus'), undefined);
+    assert.deepStrictEqual(onContextKeys('onCommand:ripr.showStatus'), undefined);
+    assert.deepStrictEqual(onContextKeys('onContext:'), []);
+    assert.deepStrictEqual(onContextKeys('onContext:workspaceTrusted'), ['workspaceTrusted']);
+    assert.deepStrictEqual(onContextKeys('onContext:isWorkspaceTrusted'), ['isWorkspaceTrusted']);
+    assert.deepStrictEqual(onContextKeys('onContext:!isWorkspaceTrusted'), ['isWorkspaceTrusted']);
+    assert.deepStrictEqual(onContextKeys('onContext:resourceLangId == rust'), ['resourceLangId']);
+    assert.deepStrictEqual(
+      onContextKeys('onContext:isWorkspaceTrusted && workspaceTrusted'),
+      ['isWorkspaceTrusted', 'workspaceTrusted']
+    );
+    assert.throws(() => assertDocumentedOnContextKeys('onContext:', 'empty'));
+    assert.throws(() => assertDocumentedOnContextKeys('onContext:workspaceTrusted', 'invented'));
+    assert.throws(() =>
+      assertDocumentedOnContextKeys('onContext:isWorkspaceTrusted && workspaceTrusted', 'compound')
+    );
+    assertDocumentedOnContextKeys('onContext:isWorkspaceTrusted', 'trust');
+    assertDocumentedOnContextKeys('onContext:!isWorkspaceTrusted', 'negated');
+    assertDocumentedOnContextKeys('onContext:resourceLangId == rust', 'lang');
   });
 
   test('every media file exists and completion events use the supported vocabulary', () => {
@@ -93,13 +127,7 @@ suite('Walkthrough Contribution Contract', () => {
           ALLOWED_COMPLETION_EVENT_PREFIXES.some((prefix) => event.startsWith(prefix)),
           `unsupported completion event on step ${step.id}: ${event}`
         );
-        const contextKey = onContextKey(event);
-        if (contextKey !== undefined) {
-          assert.ok(
-            DOCUMENTED_ON_CONTEXT_KEYS.has(contextKey),
-            `onContext event on step ${step.id} names undocumented key ${contextKey}: ${event}`
-          );
-        }
+        assertDocumentedOnContextKeys(event, `step ${step.id}`);
       }
     }
   });
