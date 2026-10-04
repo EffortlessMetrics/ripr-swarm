@@ -385,7 +385,7 @@ fn stub_body(
             .clone()
             .unwrap_or_else(|| format!("arg{}", index + 1));
         let ty = concrete_type(&param.ty, self_type);
-        let (binding_ty, argument, mutable) = match ty.strip_prefix("&mut ") {
+        let (binding_ty, argument, mutable) = match strip_mut_reference(&ty) {
             Some(inner) => (inner.trim().to_string(), format!("&mut {binding}"), true),
             None => (ty.clone(), binding.clone(), false),
         };
@@ -644,6 +644,18 @@ fn replace_word(text: &str, word: &str, replacement: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// The referent of a `&mut T`, `&'_ mut T` or `&'a mut T` parameter type.
+fn strip_mut_reference(ty: &str) -> Option<&str> {
+    let rest = ty.strip_prefix('&')?.trim_start();
+    let rest = match rest.strip_prefix('\'') {
+        Some(lifetime) => lifetime
+            .trim_start_matches(|c: char| c.is_alphanumeric() || c == '_')
+            .trim_start(),
+        None => rest,
+    };
+    rest.strip_prefix("mut ").map(str::trim)
 }
 
 /// `Error::Variant` (optionally written as `Err(Error::Variant(..))`) as a

@@ -96,6 +96,21 @@ fn resolve_at(
         .filter(|entry| entry.class.is_headline_eligible())
         .filter(|entry| paths_match(entry.seam.file(), file))
         .collect::<Vec<_>>();
+    let mut files = in_file
+        .iter()
+        .map(|entry| entry.seam.file().to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    if files.len() > 1 {
+        // A suffix like `src/lib.rs` can name several crates' files; reading
+        // one file and applying another file's seam offsets would build a
+        // stub for the wrong function.
+        return Err(TestStubError::NotFound(format!(
+            "{file} matches more than one file with gaps ({}); pass one of those paths or a seam ID",
+            files.join(", ")
+        )));
+    }
     let Some(first) = in_file.first() else {
         // Name the parse failure: a file ripr cannot parse has no seams,
         // which is a static limit, not evidence that nothing changed.
@@ -244,17 +259,34 @@ pub(crate) fn write_test_stub(
     Ok(relative.to_path_buf())
 }
 
+/// The root-relative manifest of the Cargo package that will own the stub:
+/// the nearest `Cargo.toml` with a `[package]` table at or above the stub's
+/// file, bounded by `root`. `None` when no package owns it, so no run command
+/// is offered rather than one that would test a different package.
+pub(crate) fn package_manifest_for(root: &Path, stub: &RustTestStub) -> Option<PathBuf> {
+    stub.placement.file().ancestors().skip(1).find_map(|dir| {
+        let manifest = dir.join("Cargo.toml");
+        let text = std::fs::read_to_string(root.join(&manifest)).ok()?;
+        let parsed = text.parse::<toml::Table>().ok()?;
+        parsed.contains_key("package").then_some(manifest)
+    })
+}
+
 /// The command that runs just this test after the stub is in place.
-pub(crate) fn run_command(stub: &RustTestStub) -> String {
+/// `manifest` is the package manifest as the caller should spell it.
+pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
     match &stub.placement {
         TestStubPlacement::NewIntegrationFile { file } => {
             let target = file
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())
                 .unwrap_or_default();
-            format!("cargo test --test {target} {}", stub.test_name)
+            format!(
+                "cargo test --manifest-path {manifest} --test {target} {}",
+                stub.test_name
+            )
         }
-        _ => format!("cargo test {}", stub.test_name),
+        _ => format!("cargo test --manifest-path {manifest} {}", stub.test_name),
     }
 }
 
@@ -289,6 +321,134 @@ mod tests {
         assert!(paths_match(Path::new("src\\lib.rs"), "src/lib.rs"));
         assert!(!paths_match(Path::new("src/lib.rs"), "lib.rs.bak"));
         assert!(!paths_match(Path::new("src/mylib.rs"), "lib.rs"));
+    }
+
+    fn ungripped(file: &str, line: usize) -> ClassifiedSeam {
+        use crate::analysis::seams::{
+            ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+        };
+        use crate::analysis::test_grip_evidence::TestGripEvidence;
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "test stage");
+        let seam = RepoSeam::new(
+            file,
+            "owner",
+            SeamKind::PredicateBoundary,
+            0,
+            line,
+            "a >= b",
+            RequiredDiscriminator::BoundaryValue {
+                description: "a == b".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        ClassifiedSeam {
+            evidence: TestGripEvidence {
+                seam_id: seam.id().clone(),
+                related_tests: Vec::new(),
+                reach: stage(),
+                activate: stage(),
+                propagate: stage(),
+                observe: stage(),
+                discriminate: stage(),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                new_test_target: None,
+            },
+            seam,
+            class: SeamGripClass::Ungripped,
+        }
+    }
+
+    #[test]
+    fn at_selector_refuses_a_suffix_that_names_two_files_with_gaps() {
+        let classified = vec![
+            ungripped("crates/a/src/lib.rs", 2),
+            ungripped("crates/b/src/lib.rs", 2),
+        ];
+        let result = resolve_at(Path::new("/nonexistent"), &classified, "src/lib.rs", 2);
+        assert!(
+            matches!(&result, Err(TestStubError::NotFound(message))
+                if message.contains("crates/a/src/lib.rs, crates/b/src/lib.rs")
+                    && message.contains("seam ID")),
+            "{:?}",
+            result.err()
+        );
+        // One full path is unambiguous and reaches the source read.
+        let one = resolve_at(
+            Path::new("/nonexistent"),
+            &classified,
+            "crates/a/src/lib.rs",
+            2,
+        );
+        assert!(
+            matches!(&one, Err(TestStubError::Operational(_))),
+            "{:?}",
+            one.err()
+        );
+    }
+
+    #[test]
+    fn run_command_targets_the_package_that_owns_the_stub() -> Result<(), String> {
+        use crate::analysis::test_stub::TestStubPlacement;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-stub-manifest-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("crates/a/src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/a\"]\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("crates/a/Cargo.toml"),
+            "[package]\nname = \"a\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let stub = |placement| RustTestStub {
+            placement,
+            test_name: "owner_boundary".to_string(),
+            text: String::new(),
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let inline = stub(TestStubPlacement::NewInlineModule {
+            file: PathBuf::from("crates/a/src/lib.rs"),
+            offset: 0,
+        });
+        let integration = stub(TestStubPlacement::NewIntegrationFile {
+            file: PathBuf::from("crates/a/tests/owner.rs"),
+        });
+        let orphan = stub(TestStubPlacement::NewInlineModule {
+            file: PathBuf::from("scripts/tool.rs"),
+            offset: 0,
+        });
+        let inline_manifest = package_manifest_for(&root, &inline);
+        let integration_manifest = package_manifest_for(&root, &integration);
+        let orphan_manifest = package_manifest_for(&root, &orphan);
+        let _ = std::fs::remove_dir_all(&root);
+
+        // The workspace manifest at the root has no [package]; it is skipped.
+        assert_eq!(inline_manifest, Some(PathBuf::from("crates/a/Cargo.toml")));
+        assert_eq!(
+            integration_manifest,
+            Some(PathBuf::from("crates/a/Cargo.toml"))
+        );
+        assert_eq!(orphan_manifest, None);
+        assert_eq!(
+            run_command("crates/a/Cargo.toml", &inline),
+            "cargo test --manifest-path crates/a/Cargo.toml owner_boundary"
+        );
+        assert_eq!(
+            run_command("crates/a/Cargo.toml", &integration),
+            "cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary"
+        );
+        Ok(())
     }
 
     #[test]

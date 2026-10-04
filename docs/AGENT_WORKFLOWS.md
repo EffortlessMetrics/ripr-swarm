@@ -294,6 +294,10 @@ proposed `tests/` file, calling the changed function with its real receiver
 and arguments and a boundary input when the changed comparison names one. The
 expected value is a labelled `todo!()`, so the test fails until it is
 written. `--write` applies it; `--json` emits the `rust_test_stub` document.
+Its `run_command` runs only that test through the owning package's
+`--manifest-path`, and is `null` when no Cargo package owns the file. A
+`--at` path that matches files with gaps in several crates is refused; pass
+the full path or the seam ID.
 
 No `.ripr/goals/active.toml`, current-writer file, stage file or agent-liveness
 record selects ordinary work. Keep status changes evidence-bound and update an

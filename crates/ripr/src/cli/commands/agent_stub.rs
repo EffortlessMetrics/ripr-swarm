@@ -7,8 +7,8 @@
 
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::app::test_stub::{
-    TestStubError, TestStubSelector, line_of_offset, resolve_test_stub, run_command,
-    write_test_stub,
+    TestStubError, TestStubSelector, line_of_offset, package_manifest_for, resolve_test_stub,
+    run_command, write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -68,7 +68,15 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
         .display()
         .to_string()
         .replace('\\', "/");
-    let run = run_command(stub);
+    let run = package_manifest_for(&options.root, stub).map(|manifest| {
+        let manifest = options.root.join(manifest);
+        let manifest = manifest
+            .strip_prefix(".")
+            .unwrap_or(&manifest)
+            .to_string_lossy()
+            .replace('\\', "/");
+        run_command(&shell_arg(&manifest), stub)
+    });
 
     if options.json {
         let document = serde_json::json!({
@@ -121,7 +129,12 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
     if written.is_none() {
         println!("Write it: {}", write_command(&options));
     }
-    println!("Run it: {run}");
+    match &run {
+        Some(run) => println!("Run it: {run}"),
+        None => {
+            println!("Run it: no Cargo package owns {file}; add it to one, then run its tests.")
+        }
+    }
     Ok(())
 }
 

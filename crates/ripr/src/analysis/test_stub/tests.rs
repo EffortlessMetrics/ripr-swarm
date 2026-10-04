@@ -368,3 +368,35 @@ fn stub_text_never_uses_overclaiming_vocabulary() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn lifetime_annotated_mut_reference_binds_the_referent_mutably() -> Result<(), String> {
+    const SOURCE: &str = "pub fn bump<'a>(counter: &'a mut u32, limit: u32) -> bool {
+    *counter >= limit
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        SOURCE,
+        "*counter >= limit",
+        SeamKind::PredicateBoundary,
+        boundary("*counter == limit"),
+    )?;
+    let stub = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let mut counter: u32 ="),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text.contains("bump(&mut counter, limit)"),
+        "{}",
+        stub.text
+    );
+    assert_eq!(strip_mut_reference("&mut Vec<u8>"), Some("Vec<u8>"));
+    assert_eq!(strip_mut_reference("&'_ mut u32"), Some("u32"));
+    assert_eq!(strip_mut_reference("&'static mut u32"), Some("u32"));
+    assert_eq!(strip_mut_reference("&'_ u32"), None);
+    assert_eq!(strip_mut_reference("&mutable"), None);
+    Ok(())
+}
