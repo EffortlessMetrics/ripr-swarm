@@ -62,6 +62,12 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::OrchestrationScorecard(args) => {
             super::reports::orchestration_scorecard_report(&args)
         }
+        XtaskCommand::IssueLifecycleScorecard(args) => {
+            super::reports::issue_lifecycle_scorecard_report(&args)
+        }
+        XtaskCommand::IssueLifecycleIntakeScorecard(args) => {
+            super::issue_lifecycle_intake::issue_lifecycle_intake_scorecard(&args)
+        }
         XtaskCommand::RustJudgedPanel(args) => super::rust_judged_panel::run(&args),
         XtaskCommand::CheckRustJudgedPanel => super::check_rust_judged_panel(),
         XtaskCommand::CheckReleaseChallengeSelection => {
@@ -88,11 +94,15 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::TargetedRerunBenchmark(args) => {
             super::reports::targeted_rerun_benchmark(&args)
         }
+        XtaskCommand::AgenticBench(args) => super::reports::agentic_bench(&args),
         XtaskCommand::SeamInventoryScalingBenchmark(args) => {
             super::reports::seam_inventory_scaling_benchmark(&args)
         }
+        XtaskCommand::MutationSpotCheck(args) => super::reports::mutation_spot_check(&args),
+        XtaskCommand::DxScoreboard(args) => super::reports::dx_scoreboard(&args),
         XtaskCommand::ScaleCliffBenchmark(args) => super::reports::scale_cliff_benchmark(&args),
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
+        XtaskCommand::BenchAgentSurfaces(args) => super::reports::bench_agent_surfaces(&args),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
         XtaskCommand::Lane1EvidenceAudit => super::reports::lane1_evidence_audit_report(),

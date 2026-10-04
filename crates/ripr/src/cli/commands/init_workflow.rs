@@ -124,7 +124,7 @@ jobs:
       - name: Remove checked-in RIPR artifacts
         run: rm -rf target/ripr target/ci
 
-      # Pinned to the ripr that generated this workflow. The steps below use
+@RIPR_PIN_FIRST_LINE@
       # that version's commands and flags; an unpinned install takes the
       # newest release, whose CLI may not match. To upgrade, install the
       # newer ripr and compare `ripr init --ci github --force --dry-run`
@@ -134,8 +134,11 @@ jobs:
       # checks it against the release's published SHA-256: seconds, where
       # compiling ripr takes minutes. With no prebuilt binary for this
       # runner (Windows, or a download failure), it falls back to
-      # `cargo install`. A checksum mismatch fails the step instead.
+      # `cargo install`, which needs Rust on the runner; without cargo the
+      # step fails and says how to fix it. A checksum mismatch fails the step
+      # instead. The summary step reads this step's outcome by its id.
       - name: Install ripr
+        id: install
         run: |
           version=@RIPR_VERSION@
           case "$RUNNER_OS-$RUNNER_ARCH" in
@@ -161,7 +164,13 @@ jobs:
             tar -xzf "$RUNNER_TEMP/$asset" -C "$bin_dir"
             echo "$bin_dir" >> "$GITHUB_PATH"
           else
-            echo "::notice::No prebuilt ripr $version downloaded for $RUNNER_OS-$RUNNER_ARCH; building it with cargo install"
+            why="no prebuilt ripr $version for $RUNNER_OS-$RUNNER_ARCH"
+            if [ -n "$target" ]; then why="downloading $url failed"; fi
+            if ! command -v cargo >/dev/null 2>&1; then
+              echo "::error::Cannot install ripr: $why, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
+              exit 1
+            fi
+            echo "::notice::$why; building it with cargo install"
             cargo install ripr --version @RIPR_VERSION@ --locked
           fi
           PATH="$bin_dir:$PATH" ripr --version
@@ -181,123 +190,6 @@ jobs:
           key: ripr-cache-@RIPR_VERSION@-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
           restore-keys: |
             ripr-cache-@RIPR_VERSION@-${{ runner.os }}-
-
-      - name: Generate RIPR pilot packet
-        continue-on-error: true
-        run: |
-          ripr pilot \
-            --root . \
-            --out target/ripr/pilot \
-            --mode ready \
-            --max-seams 5
-
-      - name: Prepare RIPR editor-agent artifacts
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports target/ripr/agent target/ripr/workflow
-          if [ -f target/ripr/pilot/repo-exposure.json ]; then
-            cp target/ripr/pilot/repo-exposure.json target/ripr/reports/repo-exposure.json
-            cp target/ripr/pilot/repo-exposure.json target/ripr/workflow/before.repo-exposure.json
-          fi
-          if [ -f target/ripr/pilot/agent-seam-packets.json ]; then
-            cp target/ripr/pilot/agent-seam-packets.json target/ripr/workflow/agent-seam-packets.json
-          fi
-          if [ -f target/ripr/pilot/pilot-summary.json ]; then
-            top_seam_id="$(jq -r '.top_actionable_seams[0].seam_id // empty' target/ripr/pilot/pilot-summary.json 2>/dev/null || true)"
-            if [ -n "$top_seam_id" ] && [ "$top_seam_id" != "null" ]; then
-              echo "RIPR_TOP_SEAM_ID=$top_seam_id" >> "$GITHUB_ENV"
-            fi
-          fi
-
-      - name: Generate RIPR agent loop artifacts
-        if: always() && env.RIPR_TOP_SEAM_ID != ''
-        continue-on-error: true
-        # CI writes the before side of the repair loop only: the workflow
-        # manifest, brief, and packet the focused-test edit starts from.
-        # The after snapshot, verify, and receipt need that edit between
-        # the snapshots, so the repair's `--attempt ... --phase after`
-        # command produces them where the edit happens (#3906). The packet
-        # lands through a temporary file so a failed render never leaves an
-        # empty JSON artifact for later steps or the upload.
-        run: |
-          ripr agent start \
-            --root . \
-            --seam-id "$RIPR_TOP_SEAM_ID" \
-            --out target/ripr/workflow
-          packet_tmp="$(mktemp)"
-          ripr agent packet \
-            --root . \
-            --seam-id "$RIPR_TOP_SEAM_ID" \
-            --json \
-            > "$packet_tmp"
-          mv "$packet_tmp" target/ripr/workflow/agent-packet.json
-          cp target/ripr/workflow/agent-packet.json target/ripr/agent/agent-packet.json
-          cp target/ripr/workflow/agent-brief.json target/ripr/agent/agent-brief.json
-
-      - name: Render RIPR gap decision ledger
-        if: always() && hashFiles('target/ripr/reports/repo-exposure.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          ripr reports gap-ledger \
-            --root . \
-            --repo-exposure target/ripr/reports/repo-exposure.json \
-            --out target/ripr/reports/gap-decision-ledger.json \
-            --out-md target/ripr/reports/gap-decision-ledger.md
-
-      - name: Capture pull request diff
-        if: github.event_name == 'pull_request'
-        run: |
-          mkdir -p target/ripr/reports
-          # Pinned diff contract (#4005): the same presentation pins as the
-          # production loaders. Ambient external-diff, textconv, color,
-          # context, path-quoting, and side-prefix configuration must not
-          # change the bytes RIPR analyzes.
-          base_ref="origin/${{ github.base_ref }}"
-          base_sha="$(git rev-parse --verify "${base_ref}^{commit}")" || { echo "ripr: cannot resolve base ref $base_ref" >&2; exit 1; }
-          head_sha="$(git rev-parse --verify "HEAD^{commit}")" || { echo "ripr: cannot resolve HEAD" >&2; exit 1; }
-          git -c core.quotePath=true diff --binary --no-ext-diff --no-textconv --no-color --src-prefix=a/ --dst-prefix=b/ --unified=3 --inter-hunk-context=0 "${base_sha}...${head_sha}" > target/ripr/reports/pr.diff || { echo "ripr: git diff failed for ${base_sha}...${head_sha}" >&2; exit 1; }
-          byte_count="$(wc -c < target/ripr/reports/pr.diff | tr -d ' ')"
-          digest="$(sha256sum target/ripr/reports/pr.diff)" || {
-            echo "ripr: failed to compute SHA-256 for patch" >&2
-            exit 1
-          }
-          digest="${digest%% *}"
-          jq -n --arg base_ref "$base_ref" --arg base_sha "$base_sha" --arg head_sha "$head_sha" --argjson byte_count "$byte_count" --arg digest "$digest" '{tool:"ripr",kind:"pr-diff-receipt",base_ref:$base_ref,base_sha:$base_sha,head_sha:$head_sha,byte_count:$byte_count,sha256:$digest}' > target/ripr/reports/pr-diff.receipt.json
-          if [ "$byte_count" -eq 0 ]; then
-            name_list="$(mktemp)" || { echo "ripr: cannot create temp file for path inventory" >&2; exit 1; }
-            git -c core.quotePath=true diff --name-only -z "${base_sha}...${head_sha}" > "$name_list" || { echo "ripr: git diff --name-only failed for ${base_sha}...${head_sha}" >&2; exit 1; }
-            changed_paths="$(tr -cd '\0' < "$name_list" | wc -c | tr -d ' ')"
-            rm -f "$name_list"
-            if [ "$changed_paths" -ne 0 ]; then
-              echo "ripr: empty patch but $changed_paths changed path(s); refusing an absent result" >&2
-              exit 1
-            fi
-          fi
-
-      - name: Run RIPR PR guidance report
-        if: github.event_name == 'pull_request'
-        # Gate-critical producer (#2009): advisory by default, but a
-        # blocking RIPR_GATE_MODE must not green-on-error past the gate's
-        # own input.
-        continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
-        run: |
-          mkdir -p target/ripr/pr target/ripr/review
-          check_status=0
-          ripr check \
-            --root . \
-            --base "origin/${{ github.base_ref }}" \
-            --format json > target/ripr/pr/check.json || check_status=$?
-          if [ "$check_status" -ne 0 ]; then
-            echo "RIPR check did not produce a complete result (exit $check_status); review-comments will fail closed on the named artifact."
-          fi
-          ripr review-comments \
-            --root . \
-            --base "origin/${{ github.base_ref }}" \
-            --head HEAD \
-            --check-output target/ripr/pr/check.json \
-            --out target/ripr/review/comments.json
 
       - name: Capture existing RIPR inline comments
         if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE != 'off'
@@ -340,45 +232,17 @@ jobs:
           }' target/ripr/review/existing-comments.raw.json \
             > target/ripr/review/existing-comments.json
 
-      - name: Plan RIPR inline comments
-        if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE != 'off' && hashFiles('target/ripr/review/comments.json') != ''
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RIPR_ACTOR: ${{ github.actor }}
-          RIPR_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          mkdir -p target/ripr/review
-          comment_args=(
-            pr-comments plan
-            --root .
-            --pr-guidance target/ripr/review/comments.json
-            --mode "$RIPR_COMMENT_MODE"
-            --event-name "${{ github.event_name }}"
-            --pull-request "${{ github.event.pull_request.number }}"
-            --head-repo "${{ github.event.pull_request.head.repo.full_name }}"
-            --base-repo "${{ github.repository }}"
-            --out target/ripr/review/comment-publish-plan.json
-            --out-md target/ripr/review/comment-publish-plan.md
-          )
-          if [ -f target/ripr/review/existing-comments.json ]; then
-            comment_args+=(--existing-comments target/ripr/review/existing-comments.json)
-          fi
-          if [ -n "${GH_TOKEN:-}" ]; then
-            comment_args+=(--token-available)
-          else
-            comment_args+=(--no-token)
-          fi
-          # GitHub gives Dependabot runs a read-only token whatever the
-          # permissions block says, so the plan must not claim write. Check
-          # the PR author too: a maintainer who reopens a Dependabot PR is the
-          # event actor, and the run can still carry the read-only token.
-          if [ "${RIPR_ACTOR:-}" = "dependabot[bot]" ] || [ "${RIPR_PR_AUTHOR:-}" = "dependabot[bot]" ]; then
-            comment_args+=(--no-write-permission)
-          else
-            comment_args+=(--write-permission)
-          fi
-          ripr "${comment_args[@]}"
+      # One command runs the RIPR steps in order: the pilot packet, the
+      # agent-loop start, the PR diff capture and guidance, the inline
+      # comment plan, SARIF and badge renders, the gate when RIPR_GATE_MODE
+      # is set, the policy and PR ledgers, start-here, the report index, and
+      # changed-line annotations. Each step prints as a log group, and an
+      # advisory step's failure is logged without stopping the rest. The
+      # command fails when the diff capture or the gate fails, or when a gate
+      # input fails under a blocking RIPR_GATE_MODE. It reads no token; the
+      # comment steps around it hold that. `ripr help reports` has the details.
+      - name: Run RIPR
+        run: ripr reports ci-packet --root .
 
       - name: Publish RIPR inline comments
         if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
@@ -484,664 +348,10 @@ jobs:
                 echo "RIPR inline comment already current: $dedupe_key"
               done
 
-      - name: Capture RIPR gate labels
-        if: always() && github.event_name == 'pull_request'
-        continue-on-error: true
-        run: |
-          mkdir -p target/ci
-          jq -c '{labels: [.pull_request.labels[]?.name]}' "$GITHUB_EVENT_PATH" > target/ci/labels.json
-
-      - name: Render RIPR diff SARIF
-        if: env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request'
-        continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
-        run: |
-          ripr check \
-            --root . \
-            --diff target/ripr/reports/pr.diff \
-            --format sarif \
-            > target/ripr/reports/ripr-findings.sarif
-
-      - name: Render RIPR repo seam SARIF
-        if: env.RIPR_UPLOAD_SARIF == 'true'
-        continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
-        run: |
-          mkdir -p target/ripr/reports
-          ripr check \
-            --root . \
-            --mode ready \
-            --format repo-sarif \
-            > target/ripr/reports/ripr-seams.sarif
-
-      - name: Render RIPR repo badge artifacts
-        # These files are uploaded with this PR run; they do not update a
-        # README badge endpoint on the default branch. To publish a badge,
-        # set up a separate reviewed badge-refresh workflow as described at
-        # https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_ADOPTION.md
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          ripr check \
-            --root . \
-            --mode ready \
-            --format repo-badge-json \
-            > target/ripr/reports/repo-ripr-badge.json
-          ripr check \
-            --root . \
-            --mode ready \
-            --format repo-badge-shields \
-            > target/ripr/reports/repo-ripr-badge-shields.json
-
-      - name: Evaluate RIPR gate decision
-        if: always() && env.RIPR_GATE_MODE != '' && hashFiles('target/ripr/review/comments.json') != ''
-        run: |
-          mkdir -p target/ripr/reports
-          gate_args=(
-            gate evaluate
-            --root .
-            --pr-guidance target/ripr/review/comments.json
-            --mode "$RIPR_GATE_MODE"
-            --out target/ripr/reports/gate-decision.json
-            --out-md target/ripr/reports/gate-decision.md
-          )
-          if [ -f target/ripr/reports/repo-exposure.json ]; then
-            gate_args+=(--repo-exposure target/ripr/reports/repo-exposure.json)
-          fi
-          if [ -f target/ci/labels.json ]; then
-            gate_args+=(--labels-json target/ci/labels.json)
-          fi
-          if [ -f target/ripr/reports/sarif-policy.json ]; then
-            gate_args+=(--sarif-policy target/ripr/reports/sarif-policy.json)
-          fi
-          if [ -f target/ripr/workflow/agent-verify.json ]; then
-            gate_args+=(--agent-verify target/ripr/workflow/agent-verify.json)
-          fi
-          if [ -f target/ripr/reports/agent-receipt.json ]; then
-            gate_args+=(--agent-receipt target/ripr/reports/agent-receipt.json)
-          fi
-          if [ -f target/ripr/reports/recommendation-calibration.json ]; then
-            gate_args+=(--recommendation-calibration target/ripr/reports/recommendation-calibration.json)
-          fi
-          if [ -f target/ripr/reports/mutation-calibration.json ]; then
-            gate_args+=(--mutation-calibration target/ripr/reports/mutation-calibration.json)
-          fi
-          if [ -n "${RIPR_GATE_BASELINE:-}" ]; then
-            gate_args+=(--baseline "$RIPR_GATE_BASELINE")
-          fi
-          ripr "${gate_args[@]}"
-
-      - name: Render RIPR baseline debt delta
-        if: always() && env.RIPR_GATE_BASELINE != '' && hashFiles('target/ripr/reports/gate-decision.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          ripr baseline diff \
-            --baseline "$RIPR_GATE_BASELINE" \
-            --current target/ripr/reports/gate-decision.json \
-            --out target/ripr/reports/baseline-debt-delta.json \
-            --out-md target/ripr/reports/baseline-debt-delta.md
-
-      - name: Render RIPR Zero status
-        if: always() && hashFiles('target/ripr/reports/baseline-debt-delta.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          zero_args=(
-            zero status
-            --delta target/ripr/reports/baseline-debt-delta.json
-            --out target/ripr/reports/ripr-zero-status.json
-            --out-md target/ripr/reports/ripr-zero-status.md
-          )
-          if [ -n "${RIPR_GATE_BASELINE:-}" ]; then
-            zero_args+=(--baseline "$RIPR_GATE_BASELINE")
-          fi
-          if [ -f target/ripr/reports/gate-decision.json ]; then
-            zero_args+=(--gate target/ripr/reports/gate-decision.json)
-          fi
-          if [ -f target/ripr/review/comments.json ]; then
-            zero_args+=(--pr-guidance target/ripr/review/comments.json)
-          fi
-          if [ -f target/ripr/reports/recommendation-calibration.json ]; then
-            zero_args+=(--recommendation-calibration target/ripr/reports/recommendation-calibration.json)
-          fi
-          ripr "${zero_args[@]}"
-
-      - name: Render RIPR PR evidence ledger
-        if: always() && github.event_name == 'pull_request' && hashFiles('target/ripr/review/comments.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          ledger_args=(
-            pr-ledger record
-            --pr-number "${{ github.event.pull_request.number }}"
-            --base "origin/${{ github.base_ref }}"
-            --head HEAD
-            --pr-guidance target/ripr/review/comments.json
-            --out target/ripr/reports/pr-evidence-ledger.json
-            --out-md target/ripr/reports/pr-evidence-ledger.md
-          )
-          if [ -f target/ripr/reports/gate-decision.json ]; then
-            ledger_args+=(--gate target/ripr/reports/gate-decision.json)
-          fi
-          if [ -f target/ripr/reports/baseline-debt-delta.json ]; then
-            ledger_args+=(--baseline-delta target/ripr/reports/baseline-debt-delta.json)
-          fi
-          if [ -f target/ripr/reports/ripr-zero-status.json ]; then
-            ledger_args+=(--zero-status target/ripr/reports/ripr-zero-status.json)
-          fi
-          if [ -f target/ripr/reports/recommendation-calibration.json ]; then
-            ledger_args+=(--recommendation-calibration target/ripr/reports/recommendation-calibration.json)
-          fi
-          if [ -f target/ripr/reports/agent-receipt.json ]; then
-            ledger_args+=(--agent-receipt target/ripr/reports/agent-receipt.json)
-          fi
-          if [ -f target/ripr/reports/coverage-summary.json ]; then
-            ledger_args+=(--coverage target/ripr/reports/coverage-summary.json)
-          fi
-          if [ -f .ripr/pr-evidence-ledger.jsonl ]; then
-            ledger_args+=(--history .ripr/pr-evidence-ledger.jsonl)
-          fi
-          if [ -f target/ci/labels.json ]; then
-            while IFS= read -r label; do
-              if [ -n "$label" ] && [ "$label" != "null" ]; then
-                ledger_args+=(--label "$label")
-              fi
-            done < <(jq -r '.labels[]? // empty' target/ci/labels.json 2>/dev/null || true)
-          fi
-          ripr "${ledger_args[@]}"
-
-      - name: Render RIPR waiver aging
-        if: always() && hashFiles('target/ripr/reports/pr-evidence-ledger.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          waiver_args=(
-            policy waiver-aging
-            --root .
-            --ledger target/ripr/reports/pr-evidence-ledger.json
-            --out target/ripr/reports/waiver-aging.json
-            --out-md target/ripr/reports/waiver-aging.md
-          )
-          if [ -f .ripr/pr-evidence-ledger.jsonl ]; then
-            waiver_args+=(--history .ripr/pr-evidence-ledger.jsonl)
-          fi
-          ripr "${waiver_args[@]}"
-
-      - name: Render RIPR suppression health
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          suppression_args=(
-            policy suppression-health
-            --root .
-            --out target/ripr/reports/suppression-health.json
-            --out-md target/ripr/reports/suppression-health.md
-          )
-          ripr "${suppression_args[@]}"
-
-      - name: Render RIPR policy readiness
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          policy_args=(
-            policy readiness
-            --root .
-            --out target/ripr/reports/policy-readiness.json
-            --out-md target/ripr/reports/policy-readiness.md
-          )
-          if [ -f target/ripr/reports/gate-decision.json ]; then
-            policy_args+=(--gate-decision target/ripr/reports/gate-decision.json)
-          fi
-          if [ -f target/ripr/reports/baseline-debt-delta.json ]; then
-            policy_args+=(--baseline-delta target/ripr/reports/baseline-debt-delta.json)
-          fi
-          if [ -f target/ripr/reports/recommendation-calibration.json ]; then
-            policy_args+=(--recommendation-calibration target/ripr/reports/recommendation-calibration.json)
-          fi
-          if [ -f target/ripr/reports/mutation-calibration.json ]; then
-            policy_args+=(--mutation-calibration target/ripr/reports/mutation-calibration.json)
-          fi
-          if [ -f target/ripr/reports/waiver-aging.json ]; then
-            policy_args+=(--waiver-aging target/ripr/reports/waiver-aging.json)
-          fi
-          if [ -f target/ripr/reports/suppression-health.json ]; then
-            policy_args+=(--suppression-health target/ripr/reports/suppression-health.json)
-          fi
-          ripr "${policy_args[@]}"
-
-      - name: Render RIPR policy operations
-        if: always() && hashFiles('target/ripr/reports/policy-readiness.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          operations_args=(
-            policy operations
-            --root .
-            --policy-readiness target/ripr/reports/policy-readiness.json
-            --out target/ripr/reports/policy-operations.json
-            --out-md target/ripr/reports/policy-operations.md
-          )
-          if [ -f target/ripr/reports/waiver-aging.json ]; then
-            operations_args+=(--waiver-aging target/ripr/reports/waiver-aging.json)
-          fi
-          if [ -f target/ripr/reports/suppression-health.json ]; then
-            operations_args+=(--suppression-health target/ripr/reports/suppression-health.json)
-          fi
-          if [ -f target/ripr/reports/baseline-debt-delta.json ]; then
-            operations_args+=(--baseline-delta target/ripr/reports/baseline-debt-delta.json)
-          fi
-          if [ -f target/ripr/reports/gate-decision.json ]; then
-            operations_args+=(--gate-decision target/ripr/reports/gate-decision.json)
-          fi
-          if [ -f target/ripr/reports/recommendation-calibration.json ]; then
-            operations_args+=(--recommendation-calibration target/ripr/reports/recommendation-calibration.json)
-          fi
-          if [ -f target/ripr/reports/mutation-calibration.json ]; then
-            operations_args+=(--mutation-calibration target/ripr/reports/mutation-calibration.json)
-          fi
-          if [ -f target/ripr/reports/repo-exposure.json ]; then
-            operations_args+=(--preview-boundary target/ripr/reports/repo-exposure.json)
-          fi
-          ripr "${operations_args[@]}"
-
-      - name: Render RIPR policy history
-        if: always() && hashFiles('target/ripr/reports/policy-operations.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          # Record the analyzed commit. On a PR, GITHUB_SHA names the merge
-          # commit, which this workflow does not check out.
-          history_args=(
-            policy history
-            --root .
-            --current target/ripr/reports/policy-operations.json
-            --commit "$(git rev-parse HEAD)"
-            --out target/ripr/reports/policy-history.json
-            --out-md target/ripr/reports/policy-history.md
-          )
-          if [ -f .ripr/policy-history.jsonl ]; then
-            history_args+=(--history .ripr/policy-history.jsonl)
-          fi
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            history_args+=(--pr-number "${{ github.event.number }}")
-          fi
-          ripr "${history_args[@]}"
-
-      - name: Render RIPR policy promotion packets
-        if: always() && hashFiles('target/ripr/reports/policy-operations.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          for target_mode in visible-only acknowledgeable baseline-check calibrated-gate; do
-            promotion_args=(
-              policy promote
-              --to "$target_mode"
-              --operations target/ripr/reports/policy-operations.json
-              --out "target/ripr/reports/policy-promotion-${target_mode}.json"
-              --out-md "target/ripr/reports/policy-promotion-${target_mode}.md"
-            )
-            if [ -f target/ripr/reports/policy-history.json ]; then
-              promotion_args+=(--history target/ripr/reports/policy-history.json)
-            fi
-            ripr "${promotion_args[@]}"
-          done
-
-      - name: Render RIPR preview promotion packets
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          # `ripr doctor --json` reports the same environment facts the human
-          # doctor screen prints, so it also probes on the JSON path. On a root
-          # with Perl markers (Makefile.PL, *.pm, cpanfile) that means up to
-          # four deadline-bounded exporter probes at [perl].timeout_ms (30s by
-          # default) per invocation, and this step invokes doctor up to twice,
-          # plus PATH lookups for the Perl test runners. Every probe is bounded
-          # and none can change doctor's status or exit code. See
-          # docs/OUTPUT_SCHEMA.md, "Doctor environment fields (schema 0.4)".
-          preview_languages="$(
-            ripr doctor --root . --json 2>/dev/null \
-              | jq -r '.languages[]?' 2>/dev/null \
-              | sed -n '/^typescript$/p; /^python$/p' \
-              | sort -u \
-              | tr '\n' ' ' \
-              | sed 's/ $//' \
-              || true
-          )"
-          if [ -z "$preview_languages" ]; then
-            # Empty can mean "none configured" OR "doctor --json failed"
-            # (#2182 review): doctor always emits at least the default
-            # language, so an empty result is a detection failure. Say so
-            # instead of asserting none are configured.
-            if ripr doctor --root . --json > /dev/null 2>&1; then
-              echo 'No TypeScript or Python preview languages are configured; preview promotion packets were not generated.'
-            else
-              echo 'Language detection via `ripr doctor --json` failed; preview promotion packets were not generated. Run ripr doctor locally for the underlying error.'
-            fi
-            exit 0
-          fi
-          for language in $preview_languages; do
-            class_label=boundary_gap
-            preview_args=(
-              policy preview-promote
-              --language "$language"
-              --class "$class_label"
-              --out "target/ripr/reports/preview-promotion-${language}-${class_label//_/-}.json"
-              --out-md "target/ripr/reports/preview-promotion-${language}-${class_label//_/-}.md"
-            )
-            if [ -f target/ripr/reports/preview-promotion-evidence.json ]; then
-              preview_args+=(--evidence target/ripr/reports/preview-promotion-evidence.json)
-            fi
-            ripr "${preview_args[@]}"
-          done
-
-      - name: Render RIPR test-oracle assistant proof
-        if: always() && hashFiles('target/ripr/review/comments.json') != '' && hashFiles('target/ripr/workflow/agent-brief.json') != '' && hashFiles('target/ripr/workflow/before.repo-exposure.json') != '' && hashFiles('target/ripr/workflow/after.repo-exposure.json') != '' && hashFiles('target/ripr/reports/agent-receipt.json') != '' && hashFiles('target/ripr/reports/pr-evidence-ledger.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          proof_args=(
-            assistant-loop proof
-            --root .
-            --pr-guidance target/ripr/review/comments.json
-            --agent-packet target/ripr/workflow/agent-brief.json
-            --before target/ripr/workflow/before.repo-exposure.json
-            --after target/ripr/workflow/after.repo-exposure.json
-            --receipt target/ripr/reports/agent-receipt.json
-            --ledger target/ripr/reports/pr-evidence-ledger.json
-            --out target/ripr/reports/test-oracle-assistant-proof.json
-            --out-md target/ripr/reports/test-oracle-assistant-proof.md
-          )
-          if [ -f target/ripr/reports/coverage-grip-frontier.json ]; then
-            proof_args+=(--coverage-frontier target/ripr/reports/coverage-grip-frontier.json)
-          fi
-          if [ -f target/ripr/reports/gate-decision.json ]; then
-            proof_args+=(--gate-decision target/ripr/reports/gate-decision.json)
-          fi
-          ripr "${proof_args[@]}"
-
-      - name: Render RIPR assistant loop health
-        if: always() && hashFiles('target/ripr/reports/test-oracle-assistant-proof.json') != ''
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          ripr assistant-loop health \
-            --root . \
-            --proof target/ripr/reports/test-oracle-assistant-proof.json \
-            --out target/ripr/reports/assistant-loop-health.json \
-            --out-md target/ripr/reports/assistant-loop-health.md
-
-      - name: Render RIPR first useful action
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          first_action_has_input=false
-          first_action_args=(
-            first-action
-            --root .
-            --out target/ripr/reports/first-useful-action.json
-            --out-md target/ripr/reports/first-useful-action.md
-          )
-          if [ -f target/ripr/review/comments.json ]; then
-            first_action_args+=(--pr-guidance target/ripr/review/comments.json)
-            first_action_has_input=true
-          fi
-          if [ -f target/ripr/reports/test-oracle-assistant-proof.json ]; then
-            first_action_args+=(--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json)
-            first_action_has_input=true
-          fi
-          if [ -f target/ripr/reports/pr-evidence-ledger.json ]; then
-            first_action_args+=(--ledger target/ripr/reports/pr-evidence-ledger.json)
-            first_action_has_input=true
-          fi
-          if [ -f target/ripr/reports/baseline-debt-delta.json ]; then
-            first_action_args+=(--baseline-delta target/ripr/reports/baseline-debt-delta.json)
-            first_action_has_input=true
-          fi
-          if [ -f target/ripr/reports/agent-receipt.json ]; then
-            first_action_args+=(--receipt target/ripr/reports/agent-receipt.json)
-            first_action_has_input=true
-          fi
-          if [ -f target/ripr/reports/gate-decision.json ]; then
-            first_action_args+=(--gate-decision target/ripr/reports/gate-decision.json)
-            first_action_has_input=true
-          fi
-          if [ -f target/ripr/reports/coverage-grip-frontier.json ]; then
-            first_action_args+=(--coverage-frontier target/ripr/reports/coverage-grip-frontier.json)
-            first_action_has_input=true
-          fi
-          if [ -f target/ripr/workflow/evidence-context.json ]; then
-            first_action_args+=(--editor-context target/ripr/workflow/evidence-context.json)
-            first_action_has_input=true
-          fi
-          if [ "$first_action_has_input" = true ]; then
-            ripr "${first_action_args[@]}"
-          else
-            echo 'No RIPR first-useful-action inputs were available.'
-            echo 'Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.'
-          fi
-
-      - name: Render RIPR PR review front panel
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          front_panel_has_input=false
-          front_panel_args=(
-            pr-review front-panel
-            --root .
-            --out target/ripr/reports/pr-review-front-panel.json
-            --out-md target/ripr/reports/pr-review-front-panel.md
-          )
-          if [ -f target/ripr/review/comments.json ]; then
-            front_panel_args+=(--pr-guidance target/ripr/review/comments.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/first-useful-action.json ]; then
-            front_panel_args+=(--first-action target/ripr/reports/first-useful-action.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/test-oracle-assistant-proof.json ]; then
-            front_panel_args+=(--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/assistant-loop-health.json ]; then
-            front_panel_args+=(--assistant-health target/ripr/reports/assistant-loop-health.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/pr-evidence-ledger.json ]; then
-            front_panel_args+=(--ledger target/ripr/reports/pr-evidence-ledger.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/baseline-debt-delta.json ]; then
-            front_panel_args+=(--baseline-delta target/ripr/reports/baseline-debt-delta.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/ripr-zero-status.json ]; then
-            front_panel_args+=(--zero-status target/ripr/reports/ripr-zero-status.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/gate-decision.json ]; then
-            front_panel_args+=(--gate-decision target/ripr/reports/gate-decision.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/recommendation-calibration.json ]; then
-            front_panel_args+=(--recommendation-calibration target/ripr/reports/recommendation-calibration.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/mutation-calibration.json ]; then
-            front_panel_args+=(--mutation-calibration target/ripr/reports/mutation-calibration.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/coverage-grip-frontier.json ]; then
-            front_panel_args+=(--coverage-frontier target/ripr/reports/coverage-grip-frontier.json)
-            front_panel_has_input=true
-          fi
-          if [ -f target/ripr/reports/agent-receipt.json ]; then
-            front_panel_args+=(--receipt target/ripr/reports/agent-receipt.json)
-            front_panel_has_input=true
-          fi
-          if [ "$front_panel_has_input" = true ]; then
-            ripr "${front_panel_args[@]}"
-          else
-            echo 'No RIPR PR review front-panel inputs were available.'
-            echo 'Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.'
-          fi
-
-      - name: Render RIPR first-pr start-here
-        if: always()
-        continue-on-error: true
-        # first-pr checks its base resolves and that the review cards were
-        # built for the same base. Without --base it resolves the default
-        # branch, which is not the base of a PR into another branch, so
-        # pass the PR base. A manual run has no PR base; use the default branch.
-        run: |
-          mkdir -p target/ripr/reports
-          ripr first-pr \
-            --root . \
-            --base "origin/${{ github.base_ref || github.event.repository.default_branch }}" \
-            --head HEAD \
-            --gap-ledger target/ripr/reports/gap-decision-ledger.json \
-            --first-action target/ripr/reports/first-useful-action.json \
-            --review-comments target/ripr/review/comments.json \
-            --agent-packet target/ripr/workflow/agent-packet.json \
-            --gate-decision target/ripr/reports/gate-decision.json \
-            --receipts-dir target/ripr/receipts \
-            --out-dir target/ripr/reports
-
-      - name: Render RIPR report packet index
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/reports
-          index_has_input=false
-          for path in \
-            target/ripr/reports/start-here.md \
-            target/ripr/reports/pr-review-front-panel.md \
-            target/ripr/reports/first-useful-action.md \
-            target/ripr/review/comments.md \
-            target/ripr/review/comments.json \
-            target/ripr/review/comment-publish-plan.md \
-            target/ripr/reports/test-oracle-assistant-proof.md \
-            target/ripr/reports/assistant-loop-health.md \
-            target/ripr/reports/pr-evidence-ledger.md \
-            target/ripr/reports/waiver-aging.md \
-            target/ripr/reports/suppression-health.md \
-            target/ripr/reports/policy-readiness.md \
-            target/ripr/reports/policy-operations.md \
-            target/ripr/reports/policy-history.md \
-            target/ripr/reports/policy-promotion-visible-only.md \
-            target/ripr/reports/policy-promotion-acknowledgeable.md \
-            target/ripr/reports/policy-promotion-baseline-check.md \
-            target/ripr/reports/policy-promotion-calibrated-gate.md \
-            target/ripr/reports/preview-promotion-typescript-boundary-gap.md \
-            target/ripr/reports/preview-promotion-python-boundary-gap.md \
-            target/ripr/reports/baseline-debt-delta.md \
-            target/ripr/reports/ripr-zero-status.md \
-            target/ripr/reports/gate-decision.md \
-            target/ripr/reports/recommendation-calibration.md \
-            target/ripr/reports/mutation-calibration.md \
-            target/ripr/reports/coverage-grip-frontier.md \
-            target/ripr/reports/agent-receipt.json \
-            target/ripr/reports/pr-summary.md \
-            target/ripr/reports/check-pr.md \
-            target/ripr/reports/ripr.sarif.json \
-            target/ripr/reports/ripr-badge.json; do
-            if [ -f "$path" ]; then
-              index_has_input=true
-              break
-            fi
-          done
-          if [ "$index_has_input" = true ]; then
-            ripr reports index \
-              --root . \
-              --reports-dir target/ripr/reports \
-              --review-dir target/ripr/review \
-              --receipts-dir target/ripr/receipts \
-              --workflow-dir target/ripr/workflow \
-              --agent-dir target/ripr/agent \
-              --pilot-dir target/ripr/pilot \
-              --ci-dir target/ci \
-              --out target/ripr/reports/index.json \
-              --out-md target/ripr/reports/index.md
-          else
-            echo 'No RIPR report-packet index inputs were available.'
-            echo 'Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`.'
-          fi
-
-      - name: Render RIPR LLM work-loop summaries
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p target/ripr/workflow
-          ripr agent status \
-            --root . \
-            --json \
-            > target/ripr/workflow/agent-status.json
-          ripr agent status \
-            --root . \
-            > target/ripr/workflow/agent-status.md
-          ripr agent review-summary \
-            --root . \
-            --json \
-            > target/ripr/workflow/agent-review-summary.json
-          ripr agent review-summary \
-            --root . \
-            > target/ripr/workflow/agent-review-summary.md
-
-      - name: Emit RIPR PR guidance annotations
-        if: always() && hashFiles('target/ripr/review/comments.json') != ''
-        continue-on-error: true
-        run: |
-          # Encode the workflow command in jq. Routing the fields through a
-          # TSV round-trip rewrites backslash, tab, CR, and LF into transport
-          # text before GitHub's encoder can see the original bytes (#4089). An annotation names the repair start only when
-          # that field is present. Literal "null" stays absent. The brief
-          # command is not interpolated: it points at this runner's checkout.
-          jq -r '
-            def escape_data:
-              gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
-            def escape_property:
-              escape_data | gsub(":"; "%3A") | gsub(","; "%2C");
-            .comments[]?
-            | select(.placement.path and .placement.line)
-            | (.llm_guidance.repair_command // "") as $repair_start
-            | ((.reason // "RIPR targeted test guidance")
-                + (if $repair_start != "" and $repair_start != "null"
-                   then " Start the repair: " + $repair_start
-                   else "" end)) as $message
-            | "::warning file=\(.placement.path | escape_property),line=\(.placement.line | tostring | escape_property),title=RIPR targeted test guidance::\($message | escape_data)"
-          ' target/ripr/review/comments.json
-
 "#;
 
-/// The template from the `Check RIPR advisory artifacts` step through the
-/// final upload step.
-const TEMPLATE_TAIL: &str = r#"      - name: Check RIPR advisory artifacts
-        if: always()
-        continue-on-error: true
-        run: |
-          # Green-with-missing-artifacts is a real failure mode (#2009):
-          # report it visibly without failing the advisory job.
-          missing=()
-          for artifact in target/ripr/reports/start-here.md target/ripr/reports/index.json; do
-            if [ ! -f "$artifact" ]; then
-              missing+=("$artifact")
-            fi
-          done
-          if [ "$RIPR_GATE_MODE" != '' ] && [ ! -f target/ripr/reports/gate-decision.json ] && [ -f target/ripr/review/comments.json ]; then
-            missing+=("target/ripr/reports/gate-decision.json (RIPR_GATE_MODE is set)")
-          fi
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo '::warning::Some RIPR advisory artifacts are missing (upstream step failed softly):'
-            for artifact in "${missing[@]}"; do
-              echo "  - $artifact"
-            done
-          fi
-
-      - name: Upload RIPR report artifacts
+/// The template from the first upload step through the last.
+const TEMPLATE_TAIL: &str = r#"      - name: Upload RIPR report artifacts
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v7
@@ -1184,9 +394,83 @@ fn generated_workflow_template() -> String {
     TEMPLATE_HEAD.to_owned() + ADVISORY_SUMMARY_STEP + TEMPLATE_TAIL
 }
 
+/// Newest ripr release on crates.io. `init --ci github` pins this in the
+/// generated workflow when the generating binary is NEWER (unreleased), so
+/// the install step always resolves (#5208). Released generators pin
+/// themselves and render byte-identical output to before.
+///
+/// Bump together with the package version in the release commit, and
+/// publish from that commit — never for a release candidate (#5208, #5244
+/// review). A constant bumped only after publication would travel behind
+/// the version it names, so the just-published generator would warn and
+/// pin its predecessor on every release. A stale constant (bump forgotten)
+/// degrades the same loud way: warn and pin the older release, always
+/// resolvable, never an unresolvable pin. See docs/RELEASE.md Post-Publish
+/// for the procedure and the release-commit-to-publication window.
+const LATEST_RELEASED_VERSION: &str = "0.10.0";
+
+/// Parse `major.minor.patch`; `None` for anything else. Unknown shapes fail
+/// toward "unreleased": an unrecognized generator version must never become
+/// a `--version` pin CI cannot resolve.
+fn parse_release_version(text: &str) -> Option<(u64, u64, u64)> {
+    let (major, rest) = text.split_once('.')?;
+    let (minor, patch) = rest.split_once('.')?;
+    if patch.contains('.') {
+        return None;
+    }
+    Some((
+        major.parse().ok()?,
+        minor.parse().ok()?,
+        patch.parse().ok()?,
+    ))
+}
+
+/// Version the generated workflow's install step pins for a generator
+/// reporting `generator_version`: the generator itself when it names a
+/// released version (at most the latest release), else the latest release.
+/// The caller warns on stderr when the two differ (#5208).
+pub(super) fn workflow_install_version(generator_version: &str) -> String {
+    let latest = parse_release_version(LATEST_RELEASED_VERSION);
+    let own = parse_release_version(generator_version);
+    match (latest, own) {
+        (Some(latest), Some(own)) if own <= latest => generator_version.to_string(),
+        _ => LATEST_RELEASED_VERSION.to_string(),
+    }
+}
+
+/// Historical pin-comment first line, byte-for-byte: released generators
+/// keep it so their output is unchanged (#5208). Only the first line is
+/// substituted — the rest of the install-step comment (prebuilt download,
+/// cache, upgrade route) is version-independent (#5236).
+const RELEASED_PIN_FIRST_LINE: &str =
+    "      # Pinned to the ripr that generated this workflow. The steps below use";
+
+/// Install-step comment first line for a workflow pinning `pinned`,
+/// generated by `generator_version` (#5208). A fallback pin must not keep
+/// the "generated this workflow" claim: that version did not generate it.
+fn install_pin_first_line(generator_version: &str, pinned: &str) -> String {
+    if pinned == generator_version {
+        RELEASED_PIN_FIRST_LINE.to_string()
+    } else {
+        format!(
+            "      # Pinned to released ripr {pinned}: the generating ripr ({generator_version}) is unreleased."
+        )
+    }
+}
+
 pub(super) fn generated_github_actions_workflow() -> String {
+    generated_workflow_for_version(env!("CARGO_PKG_VERSION"))
+}
+
+/// Render the workflow as a generator reporting `version` would.
+/// Parameterized so tests pin released and unreleased renderings without
+/// rebuilding the binary (#5208).
+pub(super) fn generated_workflow_for_version(version: &str) -> String {
+    let pinned = workflow_install_version(version);
+    let first_line = install_pin_first_line(version, &pinned);
     generated_workflow_template()
-        .replace("@RIPR_VERSION@", env!("CARGO_PKG_VERSION"))
+        .replace("@RIPR_VERSION@", &pinned)
+        .replace("@RIPR_PIN_FIRST_LINE@", &first_line)
         .replace(
             "target/ripr/pilot/repo-exposure.json",
             loop_commands::PILOT_BEFORE_SNAPSHOT_ARTIFACT,
@@ -1273,12 +557,16 @@ mod template_pin_tests {
     /// edits; the intended changes since extraction replaced the toolchain,
     /// rust-cache, and `cargo install` steps with the prebuilt release
     /// download and the analysis-cache restore, and the advisory summary's
-    /// shell with `ripr reports ci-summary`. The unrendered template is the
-    /// stable identity: rendering additionally substitutes the crate version
-    /// and artifact paths, which the `generated_workflow_*` tests pin at the
-    /// rendered level.
+    /// shell with `ripr reports ci-summary`. #5208 replaced the pin-comment
+    /// first line with the `@RIPR_PIN_FIRST_LINE@` placeholder (the only
+    /// template-bytes change on top of #5236; see the diff), merged with the
+    /// #5428 ci-packet step replacement, and re-measured the hash below.
+    /// The unrendered template is the stable identity:
+    /// rendering additionally substitutes the install version, the pin
+    /// first line, and artifact paths, which the `generated_workflow_*` and
+    /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "4cb034a82890f201628565cc0c1a2f744b8039d18c94d62425c7bc820095f45d";
+        "5c7deac5ccfe5b7c29a127108eb536d19f77f14d6905a62e26c88ca4c9eff44b";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
@@ -1287,5 +575,148 @@ mod template_pin_tests {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         assert_eq!(hex, TEMPLATE_SHA256);
+    }
+}
+
+#[cfg(test)]
+mod install_version_tests {
+    use super::{
+        LATEST_RELEASED_VERSION, generated_workflow_for_version, parse_release_version,
+        workflow_install_version,
+    };
+
+    /// Released generators pin themselves, whatever the release (#5208).
+    /// The constant itself is in the loop: the release commit carries
+    /// `own == latest`, so a published generator must self-pin rather than
+    /// fall back to its predecessor (#5244 review).
+    #[test]
+    fn install_version_pins_the_generator_when_released() {
+        for version in ["0.10.0", "0.9.0", "0.1.0", LATEST_RELEASED_VERSION] {
+            assert_eq!(workflow_install_version(version), version, "{version}");
+        }
+    }
+
+    /// A version that always exceeds the release constant, so this test
+    /// stays unreleased no matter how far the constant advances (a hardcoded
+    /// `0.11.0` would rot into a released version at the next bump).
+    fn version_beyond_latest_release() -> Result<String, String> {
+        let (major, minor, _) = parse_release_version(LATEST_RELEASED_VERSION)
+            .ok_or_else(|| "LATEST_RELEASED_VERSION must parse".to_string())?;
+        Ok(format!("{major}.{}.0", minor + 1))
+    }
+
+    /// Unreleased generators pin the latest release, never themselves (#5208).
+    /// Only the derived version: a hardcoded future version (however far
+    /// off) rots into a released version when the constant reaches it
+    /// (#5244 review).
+    #[test]
+    fn install_version_pins_the_latest_release_when_unreleased() -> Result<(), String> {
+        let version = version_beyond_latest_release()?;
+        assert_eq!(
+            workflow_install_version(&version),
+            LATEST_RELEASED_VERSION,
+            "{version}"
+        );
+        Ok(())
+    }
+
+    /// Unknown shapes fail toward the resolvable pin (#5208).
+    #[test]
+    fn install_version_treats_unparseable_versions_as_unreleased() {
+        for version in ["", "garbage", "0.10", "v0.9.0", "0.10.0-rc1", "1.2.3.4"] {
+            assert_eq!(
+                workflow_install_version(version),
+                LATEST_RELEASED_VERSION,
+                "{version:?}"
+            );
+        }
+    }
+
+    /// The constant must parse, and must never lead the package version: a
+    /// constant ahead of the package would self-pin unreleased generators
+    /// and silently defeat #5208. It travels with the package version in
+    /// the release commit (see docs/RELEASE.md Post-Publish); the equality
+    /// case is the published generator self-pinning, not a violation.
+    #[test]
+    fn latest_released_constant_is_ordered_behind_the_package() -> Result<(), String> {
+        let latest = parse_release_version(LATEST_RELEASED_VERSION)
+            .ok_or_else(|| "LATEST_RELEASED_VERSION must parse".to_string())?;
+        let package = parse_release_version(env!("CARGO_PKG_VERSION"))
+            .ok_or_else(|| "CARGO_PKG_VERSION must parse".to_string())?;
+        assert!(
+            latest <= package,
+            "LATEST_RELEASED_VERSION ({LATEST_RELEASED_VERSION}) leads the package ({})",
+            env!("CARGO_PKG_VERSION")
+        );
+        Ok(())
+    }
+
+    /// Released rendering keeps the historical pin comment first line and
+    /// self-pin byte-for-byte, on both install routes (#5208, #5236).
+    #[test]
+    fn released_rendering_pins_itself_with_the_historical_comment() {
+        let workflow = generated_workflow_for_version("0.10.0");
+        assert!(
+            workflow.contains("          version=0.10.0\n"),
+            "missing prebuilt self pin"
+        );
+        assert!(
+            workflow.contains("cargo install ripr --version 0.10.0 --locked"),
+            "missing fallback self pin"
+        );
+        assert!(
+            workflow.contains(
+                "      # Pinned to the ripr that generated this workflow. The steps below use\n"
+            ),
+            "missing historical comment"
+        );
+        assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
+        let installs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| line.contains("cargo install ripr"))
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .collect();
+        assert_eq!(installs.len(), 1, "{installs:?}");
+    }
+
+    /// Unreleased rendering pins the latest release on both install routes
+    /// and says why (#5208, #5236).
+    #[test]
+    fn unreleased_rendering_pins_the_latest_release_with_an_honest_comment() -> Result<(), String> {
+        let future = version_beyond_latest_release()?;
+        let workflow = generated_workflow_for_version(&future);
+        assert!(
+            workflow.contains(&format!("          version={LATEST_RELEASED_VERSION}\n")),
+            "must pin the latest release for the prebuilt download"
+        );
+        assert!(
+            workflow.contains(&format!(
+                "cargo install ripr --version {LATEST_RELEASED_VERSION} --locked"
+            )),
+            "must pin the latest release for the cargo fallback"
+        );
+        assert!(
+            !workflow.contains(&format!("version={future}"))
+                && !workflow.contains(&format!("--version {future}")),
+            "must not name the unreleased version"
+        );
+        assert!(
+            workflow.contains(&format!(
+                "      # Pinned to released ripr {LATEST_RELEASED_VERSION}: the generating ripr ({future}) is unreleased.\n"
+            )),
+            "missing honest comment"
+        );
+        assert!(
+            !workflow.contains("Pinned to the ripr that generated this workflow"),
+            "must not keep the self-pin claim"
+        );
+        assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
+        let installs: Vec<&str> = workflow
+            .lines()
+            .filter(|line| line.contains("cargo install ripr"))
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .collect();
+        assert_eq!(installs.len(), 1, "{installs:?}");
+        Ok(())
     }
 }

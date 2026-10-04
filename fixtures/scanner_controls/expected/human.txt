@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
   Changed behavior: if final_state == "text" {
   Missing discriminator: final_state == "text"
-  Related test (1 of 2): tests/classify.rs:12 bound_long_trailing_space_is_blank
+  Related test (1 of 2): tests/classify.rs:12 bound_long_trailing_space_is_blank (no test input reaches `final_state == "text"`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     - reach yes: Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word
@@ -25,6 +25,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/scanner_controls/input --diff fixtures/scanner_controls/diff.patch --mode fast probe:src_lib.rs:predicate:f4ed635d
   ripr context --root fixtures/scanner_controls/input --diff fixtures/scanner_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:f4ed635d
+Write a test for it:
+  ripr agent stub --root fixtures/scanner_controls/input --at src/lib.rs:16
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.

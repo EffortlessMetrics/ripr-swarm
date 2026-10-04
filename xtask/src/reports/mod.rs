@@ -1,12 +1,15 @@
+mod agentic_bench;
 mod annotations;
 mod back_sync;
 mod badges;
+mod bench_agent_surfaces;
 mod blind_journey;
 mod blind_journey_execute;
 mod bun;
 mod candidate_control;
 mod ci_budget;
 mod dogfood;
+mod dx_scoreboard;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
@@ -15,12 +18,14 @@ mod first_pr;
 mod fixtures;
 mod index;
 mod issue_intake;
+mod issue_lifecycle;
 mod lsp;
 mod lsp_performance;
 mod merge_queue;
 mod metrics;
 mod module_health;
 mod mutation;
+mod mutation_spot_check;
 mod operator;
 mod orchestration;
 mod perl_migration;
@@ -59,6 +64,7 @@ mod targeted_test;
 mod test_oracles;
 mod verdict_corpus;
 
+pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
 pub(crate) use back_sync::back_sync;
 #[cfg(test)]
@@ -90,6 +96,7 @@ pub(crate) use badges::{
     badge_artifacts, badge_basis, check_badge_diff_policy, check_badge_endpoints,
     repo_badge_artifacts, ripr_plus, update_badge_endpoints,
 };
+pub(crate) use bench_agent_surfaces::bench_agent_surfaces;
 pub(crate) use blind_journey::{
     assess_blind_journey_fixture_corpus, blind_journey_contract_report,
 };
@@ -99,6 +106,7 @@ pub(crate) use blind_journey_execute::{
 pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use ci_budget::ci_budget;
 pub(crate) use dogfood::dogfood;
+pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{
@@ -116,6 +124,11 @@ pub(crate) use fixtures::{
 };
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
+pub(crate) use issue_lifecycle::{
+    assess_issue_lifecycle_fixture_corpus, build_issue_lifecycle_scorecard,
+    issue_lifecycle_corpus_identity, issue_lifecycle_scorecard_json,
+    issue_lifecycle_scorecard_markdown, issue_lifecycle_scorecard_report,
+};
 pub(crate) use lsp::lsp_cockpit_report;
 pub(crate) use lsp_performance::lsp_performance_report;
 pub(crate) use merge_queue::merge_queue;
@@ -129,6 +142,7 @@ pub(crate) use mutation::{
     mutation_calibration_report_markdown, parse_mutation_calibration_args,
     parse_mutation_outcomes_json, read_mutation_input_json,
 };
+pub(crate) use mutation_spot_check::mutation_spot_check;
 pub(crate) use operator::operator_cockpit_report;
 pub(crate) use orchestration::{
     assess_orchestration_fixture_corpus, orchestration_scorecard_report,

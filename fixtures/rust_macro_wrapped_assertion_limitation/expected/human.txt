@@ -15,7 +15,7 @@ Start here:
   Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
   Changed behavior: if a >= b {
   Missing discriminator (1 of 4): a == b
-  Related test: tests/it.rs:8 test_inner_with_custom_assertion_macro
+  Related test: tests/it.rs:8 test_inner_with_custom_assertion_macro (has no assertion)
   Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.
   Evidence: reach yes · infection weak · propagation yes · observation no · discriminator no
     - reach yes: Related tests appear to reach inner: test_inner_with_custom_assertion_macro
@@ -25,6 +25,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/rust_macro_wrapped_assertion_limitation/input --diff fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root fixtures/rust_macro_wrapped_assertion_limitation/input --diff fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322
+Write a test for it:
+  ripr agent stub --root fixtures/rust_macro_wrapped_assertion_limitation/input --at src/internal.rs:2
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

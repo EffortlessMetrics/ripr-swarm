@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return Err(ParseError::MalformedSource)
   Missing discriminator (1 of 2): ParseError::MalformedSource
-  Related test (1 of 3): tests/parse.rs:4 rejects_at_sign
+  Related test (1 of 3): tests/parse.rs:4 rejects_at_sign (assertion too weak to tell the old behavior from the new)
   Next step: Assert the exact error variant or payload instead of only is_err().
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach try_parse: rejects_at_sign, try_parse_variant_is_distinct, malformedsource_variant_is_distinct
@@ -25,6 +25,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/proximity_name_oracle_not_credited/input --diff fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast probe:src_lib.rs:error_path:e01f0ca9
   ripr context --root fixtures/proximity_name_oracle_not_credited/input --diff fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast --at probe:src_lib.rs:error_path:e01f0ca9
+Write a test for it:
+  ripr agent stub --root fixtures/proximity_name_oracle_not_credited/input --at src/lib.rs:9
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
