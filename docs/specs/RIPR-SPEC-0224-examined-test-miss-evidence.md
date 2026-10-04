@@ -122,6 +122,8 @@ developer who disagreed had to re-derive the analysis.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose.
+- `crates/ripr/src/analysis/language/perl/tests.rs` — the Perl v1 rule: only
+  a direct, reachable, strong row without sink alignment is unconfirmed.
 - Golden fixtures under `fixtures/*/expected/` — rendered parity.
 
 ## Implementation Mapping
@@ -131,6 +133,7 @@ developer who disagreed had to re-derive the analysis.
 | `crates/ripr/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
 | `crates/ripr/src/analysis/classify/reveal.rs` | retain examined tests; set assertion-level misses; ranking |
 | `crates/ripr/src/analysis/classifier/finding.rs` | class-level misses |
+| `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |
 | `crates/ripr/src/output/related_test_miss.rs` | the one prose owner |
 | `crates/ripr/src/output/human/{sections,evidence_lines,explain}.rs`, `output/json/report.rs`, `lsp/{hover,diagnostics}.rs`, `mcp/gaps.rs` | projections |
 
