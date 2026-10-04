@@ -1,0 +1,1196 @@
+//! `cargo xtask dx-scoreboard` — developer-experience scoreboards.
+//!
+//! The scoreboards answer "would a developer happily reach for ripr?" with
+//! numbers a developer would feel: time to the first useful result, warm
+//! check latency and memory, the size and install cost of the generated CI
+//! workflow, false or self-contradicting verdicts, and whether printed
+//! commands survive being pasted. Each metric belongs to one board (speed,
+//! ci, trust, paste, first_run); the rollup counts how many metrics meet the
+//! bar declared in `benchmarks/dx_scoreboard/scoreboards.toml`.
+//!
+//! Two judgments stay separate:
+//!
+//! - **target**: the bar a developer would feel. Missing it is a gap to
+//!   close, reported as `below_target`, and never fails the command.
+//! - **regression**: worse than a committed baseline by more than the
+//!   metric's margin. With `--gate` this exits nonzero. Wall-time and memory
+//!   metrics compare only against a baseline from the same runner class.
+//!
+//! Metrics measured elsewhere (the hand-checked verdict corpus, the scripted
+//! first-run journey) arrive through `--ingest <file>` in the
+//! `ripr-dx-scoreboard-input-v1` shape. A metric with no instrument is
+//! `not_measured` with its reason; absence is never reported as a pass.
+//! Cloning the real-repository corpus is opt-in (`--clone`).
+
+mod measure;
+
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+pub(crate) const SCHEMA_VERSION: &str = "ripr-dx-scoreboard-v1";
+const CONFIG_SCHEMA_VERSION: &str = "ripr-dx-scoreboards-v1";
+pub(crate) const INPUT_SCHEMA_VERSION: &str = "ripr-dx-scoreboard-input-v1";
+/// Receipt written by `cargo xtask first-run` (the scripted new-developer
+/// walk); converted on ingest so that harness needs no second output.
+const FIRST_RUN_SCHEMA_VERSION: &str = "first_run.v1";
+/// Receipt written by the mutation spot-check (real cargo-mutants outcomes
+/// joined to ripr seams); converted on ingest.
+const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
+const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
+const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
+const DEFAULT_TIMEOUT_MS: u64 = 900_000;
+const BOARDS: [&str; 5] = ["speed", "ci", "trust", "paste", "first_run"];
+
+const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
+
+Measures the developer-experience scoreboards declared in
+benchmarks/dx_scoreboard/scoreboards.toml and writes
+target/ripr/reports/dx-scoreboard.{json,md}.
+
+  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run
+  --repo <id>         limit corpus measurements to these corpus ids
+  --include-heavy     also measure corpus entries marked heavy
+  --corpus-dir <dir>  where pinned corpus checkouts live
+  --clone             allow cloning or fetching missing corpus pins (network)
+  --ripr-bin <path>   measure this binary instead of building release ripr
+  --ingest <file>     merge metrics measured by another harness
+  --baseline <file>   compare against an earlier dx-scoreboard.json
+  --gate              exit nonzero when a metric regresses past its margin
+                      or an instrument fails";
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct Config {
+    schema_version: String,
+    /// Optional shared corpus manifest (`benchmarks/rust_corpus/manifest.json`
+    /// shape). When set it replaces the inline `[[corpus]]` list: `fast`
+    /// tier entries run by default and `full` tier entries run with
+    /// `--include-heavy`.
+    #[serde(default)]
+    corpus_manifest: Option<String>,
+    #[serde(default)]
+    pub(crate) corpus_version: Option<String>,
+    #[serde(default)]
+    pub(crate) corpus: Vec<CorpusEntry>,
+    #[serde(default)]
+    pub(crate) metric: Vec<MetricDef>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct CorpusEntry {
+    pub(crate) id: String,
+    pub(crate) url: String,
+    pub(crate) sha: String,
+    /// Base for the warm check; `HEAD~1` when absent.
+    #[serde(default)]
+    pub(crate) base_sha: Option<String>,
+    #[serde(default)]
+    pub(crate) note: String,
+    #[serde(default)]
+    pub(crate) heavy: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct MetricDef {
+    pub(crate) id: String,
+    pub(crate) board: String,
+    pub(crate) title: String,
+    pub(crate) unit: String,
+    pub(crate) direction: String,
+    pub(crate) target: f64,
+    pub(crate) regression_pct: f64,
+    pub(crate) regression_floor: f64,
+    pub(crate) runner_dependent: bool,
+    pub(crate) source: String,
+    #[serde(default)]
+    pub(crate) per_repo: bool,
+    #[serde(default)]
+    pub(crate) pending_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Options {
+    config: PathBuf,
+    boards: Vec<String>,
+    pub(crate) repos: Vec<String>,
+    pub(crate) include_heavy: bool,
+    pub(crate) corpus_dir: PathBuf,
+    pub(crate) clone: bool,
+    pub(crate) ripr_bin: Option<PathBuf>,
+    ingest: Vec<PathBuf>,
+    baseline: Option<PathBuf>,
+    gate: bool,
+    pub(crate) timeout_ms: u64,
+}
+
+/// One observation of a metric, optionally for one corpus repository.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Sample {
+    pub(crate) metric: String,
+    pub(crate) repo: Option<String>,
+    pub(crate) outcome: SampleOutcome,
+    pub(crate) detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SampleOutcome {
+    /// The instrument produced a number.
+    Value(f64),
+    /// The instrument ran but the product did not reach a useful result
+    /// (for example pilot exited nonzero). The elapsed number is kept for
+    /// context but the sample can never meet its target.
+    Incomplete(f64),
+    /// The instrument itself could not run (missing corpus, spawn failure).
+    NotMeasured,
+    /// The instrument broke in a way that hides the product's behavior.
+    Failed,
+}
+
+pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    let options = parse_options(args)?;
+    let config = load_config(&options.config)?;
+    let mut samples = Vec::new();
+    for path in &options.ingest {
+        samples.extend(load_ingest(path, &config)?);
+    }
+    samples.extend(file_samples(&config, &options.boards)?);
+    let context = measure::measure(&config, &options, &mut samples)?;
+    let baseline = match &options.baseline {
+        Some(path) => Some(read_json(path)?),
+        None => None,
+    };
+    let report = build_report(
+        &config,
+        &options.boards,
+        &samples,
+        &context,
+        baseline.as_ref(),
+        options.gate,
+    );
+    let json_text = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("serialize dx scoreboard: {err}"))?;
+    crate::write_report("dx-scoreboard.json", &format!("{json_text}\n"))?;
+    crate::write_report("dx-scoreboard.md", &render_markdown(&report))?;
+    println!("Wrote target/ripr/reports/dx-scoreboard.json");
+    println!("Wrote target/ripr/reports/dx-scoreboard.md");
+    if options.gate && report["gate"]["status"].as_str() == Some("fail") {
+        return Err(gate_failure_message(&report));
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
+    let mut options = Options {
+        config: PathBuf::from(DEFAULT_CONFIG),
+        boards: BOARDS.iter().map(|board| (*board).to_string()).collect(),
+        repos: Vec::new(),
+        include_heavy: false,
+        corpus_dir: PathBuf::from(DEFAULT_CORPUS_DIR),
+        clone: false,
+        ripr_bin: None,
+        ingest: Vec::new(),
+        baseline: None,
+        gate: false,
+        timeout_ms: DEFAULT_TIMEOUT_MS,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let mut value = |flag: &str| {
+            iter.next()
+                .cloned()
+                .ok_or_else(|| format!("{flag} needs a value\n{USAGE}"))
+        };
+        match arg.as_str() {
+            "--config" => options.config = PathBuf::from(value("--config")?),
+            "--boards" => {
+                let list = value("--boards")?;
+                let mut boards = Vec::new();
+                for board in list.split(',').map(str::trim).filter(|b| !b.is_empty()) {
+                    if !BOARDS.contains(&board) {
+                        return Err(format!(
+                            "unknown board `{board}`; expected one of {}",
+                            BOARDS.join(", ")
+                        ));
+                    }
+                    boards.push(board.to_string());
+                }
+                if boards.is_empty() {
+                    return Err("--boards needs at least one board".to_string());
+                }
+                options.boards = boards;
+            }
+            "--repo" => options.repos.push(value("--repo")?),
+            "--include-heavy" => options.include_heavy = true,
+            "--corpus-dir" => options.corpus_dir = PathBuf::from(value("--corpus-dir")?),
+            "--clone" => options.clone = true,
+            "--ripr-bin" => options.ripr_bin = Some(PathBuf::from(value("--ripr-bin")?)),
+            "--ingest" => options.ingest.push(PathBuf::from(value("--ingest")?)),
+            "--baseline" => options.baseline = Some(PathBuf::from(value("--baseline")?)),
+            "--gate" => options.gate = true,
+            "--timeout-ms" => {
+                let raw = value("--timeout-ms")?;
+                options.timeout_ms =
+                    raw.parse::<u64>()
+                        .ok()
+                        .filter(|ms| *ms > 0)
+                        .ok_or_else(|| {
+                            format!("--timeout-ms must be a positive integer, got `{raw}`")
+                        })?;
+            }
+            other => return Err(format!("unknown dx-scoreboard argument: {other}\n{USAGE}")),
+        }
+    }
+    Ok(options)
+}
+
+pub(crate) fn load_config(path: &Path) -> Result<Config, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("read dx scoreboard config {}: {err}", path.display()))?;
+    let mut config = parse_config(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    if let Some(manifest) = config.corpus_manifest.clone() {
+        let value = read_json(Path::new(&manifest))?;
+        let (version, corpus) =
+            corpus_from_manifest(&value).map_err(|err| format!("{manifest}: {err}"))?;
+        config.corpus_version = Some(version);
+        config.corpus = corpus;
+    }
+    Ok(config)
+}
+
+/// Read the shared Rust corpus manifest (`ripr_rust_corpus_manifest`).
+pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusEntry>), String> {
+    if value["kind"].as_str() != Some("ripr_rust_corpus_manifest") {
+        return Err("kind must be `ripr_rust_corpus_manifest`".to_string());
+    }
+    let version = value["corpus_version"]
+        .as_str()
+        .ok_or("manifest needs a corpus_version")?
+        .to_string();
+    let mut corpus = Vec::new();
+    for repo in value["repos"]
+        .as_array()
+        .ok_or("manifest needs a repos array")?
+    {
+        let field = |key: &str| {
+            repo[key]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("manifest repo is missing `{key}`"))
+        };
+        corpus.push(CorpusEntry {
+            id: field("id")?,
+            url: field("url")?,
+            sha: field("sha")?,
+            base_sha: repo["base_sha"].as_str().map(str::to_string),
+            note: repo["why"].as_str().unwrap_or_default().to_string(),
+            heavy: repo["tier"].as_str() != Some("fast"),
+        });
+    }
+    Ok((version, corpus))
+}
+
+pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
+    let config: Config =
+        toml::from_str(text).map_err(|err| format!("parse dx scoreboard config: {err}"))?;
+    if config.schema_version != CONFIG_SCHEMA_VERSION {
+        return Err(format!(
+            "schema_version must be `{CONFIG_SCHEMA_VERSION}`, got `{}`",
+            config.schema_version
+        ));
+    }
+    let mut seen = BTreeMap::new();
+    for entry in &config.corpus {
+        if seen.insert(format!("corpus:{}", entry.id), ()).is_some() {
+            return Err(format!("duplicate corpus id `{}`", entry.id));
+        }
+        let full_sha = |sha: &str| sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit());
+        if !full_sha(&entry.sha)
+            || entry
+                .base_sha
+                .as_deref()
+                .is_some_and(|base| !full_sha(base))
+        {
+            return Err(format!(
+                "corpus `{}` must pin a full 40-character commit sha",
+                entry.id
+            ));
+        }
+    }
+    for metric in &config.metric {
+        if seen.insert(format!("metric:{}", metric.id), ()).is_some() {
+            return Err(format!("duplicate metric id `{}`", metric.id));
+        }
+        if !BOARDS.contains(&metric.board.as_str()) {
+            return Err(format!(
+                "metric `{}` names unknown board `{}`",
+                metric.id, metric.board
+            ));
+        }
+        if !metric.id.starts_with(&format!("{}.", metric.board)) {
+            return Err(format!(
+                "metric `{}` must be prefixed with its board `{}.`",
+                metric.id, metric.board
+            ));
+        }
+        if metric.direction != "lower_is_better" && metric.direction != "higher_is_better" {
+            return Err(format!(
+                "metric `{}` direction must be lower_is_better or higher_is_better",
+                metric.id
+            ));
+        }
+        if metric.regression_pct < 0.0 || metric.regression_floor < 0.0 {
+            return Err(format!(
+                "metric `{}` regression margins must be >= 0",
+                metric.id
+            ));
+        }
+        let source_ok = metric.source == "measured"
+            || metric.source == "pending"
+            || metric.source.starts_with("ingest:")
+            || metric.source.starts_with("file:");
+        if !source_ok {
+            return Err(format!(
+                "metric `{}` has unknown source `{}`",
+                metric.id, metric.source
+            ));
+        }
+        if metric.source == "pending" && metric.pending_reason.is_none() {
+            return Err(format!(
+                "pending metric `{}` must say why in pending_reason",
+                metric.id
+            ));
+        }
+    }
+    Ok(config)
+}
+
+/// Read a `ripr-dx-scoreboard-input-v1` file produced by another harness.
+/// Every metric id must exist and declare `ingest:<source>` for the file's
+/// `source`, so a harness cannot overwrite a number this command measures.
+pub(crate) fn load_ingest(path: &Path, config: &Config) -> Result<Vec<Sample>, String> {
+    let value = read_json(path)?;
+    parse_ingest(&value, config).map_err(|err| format!("{}: {err}", path.display()))
+}
+
+pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>, String> {
+    if value["schema_version"].as_str() == Some(FIRST_RUN_SCHEMA_VERSION) {
+        let converted = first_run_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
+    if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_SCHEMA_VERSION) {
+        let converted = mutation_spot_check_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
+    if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
+        return Err(format!("schema_version must be `{INPUT_SCHEMA_VERSION}`"));
+    }
+    let source = value["source"]
+        .as_str()
+        .filter(|source| !source.is_empty())
+        .ok_or("ingest file needs a non-empty `source`")?;
+    let evidence_default = value["evidence"].as_str().unwrap_or_default();
+    let rows = value["metrics"]
+        .as_array()
+        .ok_or("ingest file needs a `metrics` array")?;
+    let mut samples = Vec::new();
+    for row in rows {
+        let id = row["id"]
+            .as_str()
+            .ok_or("ingest metric row needs an `id`")?;
+        let def = config
+            .metric
+            .iter()
+            .find(|metric| metric.id == id)
+            .ok_or_else(|| format!("ingest names unknown metric `{id}`"))?;
+        if def.source != format!("ingest:{source}") {
+            return Err(format!(
+                "metric `{id}` is sourced from `{}`, not `ingest:{source}`",
+                def.source
+            ));
+        }
+        let number = row["value"]
+            .as_f64()
+            .filter(|number| number.is_finite())
+            .ok_or_else(|| format!("ingest metric `{id}` needs a finite numeric `value`"))?;
+        let completed = row["completed"].as_bool().unwrap_or(true);
+        let detail = row["evidence"]
+            .as_str()
+            .unwrap_or(evidence_default)
+            .to_string();
+        samples.push(Sample {
+            metric: id.to_string(),
+            repo: row["repo"].as_str().map(str::to_string),
+            outcome: if completed {
+                SampleOutcome::Value(number)
+            } else {
+                SampleOutcome::Incomplete(number)
+            },
+            detail: format!("ingested from {source}: {detail}"),
+        });
+    }
+    Ok(samples)
+}
+
+/// Convert a `first_run.v1` receipt into scoreboard input rows:
+///
+/// - time to first useful result per case: the install step (when the walk
+///   timed one) plus every step through the first `check` that exited 0.
+///   A receipt without an install step leaves this metric not measured,
+///   because install dominates the journey and must not silently drop out.
+/// - friction events: every friction string in setup and cases.
+/// - unknown verdicts: cases whose verdict is a `*_unknown` class.
+pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
+    let setup = value["setup"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let cases = value["cases"]
+        .as_array()
+        .ok_or("first_run.v1 receipt needs a cases array")?;
+    let install_secs: Option<f64> = setup
+        .iter()
+        .filter(|step| {
+            step["step"]
+                .as_str()
+                .is_some_and(|name| name.contains("install"))
+        })
+        .filter_map(|step| step["secs"].as_f64())
+        .reduce(|a, b| a + b);
+    let ripr = value["ripr"].as_str().unwrap_or("unknown ripr");
+    let friction_in = |steps: &[Value]| -> usize {
+        steps
+            .iter()
+            .map(|step| step["friction"].as_array().map_or(0, Vec::len))
+            .sum()
+    };
+    let mut friction = friction_in(setup);
+    let mut unknown = 0_usize;
+    let mut rows = Vec::new();
+    for case in cases {
+        let name = case["case"].as_str().unwrap_or("case");
+        let steps = case["steps"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        friction += friction_in(steps);
+        if case["verdict"]
+            .as_str()
+            .is_some_and(|v| v.ends_with("_unknown"))
+        {
+            unknown += 1;
+        }
+        let Some(install) = install_secs else {
+            continue;
+        };
+        let mut elapsed = install;
+        let mut reached = false;
+        for step in steps {
+            elapsed += step["secs"].as_f64().unwrap_or(0.0);
+            if step["step"].as_str() == Some("check") && step["exit"].as_i64() == Some(0) {
+                reached = true;
+                break;
+            }
+        }
+        rows.push(json!({
+            "id": "first_run.time_to_first_useful_result_s",
+            "repo": name,
+            "value": elapsed,
+            "completed": reached,
+        }));
+    }
+    rows.push(json!({"id": "first_run.friction_events", "value": friction}));
+    rows.push(json!({"id": "first_run.unknown_verdicts", "value": unknown}));
+    Ok(json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "first-run",
+        "evidence": format!(
+            "first_run.v1 receipt for {ripr}, {} case(s){}",
+            cases.len(),
+            if install_secs.is_some() { "" } else { "; no install step timed" }
+        ),
+        "metrics": rows,
+    }))
+}
+
+/// Convert a `ripr-mutation-spot-check-v1` receipt into scoreboard rows:
+///
+/// - discriminator claim agreement: when ripr says a test discriminates the
+///   seam, the share of seam-precise mutants a real run caught;
+/// - gap claim agreement: when ripr says no test discriminates, the share of
+///   seam-precise mutants a real run missed (the rest are false gaps);
+/// - join coverage: seam-precise joins over all mutants, because agreement
+///   rates only speak for the mutants that could be joined to a seam.
+pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, String> {
+    let families = &value["scored_families"];
+    let mut rows = Vec::new();
+    for (family, metric) in [
+        (
+            "claims_discriminator",
+            "trust.discriminator_claim_agreement",
+        ),
+        ("claims_no_discriminator", "trust.gap_claim_agreement"),
+    ] {
+        let scored = families[family]["mutants_scored"].as_u64().unwrap_or(0);
+        if scored == 0 {
+            continue;
+        }
+        let rate = families[family]["agreement_rate"]
+            .as_f64()
+            .ok_or_else(|| format!("mutation spot-check `{family}` needs agreement_rate"))?;
+        rows.push(json!({
+            "id": metric,
+            "value": rate,
+            "evidence": format!("{scored} seam-precise mutants scored"),
+        }));
+    }
+    let repos = value["repos"]
+        .as_array()
+        .ok_or("mutation spot-check receipt needs a repos array")?;
+    let joined: u64 = repos
+        .iter()
+        .map(|repo| repo["pairings"]["seam_precise"].as_u64().unwrap_or(0))
+        .sum();
+    let mutants: u64 = repos
+        .iter()
+        .map(|repo| {
+            repo["calibration_metrics"]["mutants_total"]
+                .as_u64()
+                .unwrap_or(0)
+        })
+        .sum();
+    if mutants > 0 {
+        rows.push(json!({
+            "id": "trust.mutation_join_coverage",
+            "value": joined as f64 / mutants as f64,
+            "evidence": format!("{joined} of {mutants} mutants joined seam-precise"),
+        }));
+    }
+    Ok(json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "mutation-spot-check",
+        "evidence": format!("ripr-mutation-spot-check-v1 receipt, {} repositories", repos.len()),
+        "metrics": rows,
+    }))
+}
+
+/// Metrics read from committed receipts (`file:<path>#<json.path>`). The
+/// referenced object uses the judged-panel `{numerator, denominator}` shape;
+/// a zero denominator is `not_measured`, not a perfect rate.
+fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, String> {
+    let mut samples = Vec::new();
+    for metric in &config.metric {
+        if !boards.contains(&metric.board) {
+            continue;
+        }
+        let Some(reference) = metric.source.strip_prefix("file:") else {
+            continue;
+        };
+        let (path, pointer) = reference.split_once('#').unwrap_or((reference, ""));
+        let sample = match fs::read_to_string(path) {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(json) => ratio_sample(&metric.id, path, pointer, &json),
+                Err(err) => Sample {
+                    metric: metric.id.clone(),
+                    repo: None,
+                    outcome: SampleOutcome::Failed,
+                    detail: format!("{path} is not JSON: {err}"),
+                },
+            },
+            Err(err) => Sample {
+                metric: metric.id.clone(),
+                repo: None,
+                outcome: SampleOutcome::NotMeasured,
+                detail: format!("{path} unreadable: {err}"),
+            },
+        };
+        samples.push(sample);
+    }
+    Ok(samples)
+}
+
+pub(crate) fn ratio_sample(metric: &str, path: &str, pointer: &str, json: &Value) -> Sample {
+    let mut node = json;
+    for part in pointer.split('.').filter(|part| !part.is_empty()) {
+        node = &node[part];
+    }
+    let numerator = node["numerator"].as_f64();
+    let denominator = node["denominator"].as_f64();
+    let (outcome, detail) = match (numerator, denominator) {
+        (Some(n), Some(d)) if d > 0.0 => (
+            SampleOutcome::Value(n / d),
+            format!("{path} {pointer}: {n}/{d}"),
+        ),
+        (Some(_), Some(_)) => (
+            SampleOutcome::NotMeasured,
+            format!("{path} {pointer}: denominator is 0, no eligible cases yet"),
+        ),
+        _ => (
+            SampleOutcome::Failed,
+            format!("{path} {pointer}: missing numerator/denominator"),
+        ),
+    };
+    Sample {
+        metric: metric.to_string(),
+        repo: None,
+        outcome,
+        detail,
+    }
+}
+
+/// Host facts the report records next to its numbers.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RunContext {
+    pub(crate) revision: String,
+    pub(crate) analyzer_version: String,
+    pub(crate) runner_class: String,
+    pub(crate) binary: String,
+    pub(crate) corpus: Vec<Value>,
+}
+
+pub(crate) fn build_report(
+    config: &Config,
+    boards: &[String],
+    samples: &[Sample],
+    context: &RunContext,
+    baseline: Option<&Value>,
+    gate: bool,
+) -> Value {
+    let mut metrics = Vec::new();
+    for def in config
+        .metric
+        .iter()
+        .filter(|metric| boards.contains(&metric.board))
+    {
+        let mine: Vec<&Sample> = samples.iter().filter(|s| s.metric == def.id).collect();
+        let mut row = metric_row(def, &mine);
+        row["baseline"] = compare_with_baseline(def, &row, context, baseline);
+        metrics.push(row);
+    }
+
+    let mut board_rows = Vec::new();
+    for board in boards {
+        let rows: Vec<&Value> = metrics
+            .iter()
+            .filter(|row| row["board"].as_str() == Some(board.as_str()))
+            .collect();
+        let counts = status_counts(&rows);
+        board_rows.push(json!({
+            "id": board,
+            "status": board_status(&counts),
+            "counts": counts,
+            "metrics": rows.iter().map(|row| row["id"].clone()).collect::<Vec<_>>(),
+        }));
+    }
+    let all: Vec<&Value> = metrics.iter().collect();
+    let rollup = status_counts(&all);
+    let repos = repo_view(config, &metrics);
+
+    let regressions: Vec<Value> = metrics
+        .iter()
+        .filter(|row| row["baseline"]["regressed"].as_bool() == Some(true))
+        .map(|row| {
+            json!({
+                "metric": row["id"],
+                "baseline": row["baseline"]["value"],
+                "current": row["value"],
+                "allowed_worsening": row["baseline"]["allowed_worsening"],
+            })
+        })
+        .collect();
+    let failed: Vec<Value> = metrics
+        .iter()
+        .filter(|row| row["status"].as_str() == Some("failed"))
+        .map(|row| row["id"].clone())
+        .collect();
+    let gate_status = if !gate {
+        "not_run"
+    } else if baseline.is_none() {
+        if failed.is_empty() {
+            "no_baseline"
+        } else {
+            "fail"
+        }
+    } else if regressions.is_empty() && failed.is_empty() {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    json!({
+        "schema_version": SCHEMA_VERSION,
+        "tool": "ripr",
+        "report": "dx-scoreboard",
+        "revision": context.revision,
+        "analyzer_version": context.analyzer_version,
+        "runner_class": context.runner_class,
+        "binary": context.binary,
+        "corpus_version": config.corpus_version,
+        "corpus": context.corpus,
+        "rollup": rollup,
+        "boards": board_rows,
+        "repos": repos,
+        "metrics": metrics,
+        "gate": {
+            "enabled": gate,
+            "status": gate_status,
+            "baseline_revision": baseline.map(|b| b["revision"].clone()).unwrap_or(Value::Null),
+            "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
+            "regressions": regressions,
+            "failed_instruments": failed,
+        },
+        "claim_boundary": "Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.",
+    })
+}
+
+/// Per-repository view: every per-repo sample for one corpus entry, so a
+/// target repository we intend to integrate with reads as its own board.
+fn repo_view(config: &Config, metrics: &[Value]) -> Vec<Value> {
+    let mut repos = Vec::new();
+    for entry in &config.corpus {
+        let mut rows = Vec::new();
+        for metric in metrics {
+            for sample in metric["samples"].as_array().into_iter().flatten() {
+                if sample["repo"].as_str() == Some(entry.id.as_str()) {
+                    rows.push(json!({
+                        "metric": metric["id"],
+                        "title": metric["title"],
+                        "unit": metric["unit"],
+                        "target": metric["target"],
+                        "value": sample["value"],
+                        "status": sample["status"],
+                    }));
+                }
+            }
+        }
+        let refs: Vec<&Value> = rows.iter().collect();
+        let counts = status_counts(&refs);
+        repos.push(json!({
+            "id": entry.id,
+            "sha": entry.sha,
+            "note": entry.note,
+            "status": if rows.is_empty() { "not_measured" } else { board_status(&counts) },
+            "counts": counts,
+            "metrics": rows,
+        }));
+    }
+    repos
+}
+
+fn metric_row(def: &MetricDef, samples: &[&Sample]) -> Value {
+    let base = json!({
+        "id": def.id,
+        "board": def.board,
+        "title": def.title,
+        "unit": def.unit,
+        "direction": def.direction,
+        "target": def.target,
+        "source": def.source,
+        "runner_dependent": def.runner_dependent,
+        "per_repo": def.per_repo,
+    });
+    let mut row = base;
+    let per_repo: Vec<Value> = samples
+        .iter()
+        .map(|sample| {
+            let (value, status) = sample_value_status(def, &sample.outcome);
+            json!({
+                "repo": sample.repo,
+                "value": value,
+                "status": status,
+                "detail": sample.detail,
+            })
+        })
+        .collect();
+
+    if def.source == "pending" && samples.is_empty() {
+        row["status"] = json!("not_measured");
+        row["value"] = Value::Null;
+        row["reason"] = json!(def.pending_reason.clone().unwrap_or_default());
+        row["samples"] = json!(per_repo);
+        return row;
+    }
+    if samples.is_empty() {
+        row["status"] = json!("not_measured");
+        row["value"] = Value::Null;
+        row["reason"] = json!(if def.source.starts_with("ingest:") {
+            format!("no --ingest file supplied for `{}`", def.source)
+        } else {
+            "no sample was taken on this run".to_string()
+        });
+        row["samples"] = json!(per_repo);
+        return row;
+    }
+
+    // A failed instrument dominates; otherwise the metric's value is the
+    // worst measured sample, because a developer feels the slowest repo.
+    let any_failed = samples
+        .iter()
+        .any(|s| matches!(s.outcome, SampleOutcome::Failed));
+    let any_incomplete = samples
+        .iter()
+        .any(|s| matches!(s.outcome, SampleOutcome::Incomplete(_)));
+    let measured: Vec<f64> = samples
+        .iter()
+        .filter_map(|s| match s.outcome {
+            SampleOutcome::Value(v) | SampleOutcome::Incomplete(v) => Some(v),
+            SampleOutcome::NotMeasured | SampleOutcome::Failed => None,
+        })
+        .collect();
+    let unmeasured = samples
+        .iter()
+        .filter(|s| matches!(s.outcome, SampleOutcome::NotMeasured))
+        .count();
+    let worst = measured
+        .iter()
+        .copied()
+        .reduce(|a, b| if is_worse(def, b, a) { b } else { a });
+
+    let status = if any_failed {
+        "failed"
+    } else if let Some(value) = worst {
+        if any_incomplete || !meets_target(def, value) {
+            "below_target"
+        } else {
+            "meets_target"
+        }
+    } else {
+        "not_measured"
+    };
+    row["status"] = json!(status);
+    row["value"] = worst.map_or(Value::Null, |v| json!(round(v)));
+    row["partial"] = json!(unmeasured > 0 && worst.is_some());
+    if status == "not_measured" {
+        row["reason"] = json!(
+            samples
+                .iter()
+                .map(|s| s.detail.clone())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+    row["samples"] = json!(per_repo);
+    row
+}
+
+fn sample_value_status(def: &MetricDef, outcome: &SampleOutcome) -> (Value, &'static str) {
+    match outcome {
+        SampleOutcome::Value(v) => (
+            json!(round(*v)),
+            if meets_target(def, *v) {
+                "meets_target"
+            } else {
+                "below_target"
+            },
+        ),
+        SampleOutcome::Incomplete(v) => (json!(round(*v)), "incomplete"),
+        SampleOutcome::NotMeasured => (Value::Null, "not_measured"),
+        SampleOutcome::Failed => (Value::Null, "failed"),
+    }
+}
+
+pub(crate) fn meets_target(def: &MetricDef, value: f64) -> bool {
+    if def.direction == "higher_is_better" {
+        value >= def.target
+    } else {
+        value <= def.target
+    }
+}
+
+fn is_worse(def: &MetricDef, candidate: f64, current: f64) -> bool {
+    if def.direction == "higher_is_better" {
+        candidate < current
+    } else {
+        candidate > current
+    }
+}
+
+fn round(value: f64) -> f64 {
+    (value * 10_000.0).round() / 10_000.0
+}
+
+/// Compare one metric with the same metric in an earlier report. The margin
+/// is the larger of `regression_pct` of the baseline and `regression_floor`,
+/// so noise on small numbers cannot trip the gate and a large relative slide
+/// on big numbers still does.
+pub(crate) fn compare_with_baseline(
+    def: &MetricDef,
+    row: &Value,
+    context: &RunContext,
+    baseline: Option<&Value>,
+) -> Value {
+    let Some(baseline) = baseline else {
+        return json!({"comparable": false, "reason": "no baseline supplied"});
+    };
+    let base_row = baseline["metrics"].as_array().and_then(|rows| {
+        rows.iter()
+            .find(|r| r["id"].as_str() == Some(def.id.as_str()))
+    });
+    let Some(base_row) = base_row else {
+        return json!({"comparable": false, "reason": "metric absent from baseline"});
+    };
+    if def.runner_dependent
+        && baseline["runner_class"].as_str() != Some(context.runner_class.as_str())
+    {
+        return json!({
+            "comparable": false,
+            "value": base_row["value"],
+            "reason": format!(
+                "runner class differs (baseline `{}`, current `{}`)",
+                baseline["runner_class"].as_str().unwrap_or("unknown"),
+                context.runner_class
+            ),
+        });
+    }
+    let (Some(base), Some(current)) = (base_row["value"].as_f64(), row["value"].as_f64()) else {
+        return json!({
+            "comparable": false,
+            "value": base_row["value"],
+            "reason": "baseline or current value is missing",
+        });
+    };
+    let allowed = (base.abs() * def.regression_pct / 100.0).max(def.regression_floor);
+    let worsening = if def.direction == "higher_is_better" {
+        base - current
+    } else {
+        current - base
+    };
+    json!({
+        "comparable": true,
+        "value": round(base),
+        "delta": round(current - base),
+        "allowed_worsening": round(allowed),
+        "regressed": worsening > allowed,
+    })
+}
+
+fn status_counts(rows: &[&Value]) -> Value {
+    let mut counts = BTreeMap::from([
+        ("meets_target", 0_u64),
+        ("below_target", 0),
+        ("not_measured", 0),
+        ("failed", 0),
+        ("regressed", 0),
+    ]);
+    for row in rows {
+        if let Some(status) = row["status"].as_str()
+            && let Some(slot) = counts.get_mut(status)
+        {
+            *slot += 1;
+        }
+        if row["baseline"]["regressed"].as_bool() == Some(true)
+            && let Some(slot) = counts.get_mut("regressed")
+        {
+            *slot += 1;
+        }
+    }
+    json!(counts)
+}
+
+fn board_status(counts: &Value) -> &'static str {
+    let get = |key: &str| counts[key].as_u64().unwrap_or(0);
+    if get("failed") > 0 || get("regressed") > 0 {
+        "attention"
+    } else if get("below_target") > 0 {
+        "gaps"
+    } else if get("meets_target") == 0 {
+        "not_measured"
+    } else if get("not_measured") > 0 {
+        "partial"
+    } else {
+        "meets_target"
+    }
+}
+
+fn gate_failure_message(report: &Value) -> String {
+    let mut lines = vec!["dx-scoreboard gate failed:".to_string()];
+    for regression in report["gate"]["regressions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  regressed {}: baseline {} -> current {} (allowed worsening {})",
+            regression["metric"].as_str().unwrap_or("?"),
+            regression["baseline"],
+            regression["current"],
+            regression["allowed_worsening"],
+        ));
+    }
+    for metric in report["gate"]["failed_instruments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  instrument failed: {}",
+            metric.as_str().unwrap_or("?")
+        ));
+    }
+    lines.push("see target/ripr/reports/dx-scoreboard.md".to_string());
+    lines.join("\n")
+}
+
+pub(crate) fn render_markdown(report: &Value) -> String {
+    let mut out = String::new();
+    out.push_str("# ripr developer-experience scoreboards\n\n");
+    let rollup = &report["rollup"];
+    out.push_str(&format!(
+        "Revision `{}` · {} · runner `{}`\n\n",
+        report["revision"].as_str().unwrap_or("unknown"),
+        report["analyzer_version"].as_str().unwrap_or("unknown"),
+        report["runner_class"].as_str().unwrap_or("unknown"),
+    ));
+    out.push_str(&format!(
+        "**Rollup:** {} meet target, {} below target, {} not measured, {} failed, {} regressed. Gate: `{}`.\n\n",
+        rollup["meets_target"],
+        rollup["below_target"],
+        rollup["not_measured"],
+        rollup["failed"],
+        rollup["regressed"],
+        report["gate"]["status"].as_str().unwrap_or("not_run"),
+    ));
+    out.push_str("| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n");
+    for board in report["boards"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            board["id"].as_str().unwrap_or("?"),
+            board["status"].as_str().unwrap_or("?"),
+            board["counts"]["meets_target"],
+            board["counts"]["below_target"],
+            board["counts"]["not_measured"],
+        ));
+    }
+    let repos: Vec<&Value> = report["repos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|repo| repo["status"].as_str() != Some("not_measured"))
+        .collect();
+    if !repos.is_empty() {
+        out.push_str("\n## By repository\n\n| Repository | Metric | Value | Target | Status |\n|---|---|---:|---:|---|\n");
+        for repo in repos {
+            for metric in repo["metrics"].as_array().into_iter().flatten() {
+                out.push_str(&format!(
+                    "| {} | `{}` | {} | {} | {} |\n",
+                    repo["id"].as_str().unwrap_or("?"),
+                    metric["metric"].as_str().unwrap_or("?"),
+                    display_value(&metric["value"]),
+                    display_value(&metric["target"]),
+                    metric["status"].as_str().unwrap_or("?"),
+                ));
+            }
+        }
+    }
+    for board in report["boards"].as_array().into_iter().flatten() {
+        let id = board["id"].as_str().unwrap_or("?");
+        out.push_str(&format!("\n## {id}\n\n"));
+        out.push_str("| Metric | Value | Target | Status | Baseline |\n|---|---:|---:|---|---|\n");
+        for metric in report["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|m| m["board"].as_str() == Some(id))
+        {
+            out.push_str(&format!(
+                "| {} (`{}`) | {} | {} {} | {} | {} |\n",
+                metric["title"].as_str().unwrap_or("?"),
+                metric["id"].as_str().unwrap_or("?"),
+                display_value(&metric["value"]),
+                comparator(metric),
+                display_value(&metric["target"]),
+                metric["status"].as_str().unwrap_or("?"),
+                baseline_cell(&metric["baseline"]),
+            ));
+        }
+        for metric in report["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|m| m["board"].as_str() == Some(id))
+        {
+            let samples = metric["samples"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let reason = metric["reason"].as_str();
+            if samples.is_empty() && reason.is_none() {
+                continue;
+            }
+            out.push_str(&format!(
+                "\n`{}` ({}):\n",
+                metric["id"].as_str().unwrap_or("?"),
+                metric["unit"].as_str().unwrap_or("")
+            ));
+            if let Some(reason) = reason
+                && samples.is_empty()
+            {
+                out.push_str(&format!("- not measured: {reason}\n"));
+            }
+            for sample in samples {
+                out.push_str(&format!(
+                    "- {}: {} ({}) {}\n",
+                    sample["repo"].as_str().unwrap_or("all"),
+                    display_value(&sample["value"]),
+                    sample["status"].as_str().unwrap_or("?"),
+                    sample["detail"].as_str().unwrap_or(""),
+                ));
+            }
+        }
+    }
+    out.push_str(&format!(
+        "\n## Claim boundary\n\n{}\n",
+        report["claim_boundary"].as_str().unwrap_or("")
+    ));
+    out
+}
+
+fn comparator(metric: &Value) -> &'static str {
+    if metric["direction"].as_str() == Some("higher_is_better") {
+        "≥"
+    } else {
+        "≤"
+    }
+}
+
+fn display_value(value: &Value) -> String {
+    match value {
+        Value::Null => "—".to_string(),
+        Value::Number(number) => match number.as_f64() {
+            Some(n) if n.abs() >= 10.0 || n.fract().abs() < f64::EPSILON => format!("{n:.0}"),
+            Some(n) => format!("{n:.3}")
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string(),
+            None => number.to_string(),
+        },
+        other => other.to_string(),
+    }
+}
+
+fn baseline_cell(baseline: &Value) -> String {
+    if baseline["comparable"].as_bool() == Some(true) {
+        let verdict = if baseline["regressed"].as_bool() == Some(true) {
+            "**regressed**"
+        } else {
+            "ok"
+        };
+        format!(
+            "{} (Δ {}) {verdict}",
+            display_value(&baseline["value"]),
+            display_value(&baseline["delta"])
+        )
+    } else {
+        baseline["reason"]
+            .as_str()
+            .unwrap_or("not compared")
+            .to_string()
+    }
+}
+
+fn read_json(path: &Path) -> Result<Value, String> {
+    let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
+}
+
+#[cfg(test)]
+mod tests;
