@@ -14685,11 +14685,15 @@ Field contract:
   consistent with the structured workflow's `command_shell: "bash"`, and do
   not establish PowerShell recipe compatibility for themselves. Read the
   structured workflow for its shell contract before executing commands.
-  Explicit standalone per-seam CLI `agent packet` binds these `next` commands
-  to the selected repository root.
-  Its optional `next.analysis_outcome_command` writes the static outcome
+  Explicit standalone per-seam CLI `agent packet` and the repo-wide
+  `ripr pilot` packet (`agent-seam-packets.json`) bind these `next` commands
+  to the selected repository root, so even `--root .` prints an absolute
+  root and absolute redirects. Embedded per-record `verify_command` values
+  keep the portable `--root .` form (#3999).
+  Their optional `next.analysis_outcome_command` writes the static outcome
   consumed by the receipt, between the after snapshot and verify steps.
-  Portable bulk/check-format wrappers omit this additive field and retain
+  The `ripr check --format agent-seam-packets-json` wrapper omits this
+  additive field and retains
   their repository-local recipe; they are not a complete foreign-CWD receipt
   workflow. GapRecord and editor routes are unchanged. Static receipt
   completeness does not establish project-test execution.

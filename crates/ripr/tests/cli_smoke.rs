@@ -13968,6 +13968,28 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
 
+    // A seam budget of one would cut the changed `is_digit` seam, which comes
+    // after `discounted` in inventory order; pilot keeps it past the cut.
+    let (root_arg, out_arg) = (root.display().to_string(), out_dir.display().to_string());
+    let budgeted = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", &root_arg, "--out", &out_arg],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    )
+    .map_err(|err| format!("run budgeted pilot: {err}"))?;
+    assert_success(&budgeted);
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read budgeted summary: {err}"))?,
+    )
+    .map_err(|err| format!("parse budgeted summary: {err}"))?;
+    assert_eq!(top_line(&summary), 6, "{summary}");
+    assert_eq!(
+        summary["current_change"]["top_recommendation_in_change"],
+        true
+    );
+
     // An uncommitted edit on no ranked seam: plain `ripr check` reads
     // committed history and would miss it, so the named command selects the
     // working tree.
@@ -13984,6 +14006,22 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         .ok_or_else(|| format!("no check command: {stdout}"))?;
     assert!(check_line.ends_with(" --worktree"), "{check_line}");
     assert!(md.contains(" --worktree`."), "{md}");
+
+    // A failed working-tree probe is not a clean tree: a corrupt index makes
+    // `git status` fail while the base still resolves, and pilot must say the
+    // change is unavailable instead of ranking `<base>...HEAD`.
+    std::fs::write(root.join(".git/index"), "not an index\n")
+        .map_err(|err| format!("corrupt index: {err}"))?;
+    let (stdout, _, summary, _) = run_pilot_language_fixture(&root, &out_dir)?;
+    assert_eq!(
+        summary["current_change"]["state"], "unavailable",
+        "{summary}"
+    );
+    assert_eq!(summary["current_change"]["reason"], "git status failed");
+    assert!(
+        stdout.contains("scope: whole repository (current change unavailable: git status failed)"),
+        "{stdout}"
+    );
     Ok(())
 }
 

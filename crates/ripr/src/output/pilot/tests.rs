@@ -1706,16 +1706,21 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
 
     // The change exists but no ranked seam is on it.
     let (terminal, md, json) = render(Some(&changed("src/other.rs", 3)))?;
+    // The named root is bound like every other pilot command, so it pastes
+    // from any directory.
+    let bound = crate::output::path::display_path(&crate::agent::loop_commands::bound_root_path(
+        Path::new("."),
+    ));
     assert!(
-        terminal.contains(
-            "  current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since origin/main. For the change itself, run: ripr check --root ."
-        ),
+        terminal.contains(&format!(
+            "  current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since origin/main. For the change itself, run: ripr check --root {bound}\n"
+        )),
         "{terminal}"
     );
     assert!(
-        md.contains(
-            "- Current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since `origin/main`. For the change itself, run `ripr check --root .`."
-        ),
+        md.contains(&format!(
+            "- Current change: not part of it. This recommendation is elsewhere in the repo: no seam pilot ranks is on a line changed since `origin/main`. For the change itself, run `ripr check --root {bound}`."
+        )),
         "{md}"
     );
     assert!(!md.contains("(in your current change)"), "{md}");
@@ -1728,11 +1733,15 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     let uncommitted = changed("src/other.rs", 3).with_working_tree(true);
     let (worktree_terminal, worktree_md, _) = render(Some(&uncommitted))?;
     assert!(
-        worktree_terminal.contains("For the change itself, run: ripr check --root . --worktree\n"),
+        worktree_terminal.contains(&format!(
+            "For the change itself, run: ripr check --root {bound} --worktree\n"
+        )),
         "{worktree_terminal}"
     );
     assert!(
-        worktree_md.contains("For the change itself, run `ripr check --root . --worktree`."),
+        worktree_md.contains(&format!(
+            "For the change itself, run `ripr check --root {bound} --worktree`."
+        )),
         "{worktree_md}"
     );
 

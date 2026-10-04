@@ -672,7 +672,7 @@ fn current_change_label(
             base,
             check: format!(
                 "ripr check --root {}{}",
-                shell_path(context.root),
+                shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
                 change.check_selector()
             ),
         }

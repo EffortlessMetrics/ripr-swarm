@@ -55,9 +55,11 @@ are scoped or reviewed.
   already look, instead of `target/ripr/pilot` under the shell's working
   directory, which overwrote that directory's own packet (#5324). `--root .`
   and an explicit `--out` are unchanged; the terminal output already names
-  the packet path. The packet's snapshot and verify commands now bind that
-  root too, like `ripr agent packet`; they used to say `--root .` while
-  redirecting into the launch directory.
+  the packet path. The packet's `next` snapshot and verify commands now bind
+  that root too, like `ripr agent packet` (absolute even for `--root .`), and
+  gain `next.analysis_outcome_command`; they used to say `--root .` while
+  redirecting into the launch directory. A changed seam past the pilot seam
+  budget is kept so it can still rank change-first.
 - The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
   line, the `agent repair --phase before` next command (stdout and stderr) and
   the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`

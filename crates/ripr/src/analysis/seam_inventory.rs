@@ -1818,22 +1818,41 @@ fn apply_repo_exposure_seam_limit_for_test(
 /// 1. `RIPR_PILOT_SEAM_BUDGET=0` → unbounded (operator opt-out).
 /// 2. `RIPR_PILOT_SEAM_BUDGET=N` (N > 0) → configured cap N.
 /// 3. Env var unset → `DEFAULT_PILOT_SEAM_BUDGET` (always-on default).
+///
+/// Seams for which `keep` returns true (pilot passes "on a line of the
+/// current change") survive the cut ahead of the inventory-order prefix, so
+/// a changed seam past the budget can still be ranked change-first. The
+/// retained set keeps inventory order and the budget's size.
 pub(crate) fn apply_pilot_seam_budget(
     classified: &mut Vec<super::seam_classification::ClassifiedSeam>,
+    keep: impl Fn(&super::seam_classification::ClassifiedSeam) -> bool,
 ) -> Result<Option<SeamLimitInfo>, String> {
     Ok(pilot_seam_budget()?
-        .and_then(|(limit, source)| apply_pilot_seam_budget_inner(classified, limit, source)))
+        .and_then(|(limit, source)| apply_pilot_seam_budget_inner(classified, limit, source, keep)))
 }
 
 fn apply_pilot_seam_budget_inner(
     classified: &mut Vec<super::seam_classification::ClassifiedSeam>,
     limit: usize,
     source: SeamLimitSource,
+    keep: impl Fn(&super::seam_classification::ClassifiedSeam) -> bool,
 ) -> Option<SeamLimitInfo> {
     let total = classified.len();
     if total <= limit {
         return None;
     }
+    let kept: Vec<bool> = classified.iter().map(&keep).collect();
+    let mut slots = limit.saturating_sub(kept.iter().filter(|kept| **kept).count());
+    let mut index = 0;
+    classified.retain(|_| {
+        let retain = kept[index]
+            || (slots > 0 && {
+                slots -= 1;
+                true
+            });
+        index += 1;
+        retain
+    });
     classified.truncate(limit);
     Some(SeamLimitInfo {
         analyzed: classified.len(),
@@ -5642,7 +5661,8 @@ pub fn check_b(x: i32) -> bool { x < 0 }
         };
 
         let mut classified = vec![make_classified(0), make_classified(10), make_classified(20)];
-        let info = apply_pilot_seam_budget_inner(&mut classified, 2, SeamLimitSource::Default);
+        let info =
+            apply_pilot_seam_budget_inner(&mut classified, 2, SeamLimitSource::Default, |_| false);
         let info = info.ok_or("should truncate and return Some when limit < total")?;
         if classified.len() != 2 {
             return Err(format!(
@@ -5661,6 +5681,21 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                 "expected SeamLimitSource::Default, got {:?}",
                 info.source
             ));
+        }
+
+        // A kept seam past the cut survives in place of the last prefix
+        // seam; the retained set stays in inventory order at the budget size.
+        let mut classified = vec![make_classified(0), make_classified(10), make_classified(20)];
+        let changed = make_classified(20).seam.id().clone();
+        apply_pilot_seam_budget_inner(&mut classified, 2, SeamLimitSource::Default, |entry| {
+            entry.seam.id() == &changed
+        });
+        let offsets: Vec<usize> = classified
+            .iter()
+            .map(|entry| entry.seam.byte_offset())
+            .collect();
+        if offsets != [0, 20] {
+            return Err(format!("expected the kept seam to survive: {offsets:?}"));
         }
         Ok(())
     }
@@ -5710,7 +5745,8 @@ pub fn check_b(x: i32) -> bool { x < 0 }
         };
 
         let mut classified = vec![make_classified(0), make_classified(10)];
-        let info = apply_pilot_seam_budget_inner(&mut classified, 5, SeamLimitSource::Default);
+        let info =
+            apply_pilot_seam_budget_inner(&mut classified, 5, SeamLimitSource::Default, |_| false);
         assert!(
             info.is_none(),
             "slice smaller than budget must return None, got {info:?}"

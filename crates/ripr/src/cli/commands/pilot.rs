@@ -184,7 +184,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         report.skipped_generated,
         report.naming_only_skips,
     );
-    let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified)?;
+    // The current change is loaded before the budget cut so a changed seam
+    // past the cut is kept and can still rank change-first.
+    let current_change = load_pilot_current_change(&input);
+    let pilot_budget_info =
+        analysis::apply_pilot_seam_budget(&mut classified, |entry| current_change.touches(entry))?;
     let pilot_budget_truncated = pilot_budget_info.is_some();
     let limit_info = pilot_budget_info.or(inventory_limit_info);
     let (causal_projection, causal_projection_warning) =
@@ -206,7 +210,6 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         analysis::workspace_unanalyzed_source_languages(&input.root),
         !analysis::workspace_rust_files(&input.root).is_empty(),
     );
-    let current_change = load_pilot_current_change(&input);
     let context = output::pilot::PilotSummaryContext {
         root: &input.root,
         mode: &input.mode,
