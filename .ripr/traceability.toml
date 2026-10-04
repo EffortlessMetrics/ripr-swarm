@@ -12234,6 +12234,9 @@ tests = [
   "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_no_active_toml_label_age_or_title_selects_work",
   "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_cold_start_root_reconstructs_packet_without_chat",
   "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_packet_bytes_complete_or_explicitly_not_measured",
+  "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_fabricated_selected_bytes_fail_closed",
+  "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_downgraded_root_disposition_rejected",
+  "xtask/src/issue_lifecycle_intake.rs::tests::issue_lifecycle_intake_pilot_extra_provenance_row_rejected",
 ]
 fixtures = [
   "fixtures/issue_lifecycle_intake",

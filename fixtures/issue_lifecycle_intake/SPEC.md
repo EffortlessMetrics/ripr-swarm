@@ -46,9 +46,11 @@ the committed control corpus.
 
 - The six real rows retain their required observations: snapshot identity,
   current-main context, open PR/claim candidates, packet
-  selected/omitted/overflow bytes (measured, or explicitly `not_measured`),
-  triager findings, duplicate/already-satisfied/stale/spec-needed candidates,
-  exact missing-evidence questions, the independent root disposition,
+  selected/omitted/overflow bytes (measured, or explicitly `not_measured`;
+  the measured selected count is bound to the committed snapshot bytes and a
+  fabricated count fails closed), triager findings,
+  duplicate/already-satisfied/stale/spec-needed candidates, exact
+  missing-evidence questions, the independent root disposition,
   artifact-archaeology retrieval steps, and limitations/false
   candidates/non-claims.
 - Each row's root disposition is expressed in the closed fifteen-value

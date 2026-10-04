@@ -88,7 +88,8 @@ Intake laws enforced by `assess_intake_row` and the fixture-contract gate:
   selects work; the packet projection is a pure function of committed corpus
   fields and never reads the GitHub snapshot body.
 - Byte law: every packet byte surface is present on every row as a measured
-  number or an explicit `not_measured`.
+  number or an explicit `not_measured`; a measured selected count must equal
+  the committed snapshot bytes, and a fabricated or stale count fails closed.
 
 ## Required Evidence
 

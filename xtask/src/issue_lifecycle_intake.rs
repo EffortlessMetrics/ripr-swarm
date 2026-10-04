@@ -404,14 +404,17 @@ pub(crate) fn verify_intake_row_snapshot(
             row.id, row.snapshot.comments_snapshot_id
         ));
     }
-    if let Some(timeline_path) = &row.snapshot.timeline_path {
-        let timeline_body = fs::read(root.join(timeline_path)).map_err(|error| {
+    let timeline_body = match &row.snapshot.timeline_path {
+        Some(timeline_path) => Some(fs::read(root.join(timeline_path)).map_err(|error| {
             format!(
                 "intake row `{}` timeline {} is unreadable: {error}",
                 row.id, timeline_path
             )
-        })?;
-        let computed = crate::blind_journey::sha256_hex(&timeline_body);
+        })?),
+        None => None,
+    };
+    if let Some(timeline_body) = &timeline_body {
+        let computed = crate::blind_journey::sha256_hex(timeline_body);
         let recorded = row
             .snapshot
             .timeline_snapshot_id
@@ -423,9 +426,34 @@ pub(crate) fn verify_intake_row_snapshot(
                 row.id
             ));
         }
+    }
+    let retained_len = snapshot_body.len()
+        + comments_body.len()
+        + timeline_body.as_ref().map_or(0, Vec::len);
+    verify_selected_packet_bytes(row, retained_len)?;
+    if let Some(timeline_body) = &timeline_body {
         verify_retrieval_step_bytes(row, "issue", snapshot_body.len())?;
         verify_retrieval_step_bytes(row, "comments", comments_body.len())?;
         verify_retrieval_step_bytes(row, "timeline", timeline_body.len())?;
+    }
+    Ok(())
+}
+
+/// Bind the recorded selected-packet byte claim to the committed snapshot
+/// bytes: a measured count must equal what the retained snapshots actually
+/// measure. A fabricated or stale count fails closed instead of entering a
+/// counted scorecard.
+fn verify_selected_packet_bytes(
+    row: &IssueLifecycleIntakeRowV1,
+    retained_len: usize,
+) -> Result<(), String> {
+    if let IssueLifecycleIntakeBytesV1::Measured(selected) = row.packet_bytes.selected
+        && selected as usize != retained_len
+    {
+        return Err(format!(
+            "intake row `{}` packet selected bytes claim {selected}, committed snapshots measure {retained_len}",
+            row.id
+        ));
     }
     Ok(())
 }
@@ -705,10 +733,31 @@ pub(crate) fn load_intake_corpus_dir(
     let provenance_body = fs::read_to_string(dir.join("provenance.json"))
         .map_err(|error| format!("read issue lifecycle intake provenance: {error}"))?;
     let provenance = load_issue_lifecycle_intake_provenance(&provenance_body)?;
+    check_provenance_against_corpus(&corpus, &provenance)?;
+    for row in &corpus.rows {
+        verify_intake_row_snapshot(row, dir)?;
+    }
+    Ok((corpus, controls, provenance))
+}
+
+/// Fail-closed provenance shape check shared by the scorecard command path:
+/// the provenance must name exactly the corpus rows — no missing entry, no
+/// duplicate issue, and no extra row the corpus does not contain.
+fn check_provenance_against_corpus(
+    corpus: &IssueLifecycleIntakeCorpusV1,
+    provenance: &IssueLifecycleIntakeProvenanceV1,
+) -> Result<(), String> {
     if provenance.base_main != corpus.base_main {
         return Err(format!(
             "intake provenance base main `{}` disagrees with the corpus base main `{}`",
             provenance.base_main, corpus.base_main
+        ));
+    }
+    if provenance.rows.len() != corpus.rows.len() {
+        return Err(format!(
+            "intake provenance must name {} rows, got {}",
+            corpus.rows.len(),
+            provenance.rows.len()
         ));
     }
     let mut provenance_issues = BTreeSet::new();
@@ -739,31 +788,25 @@ pub(crate) fn load_intake_corpus_dir(
                 row.id, row.category
             ));
         }
-        verify_intake_row_snapshot(row, dir)?;
     }
-    Ok((corpus, controls, provenance))
+    Ok(())
 }
 
-/// `cargo xtask issue-lifecycle-intake-scorecard [--corpus <dir>]` (#4930,
-/// RIPR-SPEC-0223): validate the committed read-only intake corpus
-/// fail-closed (shape, provenance, snapshot digest bindings, packet law),
-/// then project the embedded real attempt rows through the unchanged
-/// RIPR-SPEC-0218 validator and scorecard builder, writing the standard
-/// issue-lifecycle scorecard reports — results flow through #4929 without a
-/// parallel intake report. The deterministic per-row packet projections are
-/// printed to stdout.
-pub(crate) fn issue_lifecycle_intake_scorecard(args: &[String]) -> Result<(), String> {
-    let corpus_dir = parse_corpus_dir_arg(args)?;
-    let root = workspace_path(&corpus_dir);
-    let (corpus, controls, _provenance) = load_intake_corpus_dir(&root)?;
-    let mut failures = assess_intake_corpus(&corpus);
-    failures.extend(assess_intake_control_corpus(&controls));
+/// Fail-closed RIPR-SPEC-0218 assessment of the embedded real attempt rows:
+/// a rejected row fails the run, and a counted row whose deterministically
+/// downgraded assessed disposition disagrees with the row's independent root
+/// disposition fails too — the command never emits a scorecard stronger than
+/// the retained evidence.
+fn assess_real_rows_against_counting_law(
+    corpus: &IssueLifecycleIntakeCorpusV1,
+) -> (Vec<String>, Vec<IssueLifecycleRowAssessmentV1>) {
     let attempts: Vec<IssueLifecycleAttemptV1> =
         corpus.rows.iter().map(|row| row.attempt.clone()).collect();
     let assessed: Vec<IssueLifecycleRowAssessmentV1> = attempts
         .iter()
         .map(assess_issue_lifecycle_attempt)
         .collect();
+    let mut failures = Vec::new();
     for (row, assessment) in corpus.rows.iter().zip(assessed.iter()) {
         if !assessment.counted {
             failures.push(format!(
@@ -780,6 +823,27 @@ pub(crate) fn issue_lifecycle_intake_scorecard(args: &[String]) -> Result<(), St
             ));
         }
     }
+    (failures, assessed)
+}
+
+/// `cargo xtask issue-lifecycle-intake-scorecard [--corpus <dir>]` (#4930,
+/// RIPR-SPEC-0223): validate the committed read-only intake corpus
+/// fail-closed (shape, provenance, snapshot digest bindings, packet law),
+/// then project the embedded real attempt rows through the unchanged
+/// RIPR-SPEC-0218 validator and scorecard builder, writing the standard
+/// issue-lifecycle scorecard reports — results flow through #4929 without a
+/// parallel intake report. The deterministic per-row packet projections are
+/// printed to stdout.
+pub(crate) fn issue_lifecycle_intake_scorecard(args: &[String]) -> Result<(), String> {
+    let corpus_dir = parse_corpus_dir_arg(args)?;
+    let root = workspace_path(&corpus_dir);
+    let (corpus, controls, _provenance) = load_intake_corpus_dir(&root)?;
+    let mut failures = assess_intake_corpus(&corpus);
+    failures.extend(assess_intake_control_corpus(&controls));
+    let (law_failures, assessed) = assess_real_rows_against_counting_law(&corpus);
+    failures.extend(law_failures);
+    let attempts: Vec<IssueLifecycleAttemptV1> =
+        corpus.rows.iter().map(|row| row.attempt.clone()).collect();
     for control in &controls.rows {
         let assessment = assess_issue_lifecycle_attempt(&control.row.attempt);
         if !assessment.counted {
@@ -1247,6 +1311,17 @@ mod tests {
             .iter()
             .chain(controls.rows.iter().map(|control| &control.row))
         {
+            if let IssueLifecycleIntakeBytesV1::Measured(selected) = row.packet_bytes.selected
+                && row.snapshot.snapshot_path.is_some()
+            {
+                let committed = committed_snapshot_bytes(row)?;
+                if selected as usize != committed {
+                    return Err(format!(
+                        "row `{}` measured selected bytes {selected}, committed snapshots measure {committed}",
+                        row.id
+                    ));
+                }
+            }
             let surfaces = [
                 &row.packet_bytes.selected,
                 &row.packet_bytes.omitted,
@@ -1254,9 +1329,7 @@ mod tests {
             ];
             for surface in surfaces {
                 match surface {
-                    IssueLifecycleIntakeBytesV1::Measured(bytes) => {
-                        let _ = bytes;
-                    }
+                    IssueLifecycleIntakeBytesV1::Measured(_bytes) => {}
                     IssueLifecycleIntakeBytesV1::NotMeasured => {}
                 }
                 checked += 1;
@@ -1277,6 +1350,92 @@ mod tests {
             })?;
         if control.row.packet_bytes.selected != IssueLifecycleIntakeBytesV1::NotMeasured {
             return Err("the control row must say not_measured explicitly".to_string());
+        }
+        Ok(())
+    }
+
+    fn committed_snapshot_bytes(row: &IssueLifecycleIntakeRowV1) -> Result<usize, String> {
+        let mut total = 0usize;
+        for path in [
+            row.snapshot.snapshot_path.as_deref(),
+            row.snapshot.comments_path.as_deref(),
+            row.snapshot.timeline_path.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let bytes = fs::read(intake_root().join(path))
+                .map_err(|error| format!("read committed snapshot {path}: {error}"))?;
+            total += bytes.len();
+        }
+        Ok(total)
+    }
+
+    #[test]
+    fn issue_lifecycle_intake_pilot_fabricated_selected_bytes_fail_closed()
+    -> Result<(), String> {
+        let (corpus, _controls, _provenance) = load_committed()?;
+        let mut row = corpus.rows[0].clone();
+        row.packet_bytes.selected = IssueLifecycleIntakeBytesV1::Measured(1);
+        let error = verify_intake_row_snapshot(&row, &intake_root())
+            .err()
+            .ok_or_else(|| "a fabricated selected byte count must fail closed".to_string())?;
+        if !error.contains("packet selected bytes claim") {
+            return Err(format!("unexpected verification error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_intake_pilot_downgraded_root_disposition_rejected()
+    -> Result<(), String> {
+        let (mut corpus, _controls, _provenance) = load_committed()?;
+        let lifecycle_id = {
+            let row = corpus
+                .rows
+                .iter_mut()
+                .find(|row| row.category == "narrow_accepted_contract_bug")
+                .ok_or_else(|| "missing narrow accepted-contract bug row".to_string())?;
+            row.attempt.contract_decision.spec_required = true;
+            row.attempt.row_digest =
+                crate::issue_lifecycle_attempt::issue_lifecycle_row_digest(&row.attempt)?;
+            row.attempt.lifecycle_id.clone()
+        };
+        let (failures, assessed) = assess_real_rows_against_counting_law(&corpus);
+        let assessment = assessed
+            .iter()
+            .find(|assessment| assessment.lifecycle_id == lifecycle_id)
+            .ok_or_else(|| "downgraded row was not assessed".to_string())?;
+        if !assessment.counted {
+            return Err(
+                "the spec-required downgrade keeps the row counted, so only the root-disposition disagreement may reject it".to_string(),
+            );
+        }
+        if !failures
+            .iter()
+            .any(|failure| failure.contains("disagrees with the assessed disposition"))
+        {
+            return Err(format!(
+                "a counted but downgraded row must be rejected, got failures {failures:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn issue_lifecycle_intake_pilot_extra_provenance_row_rejected() -> Result<(), String> {
+        let (corpus, _controls, mut provenance) = load_committed()?;
+        check_provenance_against_corpus(&corpus, &provenance)?;
+        provenance.rows.push(IssueLifecycleIntakeProvenanceRowV1 {
+            issue: 9_999_999,
+            category: "narrow_accepted_contract_bug".to_string(),
+            justification: "synthetic extra provenance entry".to_string(),
+        });
+        let error = check_provenance_against_corpus(&corpus, &provenance)
+            .err()
+            .ok_or_else(|| "an extra provenance row must fail closed".to_string())?;
+        if !error.contains("must name 6 rows, got 7") {
+            return Err(format!("unexpected provenance error: {error}"));
         }
         Ok(())
     }
