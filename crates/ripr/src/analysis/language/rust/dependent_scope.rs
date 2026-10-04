@@ -1091,7 +1091,7 @@ mod tests {
         assert!(spells_any("let s = \"→größe\";".as_bytes(), &set));
         assert!(!spells_any("/// “größe_x”".as_bytes(), &set));
         assert!(spells_any("/// 1→größe".as_bytes(), &set));
-        assert!(spells_any("let xgröße = größe;".as_bytes(), &set));
+        assert!(spells_any("/// xgröße “größe”".as_bytes(), &set));
     }
 
     #[test]
