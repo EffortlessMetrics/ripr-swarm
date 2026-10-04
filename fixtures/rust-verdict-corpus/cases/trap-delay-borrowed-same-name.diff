@@ -1,5 +1,5 @@
 diff --git a/src/heaters.rs b/src/heaters.rs
-index 39ef771..f53f15a 100644
+index d3742d5..7a35d26 100644
 --- a/src/heaters.rs
 +++ b/src/heaters.rs
 @@ -6,7 +6,7 @@ pub enum Mode {

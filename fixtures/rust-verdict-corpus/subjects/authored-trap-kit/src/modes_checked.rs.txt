@@ -6,8 +6,8 @@ pub enum Season {
 
 pub fn pause(season: Season) -> u32 {
     match season {
-        Season::Spring => 5,
-        Season::Autumn => 50,
+        Season::Spring => 6,
+        Season::Autumn => 60,
     }
 }
 
@@ -17,6 +17,6 @@ mod tests {
 
     #[test]
     fn spring_pause() {
-        assert_eq!(pause(Season::Spring), 5);
+        assert_eq!(pause(Season::Spring), 6);
     }
 }

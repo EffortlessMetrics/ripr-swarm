@@ -8,6 +8,7 @@ pub mod coolers;
 pub mod counter;
 pub mod grid;
 pub mod grid_checked;
+pub mod grid_reached;
 pub mod heaters;
 pub mod labels;
 pub mod levels;

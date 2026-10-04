@@ -3,9 +3,9 @@ pub struct Counter {
     pub n: u32,
 }
 
-impl Counter {
-    pub fn bump(&mut self) {
-        self.n += 2;
+pub fn with_bonus(base: &Counter) -> Counter {
+    Counter {
+        n: base.n * 3,
     }
 }
 
@@ -14,10 +14,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bump_moves_the_counter() {
-        let mut counter = Counter::default();
+    fn bonus_moves_the_counter() {
+        let counter = Counter { n: 2 };
         let snapshot = counter.clone();
-        counter.bump();
-        assert_eq!(snapshot.n, 0);
+        let next = with_bonus(&counter);
+        assert_eq!(snapshot.n, 2);
+        let _ = next;
     }
 }

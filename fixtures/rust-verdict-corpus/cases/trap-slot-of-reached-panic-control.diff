@@ -1,0 +1,13 @@
+diff --git a/src/grid_reached.rs b/src/grid_reached.rs
+index 4e1af71..541a24d 100644
+--- a/src/grid_reached.rs
++++ b/src/grid_reached.rs
+@@ -9,7 +9,7 @@ impl Panel {
+     }
+ 
+     pub fn slot_of(&self, index: usize) -> usize {
+-        if index >= 100 {
++        if index > 99 {
+             panic!("slot past the panel");
+         }
+         index / self.cols

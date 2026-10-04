@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 126.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 127.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 42/126 | 0.3333 |
-| False actionable (of discriminated) | 36/60 | 0.6000 |
+| False verdicts (all cases) | 43/127 | 0.3386 |
+| False actionable (of discriminated) | 37/61 | 0.6066 |
 | False exposed (of not fully discriminated) | 6/66 | 0.0909 |
 | False silent (of not fully discriminated) | 0/66 | 0.0000 |
-| Ideal verdict | 49/126 | 0.3889 |
-| Abstained (limited or silent where acceptable) | 35/126 | 0.2778 |
-| Findings with a contradiction | 2/160 | 0.0125 |
+| Ideal verdict | 50/127 | 0.3937 |
+| Abstained (limited or silent where acceptable) | 34/127 | 0.2677 |
+| Findings with a contradiction | 2/161 | 0.0124 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 92 | 32/92 | 26/40 | 6/52 | 0/52 | 44/92 | 16/92 |
+| authored | 93 | 33/93 | 27/41 | 6/52 | 0/52 | 45/93 | 15/93 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -128,21 +128,22 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `trap-tax-reference-helper` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
 | `trap-score-tautology` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-widen-asserts-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `trap-bump-stale-clone` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `trap-bonus-stale-clone` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-area-sibling-not-called` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-round-other-module` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `trap-round-same-module-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
-| `trap-count-early-return` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
-| `trap-count-reached-assert-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `trap-snap-imported-owner-control` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `trap-steps-early-return` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `trap-tally-reached-assert-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
 | `trap-row-of-unrelated-panic` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
-| `trap-row-of-expected-panic-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `trap-slot-of-reached-panic-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
+| `trap-row-at-expected-panic-control` | authored | discriminated | credited | gap | reachable_unrevealed | false_actionable | no | none |
 | `trap-scale-message-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-halve-empty-table` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
 | `trap-rate-ignored-test` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
 | `trap-level-catch-unwind` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-retries-unsigned-nonnegative` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `trap-delay-sibling-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `trap-delay-asserted-arm-control` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `trap-quota-sibling-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `trap-pause-asserted-arm-control` | authored | discriminated | credited | credited | exposed | ideal | no | none |
 | `trap-delay-borrowed-same-name` | authored | not_discriminated | gap | credited | exposed | false_exposed | no | none |
 | `trap-fee-name-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `trap-total-local-binding` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |

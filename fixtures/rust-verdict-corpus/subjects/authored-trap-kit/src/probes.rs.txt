@@ -1,5 +1,5 @@
-pub fn count() -> u32 {
-    7
+pub fn steps(base: u32) -> u32 {
+    base * 7
 }
 
 #[cfg(test)]
@@ -7,11 +7,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn count_is_seven() {
-        let n = count();
-        if n < 1000 {
+    fn steps_is_fourteen() {
+        if steps(2) < 1000 {
             return;
         }
-        assert_eq!(n, 7);
+        assert_eq!(steps(2), 14);
     }
 }

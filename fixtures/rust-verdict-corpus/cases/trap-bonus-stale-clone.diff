@@ -1,0 +1,13 @@
+diff --git a/src/counter.rs b/src/counter.rs
+index 49cd153..5e95d31 100644
+--- a/src/counter.rs
++++ b/src/counter.rs
+@@ -5,7 +5,7 @@ pub struct Counter {
+ 
+ pub fn with_bonus(base: &Counter) -> Counter {
+     Counter {
+-        n: base.n * 3,
++        n: 3 * base.n,
+     }
+ }
+ 

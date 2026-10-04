@@ -1,5 +1,5 @@
-pub fn rate() -> u32 {
-    7
+pub fn rate(base: u32) -> u32 {
+    base * 3
 }
 
 #[cfg(test)]
@@ -9,6 +9,6 @@ mod tests {
     #[test]
     #[ignore = "slow"]
     fn rate_is_pinned() {
-        assert_eq!(rate(), 7);
+        assert_eq!(rate(2), 6);
     }
 }

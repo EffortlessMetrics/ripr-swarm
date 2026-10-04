@@ -685,7 +685,7 @@
         },
         {
           "path": "src/counter.rs",
-          "sha256": "85cb52840a884035ed06520c45eff2c8fb9fbf43f92f56ef2dcfb3dd4f7b48e8"
+          "sha256": "84cd1e7d160dcdcdc860781329049bc028b2e206bf033748af1c78e2b1e446e9"
         },
         {
           "path": "src/grid.rs",
@@ -693,11 +693,15 @@
         },
         {
           "path": "src/grid_checked.rs",
-          "sha256": "4cf293fe62405cf1e53557f2f9cc7487f5ee2487028d6f3a58c28ef683c73bb8"
+          "sha256": "8c70a96fda85584e2d8650c4fd2a802e376c9fa96bdd2533b20e88b1d968d088"
+        },
+        {
+          "path": "src/grid_reached.rs",
+          "sha256": "bddd7854382f78da37d2dc3b8c315dba8e3296e1a751038d9b89fef27311b728"
         },
         {
           "path": "src/heaters.rs",
-          "sha256": "40328d49adfa818588e313184a0c8acc96e88ee2d6a69697aaea3f77ae6e9b2a"
+          "sha256": "dafa07a74dedd023ac304ea425ddd44674fd9aafc2e4b4c346dc146e7f8c8e99"
         },
         {
           "path": "src/labels.rs",
@@ -709,7 +713,7 @@
         },
         {
           "path": "src/lib.rs",
-          "sha256": "122cfaa8ac74dca7e0f0671cc5d5e80d603c32e01abfcc46ccce790dd7dbe77c"
+          "sha256": "0e81b6aad42c08cd8758fc6b05396556235ee5e617574c72c98e484cdfdcf9d9"
         },
         {
           "path": "src/modes.rs",
@@ -717,11 +721,11 @@
         },
         {
           "path": "src/modes_checked.rs",
-          "sha256": "3c520a2af5932d1cb709233d3ade7f59db9f5772d51fe4d74933f08483075f8a"
+          "sha256": "11eaadb43793e1ae1db7fb6439137ac006d1e900a5242cca62cac0da875de786"
         },
         {
           "path": "src/nested.rs",
-          "sha256": "9fb3b4024c5dd387a66c8ec23111f978c579b288d1dc8c8d5642b15645286e11"
+          "sha256": "a9f4b324136b615451cc3358a3a361c080551ef5a64b3f4520fa101e6b920b57"
         },
         {
           "path": "src/notices.rs",
@@ -729,15 +733,15 @@
         },
         {
           "path": "src/probes.rs",
-          "sha256": "2f210cc68c7a115a4b113e332681fc9b3382330766a4e4106b1235e1c270cffc"
+          "sha256": "91e0dcad33a30af987d994603983105d11d6b672c393d03709f70ba1eff54937"
         },
         {
           "path": "src/probes_checked.rs",
-          "sha256": "419bda400d8435180b9d74e3e3c828cf3b2f8ffed829b8a2c0546bdb3cbbd317"
+          "sha256": "20e2697d433f0def9f62be0b4762d57fcb58fa4691e2bc25960dd3296380b524"
         },
         {
           "path": "src/rates.rs",
-          "sha256": "fec4ad84930c8bff4f713add2b68997916c26f36769cbffb717e344ef4e8ba14"
+          "sha256": "945abac76fe8db79582e05ab41b0f9624dfd643697ef51492723259a898b0635"
         },
         {
           "path": "src/retries.rs",
@@ -5862,7 +5866,7 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "self_computed_expected_via_test_helper",
       "hard_case": "The expected value comes from a test-module helper that calls tax() itself, so the assert compares tax with tax.",
       "truth": {
@@ -5875,19 +5879,19 @@
             "replacement": "subtotal * 9 / 100",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `subtotal * 2 * 4 / 100` with `subtotal * 9 / 100`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `subtotal * 2 * 4 / 100` with `subtotal * 9 / 100`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "subtotal * 8 * 100",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `subtotal * 2 * 4 / 100` with `subtotal * 8 * 100`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `subtotal * 2 * 4 / 100` with `subtotal * 8 * 100`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "subtotal + 8 / 100",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `subtotal * 2 * 4 / 100` with `subtotal + 8 / 100`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `subtotal * 2 * 4 / 100` with `subtotal + 8 / 100`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -5898,7 +5902,7 @@
           "limited"
         ]
       },
-      "reasoning": "tax_matches_the_reference asserts tax(250) == reference_tax(250) and reference_tax returns tax(subtotal), so any change to tax moves both sides together. Spec cells: RIPR-SPEC-0004, RIPR-SPEC-0035 (self-computed expected value).",
+      "reasoning": "tax_matches_the_reference asserts tax(250) == reference_tax(250), and reference_tax returns tax(subtotal), so any change to tax moves both sides together. Spec cells: RIPR-SPEC-0004, RIPR-SPEC-0035 (self-computed expected value).",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "credited",
@@ -5917,7 +5921,7 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "tautological_assert_eq_same_binding",
       "hard_case": "assert_eq!(got, got) compares the owner's result with itself.",
       "truth": {
@@ -5930,19 +5934,19 @@
             "replacement": "hits * 3 - 1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits * 3 - 1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits * 3 - 1`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "hits * 4 + 1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits * 4 + 1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits * 4 + 1`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "hits + 3 + 1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits + 3 + 1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits + 3 + 1`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -5953,7 +5957,7 @@
           "limited"
         ]
       },
-      "reasoning": "score_is_stable binds got = score(4) and asserts got == got, which holds for every value of score. Adversarial shape (tautological assertion).",
+      "reasoning": "score_is_stable binds got = score(4) and asserts got == got, which holds for every value of score. Adversarial shape (tautological assertion). It also guards the owner-result binding rule (RIPR-SPEC-0005): today any let-bound result reads weak, so a fix there must still refuse this shape.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -5972,7 +5976,7 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_on_input_not_result",
       "hard_case": "The test calls widen() but asserts on the input binding, not on the returned value.",
       "truth": {
@@ -5985,19 +5989,19 @@
             "replacement": "width - 4",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `4 + width` with `width - 4`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `4 + width` with `width - 4`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "width + 5",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `4 + width` with `width + 5`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `4 + width` with `width + 5`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "width * 4",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `4 + width` with `width * 4`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `4 + width` with `width * 4`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6008,7 +6012,7 @@
           "limited"
         ]
       },
-      "reasoning": "widen_adds_the_margin computes after = widen(before) and then asserts before == 10; the result is discarded. Adversarial shape (assert on the wrong variable).",
+      "reasoning": "widen_adds_the_margin computes after = widen(before) and then asserts before == 10; the result is discarded. Adversarial shape (assert on the wrong variable). It also guards the owner-result binding rule (RIPR-SPEC-0005): today any let-bound result reads weak, so a fix there must still refuse this shape.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6019,17 +6023,17 @@
       }
     },
     {
-      "case_id": "trap-bump-stale-clone",
+      "case_id": "trap-bonus-stale-clone",
       "subject_id": "authored-trap-kit",
-      "diff": "cases/trap-bump-stale-clone.diff",
+      "diff": "cases/trap-bonus-stale-clone.diff",
       "anchor": {
         "file": "src/counter.rs",
         "line": 8
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "field_write",
+      "behavior_family": "field_construction",
       "test_shape": "assert_on_stale_clone",
-      "hard_case": "The test asserts on a clone taken before bump() ran, so the mutated field is never read.",
+      "hard_case": "The test asserts on a clone of the input taken before with_bonus() ran, so the constructed field is never read.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -6037,22 +6041,22 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "self.n = self.n + 3;",
+            "replacement": "base.n * 4",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `self.n = self.n + 2;` with `self.n = self.n + 3;`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base.n` with `base.n * 4`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "self.n = self.n * 2;",
+            "replacement": "base.n + 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `self.n = self.n + 2;` with `self.n = self.n * 2;`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base.n` with `base.n + 3`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "self.n = self.n;",
+            "replacement": "base.n / 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `self.n = self.n + 2;` with `self.n = self.n;`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base.n` with `base.n / 3`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6063,12 +6067,12 @@
           "limited"
         ]
       },
-      "reasoning": "bump_moves_the_counter clones the counter, calls bump() on the original and asserts snapshot.n == 0. Adversarial shape (assert on the wrong variable: a stale snapshot).",
+      "reasoning": "bonus_moves_the_counter clones the counter, calls with_bonus(&counter) into next and asserts snapshot.n == 2. Adversarial shape (assert on the wrong variable: a stale snapshot). It also guards the owner-result binding rule (RIPR-SPEC-0005): today any let-bound result reads weak, so a fix there must still refuse this shape.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
-        "full_checkout_verdict": "limited",
+        "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
-          "static_unknown"
+          "weakly_exposed"
         ],
         "excerpt_parity": "matched"
       }
@@ -6082,7 +6086,7 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "sibling_named_function_tested_instead",
       "hard_case": "Only area_rounded() is tested; it computes its own product and never calls area().",
       "truth": {
@@ -6095,19 +6099,19 @@
             "replacement": "width + height",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `height * width` with `width + height`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `height * width` with `width + height`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "width * height + 1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `height * width` with `width * height + 1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `height * width` with `width * height + 1`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "width / height",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `height * width` with `width / height`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `height * width` with `width / height`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6137,7 +6141,7 @@
         "line": 3
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "same_name_function_other_module",
       "hard_case": "The test imports imperial::round; the edit is in metric::round, a same-named free function in a sibling module.",
       "truth": {
@@ -6150,19 +6154,19 @@
             "replacement": "(value + 2) / 10 * 10",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 2) / 10 * 10`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 2) / 10 * 10`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "(value - 5) / 10 * 10",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value - 5) / 10 * 10`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value - 5) / 10 * 10`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "(value + 5) * 10 * 10",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 5) * 10 * 10`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 5) * 10 * 10`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6173,7 +6177,7 @@
           "limited"
         ]
       },
-      "reasoning": "round_snaps_to_the_unit calls round(17) after `use super::imperial::round`, so metric::round never runs. Adversarial shape (same-named function in another module); paired with trap-round-same-module-control.",
+      "reasoning": "round_snaps_to_the_unit calls round(17) after `use super::imperial::round`, so metric::round never runs. Adversarial shape (same-named function in another module); paired with trap-snap-imported-owner-control.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6184,15 +6188,15 @@
       }
     },
     {
-      "case_id": "trap-round-same-module-control",
+      "case_id": "trap-snap-imported-owner-control",
       "subject_id": "authored-trap-kit",
-      "diff": "cases/trap-round-same-module-control.diff",
+      "diff": "cases/trap-snap-imported-owner-control.diff",
       "anchor": {
         "file": "src/units_checked.rs",
         "line": 3
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "same_name_function_imported_owner",
       "hard_case": null,
       "truth": {
@@ -6205,19 +6209,19 @@
             "replacement": "(value + 2) / 10 * 10",
             "outcome": "tests_failed",
             "failing_test": "units_checked::tests::snap_rounds_to_the_unit",
-            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 2) / 10 * 10`, which changes the value"
+            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 2) / 10 * 10`, which changes the result"
           },
           {
             "replacement": "(value - 5) / 10 * 10",
             "outcome": "tests_failed",
             "failing_test": "units_checked::tests::snap_rounds_to_the_unit",
-            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value - 5) / 10 * 10`, which changes the value"
+            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value - 5) / 10 * 10`, which changes the result"
           },
           {
             "replacement": "(value + 5) * 10 * 10",
             "outcome": "tests_failed",
             "failing_test": "units_checked::tests::snap_rounds_to_the_unit",
-            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 5) * 10 * 10`, which changes the value"
+            "equivalence_review": "not equivalent: replaces `(5 + value) / 10 * 10` with `(value + 5) * 10 * 10`, which changes the result"
           }
         ]
       },
@@ -6229,7 +6233,7 @@
           "silent"
         ]
       },
-      "reasoning": "Negative control for trap-round-other-module: the same shape (two sibling modules with a same-named function), but the test imports celsius::snap from a pair of same-named snap functions and pins snap(17) == 20, so every listed mutant fails it.",
+      "reasoning": "Negative control for trap-round-other-module: two sibling modules with a same-named snap function, and the test imports celsius::snap (the edited one) and pins snap(17) == 20, so every listed mutant fails it.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6240,17 +6244,17 @@
       }
     },
     {
-      "case_id": "trap-count-early-return",
+      "case_id": "trap-steps-early-return",
       "subject_id": "authored-trap-kit",
-      "diff": "cases/trap-count-early-return.diff",
+      "diff": "cases/trap-steps-early-return.diff",
       "anchor": {
         "file": "src/probes.rs",
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_after_always_taken_early_return",
-      "hard_case": "The test returns early whenever count() is below 1000, so the exact-value assert after it never runs for any listed mutant.",
+      "hard_case": "The test returns early whenever steps(2) is below 1000, so the exact-value assert after it never runs for any listed mutant. It is only partly vacuous: a value of 1000 or more would reach the assert. Without the guard ripr reads the same test exposed.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -6258,22 +6262,22 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "8",
+            "replacement": "base * 8",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `8`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `7 * base` with `base * 8`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "0",
+            "replacement": "base + 7",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `0`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `7 * base` with `base + 7`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "1",
+            "replacement": "base * 6",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `7 * base` with `base * 6`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6284,7 +6288,7 @@
           "limited"
         ]
       },
-      "reasoning": "count_is_seven binds n = count(), returns when n < 1000, then asserts n == 7. Every listed value takes the early return. Adversarial shape (assertion after an early return); paired with trap-count-reached-assert-control.",
+      "reasoning": "steps_is_fourteen returns when steps(2) < 1000, then asserts steps(2) == 14. Every listed value takes the early return. Adversarial shape (assertion after an early return); paired with trap-tally-reached-assert-control.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6295,15 +6299,15 @@
       }
     },
     {
-      "case_id": "trap-count-reached-assert-control",
+      "case_id": "trap-tally-reached-assert-control",
       "subject_id": "authored-trap-kit",
-      "diff": "cases/trap-count-reached-assert-control.diff",
+      "diff": "cases/trap-tally-reached-assert-control.diff",
       "anchor": {
         "file": "src/probes_checked.rs",
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_after_untaken_early_return",
       "hard_case": null,
       "truth": {
@@ -6313,22 +6317,22 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "8",
+            "replacement": "base * 8",
             "outcome": "tests_failed",
-            "failing_test": "probes_checked::tests::tally_is_seven",
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `8`, which changes the value"
+            "failing_test": "probes_checked::tests::tally_is_eighteen",
+            "equivalence_review": "not equivalent: replaces `9 * base` with `base * 8`, which changes the result"
           },
           {
-            "replacement": "0",
+            "replacement": "base + 9",
             "outcome": "tests_failed",
-            "failing_test": "probes_checked::tests::tally_is_seven",
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `0`, which changes the value"
+            "failing_test": "probes_checked::tests::tally_is_eighteen",
+            "equivalence_review": "not equivalent: replaces `9 * base` with `base + 9`, which changes the result"
           },
           {
-            "replacement": "1",
+            "replacement": "base * 10",
             "outcome": "tests_failed",
-            "failing_test": "probes_checked::tests::tally_is_seven",
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `1`, which changes the value"
+            "failing_test": "probes_checked::tests::tally_is_eighteen",
+            "equivalence_review": "not equivalent: replaces `9 * base` with `base * 10`, which changes the result"
           }
         ]
       },
@@ -6340,7 +6344,7 @@
           "silent"
         ]
       },
-      "reasoning": "Negative control for trap-count-early-return: tally() has the same body and the guard is n > 1000, which no listed value takes, so the assert n == 7 runs and fails for each mutant.",
+      "reasoning": "Negative control for trap-steps-early-return: the same shape with the guard tally(2) > 1000, which no listed value takes, so the assert tally(2) == 18 runs and fails for each mutant. A value above 1000 would also escape it.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6359,9 +6363,9 @@
         "line": 12
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "error_path",
+      "behavior_family": "predicate_boundary",
       "test_shape": "should_panic_satisfied_by_unrelated_panic",
-      "hard_case": "#[should_panic] without `expected` passes on Grid::new(0)'s column assert before row_of() runs.",
+      "hard_case": "#[should_panic] without `expected` passes on Grid::new(0)'s column assert before row_of() runs. Today ripr reads every should_panic test as having no assertion, so this trap mainly guards a future should_panic oracle: it must not credit a test whose panic can come from elsewhere.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -6372,19 +6376,19 @@
             "replacement": "index >= 101",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `index > 99` with `index >= 101`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 101`, which changes whether index 100 panics, but no executed assertion observes it"
           },
           {
             "replacement": "index < 100",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `index > 99` with `index < 100`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index < 100`, which changes whether index 100 panics, but no executed assertion observes it"
           },
           {
             "replacement": "false",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `index > 99` with `false`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics, but no executed assertion observes it"
           }
         ]
       },
@@ -6395,7 +6399,7 @@
           "limited"
         ]
       },
-      "reasoning": "row_of_rejects_large_index calls Grid::new(0).row_of(100). Grid::new panics with \"grid needs columns\" first, so the bounds check in row_of is never reached and the test passes whatever it does. Adversarial shape (#[should_panic] for an unrelated panic); paired with trap-row-of-expected-panic-control.",
+      "reasoning": "row_of_rejects_large_index calls Grid::new(0).row_of(100). Grid::new panics with \"grid needs columns\" first, so the bounds check in row_of is never reached and the test passes whatever it does. Adversarial shape (#[should_panic] for an unrelated panic); minimal pair with trap-slot-of-reached-panic-control (differs only in new(0) vs new(4)), plus trap-row-at-expected-panic-control.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6406,15 +6410,71 @@
       }
     },
     {
-      "case_id": "trap-row-of-expected-panic-control",
+      "case_id": "trap-slot-of-reached-panic-control",
       "subject_id": "authored-trap-kit",
-      "diff": "cases/trap-row-of-expected-panic-control.diff",
+      "diff": "cases/trap-slot-of-reached-panic-control.diff",
+      "anchor": {
+        "file": "src/grid_reached.rs",
+        "line": 12
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "should_panic_reached_owner_panic",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "index >= 101",
+            "outcome": "tests_failed",
+            "failing_test": "grid_reached::tests::slot_of_rejects_large_index",
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 101`, which changes whether index 100 panics"
+          },
+          {
+            "replacement": "index < 100",
+            "outcome": "tests_failed",
+            "failing_test": "grid_reached::tests::slot_of_rejects_large_index",
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index < 100`, which changes whether index 100 panics"
+          },
+          {
+            "replacement": "false",
+            "outcome": "tests_failed",
+            "failing_test": "grid_reached::tests::slot_of_rejects_large_index",
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Negative control for trap-row-of-unrelated-panic: Panel::new(4) succeeds, so the bare #[should_panic] can only be satisfied by slot_of's own panic, and each mutant that stops the panic fails the test.",
+      "labeling_observation": {
+        "ripr_commit": "277edf1",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "trap-row-at-expected-panic-control",
+      "subject_id": "authored-trap-kit",
+      "diff": "cases/trap-row-at-expected-panic-control.diff",
       "anchor": {
         "file": "src/grid_checked.rs",
         "line": 12
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "error_path",
+      "behavior_family": "predicate_boundary",
       "test_shape": "should_panic_expected_message",
       "hard_case": null,
       "truth": {
@@ -6427,19 +6487,19 @@
             "replacement": "index >= 101",
             "outcome": "tests_failed",
             "failing_test": "grid_checked::tests::row_at_rejects_large_index",
-            "equivalence_review": "not equivalent: replaces `index > 99` with `index >= 101`, which changes the value"
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 101`, which changes whether index 100 panics"
           },
           {
             "replacement": "index < 100",
             "outcome": "tests_failed",
             "failing_test": "grid_checked::tests::row_at_rejects_large_index",
-            "equivalence_review": "not equivalent: replaces `index > 99` with `index < 100`, which changes the value"
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index < 100`, which changes whether index 100 panics"
           },
           {
             "replacement": "false",
             "outcome": "tests_failed",
             "failing_test": "grid_checked::tests::row_at_rejects_large_index",
-            "equivalence_review": "not equivalent: replaces `index > 99` with `false`, which changes the value"
+            "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics"
           }
         ]
       },
@@ -6451,7 +6511,7 @@
           "silent"
         ]
       },
-      "reasoning": "Negative control for trap-row-of-unrelated-panic: Board::new(4) succeeds and #[should_panic(expected = \"index out of range\")] requires row_at's own panic, so each mutant that stops the panic fails the test.",
+      "reasoning": "Negative control for trap-row-of-unrelated-panic: Board::new(4) succeeds and #[should_panic(expected = \"cell beyond the board\")] requires row_at's own panic, so each mutant that stops the panic fails the test.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6470,7 +6530,7 @@
         "line": 6
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "owner_only_in_assert_message",
       "hard_case": "scale() appears only in assert!'s format arguments, which are evaluated only when the condition fails; ready() is always true.",
       "truth": {
@@ -6483,19 +6543,19 @@
             "replacement": "value * 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `value + value` with `value * 3`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `value + value` with `value * 3`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "value - 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `value + value` with `value - 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `value + value` with `value - 2`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "value / 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `value + value` with `value / 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `value + value` with `value / 2`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6525,9 +6585,9 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_in_loop_over_empty_table",
-      "hard_case": "The table-driven loop iterates a zero-length array, so its assert_eq! never executes.",
+      "hard_case": "The table-driven loop iterates a zero-length array, so its assert_eq! never executes. Today ripr refuses every assertion in a table loop, so this trap mainly guards a future table-loop rule: it must not credit an empty table.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -6538,19 +6598,19 @@
             "replacement": "value * 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `value >> 1` with `value * 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `value >> 1` with `value * 2`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "value % 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `value >> 1` with `value % 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `value >> 1` with `value % 2`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "value / 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `value >> 1` with `value / 3`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `value >> 1` with `value / 3`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6580,9 +6640,9 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "owner_pinned_only_by_ignored_test",
-      "hard_case": "The only test that pins rate() is #[ignore], so `cargo test` skips it.",
+      "hard_case": "The only test that pins rate() is #[ignore], so `cargo test` skips it. Without #[ignore] ripr reads the same test exposed.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -6590,22 +6650,22 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "8",
+            "replacement": "base * 4",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `8`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base` with `base * 4`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "0",
+            "replacement": "base + 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `0`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base` with `base + 3`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "1",
+            "replacement": "base * 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 + 4` with `1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * base` with `base * 2`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6616,7 +6676,7 @@
           "limited"
         ]
       },
-      "reasoning": "rate_is_pinned asserts rate() == 7 but carries #[ignore = \"slow\"]; the default test command never runs it. Adversarial shape (pin in a test that does not run by default).",
+      "reasoning": "rate_is_pinned asserts rate(2) == 6 but carries #[ignore = \"slow\"]; the default test command never runs it. Adversarial shape (pin in a test that does not run by default).",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6635,7 +6695,7 @@
         "line": 4
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "match_arm",
       "test_shape": "catch_unwind_is_ok_smoke",
       "hard_case": "The test wraps the call in catch_unwind and checks only that it did not panic; the returned level is discarded.",
       "truth": {
@@ -6648,19 +6708,19 @@
             "replacement": "8",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 * 3` with `8`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * 3` with `8`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "0",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 * 3` with `0`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * 3` with `0`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `3 * 3` with `1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `3 * 3` with `1`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6690,7 +6750,7 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "always_true_unsigned_comparison",
       "hard_case": "assert!(retries(3) >= 0) holds for every u32.",
       "truth": {
@@ -6703,19 +6763,19 @@
             "replacement": "attempts * 3",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `attempts + attempts` with `attempts * 3`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `attempts + attempts` with `attempts * 3`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "attempts / 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `attempts + attempts` with `attempts / 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `attempts + attempts` with `attempts / 2`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "attempts + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `attempts + attempts` with `attempts + 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `attempts + attempts` with `attempts + 2`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6726,7 +6786,7 @@
           "limited"
         ]
       },
-      "reasoning": "retries_is_never_negative compares an unsigned result with zero, a comparison rustc itself flags as useless. Adversarial shape (always-true assertion).",
+      "reasoning": "retries_is_never_negative compares an unsigned result with zero, a comparison rustc's unused_comparisons lint flags as useless (the test allows the lint). Adversarial shape (always-true assertion).",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6737,9 +6797,9 @@
       }
     },
     {
-      "case_id": "trap-delay-sibling-arm",
+      "case_id": "trap-quota-sibling-arm",
       "subject_id": "authored-trap-kit",
-      "diff": "cases/trap-delay-sibling-arm.diff",
+      "diff": "cases/trap-quota-sibling-arm.diff",
       "anchor": {
         "file": "src/modes.rs",
         "line": 9
@@ -6758,19 +6818,19 @@
             "replacement": "6",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `6`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `2 + 3` with `6`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "0",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `0`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `2 + 3` with `0`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `2 + 3` with `1`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6781,7 +6841,7 @@
           "limited"
         ]
       },
-      "reasoning": "premium_quota asserts quota(Tier::Premium) == 50, which never selects the Basic arm. Spec cell: RIPR-SPEC-0094 (shared `Enum::` qualifier only); paired with trap-delay-asserted-arm-control.",
+      "reasoning": "premium_quota asserts quota(Tier::Premium) == 50, which never selects the Basic arm. Spec cell: RIPR-SPEC-0094 (shared `Enum::` qualifier only); minimal pair with trap-pause-asserted-arm-control.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",
@@ -6792,9 +6852,9 @@
       }
     },
     {
-      "case_id": "trap-delay-asserted-arm-control",
+      "case_id": "trap-pause-asserted-arm-control",
       "subject_id": "authored-trap-kit",
-      "diff": "cases/trap-delay-asserted-arm-control.diff",
+      "diff": "cases/trap-pause-asserted-arm-control.diff",
       "anchor": {
         "file": "src/modes_checked.rs",
         "line": 9
@@ -6810,22 +6870,22 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "6",
+            "replacement": "7",
             "outcome": "tests_failed",
             "failing_test": "modes_checked::tests::spring_pause",
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `6`, which changes the value"
+            "equivalence_review": "not equivalent: replaces `2 + 4` with `7`, which changes the result"
           },
           {
             "replacement": "0",
             "outcome": "tests_failed",
             "failing_test": "modes_checked::tests::spring_pause",
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `0`, which changes the value"
+            "equivalence_review": "not equivalent: replaces `2 + 4` with `0`, which changes the result"
           },
           {
             "replacement": "1",
             "outcome": "tests_failed",
             "failing_test": "modes_checked::tests::spring_pause",
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `1`, which changes the value"
+            "equivalence_review": "not equivalent: replaces `2 + 4` with `1`, which changes the result"
           }
         ]
       },
@@ -6837,7 +6897,7 @@
           "silent"
         ]
       },
-      "reasoning": "Negative control for trap-delay-sibling-arm: spring_pause asserts pause(Season::Spring) == 5 on a separately named enum, so each mutant of the Spring arm fails it.",
+      "reasoning": "Negative control for trap-quota-sibling-arm: spring_pause asserts pause(Season::Spring) == 6 on a separately named enum, so each mutant of the Spring arm fails it.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "credited",
@@ -6857,8 +6917,8 @@
       },
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "match_arm",
-      "test_shape": "sibling_arm_with_same_name_owner_pinned_elsewhere",
-      "hard_case": "The edited module's own test pins only the Cold arm; a same-named delay() in another module (coolers) has a test pinning its Warm arm, which never runs heaters::delay.",
+      "test_shape": "same_name_owner_pinned_only_elsewhere",
+      "hard_case": "heaters::delay has no test of its own; a same-named delay() in a sibling module (coolers) has a test pinning its Warm arm, which never runs heaters::delay.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -6869,19 +6929,19 @@
             "replacement": "6",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `6`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `2 + 3` with `6`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "0",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `0`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `2 + 3` with `0`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `2 + 3` with `1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `2 + 3` with `1`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6892,7 +6952,7 @@
           "limited"
         ]
       },
-      "reasoning": "heaters::tests::cold_delay asserts delay(Mode::Cold) == 50 and never selects the Warm arm. coolers::tests::warm_delay asserts coolers::delay(Mode::Warm) == 5, a different function with the same name, enum and arm values. Adversarial shape (same-named function in another module lending credit); spec cell RIPR-SPEC-0094 shared `Enum::` qualifier.",
+      "reasoning": "coolers::tests::warm_delay asserts coolers::delay(Mode::Warm) == 5, a different function with the same name, enum and arm values. Nothing calls heaters::delay. Adversarial shape (same-named function in another module lending credit); see #6537.",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "credited",
@@ -6911,7 +6971,7 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "name_only_relation",
       "hard_case": "The only test mentions fee in its name and its literal (\"fee: 2\") but calls describe_fee(), which returns a constant string.",
       "truth": {
@@ -6924,19 +6984,19 @@
             "replacement": "amount / 50 + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + amount / 50` with `amount / 50 + 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + amount / 50` with `amount / 50 + 2`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "amount * 50 + 1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + amount / 50` with `amount * 50 + 1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + amount / 50` with `amount * 50 + 1`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "amount / 50",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + amount / 50` with `amount / 50`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + amount / 50` with `amount / 50`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -6966,7 +7026,7 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "local_binding_named_like_owner",
       "hard_case": "The test binds a local named `total` and asserts on it; it never calls the total() function.",
       "truth": {
@@ -6979,19 +7039,19 @@
             "replacement": "items.iter().sum::<i64>() - 1",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + items.iter().sum::<i64>()` with `items.iter().sum::<i64>() - 1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + items.iter().sum::<i64>()` with `items.iter().sum::<i64>() - 1`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "items.iter().sum::<i64>() + 2",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + items.iter().sum::<i64>()` with `items.iter().sum::<i64>() + 2`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + items.iter().sum::<i64>()` with `items.iter().sum::<i64>() + 2`, which changes the result, but no executed assertion observes it"
           },
           {
             "replacement": "items.iter().sum::<i64>()",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `1 + items.iter().sum::<i64>()` with `items.iter().sum::<i64>()`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `1 + items.iter().sum::<i64>()` with `items.iter().sum::<i64>()`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -7021,9 +7081,9 @@
         "line": 2
       },
       "edit_kind": "behavior_preserving_rewrite",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "pin_in_nested_test_fn",
-      "hard_case": "The pin is a #[test] fn nested inside another test's body; libtest cannot collect it (rustc warns unnameable_test_items) and the outer test never calls it.",
+      "hard_case": "The pin is a #[test] fn nested inside another test's body; libtest cannot collect it (the unnameable_test_items lint, allowed here, says so) and the outer test never calls it. Flattened into a plain test, ripr reads it exposed.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
@@ -7031,22 +7091,22 @@
         "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
-            "replacement": "13",
+            "replacement": "base * 6",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `6 + 6` with `13`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `5 * base` with `base * 6`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "0",
+            "replacement": "base + 5",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `6 + 6` with `0`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `5 * base` with `base + 5`, which changes the result, but no executed assertion observes it"
           },
           {
-            "replacement": "1",
+            "replacement": "base * 4",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: replaces `6 + 6` with `1`, which changes the value but no executed assertion observes it"
+            "equivalence_review": "not equivalent: replaces `5 * base` with `base * 4`, which changes the result, but no executed assertion observes it"
           }
         ]
       },
@@ -7057,7 +7117,7 @@
           "limited"
         ]
       },
-      "reasoning": "limit_suite only defines limit_is_twelve, which asserts limit() == 12 but never runs. Spec cell: RIPR-SPEC-0108 (pin in a nested test).",
+      "reasoning": "limit_suite only defines limit_is_ten, which asserts limit(2) == 10 but never runs. Spec cell: RIPR-SPEC-0108 (pin in a nested test).",
       "labeling_observation": {
         "ripr_commit": "277edf1",
         "full_checkout_verdict": "gap",

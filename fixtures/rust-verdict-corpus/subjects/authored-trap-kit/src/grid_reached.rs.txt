@@ -1,0 +1,28 @@
+pub struct Panel {
+    cols: usize,
+}
+
+impl Panel {
+    pub fn new(cols: usize) -> Panel {
+        assert!(cols > 0, "panel needs columns");
+        Panel { cols }
+    }
+
+    pub fn slot_of(&self, index: usize) -> usize {
+        if index >= 100 {
+            panic!("slot past the panel");
+        }
+        index / self.cols
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn slot_of_rejects_large_index() {
+        Panel::new(4).slot_of(100);
+    }
+}

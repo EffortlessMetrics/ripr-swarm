@@ -10,13 +10,3 @@ pub fn delay(mode: Mode) -> u32 {
         Mode::Cold => 50,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cold_delay() {
-        assert_eq!(delay(Mode::Cold), 50);
-    }
-}

@@ -2,33 +2,33 @@
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
   "corpus_version": "2026-10-04.6",
-  "cases_total": 126,
+  "cases_total": 127,
   "by_truth": {
-    "discriminated": 60,
+    "discriminated": 61,
     "not_discriminated": 50,
     "partially_discriminated": 16
   },
   "by_outcome": {
-    "abstained": 35,
-    "false_actionable": 36,
+    "abstained": 34,
+    "false_actionable": 37,
     "false_exposed": 6,
-    "ideal": 49
+    "ideal": 50
   },
   "by_observed_verdict": {
     "credited": 13,
-    "gap": 78,
-    "limited": 34,
+    "gap": 80,
+    "limited": 33,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 42,
-    "denominator": 126,
-    "rate": "0.3333"
+    "numerator": 43,
+    "denominator": 127,
+    "rate": "0.3386"
   },
   "false_actionable_rate": {
-    "numerator": 36,
-    "denominator": 60,
-    "rate": "0.6000"
+    "numerator": 37,
+    "denominator": 61,
+    "rate": "0.6066"
   },
   "false_exposed_rate": {
     "numerator": 6,
@@ -41,41 +41,41 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 49,
-    "denominator": 126,
-    "rate": "0.3889"
+    "numerator": 50,
+    "denominator": 127,
+    "rate": "0.3937"
   },
   "abstention_rate": {
-    "numerator": 35,
-    "denominator": 126,
-    "rate": "0.2778"
+    "numerator": 34,
+    "denominator": 127,
+    "rate": "0.2677"
   },
   "contradiction_rate": {
     "numerator": 2,
-    "denominator": 160,
-    "rate": "0.0125"
+    "denominator": 161,
+    "rate": "0.0124"
   },
   "contradictions_by_code": {
     "no_static_path_with_related_tests": 2
   },
   "by_origin": {
     "authored": {
-      "cases_total": 92,
+      "cases_total": 93,
       "by_observed_verdict": {
         "credited": 13,
-        "gap": 63,
-        "limited": 15,
+        "gap": 65,
+        "limited": 14,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 32,
-        "denominator": 92,
-        "rate": "0.3478"
+        "numerator": 33,
+        "denominator": 93,
+        "rate": "0.3548"
       },
       "false_actionable_rate": {
-        "numerator": 26,
-        "denominator": 40,
-        "rate": "0.6500"
+        "numerator": 27,
+        "denominator": 41,
+        "rate": "0.6585"
       },
       "false_exposed_rate": {
         "numerator": 6,
@@ -88,14 +88,14 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 44,
-        "denominator": 92,
-        "rate": "0.4783"
+        "numerator": 45,
+        "denominator": 93,
+        "rate": "0.4839"
       },
       "abstention_rate": {
-        "numerator": 16,
-        "denominator": 92,
-        "rate": "0.1739"
+        "numerator": 15,
+        "denominator": 93,
+        "rate": "0.1613"
       }
     },
     "upstream": {
@@ -2138,7 +2138,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/billing.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "self_computed_expected_via_test_helper",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2157,7 +2157,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/scaling.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "tautological_assert_eq_same_binding",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2176,7 +2176,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/sizing.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_on_input_not_result",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2191,22 +2191,22 @@
       "contradictions": []
     },
     {
-      "case_id": "trap-bump-stale-clone",
+      "case_id": "trap-bonus-stale-clone",
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/counter.rs:8",
-      "behavior_family": "field_write",
+      "behavior_family": "field_construction",
       "test_shape": "assert_on_stale_clone",
       "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "limited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
       "changed_since_labeling": false,
       "observed_classifications": [
-        "static_unknown"
+        "weakly_exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": []
     },
     {
@@ -2214,7 +2214,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/shapes.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "sibling_named_function_tested_instead",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2233,7 +2233,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/units.rs:3",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "same_name_function_other_module",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2248,11 +2248,11 @@
       "contradictions": []
     },
     {
-      "case_id": "trap-round-same-module-control",
+      "case_id": "trap-snap-imported-owner-control",
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/units_checked.rs:3",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "same_name_function_imported_owner",
       "hard_case": false,
       "truth": "discriminated",
@@ -2267,11 +2267,11 @@
       "contradictions": []
     },
     {
-      "case_id": "trap-count-early-return",
+      "case_id": "trap-steps-early-return",
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/probes.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_after_always_taken_early_return",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2286,11 +2286,11 @@
       "contradictions": []
     },
     {
-      "case_id": "trap-count-reached-assert-control",
+      "case_id": "trap-tally-reached-assert-control",
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/probes_checked.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_after_untaken_early_return",
       "hard_case": false,
       "truth": "discriminated",
@@ -2309,7 +2309,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/grid.rs:12",
-      "behavior_family": "error_path",
+      "behavior_family": "predicate_boundary",
       "test_shape": "should_panic_satisfied_by_unrelated_panic",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2324,11 +2324,30 @@
       "contradictions": []
     },
     {
-      "case_id": "trap-row-of-expected-panic-control",
+      "case_id": "trap-slot-of-reached-panic-control",
+      "subject_id": "authored-trap-kit",
+      "origin": "authored",
+      "anchor": "src/grid_reached.rs:12",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "should_panic_reached_owner_panic",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "trap-row-at-expected-panic-control",
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/grid_checked.rs:12",
-      "behavior_family": "error_path",
+      "behavior_family": "predicate_boundary",
       "test_shape": "should_panic_expected_message",
       "hard_case": false,
       "truth": "discriminated",
@@ -2347,7 +2366,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/notices.rs:6",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "owner_only_in_assert_message",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2366,7 +2385,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/tables.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "assert_in_loop_over_empty_table",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2385,7 +2404,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/rates.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "owner_pinned_only_by_ignored_test",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2404,7 +2423,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/levels.rs:4",
-      "behavior_family": "return_value",
+      "behavior_family": "match_arm",
       "test_shape": "catch_unwind_is_ok_smoke",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2423,7 +2442,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/retries.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "always_true_unsigned_comparison",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2438,7 +2457,7 @@
       "contradictions": []
     },
     {
-      "case_id": "trap-delay-sibling-arm",
+      "case_id": "trap-quota-sibling-arm",
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/modes.rs:9",
@@ -2457,7 +2476,7 @@
       "contradictions": []
     },
     {
-      "case_id": "trap-delay-asserted-arm-control",
+      "case_id": "trap-pause-asserted-arm-control",
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/modes_checked.rs:9",
@@ -2481,7 +2500,7 @@
       "origin": "authored",
       "anchor": "src/heaters.rs:9",
       "behavior_family": "match_arm",
-      "test_shape": "sibling_arm_with_same_name_owner_pinned_elsewhere",
+      "test_shape": "same_name_owner_pinned_only_elsewhere",
       "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
@@ -2499,7 +2518,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/labels.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "name_only_relation",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2518,7 +2537,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/totals.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "local_binding_named_like_owner",
       "hard_case": true,
       "truth": "not_discriminated",
@@ -2537,7 +2556,7 @@
       "subject_id": "authored-trap-kit",
       "origin": "authored",
       "anchor": "src/nested.rs:2",
-      "behavior_family": "return_value",
+      "behavior_family": "return_value_arithmetic",
       "test_shape": "pin_in_nested_test_fn",
       "hard_case": true,
       "truth": "not_discriminated",
