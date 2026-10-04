@@ -15,13 +15,13 @@ pub(in crate::analysis) fn infection_evidence(
             let test_literals = related_tests
                 .iter()
                 .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
-                // A char or byte literal (`'x'`, `b'x'`) and a number share
-                // no comparable boundary in this report, so only literals of
-                // a kind the changed boundary uses count.
+                // A number, a char (`'x'`) and a byte (`b'x'`) share no
+                // comparable boundary in this report, so only literals of a
+                // kind the changed boundary uses count.
                 .filter(|literal| {
                     probe_literals
                         .iter()
-                        .any(|boundary| is_quoted(boundary) == is_quoted(literal))
+                        .any(|boundary| literal_kind(boundary) == literal_kind(literal))
                 })
                 .collect::<Vec<_>>();
             // Only a literal that flows into the changed owner's inputs can
@@ -143,8 +143,10 @@ pub(in crate::analysis) fn infection_evidence(
     }
 }
 
-fn is_quoted(literal: &str) -> bool {
-    literal.ends_with('\'')
+/// Numeric, char or byte: (quoted, byte-prefixed).
+fn literal_kind(literal: &str) -> (bool, bool) {
+    let quoted = literal.ends_with('\'');
+    (quoted, quoted && literal.starts_with("b'"))
 }
 
 /// Why a changed predicate with no literal boundary stays unknown. A
@@ -308,11 +310,12 @@ mod tests {
                 .starts_with("Related tests pass no literal")
         );
 
+        // A byte boundary counts byte literals only, not the char `'x'`.
         let byte = probe(ProbeFamily::Predicate, "digit > b'9'");
         let evidence = infection_evidence(&byte, &[&chars], &ActivationEvidence::default());
         assert_eq!(evidence.state, StageState::Weak);
         assert!(
-            evidence.summary.contains("['x', b',']"),
+            evidence.summary.contains("[b',']"),
             "{}",
             evidence.summary
         );
