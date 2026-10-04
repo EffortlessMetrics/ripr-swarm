@@ -486,9 +486,11 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             }
         };
         let is_already_observed = class == ExposureClass::Exposed;
-        // RIPR-SPEC-0224 / #5498: a concrete gap row whose own direct,
-        // strong exact, owner-targeted oracle earned the weak exposure but
-        // establishes no sink alignment says observation is unconfirmed.
+        // RIPR-SPEC-0224 / #5498: on a weakly exposed finding from a
+        // complete, unblocked packet (a concrete discriminator is not
+        // required), a row whose own direct, strong exact, owner-targeted
+        // oracle earned the weak exposure but establishes no sink alignment
+        // says observation is unconfirmed.
         // `related` maps `related_evidence` one to one and in order. Every
         // other row keeps no miss: advisory, weak and unknown evidence is not
         // an established per-test defect, and the finding-wide discriminator

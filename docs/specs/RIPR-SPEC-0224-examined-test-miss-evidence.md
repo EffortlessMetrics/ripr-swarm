@@ -58,8 +58,8 @@ developer who disagreed had to re-derive the analysis.
   behavior (#5508). Only `assertion_not_observing` claims the assertion
   observes something else.
 - The Perl v1 producer (#5498) sets `observation_unconfirmed` on a row only
-  when the finding is a concrete `weakly_exposed` gap from a complete packet
-  with no blocking limit, the row is a reachable direct owner call, its linked
+  when the finding is `weakly_exposed` and comes from a complete packet with
+  no blocking limit (a concrete discriminator is not required), the row is a reachable direct owner call, its linked
   oracle is the strong exact, owner-targeted oracle that earned the weak
   exposure, and the shared sink-alignment check establishes no alignment for
   that row. Unequal sink text stays unconfirmed. Every other Perl row keeps no
@@ -75,7 +75,8 @@ developer who disagreed had to re-derive the analysis.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
-  `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
+  `misses: <why>; checked <assertion>` (`unconfirmed: <why>` for
+  `observation_unconfirmed`, through `related_test_miss_label`); JSON, the context packet and MCP gap
   documents carry `miss` and `why`; LSP hover prints it, and diagnostics add up
   to three related-information rows that open the examined test.
 - `ripr explain` adds a "Why this verdict" section: every retained examined

@@ -4000,8 +4000,9 @@ fn streamed_file_digest_matches_in_memory_digest() -> Result<(), String> {
 // ──────────────────────────────────────────────────────────────────────
 // #5498 — current-v1 Perl related-test misses (RIPR-SPEC-0224).
 //
-// Only a concrete-gap row whose own direct, strong exact, owner-targeted
-// oracle earned the weak exposure, with no established sink alignment, says
+// On a weakly exposed finding from a complete, unblocked packet (with or
+// without a concrete discriminator), only a row whose own direct, strong
+// exact, owner-targeted oracle earned the weak exposure, with no established sink alignment, says
 // observation is unconfirmed. Every other row keeps no miss.
 // ──────────────────────────────────────────────────────────────────────
 

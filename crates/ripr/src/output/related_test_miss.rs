@@ -56,6 +56,15 @@ pub(crate) fn related_test_miss_reason(
     })
 }
 
+/// The word placed before the reason. An unconfirmed observation is an
+/// unknown, so it is not introduced as a miss (#5508).
+pub(crate) fn related_test_miss_label(test: &RelatedTest) -> &'static str {
+    match test.miss {
+        Some(RelatedTestMiss::ObservationUnconfirmed) => "unconfirmed",
+        _ => "misses",
+    }
+}
+
 /// The assertion text a miss was judged by, on one line and without the
 /// statement's trailing `;`, for quoting after the reason.
 pub(crate) fn checked_assertion_text(oracle: &str) -> String {
@@ -163,6 +172,33 @@ mod tests {
                 "{miss:?}"
             );
         }
+    }
+
+    #[test]
+    fn only_an_unconfirmed_observation_drops_the_misses_label() {
+        let established = [
+            RelatedTestMiss::NoCallPath,
+            RelatedTestMiss::NoAssertion,
+            RelatedTestMiss::AssertionNotObserving,
+            RelatedTestMiss::AssertionNotCredited,
+            RelatedTestMiss::WeakAssertion,
+            RelatedTestMiss::MissingInput,
+            RelatedTestMiss::MissingExactAssertion,
+        ];
+        for miss in established {
+            assert_eq!(
+                related_test_miss_label(&test_with(Some(miss), None)),
+                "misses",
+                "{miss:?}"
+            );
+        }
+        assert_eq!(
+            related_test_miss_label(&test_with(
+                Some(RelatedTestMiss::ObservationUnconfirmed),
+                None
+            )),
+            "unconfirmed"
+        );
     }
 
     #[test]
