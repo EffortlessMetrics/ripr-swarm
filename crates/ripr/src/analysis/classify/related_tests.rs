@@ -5164,6 +5164,29 @@ let r = try_parse_summary(\"x\");",
     // #3714 round-2 review (coderabbit hGkkm): a binding whose name merely
     // BEGINS with the callee is a different binding — the unbounded prefix
     // check would falsely defeat the admit and drop the test's relation.
+    // (#5481 review) A binding's type is its annotation or initializer head;
+    // types nested in arguments, wrappers and turbofish paths fail closed.
+    #[test]
+    fn let_statement_type_head_reads_annotation_or_initializer_head() {
+        let cases = [
+            ("let x: Site = make()", Some("Site")),
+            ("let x: &mut Site = make()", Some("Site")),
+            ("let mut x = Site::new()", Some("Site")),
+            ("let x = crate::m::Site::new()", Some("Site")),
+            ("let x = Site { langs: Vec::new() }", Some("Site")),
+            ("let x = Site(1)", Some("Site")),
+            ("let x = &Site::default()", Some("Site")),
+            ("let x = Cache::new(Site::default())", Some("Cache")),
+            ("let x = Box::new(Site::new())", Some("Box")),
+            ("let x = Site::<u8>::new()", None),
+            ("let x = make_site()", Some("make_site")),
+            ("let x = |s: Site| s", None),
+        ];
+        for (stmt, expected) in cases {
+            assert_eq!(let_statement_type_head(stmt), expected, "{stmt}");
+        }
+    }
+
     #[test]
     fn given_near_name_binding_when_wrapper_probe_then_relation_survives() {
         let owner = function("src/lib.rs", "parse_summary");

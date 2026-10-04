@@ -235,8 +235,9 @@ requirements in this spec remain unchanged.
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_same_named_method_on_other_type_then_corroborated_witness_is_named`
   — a test calling the reaching type's method outranks an unrelated same-named method call
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_named_away_from_the_call_then_the_test_is_not_corroborated`
-- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_only_in_constructor_argument_then_the_receiver_is_not_that_type`
   — naming the type away from the call does not corroborate
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_only_in_constructor_argument_then_the_receiver_is_not_that_type`
+  — a type named only in a constructor argument is not the binding's type
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_cross_type_same_named_call_then_the_caller_still_reaches`
   — a real same-named call on another type still counts as a path onward
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_uses_may_language_and_no_coverage_claim`
