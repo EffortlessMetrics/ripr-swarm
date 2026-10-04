@@ -870,6 +870,21 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         && !format.is_repo_scope()
     {
         output.no_scope_provided = true;
+        // A default base that resolves to HEAD's own commit (for example
+        // `origin/HEAD` tracking the checked-out branch in a clone of a
+        // feature branch) makes the range empty by construction. The note on
+        // stdout names the base; this names the cause and the repair.
+        if let Some(base) = output.base.as_deref() {
+            let root = &limited_check_input.root;
+            let timeout = limited_check_input.git_timeout;
+            if let Some(hedge) = default_base_is_head_hedge(
+                base,
+                analysis::resolve_base_commit(root, Some(base), timeout).as_deref(),
+                analysis::resolve_base_commit(root, Some("HEAD"), timeout).as_deref(),
+            ) {
+                eprintln!("{hedge}");
+            }
+        }
     }
     // #2425: when --diff was explicitly provided but produced zero findings
     // on a diff-scoped format, disclose on stderr why the result is empty.
@@ -949,6 +964,22 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 ///   so no diff-validity guess is printed;
 /// - only when nothing parsed (or no outcome exists) print the generic
 ///   "may not be a valid unified diff" hint.
+/// The stderr warning for an empty default-base range whose base is HEAD's own
+/// commit: nothing can differ, so the result is not evidence about the change.
+/// `None` unless both commits resolved and are equal.
+fn default_base_is_head_hedge(
+    base: &str,
+    base_commit: Option<&str>,
+    head_commit: Option<&str>,
+) -> Option<String> {
+    match (base_commit, head_commit) {
+        (Some(base_commit), Some(head_commit)) if base_commit == head_commit => Some(format!(
+            "ripr: the default base `{base}` is the same commit as HEAD, so there is nothing to compare and this empty result is not a clean pass. Pass `--base <ref>` for the branch your change should be compared against (for example `--base origin/main`)."
+        )),
+        _ => None,
+    }
+}
+
 fn zero_findings_diff_hedge(
     outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
 ) -> Option<String> {
@@ -1295,6 +1326,26 @@ mod tests {
             .analysis_outcome
             .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
         Ok((output.findings.len(), outcome))
+    }
+
+    #[test]
+    fn default_base_equal_to_head_is_named_and_distinct_commits_stay_silent() {
+        let hedge = default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"));
+        assert!(
+            hedge
+                .as_deref()
+                .is_some_and(|text| text.contains("`origin/feat`")
+                    && text.contains("same commit as HEAD")
+                    && text.contains("--base")),
+            "{hedge:?}"
+        );
+        assert_eq!(
+            default_base_is_head_hedge("origin/main", Some("abc"), Some("def")),
+            None
+        );
+        // An unresolved side is never asserted equal.
+        assert_eq!(default_base_is_head_hedge("main", None, None), None);
+        assert_eq!(default_base_is_head_hedge("main", Some("abc"), None), None);
     }
 
     #[test]

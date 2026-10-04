@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- CLI: `ripr check` with no `--base` warns on stderr when the resolved default
+  base is HEAD's own commit (for example `origin/HEAD` tracking the checked-out
+  branch in a clone of a feature branch). The empty range is not evidence
+  about the change, and the warning names `--base <ref>`. The stdout note and
+  JSON are unchanged.
+
 - GitHub: `ripr check --format github` omits `,line=` when a finding's probe
   location is line 0, instead of emitting out-of-contract `line=0`. Findings
   with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are
