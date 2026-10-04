@@ -188,13 +188,6 @@ fn check_github_stdout_is_unchanged_by_progress() -> Result<(), String> {
     machine_format_stdout_is_unchanged("github")
 }
 
-#[test]
-fn check_markdown_stdout_is_unchanged_by_progress() -> Result<(), String> {
-    // Published traceability still names this symbol. `ripr check` has no
-    // `--format markdown`; the discriminator uses the github machine format.
-    machine_format_stdout_is_unchanged("github")
-}
-
 fn machine_format_stdout_is_unchanged(format: &str) -> Result<(), String> {
     let loud = run_check(&["--format", format])?;
     let quiet = run_check(&["--format", format, "--quiet"])?;
@@ -458,14 +451,20 @@ fn repo_format_disclosure_is_absent_outside_the_audit_path_group() -> Result<(),
         "diff-scoped json must not claim audit-path cost: {}",
         stderr_text(&diff_json)
     );
-    // Repo badge surface: repo-scoped, but renders the compact summary, not
-    // the audit walk, so it must not claim minutes it does not charge.
+    // Repo badge surface: since #5261 its canonical_actionable_gap count
+    // derives from the same full classified walk repo-exposure renders, so
+    // it joined the audit-path group and must disclose the cost class it
+    // now charges. The diff-scoped control above stays outside the group.
     let badge = run_repo_format(&root, "repo-badge-json", &[])?;
     assert!(badge.status.success(), "{}", stderr_text(&badge));
     let badge_err = stderr_text(&badge);
     assert!(
-        !badge_err.contains("audit path"),
-        "repo-badge-json must not claim audit-path cost: {badge_err}"
+        badge_err.contains("full-repo audit path"),
+        "repo-badge-json must disclose audit-path cost now that it walks the          classified inventory: {badge_err}"
+    );
+    assert!(
+        badge_err.contains("warm reruns reuse the seam-facts cache"),
+        "cache-backed badge disclosure must claim warm reruns: {badge_err}"
     );
     ignore_remove_dir_all(&root);
     Ok(())
