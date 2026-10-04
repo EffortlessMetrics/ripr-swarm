@@ -341,27 +341,22 @@ pub(crate) fn declared_binding(line: &str) -> Option<String> {
     plain.then_some(name)
 }
 
-/// The initializer of a `let` statement: the text after its first plain `=`
-/// outside the type's angle brackets, skipping `==`, `!=`, `<=`, `>=` and
-/// `=>`, so neither an associated-type binding (`Item = u32`) nor an `=`
-/// inside the initializer splits it.
+/// The initializer of a `let` statement: the text after the first `=` outside
+/// the type's angle brackets. Everything before the assignment is pattern and
+/// type, where `<` and `>` only bracket generics (`->` aside), so neither an
+/// associated-type binding (`Item = u32`), an unspaced `Option<usize>=`, nor
+/// an `=` inside the initializer splits it.
 fn let_initializer(statement: &str) -> Option<&str> {
     let bytes = statement.as_bytes();
     let mut depth = 0usize;
     let mut at = None;
     for (i, &b) in bytes.iter().enumerate() {
-        let prev = i.checked_sub(1).map(|j| bytes[j]);
-        let next = bytes.get(i + 1).copied();
         match b {
-            b'<' if next != Some(b'=') => depth += 1,
-            // `->` in a fn-pointer type is not a closing bracket.
-            b'>' if prev != Some(b'-') && prev != Some(b'=') && next != Some(b'=') => {
+            b'<' => depth += 1,
+            b'>' if i.checked_sub(1).map(|j| bytes[j]) != Some(b'-') => {
                 depth = depth.saturating_sub(1)
             }
-            b'=' if depth == 0
-                && !matches!(prev, Some(b'=' | b'!' | b'<' | b'>'))
-                && !matches!(next, Some(b'=' | b'>')) =>
-            {
+            b'=' if depth == 0 => {
                 at = Some(i);
                 break;
             }
