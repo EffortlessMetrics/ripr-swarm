@@ -161,9 +161,19 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     }
 
     let mut options = parse_options(args)?;
+    let repo = repo_root()?;
+    // A root that is not a directory cannot be analyzed: refuse (exit 2) before
+    // the disclosure and before writing a recovery packet, so a mistyped path
+    // does not read as a completed run. The recovery packet still serves roots
+    // that exist but are not workspaces.
+    if !resolve_path(&repo, &options.root).is_dir() {
+        return Err(format!(
+            "first-pr: --root {} is not a directory, so nothing was written. Pass the repository root with `--root`, or run from inside the repository.",
+            options.root
+        ));
+    }
     print_side_effect_disclosure(&options);
 
-    let repo = repo_root()?;
     let resolution = omitted_base_resolution(&repo, &options);
     // A missing packet is answered before a base failure (#4285): `--check`
     // never diffs, so a repository where no default base resolves still gets
@@ -2619,7 +2629,7 @@ fn git_success_with_ceiling(
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
         format!(
-            "git -C {} fetch origin {}",
+            "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),
             shell_arg(branch)
         )
@@ -3803,7 +3813,7 @@ mod tests {
         );
         assert_eq!(
             packet["selected"]["next_command"],
-            format!("git -C {} fetch origin missing-base", bound_arg("."))
+            format!("git -C {} fetch origin -- missing-base", bound_arg("."))
         );
         cleanup(&repo)
     }
