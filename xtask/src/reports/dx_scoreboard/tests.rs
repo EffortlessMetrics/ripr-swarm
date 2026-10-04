@@ -576,7 +576,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 
     let evidence = |input: &Value| input["evidence"].as_str().unwrap_or_default().to_string();
     assert!(
-        !evidence(&input).contains("sampled"),
+        !evidence(&input).contains("cargo-mutants arguments"),
         "{}",
         evidence(&input)
     );
@@ -589,7 +589,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     sampled["repos"][0]["cargo_mutants_args"] = json!(["--re=decode"]);
     let input = mutation_spot_check_to_input(&sampled)?;
     assert!(
-        evidence(&input).contains("1 sampled with cargo-mutants arguments"),
+        evidence(&input).contains("1 ran with cargo-mutants arguments"),
         "{}",
         evidence(&input)
     );

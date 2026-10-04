@@ -153,7 +153,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 let value = required_arg(args, index, flag)?;
                 let Some((name, arg)) = value
                     .split_once('=')
-                    .filter(|(name, arg)| !name.trim().is_empty() && !arg.is_empty())
+                    .filter(|(name, arg)| !name.trim().is_empty() && !arg.trim().is_empty())
                 else {
                     return Err(format!("--mutants-arg expects <name>=<arg>, got `{value}`"));
                 };
@@ -918,7 +918,7 @@ fn spot_check_markdown(report: &Value) -> String {
             .collect::<Vec<_>>();
         if !sampled.is_empty() {
             out.push_str(&format!(
-                "\n{} mutants were sampled with {}.\n",
+                "\n{} ran cargo-mutants with {}.\n",
                 repo.get("name").and_then(Value::as_str).unwrap_or(""),
                 sampled.join(" ")
             ));
@@ -1089,6 +1089,10 @@ mod tests {
             ),
             (
                 vec!["--run-mutants", "--mutants-arg", "hex="],
+                "expects <name>=<arg>",
+            ),
+            (
+                vec!["--run-mutants", "--mutants-arg", "hex= "],
                 "expects <name>=<arg>",
             ),
             (

@@ -32,11 +32,16 @@ The receipt is `target/ripr/reports/mutation-spot-check.{json,md}`.
 
 Large repositories take hours to mutate in full. `--mutants-arg <name>=<arg>`
 passes one argument to that repository's cargo-mutants run, and can be
-repeated to sample a subset. The receipt records the arguments, so the sample
-can be reproduced, and the scoreboard marks sampled rates. Each value is one
-argument (`--re=decode`, not `--re decode`). Options the harness owns, such as
-`--output`, `--jobs` or `--in-place`, are refused. Multi-crate workspaces also need `--workspace` or
-`--package`, because cargo-mutants mutates only the root package by default:
+repeated to sample a subset. The receipt records the arguments, so the run can
+be reproduced, and the scoreboard marks rates from runs with extra arguments.
+Each value is one argument (`--re=decode`, not `--re decode`). Options the
+harness owns, such as `--output`, `--jobs` or `--in-place`, are refused.
+
+Package selection follows cargo-mutants. In a workspace whose root is a
+package, it mutates only that package unless given `--workspace` or
+`--package`. In a virtual workspace it mutates the `default-members`, or every
+package when there are none. Zola's root is a package, so reaching
+`components/site` needs `--workspace`:
 
 ```bash
 cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
