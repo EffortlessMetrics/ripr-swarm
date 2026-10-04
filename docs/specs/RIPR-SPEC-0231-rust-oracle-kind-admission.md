@@ -192,7 +192,14 @@ Two pattern terms are used below.
    sides (`Ok` and `Err`, or `Some` and `None`) assigns `relational_check` /
    weak, because it does not observe the side (`Ok(_) | Err(E::X)`); any
    other or-pattern reads as its weakest alternative. Any other pattern
-   stays `exact_value`.
+   stays `exact_value` only when it pins a value: it contains a literal
+   outside a range, a constant, or a variant of an enum shown to have more
+   than one variant (the `Option` and `Result` constructors are read as
+   side-only above). A pattern that pins no value assigns
+   `relational_check` / weak: a slice that only fixes a length (`[_, ..]`,
+   `[_]`), or the sole variant of a single-variant enum (`Only::Value`,
+   `Only::Value(_)`). A variant whose enum cannot be resolved counts as
+   pinning, which keeps today's reading.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -304,9 +311,11 @@ rejected alternative. Any can be reversed later without touching the rest.
     `relational_check` / weak (today `exact_value` / strong).
 25. `assert!(matches!(lookup(1), Some(1..=5)))`: `relational_check` / weak;
     `assert!(matches!(parse(), Some(Ok(_))))` and `&Some(_)`: `smoke_only` /
-    smoke; `assert!(matches!(items(), [_, ..]))`: stays `exact_value`
-    (a length check is not irrefutable); all read `exact_value` / strong
-    today. `assert!(matches!(check(20), Ok(_) | Err(E::Bad)))`:
+    smoke; `assert!(matches!(items(), [_, ..]))` and, for
+    `enum Only { Value }`, `assert!(matches!(make(), Only::Value))`:
+    `relational_check` / weak, because neither pins a value;
+    `assert!(matches!(items(), [1, ..]))` stays `exact_value`; all read
+    `exact_value` / strong today. `assert!(matches!(check(20), Ok(_) | Err(E::Bad)))`:
     `relational_check` / weak (today `exact_error_variant` / strong).
     `assert!(matches!(lookup(1), Some(3) | Some(_)))`: `smoke_only` / smoke
     (weakest alternative).
