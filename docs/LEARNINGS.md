@@ -17,6 +17,7 @@ bytes. `ExitJson::GateEvaluate` still declares those names as fixed serde
 keys; a compile-time assertion requires the keys to match the producer
 tokens. Do not treat a limitation sentence or a "non-zero" stop-state as
 the contract.
+
 ## 2026-10-04: Weak grip needs established activation (pilot accuracy)
 
 `ripr pilot` ranks `weakly_gripped` first. The mutation spot check scored its

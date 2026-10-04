@@ -51,6 +51,22 @@ pub(super) fn pilot_top_seams(
         "ripr pilot for spot check",
     )?;
     let summary = read_json(&out_dir.join("pilot-summary.json"))?;
+    top_seams_from_summary(name, &summary)
+}
+
+/// Pilot exits 0 with a `partial` summary and no ranked seams when its own
+/// budget runs out, so only a `complete` summary counts as a ranking;
+/// anything else makes the repo unavailable rather than empty.
+fn top_seams_from_summary(name: &str, summary: &Value) -> Result<Vec<Value>, String> {
+    let status = summary
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("missing");
+    if status != "complete" {
+        return Err(format!(
+            "pilot summary for `{name}` has status `{status}`, not `complete`"
+        ));
+    }
     summary
         .get("top_actionable_seams")
         .and_then(Value::as_array)
@@ -388,5 +404,24 @@ mod tests {
         assert!(rendered.contains(
             "| b | - | pilot unavailable: ripr pilot timed out \\| after 600s | | | unavailable |"
         ));
+    }
+
+    #[test]
+    fn only_a_complete_pilot_summary_counts_as_a_ranking() {
+        let seams = json!([{"file": "src/lib.rs", "line": 3}]);
+        let complete = json!({"status": "complete", "top_actionable_seams": seams});
+        assert_eq!(
+            top_seams_from_summary("a", &complete).map(|top| top.len()),
+            Ok(1)
+        );
+        for summary in [
+            json!({"status": "partial", "top_actionable_seams": []}),
+            json!({"top_actionable_seams": seams}),
+        ] {
+            assert!(
+                top_seams_from_summary("a", &summary)
+                    .is_err_and(|err| err.contains("not `complete`"))
+            );
+        }
     }
 }
