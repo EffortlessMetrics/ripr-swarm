@@ -196,8 +196,8 @@ target = 0.05
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_verdict_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_verdict_rate"
+pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_actionable"
@@ -209,8 +209,8 @@ target = 0.05
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_actionable_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_actionable_rate"
+pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_abstention"
@@ -222,8 +222,8 @@ target = 0.2
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#abstention_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "file:fixtures/rust-verdict-corpus/expected/summary.json#abstention_rate"
+pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_silent"
@@ -235,8 +235,8 @@ target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_silent_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_silent_rate"
+pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.verdict_corpus_false_exposed"
@@ -248,8 +248,8 @@ target = 0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_exposed_rate"
-pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
+source = "file:fixtures/rust-verdict-corpus/expected/summary.json#false_exposed_rate"
+pending_reason = "fixtures/rust-verdict-corpus/expected/summary.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"

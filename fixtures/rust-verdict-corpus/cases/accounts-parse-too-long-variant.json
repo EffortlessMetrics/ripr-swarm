@@ -1,0 +1,56 @@
+{
+  "case_id": "accounts-parse-too-long-variant",
+  "subject_id": "authored-accounts",
+  "diff": "cases/accounts-parse-too-long-variant.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "unit_test_assert_is_err",
+  "hard_case": "ripr's error_path finding reads exposed, borrowing strong variant pins from sibling tests of the same function (Empty, BadDigit); the line still scores gap because a weakly_exposed return_value finding outranks it.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(ParseError::Empty);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: too-long text reports Empty"
+      },
+      {
+        "replacement": "return Err(ParseError::TooLong(0));",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the reported length is 0"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "outcome": "tests_failed",
+        "failing_test": "parse::tests::too_many_digits_are_refused",
+        "equivalence_review": "not equivalent: thirteen digits parse as 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

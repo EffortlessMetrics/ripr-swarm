@@ -1,0 +1,49 @@
+{
+  "case_id": "checkout-announce-stdout-sink",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-announce-stdout-sink.diff",
+  "anchor": {
+    "file": "src/rates.rs",
+    "line": 32
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "stdout_macro_sink",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "println!(\"rate is now {}\", rate * 3);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the printed rate is tripled"
+      },
+      {
+        "replacement": "(delete the statement)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: nothing is printed"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Nothing captures stdout, so the printed value is unobservable to the tests. Spec cells: RIPR-SPEC-0096.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

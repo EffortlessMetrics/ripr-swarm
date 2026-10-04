@@ -1,0 +1,50 @@
+{
+  "case_id": "checkout-fee-err-return-guard",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-fee-err-return-guard.diff",
+  "anchor": {
+    "file": "src/fees.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_returns_err_on_mismatch",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "amount * 25",
+        "outcome": "tests_failed",
+        "failing_test": "fees::tests::check_fee_returns_an_err_on_mismatch",
+        "equivalence_review": "not equivalent: check_fee(500) becomes 12500"
+      },
+      {
+        "replacement": "amount / 5",
+        "outcome": "tests_failed",
+        "failing_test": "fees::tests::check_fee_returns_an_err_on_mismatch",
+        "equivalence_review": "not equivalent: check_fee(500) becomes 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test returns Err when check_fee(500) != 20, which fails the test for any change to the divisor. Spec cells: RIPR-SPEC-0154.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

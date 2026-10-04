@@ -1,0 +1,50 @@
+{
+  "case_id": "shop-discount-path-dependent-test",
+  "subject_id": "authored-shop",
+  "diff": "cases/shop-discount-path-dependent-test.diff",
+  "anchor": {
+    "file": "pricing/src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "path_dependent_crate_integration_test",
+  "hard_case": "The only test is in the dependent crate and reaches the owner through its public API.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total - 6",
+        "outcome": "tests_failed",
+        "failing_test": "order_total_takes_the_discount",
+        "equivalence_review": "not equivalent: order_total(50) becomes 44"
+      },
+      {
+        "replacement": "total + 5",
+        "outcome": "tests_failed",
+        "failing_test": "order_total_takes_the_discount",
+        "equivalence_review": "not equivalent: order_total(50) becomes 55"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "orders::order_total calls pricing::discount and orders/tests pins order_total(50) to 45. Spec cells: RIPR-SPEC-0171.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

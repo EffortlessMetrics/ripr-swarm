@@ -1,0 +1,44 @@
+{
+  "case_id": "pricing-gold-discount-rate",
+  "subject_id": "authored-pricing",
+  "diff": "cases/pricing-gold-discount-rate.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 33
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Tier::Gold => 15,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::discounts_apply_per_tier",
+        "equivalence_review": "the edit itself: Gold customers get 15 percent off, so 10000 cents becomes 8500 instead of 9000"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "discounts_apply_per_tier asserts discounted_cents(10_000, Tier::Gold) == 9_000, so the new rate fails it and quote_combines_discount_and_shipping. ripr reports weakly_exposed on the match arm despite naming the exact assertion, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

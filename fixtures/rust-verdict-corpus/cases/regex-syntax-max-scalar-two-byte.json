@@ -1,0 +1,50 @@
+{
+  "case_id": "regex-syntax-max-scalar-two-byte",
+  "subject_id": "regex",
+  "diff": "cases/regex-syntax-max-scalar-two-byte.diff",
+  "anchor": {
+    "file": "regex-syntax/src/utf8.rs",
+    "line": 448
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test -p regex-syntax --lib",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "2 => 0x7FE",
+        "outcome": "tests_failed",
+        "failing_test": "utf8::tests::bmp",
+        "equivalence_review": "not equivalent: U+07FF is no longer two-byte encodable"
+      },
+      {
+        "replacement": "2 => 0x800",
+        "outcome": "tests_failed",
+        "failing_test": "utf8::tests::bmp",
+        "equivalence_review": "not equivalent: U+0800 becomes two-byte encodable"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "utf8::tests::bmp checks the encoded sequences across the BMP and fails on either side of 0x7FF. ripr's weakly_exposed gap is a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

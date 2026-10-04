@@ -1,0 +1,56 @@
+{
+  "case_id": "atuin-ai-history-output-capability",
+  "subject_id": "atuin-90f590b9",
+  "diff": "cases/atuin-ai-history-output-capability.diff",
+  "anchor": {
+    "file": "crates/atuin-ai/src/context.rs",
+    "line": 40
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "no_test_reaches_owner",
+  "hard_case": "repo mode grades this seam strongly_gripped, yet all three mutants leave 1,258 tests green; diff mode's gap rests on related tests linked only by the shared token 'context'.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test -p atuin-ai -p atuin",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "daemon_enabled || cfg!(feature = \"daemon\")",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent in the test build: `-p atuin-ai -p atuin` (like --workspace) unifies atuin's default `daemon` feature onto atuin-ai (fingerprint features [daemon, default, tree-sitter]), so cfg! is true, the original returns daemon_enabled and this mutant returns true; it differs whenever settings.daemon.enabled is false. (With cfg! false, under plain `-p atuin-ai`, it returns daemon_enabled instead of false, also non-equivalent.)"
+      },
+      {
+        "replacement": "true",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent in the test build (cfg! true): returns true when daemon_enabled is false, advertising client_v1_atuin_output with no daemon."
+      },
+      {
+        "replacement": "false",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent in the test build (cfg! true): returns false when daemon_enabled is true, dropping the atuin_output capability. It IS equivalent under plain `cargo test -p atuin-ai` (no daemon feature: the original is constant false), so that build cannot be used as truth for this mutant."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test reaches history_output_capability_available: its only callers are capability_strings, reached from AppContext::capabilities_as_strings (built only in commands/inline.rs, the interactive entry) and ChatRequest::new (only when AiApp has io; every TUI test uses AiApp::headless with io None). All three mutants pass 1,258 tests in the daemon-enabled build, so the line is not discriminated. Diff-mode ripr does not credit it: weakly_exposed (return_value) plus infection_unknown (predicate), a gap, which is the ideal verdict. But the gap rests on related tests in context_window.rs linked only by relation_reason weak_token_substring (the shared 'context' token); ripr itself says no test is seen calling the function. Repo mode's strongly_gripped is not reproduced in diff mode.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

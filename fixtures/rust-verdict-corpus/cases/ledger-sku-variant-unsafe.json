@@ -1,0 +1,50 @@
+{
+  "case_id": "ledger-sku-variant-unsafe",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-sku-variant-unsafe.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 40
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "static_unknown",
+  "test_shape": "unit_test_assert_not_empty",
+  "hard_case": "unsafe block; the only test asserts non-emptiness, which ripr labels a whole-object equality oracle",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "unsafe { sku.get_unchecked(start.saturating_sub(1)..sku.len()) }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: sku_variant(\"BOLT-M8\") returns \"-M8\" instead of \"M8\""
+      },
+      {
+        "replacement": "unsafe { sku.get_unchecked(sku.len()..sku.len()) }",
+        "outcome": "tests_failed",
+        "failing_test": "tests::dashed_skus_have_a_variant",
+        "equivalence_review": "not equivalent: sku_variant(\"BOLT-M8\") returns \"\" instead of \"M8\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "dashed_skus_have_a_variant only asserts !sku_variant(\"BOLT-M8\").is_empty(), so keeping the dash passes and an empty slice fails. ripr credits the return_value probe as exposed with a 'whole-object equality' oracle, a false exposed verdict.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed",
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "case_id": "serde-format-u8-hundreds",
+  "subject_id": "serde",
+  "diff": "cases/serde-format-u8-hundreds.diff",
+  "anchor": {
+    "file": "serde_core/src/ser/impls.rs",
+    "line": 770
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "loop_assert_eq_exhaustive",
+  "hard_case": "serde's test_format_u8 checks all 256 u8 values with assert_eq! inside `loop`; the efficiency thread traced ripr's refusal to the loop and #[macro_use] mod rules, and the full repository also routes serde_core through a symlinked serde/src/core module.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test -p serde_core --lib",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n > 100",
+        "outcome": "tests_failed",
+        "failing_test": "ser::impls::test_format_u8",
+        "equivalence_review": "not equivalent: 100 takes the two-digit branch and indexes the table past its end"
+      },
+      {
+        "replacement": "n > 98",
+        "outcome": "tests_failed",
+        "failing_test": "ser::impls::test_format_u8",
+        "equivalence_review": "not equivalent: 99 takes the three-digit branch and writes a leading zero"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Every u8 value is formatted and compared with to_string(), so any boundary change at 100 fails test_format_u8. Withholding observation credit for an assertion inside a loop is a defensible static limit, but reporting reachable_unrevealed (a repairable gap with 'no assertion observes the changed behavior') is a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

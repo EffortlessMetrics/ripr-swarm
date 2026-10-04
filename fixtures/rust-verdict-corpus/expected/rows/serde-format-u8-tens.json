@@ -1,0 +1,19 @@
+{
+  "case_id": "serde-format-u8-tens",
+  "subject_id": "serde",
+  "origin": "upstream",
+  "anchor": "serde_core/src/ser/impls.rs:777",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "loop_assert_eq_exhaustive",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

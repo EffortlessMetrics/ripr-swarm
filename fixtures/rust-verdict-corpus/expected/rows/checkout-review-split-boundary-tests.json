@@ -1,0 +1,19 @@
+{
+  "case_id": "checkout-review-split-boundary-tests",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/limits.rs:20",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "split_test_boundary_oracle",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": []
+}

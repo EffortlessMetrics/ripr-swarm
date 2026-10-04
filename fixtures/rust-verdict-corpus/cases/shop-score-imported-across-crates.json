@@ -1,0 +1,50 @@
+{
+  "case_id": "shop-score-imported-across-crates",
+  "subject_id": "authored-shop",
+  "diff": "cases/shop-score-imported-across-crates.diff",
+  "anchor": {
+    "file": "pricing/src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "dependent_crate_test_imports_owner",
+  "hard_case": "The test lives in a different workspace crate that depends on pricing by path.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "points * 4",
+        "outcome": "tests_failed",
+        "failing_test": "score_triples_points",
+        "equivalence_review": "not equivalent: score(7) becomes 28"
+      },
+      {
+        "replacement": "points + 3",
+        "outcome": "tests_failed",
+        "failing_test": "score_triples_points",
+        "equivalence_review": "not equivalent: score(7) becomes 10"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "orders/tests imports pricing::score and pins score(7) to 21. Spec cells: RIPR-SPEC-0172.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

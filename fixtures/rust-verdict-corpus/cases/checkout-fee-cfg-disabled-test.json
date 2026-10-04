@@ -1,0 +1,49 @@
+{
+  "case_id": "checkout-fee-cfg-disabled-test",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-fee-cfg-disabled-test.diff",
+  "anchor": {
+    "file": "src/fees.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test_in_cfg_false_module",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "amount * 20",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: crypto_fee(100) becomes 2000"
+      },
+      {
+        "replacement": "amount / 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: crypto_fee(100) becomes 50"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test of crypto_fee is in a #[cfg(any())] module, which is never compiled. Spec cells: RIPR-SPEC-0108.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

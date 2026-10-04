@@ -1,0 +1,50 @@
+{
+  "case_id": "ledger-sku-family-end",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-sku-family-end.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 31
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = sku.find('-').unwrap_or_else(|| 0);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::sku_family_is_the_text_before_the_first_dash",
+        "equivalence_review": "not equivalent: sku_family(\"WASHER\") returns \"\" instead of \"WASHER\""
+      },
+      {
+        "replacement": "let end = sku.find('_').unwrap_or_else(|| sku.len());",
+        "outcome": "tests_failed",
+        "failing_test": "tests::sku_family_is_the_text_before_the_first_dash",
+        "equivalence_review": "not equivalent: sku_family(\"BOLT-M8\") returns \"BOLT-M8\" instead of \"BOLT\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "sku_family_is_the_text_before_the_first_dash asserts both the dashed and undashed SKU exactly, so either change fails it. ripr reports infection_unknown on the line, an acceptable limit where credit is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

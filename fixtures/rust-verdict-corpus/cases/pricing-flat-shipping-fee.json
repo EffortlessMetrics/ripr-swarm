@@ -1,0 +1,43 @@
+{
+  "case_id": "pricing-flat-shipping-fee",
+  "subject_id": "authored-pricing",
+  "diff": "cases/pricing-flat-shipping-fee.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "unit_test_relational_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const FLAT_SHIPPING_CENTS: u64 = 599;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: an order under 5000 cents is charged 599 instead of 499"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "small_orders_pay_shipping only asserts shipping_cents(1_000) > 0, and the quote test ships free, so a different flat fee passes. ripr reports static_unknown on the const line, an acceptable limit where a gap is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

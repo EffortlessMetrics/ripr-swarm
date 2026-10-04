@@ -1,0 +1,51 @@
+{
+  "case_id": "checkout-daily-limit-imported-const",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-daily-limit-imported-const.diff",
+  "anchor": {
+    "file": "src/limits.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_via_imported_const",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "count > DAILY_LIMIT",
+        "outcome": "tests_failed",
+        "failing_test": "limits::tests::the_daily_limit_is_inclusive",
+        "equivalence_review": "not equivalent: exactly DAILY_LIMIT is no longer over"
+      },
+      {
+        "replacement": "count >= DAILY_LIMIT - 1",
+        "outcome": "tests_failed",
+        "failing_test": "limits::tests::the_daily_limit_is_inclusive",
+        "equivalence_review": "not equivalent: DAILY_LIMIT - 1 becomes over the limit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test asserts both sides of the boundary using the imported DAILY_LIMIT, so each boundary shift fails it. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0035, RIPR-SPEC-0040.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "propagation_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

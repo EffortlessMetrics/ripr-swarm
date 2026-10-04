@@ -1,0 +1,49 @@
+{
+  "case_id": "semver-max-comparators",
+  "subject_id": "semver",
+  "diff": "cases/semver-max-comparators.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 399
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "MAX_COMPARATORS == depth + 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a 31-comparator requirement is rejected"
+      },
+      {
+        "replacement": "MAX_COMPARATORS == depth",
+        "outcome": "tests_failed",
+        "failing_test": "test_multiple",
+        "equivalence_review": "not equivalent: the limit check moves one comparator later"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test parses a requirement at the 31/32 comparator limit, so tightening the limit by one keeps the tests passing. ripr limits on the public API path, an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

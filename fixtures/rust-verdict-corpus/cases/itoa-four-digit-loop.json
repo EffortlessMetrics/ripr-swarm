@@ -1,0 +1,49 @@
+{
+  "case_id": "itoa-four-digit-loop",
+  "subject_id": "itoa",
+  "diff": "cases/itoa-four-digit-loop.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 365
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "macro_generated_tests",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "remain >= 1001",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a remaining 1000 skips the four-digit loop"
+      },
+      {
+        "replacement": "remain >= 999",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a remaining 999 is written with a leading zero"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test value leaves exactly 999 or 1000 for the loop, so the tests still pass under both mutants. ripr limits, an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

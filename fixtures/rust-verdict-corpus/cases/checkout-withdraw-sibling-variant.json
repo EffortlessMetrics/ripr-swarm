@@ -1,0 +1,50 @@
+{
+  "case_id": "checkout-withdraw-sibling-variant",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-withdraw-sibling-variant.diff",
+  "anchor": {
+    "file": "src/payment.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "guarded_match_pins_sibling_variant",
+  "hard_case": "ripr's error_path finding reads exposed, borrowing the strong `matches!(refund(20_000), Err(PayError::Limit))` pin from a test of a different function in the same file; the line still scores gap because a weakly_exposed return_value finding outranks it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(PayError::Insufficient);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a frozen wallet reports Insufficient"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a frozen wallet can withdraw"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test freezes a wallet; the guarded match pins Insufficient, a sibling variant, so the Frozen return is never observed. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0106.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

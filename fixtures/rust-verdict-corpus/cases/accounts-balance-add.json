@@ -1,0 +1,50 @@
+{
+  "case_id": "accounts-balance-add",
+  "subject_id": "authored-accounts",
+  "diff": "cases/accounts-balance-add.diff",
+  "anchor": {
+    "file": "src/account.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_field_write",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": "A field write through `=` gets no side_effect probe; ripr reports a static_unknown finding instead.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(delete the statement)",
+        "outcome": "tests_failed",
+        "failing_test": "account::tests::deposits_add_to_the_balance",
+        "equivalence_review": "not equivalent: the balance stays 0"
+      },
+      {
+        "replacement": "self.balance -= amount;",
+        "outcome": "tests_failed",
+        "failing_test": "account::tests::deposits_add_to_the_balance",
+        "equivalence_review": "not equivalent: the balance becomes -150"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "deposits_add_to_the_balance reads the balance back with assert_eq!, so both mutants of the field write fail it. Spec cells: RIPR-SPEC-0001 side effect family (field write).",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

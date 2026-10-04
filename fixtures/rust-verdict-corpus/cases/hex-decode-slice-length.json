@@ -1,0 +1,49 @@
+{
+  "case_id": "hex-decode-slice-length",
+  "subject_id": "rust-hex",
+  "diff": "cases/hex-decode-slice-length.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 327
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "unit_test_assert_eq_error",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "out.len() < data.len() / 2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a longer output buffer is accepted"
+      },
+      {
+        "replacement": "out.len() > data.len() / 2",
+        "outcome": "tests_failed",
+        "failing_test": "test::test_from_hex_array",
+        "equivalence_review": "not equivalent: a shorter output buffer is accepted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Only the too-short buffer is tested, so accepting a too-long buffer keeps the tests passing. ripr's gap verdict is ideal, though its stated reason (unestablished assertion context) is not the real gap.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

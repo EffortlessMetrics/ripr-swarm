@@ -1,0 +1,49 @@
+{
+  "case_id": "accounts-trailer-crc",
+  "subject_id": "authored-accounts",
+  "diff": "cases/accounts-trailer-crc.diff",
+  "anchor": {
+    "file": "src/frame.rs",
+    "line": 29
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "unit_test_other_field_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "crc: 0,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the crc of b\"abcd\" is not 0"
+      },
+      {
+        "replacement": "crc: crc(body) ^ 1,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: every crc flips its low bit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "trailer_repeats_the_length reads only trailer(..).len, so the crc field can hold any value. Spec cells: RIPR-SPEC-0001 field construction family; RIPR-SPEC-0094 other field only.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

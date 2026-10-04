@@ -1,0 +1,50 @@
+{
+  "case_id": "semver-leading-zero",
+  "subject_id": "semver",
+  "diff": "cases/semver-leading-zero.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 169
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "integration_test_error_message",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "len > 1 && value == 0",
+        "outcome": "tests_failed",
+        "failing_test": "test_parse",
+        "equivalence_review": "not equivalent: \"01\" is accepted"
+      },
+      {
+        "replacement": "len > 0 && value == 1",
+        "outcome": "tests_failed",
+        "failing_test": "test_parse",
+        "equivalence_review": "not equivalent: \"10\" is rejected and \"01\" accepted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_parse asserts the exact leading-zero error messages, so both mutants fail. ripr limits on the public API path, an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

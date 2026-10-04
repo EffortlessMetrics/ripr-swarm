@@ -1,0 +1,50 @@
+{
+  "case_id": "roles-limit-const-value",
+  "subject_id": "authored-roles",
+  "diff": "cases/roles-limit-const-value.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "boundary_via_same_file_const",
+  "hard_case": "ripr lists doubling_the_sample, which never touches LIMIT, as the related test, and misses the_limit_is_ten.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const LIMIT: u32 = 11;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::the_limit_is_ten",
+        "equivalence_review": "not equivalent: 11 falls within the limit"
+      },
+      {
+        "replacement": "pub const LIMIT: u32 = 9;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::the_limit_is_ten",
+        "equivalence_review": "not equivalent: 10 falls outside the limit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "the_limit_is_ten asserts within(10) and !within(11), so moving LIMIT either way fails it. Spec cells: RIPR-SPEC-0048, RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

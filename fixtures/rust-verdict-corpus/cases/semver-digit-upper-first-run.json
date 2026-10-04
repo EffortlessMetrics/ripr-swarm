@@ -1,0 +1,44 @@
+{
+  "case_id": "semver-digit-upper-first-run",
+  "subject_id": "semver",
+  "diff": "cases/semver-digit-upper-first-run.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 166
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": "first-run harness edit (PR #5286); 0.10.0 said reachable_unrevealed, 0.11 dev says infection_unknown",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "digit >= b'9'",
+        "outcome": "tests_failed",
+        "failing_test": "test_basic",
+        "equivalence_review": "the edit itself: '9' is no longer a digit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The edit breaks test_basic, test_caret, test_exact and test_multiple, so the existing tests discriminate it. 0.10's reachable_unrevealed was a false actionable verdict; 0.11 dev's infection_unknown is an acceptable abstention, and crediting the discriminator would be ideal.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

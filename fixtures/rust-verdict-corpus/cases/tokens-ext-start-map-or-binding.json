@@ -1,0 +1,49 @@
+{
+  "case_id": "tokens-ext-start-map-or-binding",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-ext-start-map-or-binding.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "changed_binding_feeds_equality",
+  "hard_case": "ripr retargets a changed let binding's probe to the predicate that uses it (RIPR-SPEC-0157), so its finding lands on the next line, not on the anchor.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let start = path.rfind('.').map_or(0, |i| i + 2);",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::extension_starts_after_the_dot",
+        "equivalence_review": "not equivalent: the extension starts one byte late"
+      },
+      {
+        "replacement": "let start = path.rfind('.').map_or(1, |i| i + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a path without a dot starts at 1, but no test passes one"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Both tests pass a path with a dot, so only the Some branch of map_or is discriminated. Spec cells: RIPR-SPEC-0150, RIPR-SPEC-0157.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

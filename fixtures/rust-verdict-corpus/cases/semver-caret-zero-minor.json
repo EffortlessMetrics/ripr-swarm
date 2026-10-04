@@ -1,0 +1,49 @@
+{
+  "case_id": "semver-caret-zero-minor",
+  "subject_id": "semver",
+  "diff": "cases/semver-caret-zero-minor.diff",
+  "anchor": {
+    "file": "src/eval.rs",
+    "line": 163
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "1 < minor",
+        "outcome": "tests_failed",
+        "failing_test": "test_caret",
+        "equivalence_review": "not equivalent: ^0.1.x loses its minor-pinned branch"
+      },
+      {
+        "replacement": "0 <= minor",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: ^0.0.1 starts matching 0.0.2"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Tests cover ^0.1.x but not that ^0.0.1 rejects a later patch, so the boundary is partly discriminated. ripr limits, an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

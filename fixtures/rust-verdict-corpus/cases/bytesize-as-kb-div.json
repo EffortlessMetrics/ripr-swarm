@@ -1,0 +1,43 @@
+{
+  "case_id": "bytesize-as-kb-div",
+  "subject_id": "bytesize-66a3715",
+  "diff": "cases/bytesize-as-kb-div.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 258
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": "ripr reports no_static_path while listing related tests, one of the corpus's internal contradictions.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.0 as f64 % (KB as f64)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: as_kb returns the remainder instead of the quotient, e.g. 2000 B gives 0.0 instead of 2.0."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test calls as_kb, so the % mutant leaves the tests passing. ripr reports no_static_path (limited), an acceptable abstention, but lists 26 same-file related tests, which the corpus counts as a no_static_path_with_related_tests contradiction.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "case_id": "config-log-level-warn",
+  "subject_id": "authored-config",
+  "diff": "cases/config-log-level-warn.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 80
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "integration_test_assert_eq_each_variant",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "\"warning\" | \"warn\" => Ok(LogLevel::Info),",
+        "outcome": "tests_failed",
+        "failing_test": "every_log_level_spelling_parses",
+        "equivalence_review": "not equivalent: \"warn\" parses as Info instead of Warn"
+      },
+      {
+        "replacement": "\"warning\" => Ok(LogLevel::Warn),",
+        "outcome": "tests_failed",
+        "failing_test": "every_log_level_spelling_parses",
+        "equivalence_review": "not equivalent: \"WARN\" (lowercased to \"warn\") becomes UnknownLogLevel"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "every_log_level_spelling_parses asserts each spelling with assert_eq, so both changes fail it. ripr credits the match arm as exposed but leaves a weakly_exposed return_value probe on the same line, so the line reads as a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

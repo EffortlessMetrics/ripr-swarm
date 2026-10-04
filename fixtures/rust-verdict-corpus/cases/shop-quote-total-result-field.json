@@ -1,0 +1,50 @@
+{
+  "case_id": "shop-quote-total-result-field",
+  "subject_id": "authored-shop",
+  "diff": "cases/shop-quote-total-result-field.diff",
+  "anchor": {
+    "file": "pricing/src/lib.rs",
+    "line": 79
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "owner_result_field_binding_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total: units * 11,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::quote_total_is_ten_per_unit",
+        "equivalence_review": "not equivalent: three units total 33"
+      },
+      {
+        "replacement": "total: units,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::quote_total_is_ten_per_unit",
+        "equivalence_review": "not equivalent: three units total 3"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "let quoted = quote(3); assert_eq!(quoted.total, 30) reads the changed field directly. Spec cells: RIPR-SPEC-0005.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

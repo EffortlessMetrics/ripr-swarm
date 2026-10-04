@@ -1,0 +1,50 @@
+{
+  "case_id": "tokens-fits-binding-predicate",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-fits-binding-predicate.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "changed_binding_feeds_comparison",
+  "hard_case": "ripr retargets a changed let binding's probe to the predicate that uses it (RIPR-SPEC-0157), so its finding lands on the next line, not on the anchor.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = text.len() + 1;",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::fits_is_inclusive",
+        "equivalence_review": "not equivalent: abc no longer fits width 3"
+      },
+      {
+        "replacement": "let end = text.len() - 1;",
+        "outcome": "tests_failed",
+        "failing_test": "flow::tests::fits_is_inclusive",
+        "equivalence_review": "not equivalent: abcd fits width 3"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "fits(\"abc\", 3) and fits(\"abcd\", 3) straddle the boundary, so both shifts of end fail the test. Spec cells: RIPR-SPEC-0157.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

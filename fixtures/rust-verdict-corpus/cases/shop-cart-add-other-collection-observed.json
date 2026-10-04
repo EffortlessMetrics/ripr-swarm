@@ -1,0 +1,49 @@
+{
+  "case_id": "shop-cart-add-other-collection-observed",
+  "subject_id": "authored-shop",
+  "diff": "cases/shop-cart-add-other-collection-observed.diff",
+  "anchor": {
+    "file": "pricing/src/lib.rs",
+    "line": 62
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "other_collection_asserted",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(delete the statement)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: added items are never stored"
+      },
+      {
+        "replacement": "self.items.push(-cents);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: added items are stored negated"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The cart test asserts only cart.removed; cart.items is never read. Spec cells: RIPR-SPEC-0094.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "case_id": "atuin-otel-traces-suffix-not",
+  "subject_id": "atuin-90f590b9",
+  "diff": "cases/atuin-otel-traces-suffix-not.diff",
+  "anchor": {
+    "file": "crates/atuin/src/logs/otel/enabled.rs",
+    "line": 62
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "no_test_reaches_owner",
+  "hard_case": "the spot-check's --workspace miss ran on code behind the non-default profiling-traced feature, which was not compiled; truth here comes from a build with the feature on.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test -p atuin --features profiling-traced",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if otel_url.path().ends_with(\"/v1/traces\") == true {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent with --features profiling-traced: ATUIN_OTEL=http://host:4318 exports to http://host:4318/ instead of .../v1/traces, and a URL already ending in /v1/traces gets /v1/traces/v1/traces. Equivalent (dead code) in the spot-check's --workspace build: enabled.rs is behind #[cfg(feature = \"profiling-traced\")], a non-default feature no workspace member enables, so the file is not compiled there."
+      },
+      {
+        "replacement": "if true {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent with --features profiling-traced: a URL already ending in /v1/traces gets the suffix twice."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The spot-check's missed outcome is uninformative: under --workspace default features enabled.rs is not compiled, so the mutant is dead code there. With --features profiling-traced the file compiles, but no test sets ATUIN_OTEL or calls OtelCtx::try_enable (LogCtx::try_enable is only called from command dispatch), so both non-equivalent mutants pass and the line is not discriminated. Diff-mode ripr reports infection_unknown (limited), with two daemon.rs tests linked only by a shared name token and observe/discriminate = no. An acceptable abstention; a gap would be ideal. Repo mode's strongly_gripped is not reproduced in diff mode.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

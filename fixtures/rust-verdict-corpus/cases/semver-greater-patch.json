@@ -1,0 +1,44 @@
+{
+  "case_id": "semver-greater-patch",
+  "subject_id": "semver",
+  "diff": "cases/semver-greater-patch.diff",
+  "anchor": {
+    "file": "src/eval.rs",
+    "line": 82
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_custom_assert_helper",
+  "hard_case": "the natural `<=` mutant is equivalent here because the branch only runs when the patches differ, so the corpus uses the negation",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "patch > ver.patch",
+        "outcome": "tests_failed",
+        "failing_test": "test_multiple",
+        "equivalence_review": "not equivalent: >1.2.3 starts matching 1.2.2 and stops matching 1.2.4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The negated comparison fails test_multiple. ripr limits on the unresolved public API path, an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "case_id": "pricing-gold-threshold",
+  "subject_id": "authored-pricing",
+  "diff": "cases/pricing-gold-threshold.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "unit_test_assert_eq_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if points > 5000 {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tiers_change_exactly_at_their_thresholds",
+        "equivalence_review": "not equivalent: 5000 points becomes Silver instead of Gold"
+      },
+      {
+        "replacement": "if points > 4998 {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::tiers_change_exactly_at_their_thresholds",
+        "equivalence_review": "not equivalent: 4999 points becomes Gold instead of Silver"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tiers_change_exactly_at_their_thresholds pins 4999 and 5000 with assert_eq, so both boundary shifts fail it. ripr reports exposed on the predicate, the ideal credit.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "case_id": "shop-score-imported-across-crates",
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:4",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "dependent_crate_test_imports_owner",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

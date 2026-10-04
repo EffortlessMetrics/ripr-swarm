@@ -1,0 +1,19 @@
+{
+  "case_id": "checkout-withdraw-guarded-match-pin",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/payment.rs:20",
+  "behavior_family": "error_path",
+  "test_shape": "guarded_result_match_pin",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

@@ -12044,6 +12044,9 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
   "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
   "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
+  "xtask/src/reports/verdict_corpus_tests.rs::corpus_records_load_in_file_name_order_and_must_match_their_ids",
+  "xtask/src/reports/verdict_corpus_tests.rs::split_moves_the_one_file_layout_into_records_without_loss",
+  "xtask/src/reports/verdict_corpus_tests.rs::drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
@@ -12052,8 +12055,8 @@ code = [
   "xtask/src/reports/verdict_corpus.rs",
 ]
 outputs = [
-  "fixtures/rust-verdict-corpus/expected/report.json",
-  "fixtures/rust-verdict-corpus/expected/report.md",
+  "fixtures/rust-verdict-corpus/expected/summary.json",
+  "fixtures/rust-verdict-corpus/expected/rows",
 ]
 metrics = [
   "verdict_corpus_false_verdict_rate",

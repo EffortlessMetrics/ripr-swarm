@@ -1,0 +1,49 @@
+{
+  "case_id": "ledger-shipped-total",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-shipped-total.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 79
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "unit_test_relational_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.shipped_total = qty as u64;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: shipping 3 then 4 leaves a total of 4 instead of 7"
+      },
+      {
+        "replacement": "self.shipped_total -= qty as u64;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::history_records_every_movement_in_order",
+        "equivalence_review": "not equivalent: shipping 3 from a zero total underflows and panics in the debug test build instead of recording 3"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "shipments_count_towards_the_total only asserts shipped_total() > 0 after one shipment, so overwriting the total passes and only the underflowing subtraction fails. ripr reports static_unknown, an acceptable limit where a gap is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

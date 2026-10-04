@@ -1,0 +1,49 @@
+{
+  "case_id": "shop-cap-literal-only-expected",
+  "subject_id": "authored-shop",
+  "diff": "cases/shop-cap-literal-only-expected.diff",
+  "anchor": {
+    "file": "pricing/src/lib.rs",
+    "line": 84
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_literal_only_as_expected_value",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if value > 20 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 15 is no longer capped"
+      },
+      {
+        "replacement": "if value > 11 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 11 is no longer capped"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test passes 50, far above the boundary; 10 appears only as the expected value. (`value >= 10` and `value > 9` are equivalent here, since both branches return 10 at value 10, so they are not used.) Spec cells: RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

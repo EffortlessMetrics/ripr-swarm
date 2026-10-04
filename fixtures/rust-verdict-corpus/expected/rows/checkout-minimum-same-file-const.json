@@ -1,0 +1,20 @@
+{
+  "case_id": "checkout-minimum-same-file-const",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/limits.rs:16",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_via_same_file_const",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown",
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": []
+}

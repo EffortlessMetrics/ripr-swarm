@@ -1,0 +1,19 @@
+{
+  "case_id": "tokens-ext-start-map-or-binding",
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "anchor": "src/flow.rs:4",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "changed_binding_feeds_equality",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": true,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": []
+}

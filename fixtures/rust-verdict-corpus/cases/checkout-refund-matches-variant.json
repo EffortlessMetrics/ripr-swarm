@@ -1,0 +1,51 @@
+{
+  "case_id": "checkout-refund-matches-variant",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-refund-matches-variant.diff",
+  "anchor": {
+    "file": "src/payment.rs",
+    "line": 28
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "unit_test_assert_matches_variant",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(PayError::Frozen);",
+        "outcome": "tests_failed",
+        "failing_test": "payment::tests::a_large_refund_hits_the_limit",
+        "equivalence_review": "not equivalent: a large refund reports Frozen"
+      },
+      {
+        "replacement": "return Ok(amount);",
+        "outcome": "tests_failed",
+        "failing_test": "payment::tests::a_large_refund_hits_the_limit",
+        "equivalence_review": "not equivalent: a large refund succeeds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert!(matches!(refund(20_000), Err(PayError::Limit))) fails for a wrong variant or an Ok. Spec cells: RIPR-SPEC-0107, RIPR-SPEC-0002.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

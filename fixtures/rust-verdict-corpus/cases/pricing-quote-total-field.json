@@ -1,0 +1,49 @@
+{
+  "case_id": "pricing-quote-total-field",
+  "subject_id": "authored-pricing",
+  "diff": "cases/pricing-quote-total-field.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 84
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "unit_test_assert_eq_field_one_branch",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total_cents: subtotal,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: quote(1_000, 1, 0) totals 1000 instead of 1499 because shipping is dropped"
+      },
+      {
+        "replacement": "total_cents: shipping,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::quote_combines_discount_and_shipping",
+        "equivalence_review": "not equivalent: quote(2_500, 4, 6_000) totals 0 instead of 9000"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "quote_combines_discount_and_shipping asserts total_cents exactly but only for a free-shipping order, so dropping the shipping term passes while dropping the subtotal fails. ripr credits the field construction as exposed, a false exposed verdict.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "case_id": "ledger-insufficient-available",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-insufficient-available.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 74
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "unit_test_matches_variant_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "available: qty,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: shipping 9 of 4 reports available 9 instead of 4"
+      },
+      {
+        "replacement": "available: 0,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: shipping 9 of 4 reports available 0 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "shipping_more_than_on_hand_is_refused only checks matches!(err, StockError::Insufficient { .. }), so the available field is never read. ripr reports weakly_exposed on the field, the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
