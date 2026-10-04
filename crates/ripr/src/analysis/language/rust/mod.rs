@@ -2823,10 +2823,14 @@ mod tests {
 
     const UNRELATED_E_SOURCE: &str = "pub fn unrelated() -> u8 {\n    1\n}\n";
 
+    /// Debug-rendered findings, the narrowed main-index files (`None` when
+    /// the run did not narrow) and the reach-widened files.
+    type ScopedRun = (String, Option<Vec<PathBuf>>, Vec<PathBuf>);
+
     fn scoped_findings(
         root: &Path,
         mode: dependent_scope::DependentScopeMode,
-    ) -> Result<(String, Option<Vec<PathBuf>>, Vec<PathBuf>), String> {
+    ) -> Result<ScopedRun, String> {
         dependent_scope::with_forced_mode(mode, || {
             let result = RustAdapter.analyze_diff(
                 &diff_options(root.to_path_buf(), AnalysisMode::Draft),

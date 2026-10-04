@@ -528,7 +528,7 @@ pub(super) fn admit_dependents(
             admitted.push(file.clone());
         } else {
             let id = u32::try_from(withheld.len())
-                .map_err(|_| "dependent scope: too many withheld files".to_string())?;
+                .map_err(|err| format!("dependent scope: too many withheld files: {err}"))?;
             tokens.insert(id, &bytes);
             withheld.push(file.clone());
             if !bindings_saturated {
@@ -1080,6 +1080,11 @@ mod tests {
             DependentScopeMode::from_env_value(Ok(" named ".to_string())),
             Ok(DependentScopeMode::NameAdmitted)
         );
-        assert!(DependentScopeMode::from_env_value(Ok("all".to_string())).is_err());
+        assert_eq!(
+            DependentScopeMode::from_env_value(Ok("all".to_string())),
+            Err(format!(
+                "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`"
+            ))
+        );
     }
 }

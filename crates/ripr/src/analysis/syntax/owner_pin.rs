@@ -153,9 +153,7 @@ pub(crate) fn macro_binding_scan(
             }
         }
         if let Some(import) = ast::Use::cast(node) {
-            let Some(tree) = import.use_tree() else {
-                return None;
-            };
+            let tree = import.use_tree()?;
             let root = tree
                 .path()
                 .map(|path| path.syntax().text().to_string())
