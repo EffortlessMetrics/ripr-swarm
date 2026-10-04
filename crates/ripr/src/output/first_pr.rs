@@ -6171,6 +6171,120 @@ mod tests {
     }
 
     #[test]
+    fn preflight_recovery_commands_pair_shell_forms_for_apostrophe_root_and_refs()
+    -> Result<(), String> {
+        let repo = temp_repo("first-pr-owner's repo")?;
+        let hostile = "topic's;touch marker";
+        for (base, head, check_id, count) in [
+            ("HEAD", hostile, "git_head", 1),
+            (hostile, "HEAD", "git_base", 1),
+            ("origin/topic's;touch marker", "HEAD", "git_base", 2),
+            ("HEAD", "HEAD", "git_diff", 1),
+        ] {
+            let options = FirstPrOptions {
+                root: repo.display().to_string(),
+                base: base.to_string(),
+                head: head.to_string(),
+                preflight: true,
+                ..FirstPrOptions::default()
+            };
+            let packet = render_start_here_packet(&repo, &options);
+            let check = preflight_check(&packet, check_id)?;
+            let commands = check["recovery_commands"]
+                .as_array()
+                .ok_or("preflight did not carry executable recovery commands")?;
+            assert_eq!(commands.len(), count, "{check_id}: {packet}");
+            assert_eq!(
+                packet["preflight"]["recovery_commands"],
+                check["recovery_commands"]
+            );
+            assert_eq!(
+                packet["preflight"]["recovery_guidance"],
+                check["recovery_guidance"]
+            );
+            let markdown = render_start_here_markdown(&packet);
+            if check_id == "git_diff" {
+                assert!(
+                    markdown
+                        .contains("Choose a head with changes or commit PR work before rerunning."),
+                    "{markdown}"
+                );
+            }
+            for (index, command) in commands.iter().enumerate() {
+                let bash = command.as_str().ok_or("recovery command is not a string")?;
+                assert!(bash.contains(&shell_arg(&options.command_root())), "{bash}");
+                let powershell = crate::output::markdown::powershell_command(bash)
+                    .ok_or_else(|| format!("recovery cannot be translated: {bash}"))?;
+                assert!(
+                    markdown.contains(&format!("Recovery step {} (PowerShell):", index + 1)),
+                    "{markdown}"
+                );
+                assert!(
+                    markdown.contains(&crate::output::markdown::code_span(&powershell)),
+                    "{markdown}"
+                );
+            }
+            if count == 2 {
+                assert!(
+                    commands[0]
+                        .as_str()
+                        .is_some_and(|command| command.contains(" fetch origin -- "))
+                );
+            }
+            assert_eq!(render_start_here_markdown(&packet), markdown);
+        }
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn preflight_diff_failure_carries_the_same_shell_recovery_steps() -> Result<(), String> {
+        let repo = temp_cargo_root("first-pr-diff-error-owner's repo")?;
+        run_git_setup(&repo, &["init", "--object-format=sha1", "--template="])?;
+        run_git_setup(&repo, &["config", "gc.auto", "0"])?;
+        run_git_setup(&repo, &["config", "commit.gpgsign", "false"])?;
+        init_git_repo(&repo)?;
+        fs::write(repo.join("changed.txt"), "changed\n")
+            .map_err(|error| format!("write diff-error fixture: {error}"))?;
+        run_git_setup(&repo, &["add", "changed.txt"])?;
+        run_git_setup(&repo, &["commit", "-m", "change fixture"])?;
+        let tree = run_git(&repo, &git_args(&["rev-parse", "HEAD^{tree}"]))?;
+        let tree = tree.stdout.trim();
+        if tree.len() != 40 || !tree.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("fixture did not produce a SHA-1 tree: {tree:?}"));
+        }
+        // Only the fixture's loose tree is removed. Both commit refs still
+        // resolve, but diff must inspect a missing tree and fail after that.
+        let object = repo.join(".git/objects").join(&tree[..2]).join(&tree[2..]);
+        fs::remove_file(&object)
+            .map_err(|error| format!("remove fixture tree {}: {error}", object.display()))?;
+        let options = FirstPrOptions {
+            root: repo.display().to_string(),
+            base: "HEAD~1".to_string(),
+            head: "HEAD".to_string(),
+            preflight: true,
+            ..FirstPrOptions::default()
+        };
+        let packet = render_start_here_packet(&repo, &options);
+        assert_eq!(preflight_check(&packet, "git_base")?["status"], "ok");
+        assert_eq!(preflight_check(&packet, "git_head")?["status"], "ok");
+        let diff = preflight_check(&packet, "git_diff")?;
+        assert_eq!(diff["status"], "needs_attention", "{packet}");
+        assert!(
+            diff["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Could not inspect diff range")),
+            "{packet}"
+        );
+        assert_eq!(diff["recovery_commands"].as_array().map(Vec::len), Some(1));
+        let markdown = render_start_here_markdown(&packet);
+        assert!(
+            markdown.contains("Recovery step 1 (PowerShell):"),
+            "{markdown}"
+        );
+        cleanup(&repo)
+    }
+
+    #[test]
     fn preflight_reports_missing_git_base_and_config_defaults() -> Result<(), String> {
         let repo = temp_repo("first-pr-preflight-missing-base")?;
         fs::write(repo.join("Cargo.toml"), "[workspace]\n")

@@ -12588,6 +12588,17 @@ Field contract:
   `defaulted`, or `will_create`. Checks with `next_command` provide the next
   safe setup or recovery command; they must not imply mutation, coverage,
   runtime proof, merge approval, or gate pass/fail.
+- Git recovery checks can also carry `recovery_commands[]`: ordered, standalone
+  Bash display commands produced separately from the legacy `next_command`
+  instruction. `preflight.recovery_commands` carries the commands for the first
+  check with a recovery instruction. The missing-base fetch uses `git -C` to
+  bind the selected root and precedes the rerun. Human Markdown pairs each step
+  through the shared PowerShell renderer; unavailable forms are disclosed.
+  These display strings are advisory, not typed execution authority. Existing
+  packets without this optional field retain their legacy presentation.
+  Optional `recovery_guidance` at the same check and preflight levels keeps
+  prerequisite instructions separate from the commands (for example, commit
+  PR work or select a head with changes before rerunning an empty diff).
 - `commands.regenerate_gap_ledger` is always present so missing, stale,
   wrong-root, malformed, and timeout states can point to a known refresh path.
 - `artifacts[]` records artifact id, label, path, `present` or `missing`
