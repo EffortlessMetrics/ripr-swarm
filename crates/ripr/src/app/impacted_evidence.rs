@@ -42,7 +42,8 @@ pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
     }
     let options = parse_options(args)?;
     let repo = repo_root()?;
-    let input = require_pr_evidence(&repo, &options.pr_evidence)?;
+    let input = require_pr_evidence(&repo, &options.pr_evidence)
+        .map_err(|err| refuse_with_stale_cleanup(&repo, err, options.check))?;
     let packet = packet_from_input(&options, &input);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize impacted evidence: {err}"))?;
@@ -302,6 +303,28 @@ fn require_pr_evidence(repo: &Path, relative: &str) -> Result<PrEvidenceInput, S
             "impacted-evidence: PR evidence {relative} is not valid JSON ({err}); \
              regenerate it with `ripr pr-evidence` or pass --pr-evidence <path>."
         )),
+    }
+}
+
+/// Removes a previous run's outputs so a failed run cannot leave a stale
+/// `latest.*` that a later reader mistakes for this run's routing. Returns the
+/// paths actually removed.
+fn discard_stale_outputs(repo: &Path) -> Vec<&'static str> {
+    [IMPACTED_JSON, IMPACTED_MD]
+        .into_iter()
+        .filter(|relative| fs::remove_file(repo.join(relative)).is_ok())
+        .collect()
+}
+
+fn refuse_with_stale_cleanup(repo: &Path, err: String, check: bool) -> String {
+    if check {
+        return err;
+    }
+    let removed = discard_stale_outputs(repo);
+    if removed.is_empty() {
+        err
+    } else {
+        format!("{err} Removed stale {}.", removed.join(" and "))
     }
 }
 
@@ -730,5 +753,30 @@ mod tests {
     fn markdown_states_packet_status() {
         let packet = json!({"status": "incomplete", "summary": {}, "inputs": {}});
         assert!(render_impacted_evidence_markdown(&packet).contains("- status: `incomplete`"));
+    }
+
+    #[test]
+    fn refusal_discards_previous_outputs_but_check_does_not() -> Result<(), String> {
+        let repo = env::temp_dir().join(format!(
+            "ripr-impacted-evidence-stale-{}",
+            std::process::id()
+        ));
+        if repo.exists() {
+            fs::remove_dir_all(&repo).map_err(|err| format!("remove {}: {err}", repo.display()))?;
+        }
+        fs::create_dir_all(repo.join("target/xtask/impacted-evidence"))
+            .map_err(|err| format!("create {}: {err}", repo.display()))?;
+        fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
+        fs::write(repo.join(IMPACTED_MD), "old").map_err(|err| err.to_string())?;
+
+        let kept = refuse_with_stale_cleanup(&repo, "boom.".to_string(), true);
+        assert_eq!(kept, "boom.");
+        assert!(repo.join(IMPACTED_JSON).exists(), "--check must not delete");
+
+        let cleaned = refuse_with_stale_cleanup(&repo, "boom.".to_string(), false);
+        assert!(cleaned.contains("Removed stale"), "{cleaned}");
+        assert!(!repo.join(IMPACTED_JSON).exists() && !repo.join(IMPACTED_MD).exists());
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
     }
 }
