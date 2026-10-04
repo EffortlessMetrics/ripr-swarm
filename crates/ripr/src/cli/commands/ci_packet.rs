@@ -335,6 +335,16 @@ impl PacketRun {
             return;
         }
         if !condition || (when == When::Success && !self.failed.is_empty()) {
+            // A step named with --step says why it did not run, so a skip
+            // is not mistaken for a pass.
+            if !self.only.is_empty() {
+                let reason = if condition {
+                    "an earlier required step failed"
+                } else {
+                    "its inputs or settings are absent"
+                };
+                println!("RIPR step \"{name}\" skipped: {reason}.");
+            }
             return;
         }
         println!("::group::{name}");
@@ -438,7 +448,15 @@ impl PacketRun {
             Self::prepare_editor_agent_artifacts,
         );
 
-        let top_seam = self.top_seam.clone();
+        // Run alone with --step, the agent loop reads the seam the prepare
+        // step would have set; a full run keeps the prepare step's answer.
+        let top_seam = if self.only.is_empty() {
+            self.top_seam.clone()
+        } else {
+            fs::read(self.path("target/ripr/pilot/pilot-summary.json"))
+                .ok()
+                .and_then(|bytes| top_seam_id(&bytes))
+        };
         self.stage(
             "Generate RIPR agent loop artifacts",
             When::Always,
@@ -2058,6 +2076,50 @@ mod tests {
             .map(|(name, when, role)| (name.as_str(), *when, *role))
             .collect();
         assert_eq!(table, expected);
+    }
+
+    /// `--step` alone runs the agent loop from the pilot summary's seam,
+    /// without the prepare step that sets it in a full run.
+    #[test]
+    fn the_agent_loop_runs_alone_with_step() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-agent-loop-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        fs::create_dir_all(root.join("target/ripr/pilot")).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("target/ripr/pilot/pilot-summary.json"),
+            r#"{"top_actionable_seams":[{"seam_id":"seam-9"}]}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        let mut run = PacketRun {
+            root: root.clone(),
+            exe: PathBuf::from("ripr"),
+            settings: CiSettings::default(),
+            only: args(&["Generate RIPR agent loop artifacts"]),
+            seen: Vec::new(),
+            top_seam: None,
+            failed: Vec::new(),
+            recorded: Some(std::cell::RefCell::new(Vec::new())),
+        };
+        run.all_stages();
+        let _ = fs::remove_dir_all(&root);
+        let commands = run
+            .recorded
+            .take()
+            .map(std::cell::RefCell::into_inner)
+            .unwrap_or_default();
+        assert!(
+            commands.iter().any(|line| line
+                == "ripr agent start --root . --seam-id seam-9 --out target/ripr/workflow"),
+            "{commands:?}"
+        );
+        assert!(
+            !commands.iter().any(|line| line.starts_with("ripr pilot")),
+            "{commands:?}"
+        );
+        Ok(())
     }
 
     /// A step without `always()` is skipped after a required step fails,
