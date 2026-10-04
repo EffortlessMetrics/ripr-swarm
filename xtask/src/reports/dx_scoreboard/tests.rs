@@ -4,6 +4,14 @@ use super::measure::{
 };
 use super::*;
 
+/// The committed config, resolved from the crate root so a test that moves
+/// the working directory cannot break the lookup.
+fn committed_config() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(DEFAULT_CONFIG)
+}
+
 const MINIMAL: &str = r#"
 schema_version = "ripr-dx-scoreboards-v1"
 
@@ -80,8 +88,7 @@ fn metric<'a>(report: &'a Value, id: &str) -> Result<&'a Value, String> {
 
 #[test]
 fn committed_scoreboards_config_parses_and_pins_full_shas() -> Result<(), String> {
-    let config = load_config(Path::new("../benchmarks/dx_scoreboard/scoreboards.toml"))
-        .or_else(|_| load_config(Path::new(DEFAULT_CONFIG)))?;
+    let config = load_config(&committed_config())?;
     assert!(
         config.corpus.len() >= 3,
         "corpus should name real repositories"
@@ -558,8 +565,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         value("trust.mutation_join_coverage").is_some_and(|v| (v - 172.0 / 1745.0).abs() < 1e-9)
     );
 
-    let config = load_config(Path::new("../benchmarks/dx_scoreboard/scoreboards.toml"))
-        .or_else(|_| load_config(Path::new(DEFAULT_CONFIG)))?;
+    let config = load_config(&committed_config())?;
     let samples = parse_ingest(&receipt, &config)?;
     assert_eq!(samples.len(), 3);
     Ok(())
@@ -606,5 +612,87 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
     assert!(
         parse_ingest_text("{\"schema\":\"other\"}\nnot json")
             .is_err_and(|err| err.contains("line 1"))
+    );
+}
+
+#[test]
+fn losing_completion_regresses_on_any_runner_class() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let base = vec![sample(
+        "speed.warm_check_ms",
+        Some("a"),
+        SampleOutcome::Value(1000.0),
+    )];
+    let baseline = build_report(&config, &all_boards(), &base, &context("runner-a"), None, false);
+    // A check that now exits early looks faster than the baseline.
+    let broken = vec![sample(
+        "speed.warm_check_ms",
+        Some("a"),
+        SampleOutcome::Incomplete(50.0),
+    )];
+    for runner in ["runner-a", "runner-b"] {
+        let report = build_report(
+            &config,
+            &all_boards(),
+            &broken,
+            &context(runner),
+            Some(&baseline),
+            true,
+        );
+        assert_eq!(report["gate"]["status"].as_str(), Some("fail"), "{runner}");
+    }
+    Ok(())
+}
+
+#[test]
+fn gate_lists_baseline_metrics_it_could_not_compare() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let base = vec![
+        sample("ci.workflow_lines", None, SampleOutcome::Value(100.0)),
+        sample(
+            "speed.warm_check_ms",
+            Some("a"),
+            SampleOutcome::Value(1000.0),
+        ),
+    ];
+    let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
+    let current = vec![sample("ci.workflow_lines", None, SampleOutcome::Value(100.0))];
+    let report = build_report(
+        &config,
+        &all_boards(),
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(report["gate"]["status"].as_str(), Some("pass"));
+    let uncompared = report["gate"]["uncompared"]
+        .as_array()
+        .ok_or("uncompared list missing")?;
+    assert!(
+        uncompared
+            .iter()
+            .any(|item| item["metric"] == "speed.warm_check_ms")
+    );
+    assert!(render_markdown(&report).contains("Not compared with the baseline"));
+    Ok(())
+}
+
+#[test]
+fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
+    let entry = |id: &str, sha: &str| CorpusEntry {
+        id: id.to_string(),
+        url: "u".to_string(),
+        sha: sha.to_string(),
+        base_sha: None,
+        note: String::new(),
+        heavy: false,
+    };
+    let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
+    assert!(validate_corpus(&[entry("a", full)]).is_ok());
+    assert!(validate_corpus(&[entry("a", "main")]).is_err_and(|e| e.contains("40-character")));
+    assert!(
+        validate_corpus(&[entry("a", full), entry("a", full)])
+            .is_err_and(|e| e.contains("duplicate"))
     );
 }

@@ -46,7 +46,7 @@ const FIRST_RUN_BUDGETED: [&str; 3] = ["secs", "stdout_lines", "workflow_lines"]
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
-const BOARDS: [&str; 5] = ["speed", "ci", "trust", "paste", "first_run"];
+const BOARDS: [&str; 6] = ["speed", "ci", "trust", "paste", "first_run", "agent"];
 
 const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
 
@@ -265,6 +265,7 @@ pub(crate) fn load_config(path: &Path) -> Result<Config, String> {
         let value = read_json(Path::new(&manifest))?;
         let (version, corpus) =
             corpus_from_manifest(&value).map_err(|err| format!("{manifest}: {err}"))?;
+        validate_corpus(&corpus).map_err(|err| format!("{manifest}: {err}"))?;
         config.corpus_version = Some(version);
         config.corpus = corpus;
     }
@@ -303,21 +304,16 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
     Ok((version, corpus))
 }
 
-pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
-    let config: Config =
-        toml::from_str(text).map_err(|err| format!("parse dx scoreboard config: {err}"))?;
-    if config.schema_version != CONFIG_SCHEMA_VERSION {
-        return Err(format!(
-            "schema_version must be `{CONFIG_SCHEMA_VERSION}`, got `{}`",
-            config.schema_version
-        ));
-    }
+/// Unique ids and full commit pins, for inline entries and manifest entries
+/// alike: a branch name or short sha would let a moving upstream change the
+/// measurement.
+pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
     let mut seen = BTreeMap::new();
-    for entry in &config.corpus {
-        if seen.insert(format!("corpus:{}", entry.id), ()).is_some() {
+    let full_sha = |sha: &str| sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit());
+    for entry in corpus {
+        if seen.insert(entry.id.as_str(), ()).is_some() {
             return Err(format!("duplicate corpus id `{}`", entry.id));
         }
-        let full_sha = |sha: &str| sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit());
         if !full_sha(&entry.sha)
             || entry
                 .base_sha
@@ -330,6 +326,20 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
             ));
         }
     }
+    Ok(())
+}
+
+pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
+    let config: Config =
+        toml::from_str(text).map_err(|err| format!("parse dx scoreboard config: {err}"))?;
+    if config.schema_version != CONFIG_SCHEMA_VERSION {
+        return Err(format!(
+            "schema_version must be `{CONFIG_SCHEMA_VERSION}`, got `{}`",
+            config.schema_version
+        ));
+    }
+    validate_corpus(&config.corpus)?;
+    let mut seen = BTreeMap::new();
     for metric in &config.metric {
         if seen.insert(format!("metric:{}", metric.id), ()).is_some() {
             return Err(format!("duplicate metric id `{}`", metric.id));
@@ -887,6 +897,18 @@ pub(crate) fn build_report(
             })
         })
         .collect();
+    // Metrics the baseline measured that this run could not compare, such as
+    // ingested metrics without a receipt: listed so the gate's reach is
+    // visible instead of silently passing them.
+    let uncompared: Vec<Value> = metrics
+        .iter()
+        .filter(|row| {
+            row["baseline"]["comparable"] == false
+                && !row["baseline"]["value"].is_null()
+                && row["baseline"]["review"].is_null()
+        })
+        .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
+        .collect();
     let review: Vec<Value> = metrics
         .iter()
         .filter(|row| !row["baseline"]["review"].is_null())
@@ -933,6 +955,7 @@ pub(crate) fn build_report(
             "regressions": regressions,
             "failed_instruments": failed,
             "review": review,
+            "uncompared": uncompared,
         },
         "claim_boundary": "Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.",
     })
@@ -1143,6 +1166,23 @@ pub(crate) fn compare_with_baseline(
     let Some(base_row) = base_row else {
         return json!({"comparable": false, "reason": "metric absent from baseline"});
     };
+    let incomplete = |r: &Value| {
+        r["samples"]
+            .as_array()
+            .is_some_and(|samples| samples.iter().any(|s| s["status"] == "incomplete"))
+    };
+    // A run that stops completing is broken on every runner class, and its
+    // elapsed time can look faster than the baseline, so check it first.
+    if incomplete(row) && !incomplete(base_row) {
+        return json!({
+            "comparable": true,
+            "value": base_row["value"],
+            "delta": Value::Null,
+            "allowed_worsening": 0.0,
+            "regressed": true,
+            "reason": "current run did not complete where the baseline did",
+        });
+    }
     if def.runner_dependent
         && baseline["runner_class"].as_str() != Some(context.runner_class.as_str())
     {
@@ -1268,6 +1308,21 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or(&[]);
+    let uncompared = report["gate"]["uncompared"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if report["gate"]["enabled"] == true && !uncompared.is_empty() {
+        out.push_str("**Not compared with the baseline (outside this gate run):**\n\n");
+        for item in uncompared {
+            out.push_str(&format!(
+                "- `{}`: {}\n",
+                item["metric"].as_str().unwrap_or("?"),
+                item["reason"].as_str().unwrap_or("not compared"),
+            ));
+        }
+        out.push('\n');
+    }
     if !review.is_empty() {
         out.push_str("**For review (does not fail the gate):**\n\n");
         for item in review {

@@ -361,3 +361,96 @@ regression_floor = 0.5
 runner_dependent = true
 per_repo = true
 source = "ingest:first-run"
+
+# ------------------------------------------------------------------ agent ----
+# Help-only agents fixing seeded test gaps on pinned crates, scored with
+# hand-written mutants plus cargo-mutants (agent-as-user harness, #5293).
+# The step-count targets are proposed bars, not measured limits.
+
+[[metric]]
+id = "agent.fix_success_rate"
+board = "agent"
+title = "Targets where every answer-key mutant is caught after the agent finishes"
+unit = "ratio"
+direction = "higher_is_better"
+target = 1.0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.answer_key_mutants_caught"
+board = "agent"
+title = "Answer-key mutants caught after the agent's fix"
+unit = "mutants"
+direction = "higher_is_better"
+target = 3
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.ripr_commands_to_fix"
+board = "agent"
+title = "ripr commands the agent ran to close the gap"
+unit = "commands"
+direction = "lower_is_better"
+target = 10
+regression_pct = 25
+regression_floor = 3
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.tool_steps_to_fix"
+board = "agent"
+title = "All agent tool calls to close the gap"
+unit = "steps"
+direction = "lower_is_better"
+target = 15
+regression_pct = 25
+regression_floor = 3
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.false_weak_findings_after_fix"
+board = "agent"
+title = "Non-exposed verdicts left after every mutant is caught"
+unit = "findings"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.stale_recheck_cycles"
+board = "agent"
+title = "Re-checks after an edit that returned stale output"
+unit = "cycles"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.white_box_tests_to_satisfy_ripr"
+board = "agent"
+title = "White-box tests written only to satisfy ripr"
+unit = "tests"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:agent-as-user"

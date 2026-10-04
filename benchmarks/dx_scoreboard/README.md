@@ -18,6 +18,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 | `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, self-contradicting findings, false-verdict, false-actionable and abstention rates on the hand-checked verdict corpus (read from `fixtures/rust-verdict-corpus/expected/report.json`, whose drift `cargo xtask verdict-corpus check` gates), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
 | `first_run` | The new-developer journey from install to first useful result | time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
+| `agent` | Whether an agent using only ripr's help closes a real test gap quickly and without being misled | fix success, mutants caught, ripr commands and tool steps to fix, false weak findings left after the fix, stale re-checks, white-box tests written only for ripr (all ingested from the agent-as-user harness) |
 
 The rollup counts metrics that meet their target, fall below it, are not
 measured, have a failed instrument, or regressed. A per-repository view groups

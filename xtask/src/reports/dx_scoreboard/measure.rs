@@ -174,10 +174,18 @@ fn measure_corpus_entry(
     let checkout = match prepare_checkout(entry, options) {
         Ok(path) => path,
         Err(reason) => {
+            // With --clone the run promised a checkout, so losing it is a
+            // broken instrument the gate must see; without it, the corpus
+            // was simply not fetched.
+            let (outcome, status) = if options.clone {
+                (SampleOutcome::Failed, "failed")
+            } else {
+                (SampleOutcome::NotMeasured, "not_measured")
+            };
             for metric in corpus_metrics {
-                samples.push(sample(metric, SampleOutcome::NotMeasured, reason.clone()));
+                samples.push(sample(metric, outcome.clone(), reason.clone()));
             }
-            return json!({"id": entry.id, "sha": entry.sha, "status": "not_measured", "reason": reason});
+            return json!({"id": entry.id, "sha": entry.sha, "status": status, "reason": reason});
         }
     };
 

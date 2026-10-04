@@ -25,6 +25,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -32,6 +34,9 @@ jobs:
         with:
           cache-on-failure: true
 
+      # Ingested metrics (first-run walk, mutation spot-check, agent-as-user)
+      # have no receipt here, so the gate cannot compare them; the report
+      # lists them under "Not compared with the baseline".
       - name: Measure developer-experience scoreboards
         run: cargo xtask dx-scoreboard --clone --include-heavy --baseline metrics/dx-scoreboard/baseline.json --gate
 
