@@ -387,7 +387,7 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
 }
 
 // These inputs are re-opened by receipt admission. Preserve native filename
-// characters while retaining the report's existing leading `./` spelling.
+// characters while keeping the report's existing omission of leading `./`.
 fn agent_verify_input_path(path: &Path) -> String {
     let rendered = crate::agent::loop_commands::root_path_display(path);
     rendered.strip_prefix("./").unwrap_or(&rendered).to_string()

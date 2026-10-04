@@ -27,6 +27,9 @@ are scoped or reviewed.
   artifact admission, including literal filename backslashes (#5744).
 - Agent verify preserves native Unix characters in its before/after input
   paths so receipt admission can reopen the selected snapshots (#5744).
+- CLI/MCP: selected failed or open-gap repair attempts preserve literal Unix
+  backslashes in the restart command's `--root` argument. Such a directory no
+  longer redirects restart advice to the corresponding slash path (#5608).
 - Preview-language refusals (parse budget, read caps, walk cap) no longer
   downgrade a diff that touches none of that language. A Rust-only change in a
   repository with an unrelated, deeply nested Python fixture (found trialing
