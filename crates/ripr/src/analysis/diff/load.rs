@@ -812,13 +812,9 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
 /// The working-tree probe with its failure kept distinct from a clean tree,
 /// for callers that must not read a failed probe as "no uncommitted
 /// changes" (pilot's current change records it as unavailable instead).
-pub fn probe_working_tree_tracked_changes(root: &Path) -> Result<bool, String> {
-    probe_working_tree_tracked_changes_within(root, Some(WORKING_TREE_PROBE_DEADLINE))
-}
-
-/// [`probe_working_tree_tracked_changes`] under a caller's git deadline
-/// (`None` disables it), so a command that honors `RIPR_GIT_TIMEOUT` bounds
-/// this probe the same way as its diff loads.
+/// `deadline` is the caller's git deadline (`None` disables it), so a
+/// command that honors `RIPR_GIT_TIMEOUT` bounds this probe the same way as
+/// its diff loads.
 pub fn probe_working_tree_tracked_changes_within(
     root: &Path,
     deadline: Option<Duration>,
@@ -2407,7 +2403,9 @@ mod tests {
         }
         // The Result form keeps the failure, so pilot can say the change is
         // unavailable instead of reading the tree as clean.
-        if probe_working_tree_tracked_changes(&file).is_ok() {
+        if probe_working_tree_tracked_changes_within(&file, Some(WORKING_TREE_PROBE_DEADLINE))
+            .is_ok()
+        {
             return Err(std::io::Error::other(
                 "a failed probe must surface as an error, not clean or dirty",
             ));
