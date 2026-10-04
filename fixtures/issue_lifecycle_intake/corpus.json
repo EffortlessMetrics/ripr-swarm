@@ -183,7 +183,7 @@
      "claims no verdict on any other verify-command language surface",
      "claims no editor UX judgment beyond the copied-command contract"
     ],
-    "row_digest": "ab706d52957d75e009bbcf435499a3e728b559286afff710231bd65a0ab0d697"
+    "row_digest": "60f4d6431f920f1f4d9d26c1efda2d4e266e1c14ef47962c253e48063bb409d8"
    }
   },
   {
@@ -370,7 +370,7 @@
      "claims no judgment that the seam_not_found facet shares the same root cause",
      "claims no Windows-lane policy change (promotion to required is separate)"
     ],
-    "row_digest": "b8571fa5e9f927c9e3d31dd29da5fbc1b431b2691357eae216a423c6a8faf135"
+    "row_digest": "30c6c169c12103bc93cb01ef6033ad80d0ae7b90c835dfec7f01ca4cbbc9c783"
    }
   },
   {
@@ -574,7 +574,7 @@
      "claims no MCP protocol change beyond what PR #5408 itself claims",
      "claims no LSP receipt parity (explicitly out of the PR's own boundary)"
     ],
-    "row_digest": "08a6b73808420e6a5e8117dd263b7d16fb11e96e10b735c60b7107874df1203e"
+    "row_digest": "c072060a6ade63dc4ef44e3eda80c31a998ffe3c6e752d25bb0bd1c22a044409"
    }
   },
   {
@@ -763,7 +763,7 @@
      "claims no root cause (event delivery, scheduling skip, merge-ref staleness and incident window all remain open)",
      "claims no repository-settings change is required"
     ],
-    "row_digest": "7b0f23b6d37ca2193c25ed97364378276cd90d5149db21369bcba77a3af36026"
+    "row_digest": "407680c24a6fceb18673d2f8ec9e34f54ca9093cb08fedcb79ace8898484a46e"
    }
   },
   {
@@ -967,7 +967,7 @@
      "claims no judgment that open residuals are ready for pickup",
      "claims no 0.11.0 release-decision input beyond what the issue already records"
     ],
-    "row_digest": "b7ad9424558a787ac8d1408877b7eb8593dce4adb171a84f74ff1fe173bd2632"
+    "row_digest": "2522cdd6323d9f0417f288be68f4c75d30be44b0403e54650bdf9e9685bf236a"
    }
   },
   {
@@ -1149,7 +1149,7 @@
      "claims no ADR 0017 amendment (that is the decision itself)",
      "claims no overlap with the #1902/#1571 WorkspaceEdit track, which explicitly excludes generated tests"
     ],
-    "row_digest": "f2876f0bdff4fe75a8c4e99909af7e783d62bfd5126128293729ab2f471f527a"
+    "row_digest": "4ba4544f7dcd8a74faae1cd19247bb32d92b72ad0859295878ba04ee9ba96aac"
    }
   }
  ]
