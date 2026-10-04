@@ -655,8 +655,17 @@ kind = "benchmark_fixture"
 owner = "agentic-benchmarks"
 surface = "fixtures"
 classification = "fixture"
-reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-surface benchmark suites and receipt."
+reason = "Controlled inputs, specs, and corpora consumed by the B1-B5 agentic-surface benchmark suites and receipt."
 covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/rust_corpus/manifest.json"
+kind = "benchmark_fixture"
+owner = "eval-corpus"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned real-repository Rust corpus manifest shared by evaluation lanes; pins exact upstream commits and never vendors their source."
+covered_by = ["cargo xtask rust-corpus check", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "tests/fixtures/verification/**/*.json"

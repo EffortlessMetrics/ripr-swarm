@@ -39,10 +39,13 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
 impl ClassifiedProbeEvidence {
     pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
         let test_summaries = context.related_test_summaries();
+        // Without a resolved owner (a line in a `macro_rules!` template, an
+        // impl the index did not attribute) there is no name to search for,
+        // so nothing rules reach out.
         let reach = reach_evidence(&context.related_tests, context.owner_fn, || {
             context
                 .owner_fn
-                .is_some_and(|owner| owner_may_be_reached_unseen(owner, context.index))
+                .is_none_or(|owner| owner_may_be_reached_unseen(owner, context.index))
         });
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
@@ -108,7 +111,7 @@ impl ClassifiedProbeEvidence {
             // reachable here, so the caller computes the same-name-import
             // defeat per test instead of restructuring the reveal inputs.
             &|test, callee| {
-                context.index.files.get(&test.file).is_some_and(|facts| {
+                context.index.files().get(&test.file).is_some_and(|facts| {
                     context.test_file_imports_foreign_callee_name(&test.file, &facts.source, callee)
                 })
             },
@@ -133,7 +136,7 @@ impl ClassifiedProbeEvidence {
                     if test_package == owner_package {
                         return false;
                     }
-                    context.index.functions.iter().any(|function| {
+                    context.index.functions().iter().any(|function| {
                         function.name == callee
                             && package_prefix(&function.file).as_deref()
                                 == Some(test_package.as_str())
@@ -148,7 +151,7 @@ impl ClassifiedProbeEvidence {
                             assertion,
                             context.index,
                             &|file, name| {
-                                context.index.files.get(file).is_some_and(|facts| {
+                                context.index.files().get(file).is_some_and(|facts| {
                                     context.test_file_imports_foreign_callee_name(
                                         file,
                                         &facts.source,
@@ -533,13 +536,13 @@ mod tests {
     /// confirmed through the bare name.
     #[test]
     fn cross_package_same_name_function_defeats_owner_confirmation() {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 same_named_function("crates/alpha/src/lib.rs"),
                 same_named_function("crates/beta/src/lib.rs"),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let evidence = owner_harness_context(&index, harness_in("crates/beta/tests/protocol.rs"));
         assert_eq!(
             evidence.discriminate.state,
@@ -563,13 +566,13 @@ mod tests {
     /// relative form) keeps today's behavior.
     #[test]
     fn same_package_harness_and_unscopable_paths_stay_confirmed() {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 same_named_function("crates/alpha/src/lib.rs"),
                 same_named_function("crates/beta/src/lib.rs"),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let own_package =
             owner_harness_context(&index, harness_in("crates/alpha/tests/protocol.rs"));
         assert_eq!(
