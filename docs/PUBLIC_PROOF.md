@@ -11,7 +11,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Receipt | Measures | Revision | Detail |
 | --- | --- | --- | --- |
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (c6ccf9d) | runner `local-linux-x86_64-4cpu` |
-| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.3 | RIPR-SPEC-0219 |
+| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.4 | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, current build | ripr 0.11.0 (a7a089e) | 3 crates |
@@ -34,7 +34,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 finding** | <= 0 findings | below the bar | unchanged since a7a089e (1 finding) |
-| Trust | Wrong verdicts on the hand-checked verdict corpus | **29.4%** | <= 5.0% | below the bar | first receipt |
+| Trust | Wrong verdicts on the hand-checked verdict corpus | **33.3%** | <= 5.0% | below the bar | first receipt |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt |
 | Trust | Real mutants that join a ripr seam precisely enough to score | **10.0%** | >= 50.0% | below the bar | first receipt |
@@ -58,8 +58,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On the labeled corpus ripr reported a gap on 10 of 20 changes whose tests caught every listed mutant (50.0%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`.
-- **Mostly unsure.** It abstained on 19 of 34 corpus cases (55.9%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On the labeled corpus ripr reported a gap on 16 of 30 changes whose tests caught every listed mutant (53.3%): `serde-format-u8-hundreds`, `hex-from-hex-odd-variant`, `hex-decode-slice-odd`, `regex-syntax-max-scalar-two-byte`, `serde-derive-rename-variant-lower`, `serde-derive-rename-field-upper`, `semver-op-greater-eq`, `strsim-sorensen-dice-equal`, `bytesize-as-kib-div`, `bytesize-as-mb-div`, `pricing-gold-discount-rate`, `ledger-ship-log-push`, `ledger-receipt-remaining`, `ledger-stock-insert`, `config-missing-equals-line`, `config-log-level-warn`.
+- **Mostly unsure.** It abstained on 24 of 57 corpus cases (42.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 174 of 1745 mutants (10.0%) join a ripr seam precisely enough to score, so the agreement figures rest on a small slice.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 237.7 s; the bar is at most 30.0 s.
@@ -116,17 +116,17 @@ False-gap examples, as recorded:
 
 ## Verdict corpus
 
-34 hand-labeled changes (corpus 2026-10-04.3, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+57 hand-labeled changes (corpus 2026-10-04.4, RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
 
 | Rate | Count | Share |
 | --- | --- | --- |
-| False verdicts (all cases) | 10/34 | 29.4% |
-| False actionable (of discriminated) | 10/20 | 50.0% |
-| False exposed (of not fully discriminated) | 0/14 | 0.0% |
-| False silent (of not fully discriminated) | 0/14 | 0.0% |
-| Ideal verdict | 5/34 | 14.7% |
-| Abstained (limited or silent where acceptable) | 19/34 | 55.9% |
-| Findings with a contradiction | 4/42 | 9.5% |
+| False verdicts (all cases) | 19/57 | 33.3% |
+| False actionable (of discriminated) | 16/30 | 53.3% |
+| False exposed (of not fully discriminated) | 3/27 | 11.1% |
+| False silent (of not fully discriminated) | 0/27 | 0.0% |
+| Ideal verdict | 14/57 | 24.6% |
+| Abstained (limited or silent where acceptable) | 24/57 | 42.1% |
+| Findings with a contradiction | 4/77 | 5.2% |
 
 | Case | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -164,12 +164,36 @@ False-gap examples, as recorded:
 | `strsim-jaro-winkler-threshold-shift` | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `atuin-ai-history-output-capability` | not_discriminated | gap | gap | infection_unknown, weakly_exposed | ideal | none |
 | `atuin-otel-traces-suffix-not` | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `pricing-gold-threshold` | discriminated | credited | credited | exposed | ideal | none |
+| `pricing-free-shipping-boundary` | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | none |
+| `pricing-gold-discount-rate` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `pricing-flat-shipping-fee` | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `pricing-tier-label-gold` | discriminated | credited | credited | exposed | ideal | none |
+| `pricing-quote-total-field` | partially_discriminated | gap | credited | exposed | false_exposed | none |
+| `ledger-ship-log-push` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `ledger-receive-refresh-low-stock` | not_discriminated | gap | credited | exposed | false_exposed | none |
+| `ledger-receipt-remaining` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `ledger-insufficient-available` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `ledger-shipped-total` | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `ledger-stock-insert` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `ledger-ship-exact-stock` | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `ledger-sku-family-unsafe` | discriminated | credited | credited | exposed, static_unknown | ideal | none |
+| `ledger-sku-variant-unsafe` | partially_discriminated | gap | credited | exposed, static_unknown | false_exposed | none |
+| `config-missing-equals-line` | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `config-empty-key-error` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-log-level-warn` | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | none |
+| `config-bool-false-arm` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-port-zero` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-default-host` | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `config-duplicate-key-case` | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `ledger-sku-family-end` | discriminated | credited | limited | infection_unknown | abstained | none |
 
 What the corpus does not claim:
 
 - Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.
+- Authored cases were written to fill verdict and probe-family cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.
 - Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.
-- The harness runs ripr on retained upstream excerpts; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.
+- The harness runs ripr on retained upstream excerpts and on whole authored crates; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.
 - The harness does not run mutation testing, cargo test, or any network access.
 
 ## Speed and memory
@@ -250,8 +274,9 @@ Repositories the speed scoreboard ran on:
 - Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.
 - Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.
 - Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.
+- Authored cases were written to fill verdict and probe-family cells the upstream cases leave empty; their rates are reported separately under by_origin and are not real-world rates.
 - Truth comes from the listed mutants, not from exhaustive mutation; a discriminated label means every listed mutant made the test command fail.
-- The harness runs ripr on retained upstream excerpts; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.
+- The harness runs ripr on retained upstream excerpts and on whole authored crates; excerpt findings matched the full pinned checkout at labeling time and must be re-checked when a verdict changes.
 - The harness does not run mutation testing, cargo test, or any network access.
 - ripr reports static evidence. It does not run your tests or mutate your code, and no figure here is a runtime mutation result for your repository.
 - Agent and first-run figures are single walks, not rates.
