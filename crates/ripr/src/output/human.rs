@@ -513,7 +513,7 @@ pub(crate) fn terminal_safe(text: String) -> String {
     out
 }
 
-fn needs_terminal_escape(ch: char) -> bool {
+pub(crate) fn needs_terminal_escape(ch: char) -> bool {
     match ch {
         '\n' | '\t' => false,
         c if c.is_control() => true,

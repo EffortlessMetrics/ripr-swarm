@@ -1,3 +1,4 @@
+use crate::output::human::needs_terminal_escape;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
@@ -382,7 +383,37 @@ pub(crate) fn shell_arg(value: &str) -> String {
     {
         return value.to_string();
     }
+    if value.chars().any(needs_terminal_escape) {
+        return ansi_c_quote(value);
+    }
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Control and bidi characters cannot be printed raw in a report, and the
+/// report escape would change them inside `'...'` so the pasted command named a
+/// different argument. `$'...'` spells them as escapes bash decodes back to the
+/// exact bytes. PowerShell has no translation for this form, so the variant is
+/// withheld.
+fn ansi_c_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 3);
+    out.push_str("$'");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            // One `\xHH` per UTF-8 byte: unlike `\uHHHH` it decodes the same in
+            // every locale.
+            ch if needs_terminal_escape(ch) => {
+                let mut buf = [0u8; 4];
+                for byte in ch.encode_utf8(&mut buf).bytes() {
+                    out.push_str(&format!("\\x{byte:02x}"));
+                }
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
 }
 
 fn append_redirect(root: &str, command: String, out_path: Option<&str>) -> String {
@@ -761,7 +792,22 @@ mod tests {
             ("ampersand", "a && b"),
             ("tilde", "~/notes"),
             ("leading dash", "--not-a-flag"),
+            ("escape sequence", "a\u{1b}[2Jb'c\\d"),
+            ("bell and carriage return", "x\u{7}y\rz"),
+            ("bidi override", "dir\u{202e}gnissim"),
         ]
+    }
+
+    #[test]
+    fn shell_arg_spells_control_and_bidi_characters_as_escapes() {
+        let quoted = shell_arg("a\u{1b}[2Jb'c\\d\u{202e}");
+        assert_eq!(quoted, "$'a\\x1b[2Jb\\'c\\\\d\\xe2\\x80\\xae'");
+        assert!(!quoted.chars().any(needs_terminal_escape), "{quoted:?}");
+        // PowerShell has no translation for `$'...'`, so no variant is offered.
+        let command = format!("ripr explain --root {quoted}");
+        assert_eq!(crate::output::markdown::powershell_command(&command), None);
+        // Plain hostile text without control characters keeps `'...'` quoting.
+        assert_eq!(shell_arg("it's"), r"'it'\''s'");
     }
 
     #[test]
