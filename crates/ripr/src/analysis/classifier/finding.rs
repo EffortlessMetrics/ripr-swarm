@@ -92,9 +92,9 @@ pub(in crate::analysis) fn build_finding(
         // reveal's strongest rank when the window dropped nothing; a
         // truncated window could promote a confirming weaker row. Leave the
         // rows unannotated rather than claim an unestablished miss.
-        Unconfirmed::StrongestRows
+        Unconfirmed::StrongestRank
     } else {
-        Unconfirmed::NoRows
+        Unconfirmed::Confirmed
     };
     let mut related_tests = evidence.related_tests;
     if !exact_oracle_covers_direct_sink {
@@ -144,14 +144,15 @@ pub(in crate::analysis) fn build_finding(
 /// changed expression.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Unconfirmed {
-    NoRows,
+    /// No downgrade: no row is marked unconfirmed.
+    Confirmed,
     /// `observation_unverified`: no assertion names the changed expression.
     AllRows,
     /// `oracle_confirmation_mixed`: a weaker assertion names it, but none at
     /// the strongest rank does (reveal's equal-rank tie-break would have
     /// selected a confirming one). Rows below that rank may be the
     /// confirming ones, so only the strongest rows are unconfirmed.
-    StrongestRows,
+    StrongestRank,
 }
 
 /// Say why each listed test misses, for the classes where ripr reports a gap.
@@ -183,9 +184,9 @@ fn annotate_related_test_misses(
         .min();
     for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
         let row_unconfirmed = match unconfirmed {
-            Unconfirmed::NoRows => false,
+            Unconfirmed::Confirmed => false,
             Unconfirmed::AllRows => true,
-            Unconfirmed::StrongestRows => {
+            Unconfirmed::StrongestRank => {
                 Some(strength_rank(&test.oracle_strength)) == strongest_rank
             }
         };
@@ -493,7 +494,7 @@ mod tests {
             &crate::domain::ExposureClass::WeaklyExposed,
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
-            Unconfirmed::StrongestRows,
+            Unconfirmed::StrongestRank,
         );
         assert_eq!(
             rows.iter().map(|row| row.miss).collect::<Vec<_>>(),
