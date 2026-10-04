@@ -307,6 +307,30 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
             ran.stderr
         ));
     }
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check JSON is missing findings".to_string())?;
+    let mut reported_paths = Vec::with_capacity(findings.len());
+    for finding in findings {
+        let path = finding["probe"]["file"]
+            .as_str()
+            .ok_or_else(|| "check JSON finding is missing probe.file".to_string())?;
+        reported_paths.push(path.strip_prefix("./").unwrap_or(path).to_owned());
+    }
+    // The renderer writes every path with forward slashes (and a leading
+    // `./`), so a literal backslash in a file name is reported as a separator.
+    let mut expected_paths: Vec<String> = names
+        .iter()
+        .map(|name| format!("src/{}", name.replace('\\', "/")))
+        .collect();
+    expected_paths.sort();
+    reported_paths.sort();
+    if reported_paths != expected_paths {
+        return Err(format!(
+            "expected check finding paths {expected_paths:?}, got {reported_paths:?}\n{}",
+            ran.stderr
+        ));
+    }
     Ok(())
 }
 
