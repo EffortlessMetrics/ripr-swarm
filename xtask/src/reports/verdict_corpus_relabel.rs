@@ -1,0 +1,862 @@
+//! `verdict-corpus relabel`: re-derive a sample of the corpus's runtime truth.
+//!
+//! Every label in the corpus rests on mutants someone ran once, by hand. This
+//! command replays them: for each selected case it builds a run-owned copy of
+//! the subject, confirms the unedited tests pass, applies the case edit, then
+//! writes each mutant's `mutated_line` over the anchor and runs the case's own
+//! test command again. It fails when an observed outcome, failing test, or
+//! derived truth drifts from the label, when a mutant does not compile or
+//! leaves the anchor unchanged, and when repeated runs disagree.
+//!
+//! Authored subjects are stored whole and replay offline. Upstream subjects
+//! are excerpts, so they replay only from a full checkout at the pinned commit
+//! passed with `--checkouts`; this command never clones or fetches.
+
+use super::verdict_corpus::{
+    CORPUS_DIR, Case, Corpus, EditKind, MutantOutcome, Subject, SubjectOrigin, TruthState,
+    copy_tree, materialize_edit, validated_corpus,
+};
+use crate::normalize_path;
+use crate::run::{capture_output_measured, run_output_owned};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+const RELABEL_SCHEMA: &str = "ripr_verdict_corpus_relabel.v1";
+const DEFAULT_OUT: &str = "target/ripr/reports/verdict-corpus";
+const DEFAULT_SEED: &str = "ripr-verdict-corpus";
+const DEFAULT_REPEAT: usize = 2;
+const DEFAULT_TIMEOUT_SECS: u64 = 600;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RelabelArgs {
+    pub(crate) sample: Option<usize>,
+    pub(crate) seed: String,
+    pub(crate) cases: Vec<String>,
+    pub(crate) checkouts: Option<PathBuf>,
+    pub(crate) repeat: usize,
+    pub(crate) timeout: Duration,
+    pub(crate) out: PathBuf,
+    /// Where run-owned subject trees and their build caches live.
+    pub(crate) work_dir: PathBuf,
+}
+
+pub(crate) fn parse_args(args: &[String]) -> Result<RelabelArgs, String> {
+    let mut parsed = RelabelArgs {
+        sample: None,
+        seed: DEFAULT_SEED.to_string(),
+        cases: Vec::new(),
+        checkouts: None,
+        repeat: DEFAULT_REPEAT,
+        timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+        out: PathBuf::from(DEFAULT_OUT),
+        work_dir: std::env::temp_dir().join("ripr-verdict-relabel"),
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let mut value = |name: &str| {
+            iter.next()
+                .cloned()
+                .ok_or_else(|| format!("verdict-corpus relabel: {name} needs a value"))
+        };
+        let positive = |name: &str, text: String| -> Result<u64, String> {
+            match text.parse::<u64>() {
+                Ok(n) if n > 0 => Ok(n),
+                _ => Err(format!(
+                    "verdict-corpus relabel: {name} must be a positive integer, got `{text}`"
+                )),
+            }
+        };
+        match arg.as_str() {
+            "--sample" => {
+                let n = positive("--sample", value("--sample")?)?;
+                parsed.sample = Some(usize::try_from(n).map_err(|err| err.to_string())?);
+            }
+            "--seed" => parsed.seed = value("--seed")?,
+            "--case" => parsed.cases.push(value("--case")?),
+            "--checkouts" => parsed.checkouts = Some(PathBuf::from(value("--checkouts")?)),
+            "--repeat" => {
+                let n = positive("--repeat", value("--repeat")?)?;
+                parsed.repeat = usize::try_from(n).map_err(|err| err.to_string())?;
+            }
+            "--timeout-secs" => {
+                parsed.timeout =
+                    Duration::from_secs(positive("--timeout-secs", value("--timeout-secs")?)?);
+            }
+            "--out" => parsed.out = PathBuf::from(value("--out")?),
+            "--work-dir" => parsed.work_dir = PathBuf::from(value("--work-dir")?),
+            other => {
+                return Err(format!(
+                    "verdict-corpus relabel: unknown argument `{other}`"
+                ));
+            }
+        }
+    }
+    if parsed.sample.is_some() && !parsed.cases.is_empty() {
+        return Err("verdict-corpus relabel: pass --sample or --case, not both".to_string());
+    }
+    Ok(parsed)
+}
+
+/// Deterministic sample: order cases by sha256(seed, case id) and take the
+/// first `n`. The same seed always picks the same cases, and a different seed
+/// (a scheduled run might pass the date) rotates through the corpus.
+pub(crate) fn sample_order<'a>(cases: &[&'a Case], seed: &str) -> Vec<&'a Case> {
+    let mut keyed: Vec<(String, &Case)> = cases
+        .iter()
+        .map(|case| {
+            let mut hasher = Sha256::new();
+            hasher.update(seed.as_bytes());
+            hasher.update([0]);
+            hasher.update(case.case_id.as_bytes());
+            (format!("{:x}", hasher.finalize()), *case)
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    keyed.into_iter().map(|(_, case)| case).collect()
+}
+
+/// The case's test command as cargo arguments. Labels name a plain
+/// `cargo test ...` line; anything else (a shell pipeline, another program)
+/// is refused rather than interpreted.
+pub(crate) fn test_command_args(command: &str) -> Result<Vec<String>, String> {
+    let mut words = command.split_whitespace();
+    if words.next() != Some("cargo") {
+        return Err(format!("test command `{command}` is not a cargo command"));
+    }
+    let rest: Vec<String> = words.map(str::to_string).collect();
+    if rest.first().map(String::as_str) != Some("test") {
+        return Err(format!("test command `{command}` is not `cargo test ...`"));
+    }
+    if rest
+        .iter()
+        .any(|word| word.contains(['|', ';', '&', '>', '<', '`', '$']))
+    {
+        return Err(format!("test command `{command}` contains shell syntax"));
+    }
+    Ok(rest)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub(crate) enum RunOutcome {
+    TestsPassed,
+    TestsFailed {
+        failing_tests: BTreeSet<String>,
+    },
+    /// The command failed before any test ran: a mutant that does not
+    /// compile has no runtime outcome, so it can carry no label.
+    BuildFailed {
+        error: String,
+    },
+    TimedOut,
+}
+
+impl RunOutcome {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::TestsPassed => "tests_passed",
+            Self::TestsFailed { .. } => "tests_failed",
+            Self::BuildFailed { .. } => "build_failed",
+            Self::TimedOut => "timed_out",
+        }
+    }
+}
+
+/// Read one `cargo test` run. libtest prints `test <name> ... FAILED` for
+/// each failing test and `test result:` once per test binary that ran; a
+/// failure with neither means the build failed, and cargo's first `error`
+/// line on stderr says why.
+pub(crate) fn classify_run(
+    success: bool,
+    timed_out: bool,
+    stdout: &str,
+    stderr: &str,
+) -> RunOutcome {
+    if timed_out {
+        return RunOutcome::TimedOut;
+    }
+    if success {
+        return RunOutcome::TestsPassed;
+    }
+    let failing_tests: BTreeSet<String> = stdout
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("test ")?;
+            let name = rest.strip_suffix(" ... FAILED")?;
+            Some(name.trim().to_string())
+        })
+        .collect();
+    // `running N tests` means a test binary started; a binary that aborts
+    // (a stack overflow, say) prints it but no per-test result.
+    let any_ran = stdout
+        .lines()
+        .any(|line| line.starts_with("test result:") || line.starts_with("running "));
+    if failing_tests.is_empty() && !any_ran {
+        let error = stderr
+            .lines()
+            .find(|line| line.starts_with("error"))
+            .unwrap_or("no error line on stderr")
+            .trim()
+            .to_string();
+        RunOutcome::BuildFailed { error }
+    } else {
+        RunOutcome::TestsFailed { failing_tests }
+    }
+}
+
+/// A labeled failing test names the observed one when they are equal or one
+/// is the other's module-qualified form (`tests::x` and `x`, or a crate
+/// path).
+pub(crate) fn names_failing_test(label: &str, observed: &BTreeSet<String>) -> bool {
+    observed.iter().any(|name| {
+        name == label
+            || name.ends_with(&format!("::{label}"))
+            || label.ends_with(&format!("::{name}"))
+    })
+}
+
+/// Replace the 1-based `line` of `text` with `mutated` (already trimmed),
+/// keeping the original indentation. An empty `mutated` blanks the line, which
+/// removes the statement without shifting any other line.
+pub(crate) fn apply_mutated_line(text: &str, line: usize, mutated: &str) -> Result<String, String> {
+    let mut lines: Vec<&str> = text.split('\n').collect();
+    let index = line
+        .checked_sub(1)
+        .filter(|index| *index < lines.len())
+        .ok_or_else(|| format!("anchor line {line} is past the end of the file"))?;
+    let original = lines[index];
+    let indent = &original[..original.len() - original.trim_start().len()];
+    let carriage = if original.ends_with('\r') { "\r" } else { "" };
+    let replaced = if mutated.is_empty() {
+        carriage.to_string()
+    } else {
+        format!("{indent}{mutated}{carriage}")
+    };
+    lines[index] = &replaced;
+    Ok(lines.join("\n"))
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MutantResult {
+    pub(crate) replacement: String,
+    pub(crate) mutated_line: Option<String>,
+    pub(crate) labeled: String,
+    pub(crate) observed: Vec<RunOutcome>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CaseResult {
+    pub(crate) case_id: String,
+    pub(crate) subject_id: String,
+    pub(crate) toolchain: String,
+    pub(crate) labeled_truth: String,
+    pub(crate) observed_truth: Option<String>,
+    pub(crate) baseline: Vec<RunOutcome>,
+    pub(crate) edited: Vec<RunOutcome>,
+    pub(crate) mutants: Vec<MutantResult>,
+    pub(crate) drift: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Receipt {
+    schema_version: &'static str,
+    corpus_version: String,
+    seed: String,
+    sample: Option<usize>,
+    repeat: usize,
+    selected: usize,
+    not_replayed: Vec<String>,
+    drifted_cases: usize,
+    cases: Vec<CaseResult>,
+}
+
+/// Compare one mutant's repeated runs with its label and return each drift.
+pub(crate) fn mutant_drift(
+    case_id: &str,
+    what: &str,
+    labeled: MutantOutcome,
+    failing_test: Option<&str>,
+    observed: &[RunOutcome],
+) -> Vec<String> {
+    let mut drift = Vec::new();
+    let Some(first) = observed.first() else {
+        return vec![format!("case `{case_id}` {what}: no run was observed")];
+    };
+    if observed.iter().any(|run| run.label() != first.label()) {
+        let seen: Vec<&str> = observed.iter().map(RunOutcome::label).collect();
+        drift.push(format!(
+            "case `{case_id}` {what}: repeated runs disagree ({}); a flaky or timing-dependent test cannot carry a label",
+            seen.join(", ")
+        ));
+    }
+    match (first, labeled) {
+        (RunOutcome::BuildFailed { error }, _) => drift.push(format!(
+            "case `{case_id}` {what}: does not compile ({error}), so it has no runtime outcome; fix its mutated_line or drop it"
+        )),
+        (RunOutcome::TimedOut, _) => drift.push(format!(
+            "case `{case_id}` {what}: timed out; raise --timeout-secs or label it by hand"
+        )),
+        (RunOutcome::TestsPassed, MutantOutcome::TestsFailed) => drift.push(format!(
+            "case `{case_id}` {what}: labeled tests_failed but the tests pass"
+        )),
+        (RunOutcome::TestsFailed { .. }, MutantOutcome::TestsPassed) => drift.push(format!(
+            "case `{case_id}` {what}: labeled tests_passed but the tests fail"
+        )),
+        (RunOutcome::TestsFailed { failing_tests }, MutantOutcome::TestsFailed) => {
+            // An aborted test binary names no failing test, so there is no
+            // name to hold the label to.
+            if let Some(label) = failing_test
+                && !failing_tests.is_empty()
+                && !names_failing_test(label, failing_tests)
+            {
+                drift.push(format!(
+                    "case `{case_id}` {what}: labeled failing test `{label}` did not fail; observed {}",
+                    failing_tests.iter().cloned().collect::<Vec<_>>().join(", ")
+                ));
+            }
+        }
+        (RunOutcome::TestsPassed, MutantOutcome::TestsPassed) => {}
+    }
+    drift
+}
+
+/// Truth from observed outcomes, by the corpus's own rule: every mutant
+/// failing the tests is discriminated, none is not_discriminated. `None` when
+/// any mutant has no runtime outcome.
+pub(crate) fn observed_truth(firsts: &[&RunOutcome]) -> Option<TruthState> {
+    let mut failed = 0;
+    for run in firsts {
+        match run {
+            RunOutcome::TestsFailed { .. } => failed += 1,
+            RunOutcome::TestsPassed => {}
+            RunOutcome::BuildFailed { .. } | RunOutcome::TimedOut => return None,
+        }
+    }
+    Some(match failed {
+        0 => TruthState::NotDiscriminated,
+        n if n == firsts.len() => TruthState::Discriminated,
+        _ => TruthState::PartiallyDiscriminated,
+    })
+}
+
+struct Runner<'a> {
+    args: &'a RelabelArgs,
+    work_root: PathBuf,
+}
+
+impl Runner<'_> {
+    fn run_tests(
+        &self,
+        tree: &Path,
+        subject_id: &str,
+        toolchain: &str,
+        command: &[String],
+    ) -> Result<Vec<RunOutcome>, String> {
+        let target = self
+            .work_root
+            .join("target")
+            .join(format!("{subject_id}-{toolchain}"));
+        let target = std::path::absolute(&target)
+            .map_err(|err| format!("resolve {}: {err}", normalize_path(&target)))?;
+        let target = target.to_string_lossy().into_owned();
+        let envs = [
+            ("CARGO_TARGET_DIR", target.as_str()),
+            ("CARGO_TERM_COLOR", "never"),
+            ("RUSTUP_TOOLCHAIN", toolchain),
+            ("RUSTUP_AUTO_INSTALL", "0"),
+        ];
+        let mut runs = Vec::with_capacity(self.args.repeat);
+        for _ in 0..self.args.repeat {
+            let output = capture_output_measured(
+                "cargo",
+                command,
+                Some(tree),
+                &envs,
+                self.args.timeout,
+                "verdict-corpus relabel test run",
+            )?
+            .output;
+            let success = output.status.is_some_and(|status| status.success());
+            runs.push(classify_run(
+                success,
+                output.timed_out,
+                &output.stdout,
+                &output.stderr,
+            ));
+        }
+        Ok(runs)
+    }
+}
+
+/// A run-owned copy of the subject with the case edit applied: the stored
+/// crate for an authored subject, the pinned full checkout for an upstream
+/// one. Returns the tree and the edited anchor file's text.
+fn prepare_tree(
+    dir: &Path,
+    case: &Case,
+    subject: &Subject,
+    checkouts: Option<&Path>,
+    work_root: &Path,
+) -> Result<PathBuf, String> {
+    let tree = work_root.join("trees").join(&case.subject_id);
+    match fs::remove_dir_all(&tree) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("clear {}: {err}", normalize_path(&tree))),
+    }
+    match subject.origin {
+        SubjectOrigin::Authored => {
+            copy_tree(&dir.join("subjects").join(&subject.subject_id), &tree)?
+        }
+        SubjectOrigin::Upstream => {
+            let checkout = checkout_for(subject, checkouts)?.ok_or_else(|| {
+                format!(
+                    "no full checkout for upstream subject `{}`",
+                    subject.subject_id
+                )
+            })?;
+            copy_checkout(&checkout, &tree)?;
+        }
+    }
+    detach_from_enclosing_workspace(&tree)?;
+    std::path::absolute(&tree).map_err(|err| format!("resolve {}: {err}", normalize_path(&tree)))
+}
+
+/// Give the copied subject's root manifest an empty `[workspace]` table when
+/// it has none, so cargo builds it standalone wherever the run-owned tree
+/// sits. Without it, a tree under this repository (where the default work dir
+/// lands, since `.cargo/config.toml` points TMPDIR at `target`) is refused as
+/// a package that "believes it's in a workspace". An empty table on a root
+/// package changes nothing else about its build.
+pub(crate) fn detach_from_enclosing_workspace(tree: &Path) -> Result<(), String> {
+    let manifest = tree.join("Cargo.toml");
+    let text = fs::read_to_string(&manifest)
+        .map_err(|err| format!("read {}: {err}", normalize_path(&manifest)))?;
+    if declares_workspace(&text) {
+        return Ok(());
+    }
+    let separator = if text.ends_with('\n') { "" } else { "\n" };
+    fs::write(&manifest, format!("{text}{separator}\n[workspace]\n"))
+        .map_err(|err| format!("write {}: {err}", normalize_path(&manifest)))
+}
+
+pub(crate) fn declares_workspace(manifest: &str) -> bool {
+    manifest
+        .lines()
+        .map(str::trim)
+        .any(|line| line == "[workspace]" || line.starts_with("[workspace."))
+}
+
+/// The full checkout of an upstream subject under `checkouts`, verified to
+/// sit at the pinned commit; `None` when none was supplied.
+fn checkout_for(subject: &Subject, checkouts: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    let Some(root) = checkouts else {
+        return Ok(None);
+    };
+    let checkout = root.join(&subject.subject_id);
+    if !checkout.is_dir() {
+        return Ok(None);
+    }
+    let pinned = subject
+        .commit
+        .as_deref()
+        .ok_or_else(|| format!("upstream subject `{}` names no commit", subject.subject_id))?;
+    let args = vec![
+        "-C".to_string(),
+        checkout.to_string_lossy().into_owned(),
+        "rev-parse".to_string(),
+        "HEAD".to_string(),
+    ];
+    let head = run_output_owned("git", &args)?;
+    if head.trim() != pinned {
+        return Err(format!(
+            "{} is at {}, not the pinned commit {pinned} of `{}`",
+            normalize_path(&checkout),
+            head.trim(),
+            subject.subject_id
+        ));
+    }
+    Ok(Some(checkout))
+}
+
+/// Copy a checkout's working tree, leaving out `.git` and `target`.
+fn copy_checkout(from: &Path, to: &Path) -> Result<(), String> {
+    let mut stack = vec![PathBuf::new()];
+    while let Some(rel) = stack.pop() {
+        let source = from.join(&rel);
+        fs::create_dir_all(to.join(&rel))
+            .map_err(|err| format!("create {}: {err}", normalize_path(&to.join(&rel))))?;
+        let entries = fs::read_dir(&source)
+            .map_err(|err| format!("read {}: {err}", normalize_path(&source)))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read {}: {err}", normalize_path(&source)))?;
+            let name = entry.file_name();
+            if rel.as_os_str().is_empty() && (name == ".git" || name == "target") {
+                continue;
+            }
+            let child = rel.join(&name);
+            let kind = entry
+                .file_type()
+                .map_err(|err| format!("stat {}: {err}", normalize_path(&from.join(&child))))?;
+            if kind.is_dir() {
+                stack.push(child);
+            } else if kind.is_symlink() {
+                let link = fs::read_link(from.join(&child)).map_err(|err| {
+                    format!("read link {}: {err}", normalize_path(&from.join(&child)))
+                })?;
+                symlink(&link, &to.join(&child))?;
+            } else {
+                fs::copy(from.join(&child), to.join(&child))
+                    .map_err(|err| format!("copy {}: {err}", normalize_path(&to.join(&child))))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn symlink(link: &Path, at: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(link, at)
+        .map_err(|err| format!("link {}: {err}", normalize_path(at)))
+}
+
+#[cfg(not(unix))]
+fn symlink(_link: &Path, at: &Path) -> Result<(), String> {
+    Err(format!(
+        "{} is a symlink; replay upstream checkouts with symlinks on a Unix host",
+        normalize_path(at)
+    ))
+}
+
+fn relabel_case(
+    runner: &Runner<'_>,
+    dir: &Path,
+    case: &Case,
+    subject: &Subject,
+) -> Result<CaseResult, String> {
+    let id = &case.case_id;
+    let command =
+        test_command_args(&case.truth.test_command).map_err(|err| format!("case `{id}`: {err}"))?;
+    let tree = prepare_tree(
+        dir,
+        case,
+        subject,
+        runner.args.checkouts.as_deref(),
+        &runner.work_root,
+    )?;
+    let mut drift = Vec::new();
+    let toolchain = labeled_toolchain(&case.truth.toolchain).ok_or_else(|| {
+        format!(
+            "case `{id}`: toolchain `{}` names no rustc release",
+            case.truth.toolchain
+        )
+    })?;
+    let observed = installed_release(&tree, toolchain);
+    if observed.as_deref() != Some(toolchain_release(&case.truth.toolchain)) {
+        drift.push(format!(
+            "case `{id}`: labeled on `{}` but that toolchain is not installed here ({}); run `rustup toolchain install {toolchain}` and replay",
+            case.truth.toolchain,
+            observed.unwrap_or_else(|| "rustc did not start".to_string())
+        ));
+        return Ok(CaseResult {
+            case_id: id.clone(),
+            subject_id: case.subject_id.clone(),
+            toolchain: toolchain.to_string(),
+            labeled_truth: truth_label(case.truth.state).to_string(),
+            observed_truth: None,
+            baseline: Vec::new(),
+            edited: Vec::new(),
+            mutants: Vec::new(),
+            drift,
+        });
+    }
+
+    let baseline = runner.run_tests(&tree, &case.subject_id, toolchain, &command)?;
+    if baseline.iter().any(|run| *run != RunOutcome::TestsPassed) {
+        let seen: Vec<String> = baseline.iter().map(describe).collect();
+        drift.push(format!(
+            "case `{id}`: the unedited subject does not pass `{}` ({}); no mutant outcome can be trusted",
+            case.truth.test_command,
+            seen.join(", ")
+        ));
+    }
+
+    let anchored = materialize_edit(dir, case, &tree)?;
+    let edited_text = fs::read_to_string(&anchored)
+        .map_err(|err| format!("read {}: {err}", normalize_path(&anchored)))?;
+    let edited_line = edited_text
+        .split('\n')
+        .nth(case.anchor.line.saturating_sub(1))
+        .map(|line| line.trim().to_string())
+        .unwrap_or_default();
+    let edited = runner.run_tests(&tree, &case.subject_id, toolchain, &command)?;
+
+    let mut mutants = Vec::new();
+    match case.edit_kind {
+        EditKind::BehaviorChange => {
+            // The edit itself is the one mutant.
+            let mutant = case
+                .truth
+                .mutants
+                .first()
+                .ok_or_else(|| format!("case `{id}` has no mutant"))?;
+            drift.extend(mutant_drift(
+                id,
+                "edit",
+                mutant.outcome,
+                mutant.failing_test.as_deref(),
+                &edited,
+            ));
+            mutants.push(MutantResult {
+                replacement: mutant.replacement.clone(),
+                mutated_line: None,
+                labeled: outcome_label(mutant.outcome).to_string(),
+                observed: edited.clone(),
+            });
+        }
+        EditKind::BehaviorPreservingRewrite => {
+            if edited.iter().any(|run| *run != RunOutcome::TestsPassed) {
+                let seen: Vec<String> = edited.iter().map(describe).collect();
+                drift.push(format!(
+                    "case `{id}`: the rewrite is labeled behavior-preserving but its tests do not pass ({})",
+                    seen.join(", ")
+                ));
+            }
+            for mutant in &case.truth.mutants {
+                let what = format!("mutant `{}`", mutant.replacement);
+                let Some(line) = mutant.mutated_line.as_deref() else {
+                    drift.push(format!("case `{id}` {what}: has no mutated_line to replay"));
+                    continue;
+                };
+                if line == edited_line {
+                    drift.push(format!(
+                        "case `{id}` {what}: mutated_line equals the edited anchor line, so it changes nothing"
+                    ));
+                    continue;
+                }
+                let mutated = apply_mutated_line(&edited_text, case.anchor.line, line)?;
+                fs::write(&anchored, mutated)
+                    .map_err(|err| format!("write {}: {err}", normalize_path(&anchored)))?;
+                let observed = runner.run_tests(&tree, &case.subject_id, toolchain, &command);
+                fs::write(&anchored, &edited_text)
+                    .map_err(|err| format!("restore {}: {err}", normalize_path(&anchored)))?;
+                let observed = observed?;
+                drift.extend(mutant_drift(
+                    id,
+                    &what,
+                    mutant.outcome,
+                    mutant.failing_test.as_deref(),
+                    &observed,
+                ));
+                mutants.push(MutantResult {
+                    replacement: mutant.replacement.clone(),
+                    mutated_line: Some(line.to_string()),
+                    labeled: outcome_label(mutant.outcome).to_string(),
+                    observed,
+                });
+            }
+        }
+    }
+
+    let firsts: Vec<&RunOutcome> = mutants.iter().filter_map(|m| m.observed.first()).collect();
+    let truth = if firsts.len() == case.truth.mutants.len() {
+        observed_truth(&firsts)
+    } else {
+        None
+    };
+    if let Some(truth) = truth
+        && truth != case.truth.state
+    {
+        drift.push(format!(
+            "case `{id}`: labeled {} but the replayed mutants give {}",
+            truth_label(case.truth.state),
+            truth_label(truth)
+        ));
+    }
+    Ok(CaseResult {
+        case_id: id.clone(),
+        subject_id: case.subject_id.clone(),
+        toolchain: toolchain.to_string(),
+        labeled_truth: truth_label(case.truth.state).to_string(),
+        observed_truth: truth.map(|t| truth_label(t).to_string()),
+        baseline,
+        edited,
+        mutants,
+        drift,
+    })
+}
+
+fn describe(run: &RunOutcome) -> String {
+    match run {
+        RunOutcome::BuildFailed { error } => format!("build_failed: {error}"),
+        other => other.label().to_string(),
+    }
+}
+
+fn outcome_label(outcome: MutantOutcome) -> &'static str {
+    match outcome {
+        MutantOutcome::TestsFailed => "tests_failed",
+        MutantOutcome::TestsPassed => "tests_passed",
+    }
+}
+
+fn truth_label(truth: TruthState) -> &'static str {
+    match truth {
+        TruthState::Discriminated => "discriminated",
+        TruthState::PartiallyDiscriminated => "partially_discriminated",
+        TruthState::NotDiscriminated => "not_discriminated",
+    }
+}
+
+/// `rustc 1.95.0 (59807616e 2026-04-14)` from a label's toolchain or from
+/// `rustc --version`; the host triple after the comma is not compared.
+pub(crate) fn toolchain_release(text: &str) -> &str {
+    text.split(',').next().unwrap_or(text).trim()
+}
+
+/// The rustup toolchain name for a label: `1.95.0` from
+/// `rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu`. Each case
+/// replays on the toolchain it was labeled on, not on whatever the caller's
+/// directory pins: a label that only holds on one compiler is still a label.
+pub(crate) fn labeled_toolchain(text: &str) -> Option<&str> {
+    let version = toolchain_release(text)
+        .strip_prefix("rustc ")?
+        .split(' ')
+        .next()?;
+    let valid = !version.is_empty()
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
+    valid.then_some(version)
+}
+
+/// `rustc --version` for `toolchain` in `tree`, without letting rustup
+/// install anything; `None` when it cannot start.
+fn installed_release(tree: &Path, toolchain: &str) -> Option<String> {
+    let output = capture_output_measured(
+        "rustc",
+        &["--version".to_string()],
+        Some(tree),
+        &[
+            ("RUSTUP_TOOLCHAIN", toolchain),
+            ("RUSTUP_AUTO_INSTALL", "0"),
+        ],
+        Duration::from_mins(1),
+        "verdict-corpus relabel toolchain probe",
+    )
+    .ok()?
+    .output;
+    output
+        .status
+        .is_some_and(|status| status.success())
+        .then(|| toolchain_release(&output.stdout).to_string())
+}
+
+pub(crate) fn relabel(args: &[String]) -> Result<(), String> {
+    let args = parse_args(args)?;
+    let dir = Path::new(CORPUS_DIR);
+    let corpus: Corpus = validated_corpus(dir)?;
+    let subject = |id: &str| corpus.subjects.iter().find(|s| s.subject_id == id);
+
+    let mut not_replayed = Vec::new();
+    let mut replayable = Vec::new();
+    for case in &corpus.cases {
+        let Some(owner) = subject(&case.subject_id) else {
+            return Err(format!("case `{}` names an unknown subject", case.case_id));
+        };
+        let ready = match owner.origin {
+            SubjectOrigin::Authored => true,
+            SubjectOrigin::Upstream => checkout_for(owner, args.checkouts.as_deref())?.is_some(),
+        };
+        if ready {
+            replayable.push(case);
+        } else {
+            not_replayed.push(case.case_id.clone());
+        }
+    }
+
+    let selected: Vec<&Case> = if args.cases.is_empty() {
+        let ordered = sample_order(&replayable, &args.seed);
+        match args.sample {
+            Some(n) => ordered.into_iter().take(n).collect(),
+            None => ordered,
+        }
+    } else {
+        let mut picked = Vec::new();
+        for id in &args.cases {
+            let case = corpus
+                .cases
+                .iter()
+                .find(|case| &case.case_id == id)
+                .ok_or_else(|| format!("verdict-corpus relabel: no case `{id}`"))?;
+            if !replayable.iter().any(|ready| ready.case_id == case.case_id) {
+                return Err(format!(
+                    "verdict-corpus relabel: case `{id}` is an upstream excerpt; pass --checkouts <dir> holding a full checkout of `{}` at its pinned commit",
+                    case.subject_id
+                ));
+            }
+            picked.push(case);
+        }
+        picked
+    };
+    if selected.is_empty() {
+        return Err("verdict-corpus relabel: no replayable case was selected".to_string());
+    }
+
+    let runner = Runner {
+        args: &args,
+        work_root: args.work_dir.clone(),
+    };
+    let mut results = Vec::new();
+    for case in &selected {
+        let owner = subject(&case.subject_id)
+            .ok_or_else(|| format!("case `{}` names an unknown subject", case.case_id))?;
+        eprintln!("verdict-corpus relabel: {}", case.case_id);
+        let result = relabel_case(&runner, dir, case, owner)?;
+        for line in &result.drift {
+            eprintln!("  drift: {line}");
+        }
+        results.push(result);
+    }
+
+    let drifted_cases = results.iter().filter(|r| !r.drift.is_empty()).count();
+    let receipt = Receipt {
+        schema_version: RELABEL_SCHEMA,
+        corpus_version: corpus.corpus_version.clone(),
+        seed: args.seed.clone(),
+        sample: args.sample,
+        repeat: args.repeat,
+        selected: results.len(),
+        not_replayed,
+        drifted_cases,
+        cases: results,
+    };
+    fs::create_dir_all(&args.out)
+        .map_err(|err| format!("create {}: {err}", normalize_path(&args.out)))?;
+    let path = args.out.join("relabel.json");
+    let json = serde_json::to_string_pretty(&receipt).map_err(|err| err.to_string())?;
+    fs::write(&path, format!("{json}\n"))
+        .map_err(|err| format!("write {}: {err}", normalize_path(&path)))?;
+    println!(
+        "verdict-corpus relabel: replayed {} case(s), {} drifted, {} upstream case(s) not replayed without --checkouts; wrote {}",
+        receipt.selected,
+        receipt.drifted_cases,
+        receipt.not_replayed.len(),
+        normalize_path(&path)
+    );
+    if drifted_cases > 0 {
+        return Err(format!(
+            "verdict-corpus relabel: {drifted_cases} case(s) drifted from their labels; see {}",
+            normalize_path(&path)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "verdict_corpus_relabel_tests.rs"]
+mod tests;
