@@ -21,11 +21,26 @@ are scoped or reviewed.
 
 ### Fixed
 
+- The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
+  line, the `agent repair --phase before` next command (stdout and stderr) and
+  the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
+  form when the path holds an apostrophe or typographic quote, so the command
+  pastes as one argument in PowerShell. A new advisory `printed-command-paste`
+  lane pastes the commands from the main flows it runs into bash, zsh, sh and
+  PowerShell on Linux, macOS and Windows. Commands carried in JSON are checked
+  in Bash only.
 - `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). No exit code changes; an unknown command of 5 to 7 characters now needs to be within two edits (and four or fewer within one) to get a suggestion (#5340).
 - Config: a `ripr.toml` that is a dangling or self-referencing symlink is
   reported as an unreadable config naming the file. It was treated as absent,
   so the run silently used built-in defaults while a directory or non-UTF-8
   `ripr.toml` already failed loudly.
+- The workflow from `ripr init --ci github` now explains a failed install.
+  When no prebuilt binary fits the runner and the runner has no `cargo`, the
+  Install ripr step fails with the cause and the fix (install Rust or add a
+  toolchain step) instead of a bare `cargo: command not found`. When ripr was
+  never installed, the advisory summary says so and points at that step's log
+  instead of rendering nothing.
+
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
@@ -85,6 +100,14 @@ are scoped or reviewed.
   cores and stops once one file already leaves every trusted macro
   unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
   (8.0s to 4.4s on two cores) with identical output.
+- The generated GitHub workflow shrinks from 1,154 to 385 lines. Its analysis
+  and report steps now run inside one `ripr reports ci-packet` step, which
+  keeps each old step's semantics: a log group per step, advisory failures
+  logged without stopping the rest, and the job failing only when the diff
+  capture or the gate fails, or a gate input fails under a blocking
+  `RIPR_GATE_MODE`. `--step NAME` reruns one step. The comment capture and
+  publish steps stay in YAML, so the token never reaches ripr. Regenerate the
+  workflow with `ripr init --ci github --force` to pick this up (#4696).
 
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of
@@ -206,6 +229,16 @@ are scoped or reviewed.
   explicit and never assigned an inferred package (#5043).
 
 ### Added
+
+- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
+  scoreboards (speed, ci, trust, paste, first_run) on a pinned
+  real-repository corpus: cold pilot and warm check time and peak memory,
+  generated workflow size, false-clean and self-contradicting output, and
+  paste safety of printed commands under a hostile repository path. Targets
+  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
+  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
+  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
+  nightly `DX Scoreboard` workflow runs it.
 
 - Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
   second semver and bytesize pins), now 32 cases across 10 subjects. The
