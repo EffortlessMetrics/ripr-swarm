@@ -2033,17 +2033,17 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
         let body = read_text_lossy(&controls_path)?;
         match crate::issue_lifecycle_intake::load_issue_lifecycle_intake_control_corpus(&body) {
             Ok(controls) => {
-                for failure in crate::issue_lifecycle_intake::assess_intake_control_corpus(&controls)
+                for failure in
+                    crate::issue_lifecycle_intake::assess_intake_control_corpus(&controls)
                 {
                     violations.push(format!(
                         "issue lifecycle intake control corpus assessment failed: {failure}"
                     ));
                 }
                 for control in &controls.rows {
-                    let assessment =
-                        crate::issue_lifecycle_attempt::assess_issue_lifecycle_attempt(
-                            &control.row.attempt,
-                        );
+                    let assessment = crate::issue_lifecycle_attempt::assess_issue_lifecycle_attempt(
+                        &control.row.attempt,
+                    );
                     if !assessment.counted {
                         violations.push(format!(
                             "issue lifecycle intake control `{}` was rejected by the RIPR-SPEC-0218 counting law: {:?}",
