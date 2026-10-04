@@ -6316,6 +6316,15 @@ mod tests {
                         .as_str()
                         .is_some_and(|command| command.contains(" fetch origin -- "))
                 );
+                // The fetch names its destination, so it works in a
+                // single-branch checkout too.
+                assert!(
+                    commands[0]
+                        .as_str()
+                        .is_some_and(|command| command.contains("refs/remotes/origin/topic")
+                            && command.contains("+refs/heads/")),
+                    "{commands:?}"
+                );
             }
             assert_eq!(render_start_here_markdown(&packet), markdown);
         }

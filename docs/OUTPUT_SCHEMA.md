@@ -12755,6 +12755,10 @@ Field contract:
   check with a recovery instruction. The missing-base fetch uses `git -C` to
   bind the selected root and precedes the rerun. Human Markdown pairs each step
   through the shared PowerShell renderer; unavailable forms are disclosed.
+  The legacy `next_command` stays prose and is unchanged. The missing-base
+  fetch step names its destination (`+refs/heads/<branch>:refs/remotes/origin/<branch>`),
+  so it also works in a single-branch or shallow checkout. When both refs are
+  missing, only the base recovery is surfaced; the rerun reveals the head.
   These display strings are advisory, not typed execution authority. Existing
   packets without this optional field retain their legacy presentation.
   Optional `recovery_guidance` at the same check and preflight levels keeps
