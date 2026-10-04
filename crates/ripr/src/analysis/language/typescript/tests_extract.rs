@@ -1565,7 +1565,7 @@ fn argument_parameter_names(argument: &oxc_ast::ast::Argument<'_>) -> Vec<String
             params
                 .rest
                 .iter()
-                .flat_map(|rest| rest.argument.get_binding_identifiers()),
+                .flat_map(|rest| rest.rest.argument.get_binding_identifiers()),
         )
         .chain(function_name)
         .map(|identifier| identifier.name.to_string())
