@@ -2437,7 +2437,10 @@ impl RpcSession {
     ) -> Result<Option<Value>, String> {
         let deadline = Instant::now() + timeout;
         loop {
-            let remaining = timeout.saturating_sub(deadline.elapsed());
+            // `deadline.elapsed()` would read ~zero against a future
+            // instant, resetting the full window on every drained message;
+            // measure toward the deadline instead.
+            let remaining = deadline.saturating_duration_since(Instant::now());
             match self.receiver.recv_timeout(remaining) {
                 Ok(message) => {
                     if message.get("id").is_none() && matches(&message) {
