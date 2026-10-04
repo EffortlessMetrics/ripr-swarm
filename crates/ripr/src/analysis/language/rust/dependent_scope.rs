@@ -1206,7 +1206,14 @@ mod tests {
     fn withheld_macro_bindings_saturate_on_a_foreign_glob() {
         let packages = BTreeSet::from(["core".to_string()]);
         let mut bindings = classify::WithheldMacroBindings::default();
-        let path = Path::new("e/src/lib.rs");
+        // A crate root's private glob reaches only its own crate, so it is
+        // routed by root and does not saturate the workspace-wide set.
+        assert!(!bindings.absorb(
+            Path::new("e/src/lib.rs"),
+            "use proptest::prelude::*;",
+            &packages
+        ));
+        let path = Path::new("e/src/util.rs");
         assert!(!bindings.absorb(path, "fn plain() {}", &packages));
         assert!(!bindings.absorb(path, "use core::prelude::*;", &packages));
         assert!(bindings.absorb(path, "use proptest::prelude::*;", &packages));

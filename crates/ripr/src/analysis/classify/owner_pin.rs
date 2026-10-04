@@ -100,6 +100,11 @@ pub(in crate::analysis) struct WithheldMacroBindings {
     /// The first withheld site per trusted name, so a refusal can still
     /// name where the binding is.
     sites: BTreeMap<String, (PathBuf, MacroBindingSite)>,
+    /// Crate-local sites in a withheld crate root file, keyed by that root:
+    /// as in the full scan, they reach only tests in the same crate.
+    by_root: CrateMacroBindings,
+    /// The first such site per trusted name and root, for disclosure.
+    root_sites: BTreeMap<(String, PathBuf), (PathBuf, MacroBindingSite)>,
 }
 
 impl WithheldMacroBindings {
@@ -114,7 +119,18 @@ impl WithheldMacroBindings {
         if self.any_name {
             return true;
         }
+        let root = withheld_crate_root(path);
         for (name, site) in macro_binding_scan(source, packages, NON_RETURNING_MACROS) {
+            if let Some(root) = root.as_ref().filter(|_| site.crate_local) {
+                self.by_root
+                    .entry(root.clone())
+                    .or_default()
+                    .insert(name.clone());
+                self.root_sites
+                    .entry((name, root.clone()))
+                    .or_insert_with(|| (path.to_path_buf(), site));
+                continue;
+            }
             self.any_name |= site.kind.binds_any_name();
             self.trusted.insert(name.clone());
             self.sites
@@ -123,6 +139,23 @@ impl WithheldMacroBindings {
         }
         self.any_name
     }
+}
+
+/// A withheld file is not indexed, so its module edges are unknown; only a
+/// file that is itself a `src/lib.rs`, `src/main.rs` or `src/bin/*.rs` crate
+/// root has a root known from its path, matching [`target_root`] for it.
+/// Any other withheld file keeps its sites workspace-wide (fails closed).
+fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
+    let names: Vec<&str> = path
+        .iter()
+        .map(|part| part.to_str().unwrap_or_default())
+        .collect();
+    let recognized = matches!(
+        names.as_slice(),
+        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _]
+    );
+    (recognized && path.extension().is_some_and(|extension| extension == "rs"))
+        .then(|| path.to_path_buf())
 }
 
 impl OwnerPinSyntax {
@@ -186,6 +219,17 @@ impl OwnerPinSyntax {
                     .or_insert_with(|| {
                         workspace_macro_binding_site(&name, test_root.as_deref(), index, &resolved)
                             .or_else(|| self.withheld.sites.get(&name).cloned())
+                            .or_else(|| {
+                                self.withheld.root_sites.iter().find_map(
+                                    |((site_name, root), site)| {
+                                        (*site_name == name
+                                            && test_root
+                                                .as_ref()
+                                                .is_none_or(|test_root| test_root == root))
+                                        .then(|| site.clone())
+                                    },
+                                )
+                            })
                     })
                     .clone();
                 let site =
@@ -237,9 +281,16 @@ impl OwnerPinSyntax {
         let ambiguous = ambiguous.get_or_insert_with(|| {
             let (mut global, scoped, by_root) = trusted_macro_sites_in(index, &module_resolved);
             *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+            let mut by_root = by_root;
+            for (root, names) in &self.withheld.by_root {
+                by_root
+                    .entry(root.clone())
+                    .or_default()
+                    .extend(names.iter().cloned());
+            }
             *self.crate_macro_bindings.borrow_mut() = Some(by_root);
-            // Withheld files are not indexed, so their crate root is unknown;
-            // their crate-local sites stay global (fails closed).
+            // Withheld crate-root files' crate-local sites are routed by
+            // root below; every other withheld site is workspace-wide.
             global.extend(self.withheld.trusted.iter().cloned());
             global
         });
