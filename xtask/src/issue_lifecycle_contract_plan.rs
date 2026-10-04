@@ -1551,10 +1551,14 @@ mod tests {
                 "a queue-shaped draft identity must fail the spec law, got {failures:?}"
             ));
         }
-        // Plan law: a plan minting behavior authority fails closed.
+        // Plan law: a plan minting behavior authority fails closed. The
+        // rationale must name the real behavior draft identity so the
+        // planning-surface scan sees the minted authority.
         let mut mutated_plan = row.clone();
-        mutated_plan.planning.shape_rationale =
-            format!("implements {draft_identity} as the behavior authority");
+        mutated_plan.planning.shape_rationale = format!(
+            "implements {} as the behavior authority",
+            contract.draft_spec_identity
+        );
         let failures = assess_contract_plan_row(&mutated_plan);
         if !failures
             .iter()
