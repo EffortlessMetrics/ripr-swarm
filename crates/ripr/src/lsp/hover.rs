@@ -487,12 +487,13 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // strength and adds the reason it still misses. A row with no
             // recorded oracle (for example `has no assertion`) shows only the
             // reason, so hover never grades an oracle that does not exist.
+            let label = crate::output::related_test_miss::related_test_miss_label(test);
             let oracle_text = match (&why, &test.oracle) {
                 (Some(why), Some(oracle)) if test.is_unmatched() => format!(
-                    " misses: {why}; checked `{}`",
+                    " {label}: {why}; checked `{}`",
                     crate::output::related_test_miss::checked_assertion_text(oracle)
                 ),
-                (Some(why), None) => format!(" misses: {why}"),
+                (Some(why), None) => format!(" {label}: {why}"),
                 (why, Some(oracle)) => {
                     let mut text = format!(
                         " \u{2014} {} {} oracle: {}",
@@ -502,7 +503,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
                     );
                     if let Some(why) = why {
                         text.truncate(text.trim_end_matches(';').len());
-                        text.push_str(&format!("; misses: {why}"));
+                        text.push_str(&format!("; {label}: {why}"));
                     }
                     text
                 }

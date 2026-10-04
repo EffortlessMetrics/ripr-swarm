@@ -2070,6 +2070,125 @@ fn config_validate_discovers_parent_config_from_nested_directory() -> Result<(),
 }
 
 #[test]
+fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, diff) = agent_brief_sample_workspace("selector-location-recovery")?;
+    let foreign = root.join("foreign");
+    std::fs::create_dir_all(&foreign)?;
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let expected_listing = format!(
+        "ripr check --root {} --diff {} --json",
+        renderer_shell_arg(&root_arg),
+        renderer_shell_arg(&diff_arg)
+    );
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let listed = run_command(
+            bin,
+            Some(&foreign),
+            &["check", "--root", &root_arg, "--diff", &diff_arg, "--json"],
+        )?;
+        if !listed.status.success() {
+            return Err(format!(
+                "selector fixture did not analyze: {}",
+                String::from_utf8_lossy(&listed.stderr)
+            )
+            .into());
+        }
+        let packet: serde_json::Value = serde_json::from_slice(&listed.stdout)?;
+        let findings = packet["findings"]
+            .as_array()
+            .ok_or("selector fixture must carry a finding set")?;
+        // Producer-shaped ID from probes::repo's retained emission control.
+        let missing_repo_id = "repo-probe:src_lib.rs:error_path:3bf8c64c";
+        if findings
+            .iter()
+            .any(|finding| finding["id"].as_str() == Some(missing_repo_id))
+        {
+            return Err("repo-probe negative control must be absent from this fixture".into());
+        }
+        let finding = findings
+            .first()
+            .ok_or("selector fixture must produce a nonempty finding set")?;
+        let id = finding["id"].as_str().ok_or("finding must carry an id")?;
+        let line = finding["probe"]["line"]
+            .as_u64()
+            .ok_or("finding must carry its source line")?;
+        let locator = format!("src/lib.rs:{line}");
+
+        for command in ["explain", "context"] {
+            for (selector, needs_hint, success) in [
+                ("src/lib.rs:abc", true, false),
+                (":::", true, false),
+                ("probe:not-a-real-id", false, false),
+                (missing_repo_id, false, false),
+                ("src/lib.rs:999999", false, false),
+                (id, false, true),
+                (locator.as_str(), false, true),
+            ] {
+                let mut args = vec![command, "--root", &root_arg, "--diff", &diff_arg];
+                if command == "context" {
+                    args.push("--at");
+                }
+                args.push(selector);
+                let output = run_command(bin, Some(&foreign), &args)?;
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if success {
+                    if !output.status.success() {
+                        return Err(format!(
+                            "valid {command} selector {selector:?} failed: {stderr}"
+                        )
+                        .into());
+                    }
+                    if command == "context" {
+                        let selected: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                        if selected["probe"]["id"].as_str() != Some(id) {
+                            return Err(format!(
+                                "valid locator selected another finding: {selected}"
+                            )
+                            .into());
+                        }
+                    } else if !String::from_utf8_lossy(&output.stdout).contains(id) {
+                        return Err("explain did not render the selected finding identity".into());
+                    }
+                } else {
+                    if output.status.code() != Some(2) || !output.stdout.is_empty() {
+                        return Err(format!(
+                            "selector miss changed the CLI failure contract: {output:?}"
+                        )
+                        .into());
+                    }
+                    if stderr.contains("file:line with a nonempty path") != needs_hint {
+                        return Err(format!(
+                            "wrong syntax guidance for {command} {selector:?}: {stderr}"
+                        )
+                        .into());
+                    }
+                    let listing = stderr
+                        .split('`')
+                        .find(|part| part.starts_with("ripr check "))
+                        .ok_or_else(|| {
+                            format!("selector miss omitted its retry command: {stderr}")
+                        })?;
+                    if listing != expected_listing || !stderr.contains("list available finding ids")
+                    {
+                        return Err(
+                            format!("selector retry lost the requested scope: {stderr}").into()
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    })();
+    let cleanup = std::fs::remove_dir_all(&root);
+    result?;
+    cleanup?;
+    Ok(())
+}
+
+#[test]
 fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     let root = ".";
     let diff = "crates/ripr/examples/sample/example.diff";
@@ -6775,6 +6894,23 @@ fn agent_repair_before_refuses_a_seam_without_a_test_file_before_writing_anythin
         stderr.contains("recommended_test.file: \"not_applicable\""),
         "the refusal must name the observable packet field:\n{stderr}"
     );
+    // #5210: the inline-only boundary is reachable from the refusal via
+    // the repair help carrying the scope statement.
+    assert!(
+        stderr.contains(
+            "Repair scope, including the inline-test boundary, is in `ripr agent repair --help`"
+        ),
+        "the refusal must point at the repair scope boundary:\n{stderr}"
+    );
+    // The packet-field claim covers both states: not_applicable when no
+    // target was proposed, the production file with an empty surface for
+    // an inline-module proposal.
+    assert!(
+        stderr.contains(
+            "when no target was proposed (an inline-module proposal instead names the production file with an empty edit surface)"
+        ),
+        "the refusal must state both packet states:\n{stderr}"
+    );
     assert!(
         !stderr.contains("before phase complete"),
         "a refused before phase must not claim completion:\n{stderr}"
@@ -9426,6 +9562,146 @@ fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     assert!(stdout.contains("Proof rail: verify command, receipt command, and receipt path"));
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+// #5280: ripr's .cargo/config.toml force-redirects linker TEMP/TMP/TMPDIR
+// into workspace-relative target/, so a fresh checkout building with an
+// isolated CARGO_TARGET_DIR fails MSVC linking (LNK1104) until target/
+// exists. The source-build doctor profile must surface that constraint and
+// the mkdir repair; the analysis profile stays quiet about it, and a present
+// directory resolves the advisory.
+#[test]
+fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    // RAII cleanup: a failed assertion or early error must not leak the
+    // temporary workspace, matching the Drop-guard fixtures used by the
+    // other test files.
+    struct TempWorkspaceGuard<'a>(&'a Path);
+    impl Drop for TempWorkspaceGuard<'_> {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(self.0);
+        }
+    }
+    let _cleanup = TempWorkspaceGuard(&workspace);
+    std::fs::create_dir_all(workspace.join(".cargo")).map_err(|e| format!("create .cargo: {e}"))?;
+    std::fs::write(
+        workspace.join(".cargo/config.toml"),
+        "[env]\n\
+         TEMP = { value = \"target\", relative = true, force = true }\n\
+         TMP = { value = \"target\", relative = true, force = true }\n\
+         TMPDIR = { value = \"target\", relative = true, force = true }\n",
+    )
+    .map_err(|e| format!("write .cargo/config.toml: {e}"))?;
+    let root = workspace.display().to_string();
+
+    // `doctor_check_status` is unix-gated, so this test extracts the check
+    // status itself and stays cross-platform: the redirect constraint is a
+    // Windows-MSVC failure mode, but the doctor surface is not.
+    let check_status = |report: &serde_json::Value, name: &str| -> String {
+        report["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == name))
+            .and_then(|check| check["status"].as_str())
+            .unwrap_or("absent")
+            .to_string()
+    };
+
+    let source = run_ripr(&[
+        "doctor",
+        "--root",
+        &root,
+        "--profile",
+        "source-build",
+        "--json",
+    ]);
+    assert!(
+        source.status.success(),
+        "an advisory must not fail the source-build doctor: {source:?}"
+    );
+    let source_report: serde_json::Value = serde_json::from_slice(&source.stdout)
+        .map_err(|e| format!("source-build doctor JSON did not parse: {e}"))?;
+    if check_status(&source_report, "linker_temp_redirect") != "advisory" {
+        return Err(format!(
+            "absent workspace target/ with a linker-temp redirect must warn: {source_report}"
+        ));
+    }
+    let evidence = source_report["checks"]
+        .as_array()
+        .and_then(|checks| {
+            checks
+                .iter()
+                .find(|check| check["name"] == "linker_temp_redirect")
+                .and_then(|check| check["evidence"].as_str())
+        })
+        .unwrap_or_default()
+        .to_string();
+    for needle in ["LNK1104", "workspace-relative target/", "mkdir "] {
+        assert!(
+            evidence.contains(needle),
+            "evidence must name {needle}: {evidence}"
+        );
+    }
+
+    // The analysis profile stays quiet: the constraint matters only when
+    // building ripr from source.
+    let analysis = run_ripr(&["doctor", "--root", &root, "--profile", "analysis", "--json"]);
+    assert!(
+        analysis.status.success(),
+        "analysis doctor must succeed: {analysis:?}"
+    );
+    let analysis_report: serde_json::Value = serde_json::from_slice(&analysis.stdout)
+        .map_err(|e| format!("analysis doctor JSON did not parse: {e}"))?;
+    assert_eq!(
+        check_status(&analysis_report, "linker_temp_redirect"),
+        "absent",
+        "the analysis profile must not carry the source-build preflight"
+    );
+
+    // The human surface prints the same advisory with its repair. The repair
+    // names the workspace-rooted directory (the binary is invoked from a
+    // different working directory here), not a bare cwd-relative name.
+    let human = run_ripr(&["doctor", "--root", &root, "--profile", "source-build"]);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        stdout.contains("~ .cargo/config.toml redirects linker temp variables"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("LNK1104"), "{stdout}");
+    let raw_target = workspace.join("target").display().to_string();
+    let rooted_target = if cfg!(windows) {
+        raw_target.replace('\\', "/")
+    } else {
+        raw_target
+    };
+    assert!(
+        stdout.contains(&format!("mkdir {rooted_target}")),
+        "repair must name the workspace-rooted directory {rooted_target}:\n{stdout}"
+    );
+
+    // Once the directory exists (a normal workspace build creates it), the
+    // preflight is silent again.
+    std::fs::create_dir_all(workspace.join("target")).map_err(|e| format!("create target: {e}"))?;
+    let resolved = run_ripr(&[
+        "doctor",
+        "--root",
+        &root,
+        "--profile",
+        "source-build",
+        "--json",
+    ]);
+    assert!(
+        resolved.status.success(),
+        "resolved doctor must succeed: {resolved:?}"
+    );
+    let resolved_report: serde_json::Value = serde_json::from_slice(&resolved.stdout)
+        .map_err(|e| format!("resolved doctor JSON did not parse: {e}"))?;
+    assert_eq!(
+        check_status(&resolved_report, "linker_temp_redirect"),
+        "absent",
+        "a present workspace target must resolve the advisory"
+    );
+
     Ok(())
 }
 

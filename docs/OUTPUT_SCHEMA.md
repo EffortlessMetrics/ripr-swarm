@@ -1030,8 +1030,12 @@ The evidence-first fields are additive in schema `0.2`:
   `missing_discriminators` (the `left == right` entry).
   `missing_exact_assertion`: no assertion pins the exact error variant or
   constructed field value named in `missing_discriminators`.
-  `observation_unconfirmed`: the oracle has the right shape but its text never
-  names the changed expression (`observation_unverified`). Tests are listed
+  `observation_unconfirmed`: the oracle has the right shape but ripr could not
+  confirm that it observes the changed behavior (for Rust, its text never
+  names the changed expression, `observation_unverified`; for Perl, the
+  packet establishes no sink alignment). It is an unknown, not an
+  established miss: only `assertion_not_observing` claims the assertion
+  observes something else. Tests are listed
   even when they supply no oracle, so `related_tests_total` counts every
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
@@ -17386,7 +17390,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.31",
+      "schema_version": "1.32",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
