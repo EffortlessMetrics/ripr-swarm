@@ -73,6 +73,24 @@ route should be enabled as an organization-wide zero policy from these inputs.
 A portable measured and candidate-bound producer is separate work; do not
 invent a supported command or reinterpret an incomplete result as pass.
 
+When a run fails on unreadable or malformed input, `ripr plus` first sets aside
+the previous receipt if it was a real result (any status other than
+`indeterminate`):
+
+```text
+target/ripr/reports/ripr-plus.last-good.json
+target/ripr/reports/ripr-plus.last-good.md
+```
+
+`ripr-plus.json` then records the failed run as `indeterminate`, and the error
+message names the saved path. The Markdown copy is saved only when the previous
+run wrote one, so a stale `.md` never sits beside a different run's `.json`. If
+only one file of the pair could be saved, the message says the receipt was kept
+only partly. An `indeterminate` receipt never becomes the last good one, so a
+second failed run does not overwrite the saved copy. Nothing reads the
+`last-good` files: gates and badges keep reading `ripr-plus.json`. They are a
+recovery copy of an earlier result, not a result for the current head.
+
 The badge surfaces retain their own advisory scope contract. In particular,
 missing test-efficiency evidence renders `needs test-efficiency`, not a
 measured zero. A badge count alone does not authorize merge or publication.

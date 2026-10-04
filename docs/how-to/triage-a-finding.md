@@ -39,6 +39,37 @@ add or repair the test. If the analyzer appears to align the wrong entities,
 capture the exact finding id, source location, command, and current commit when
 filing the analyzer follow-up.
 
+### Read the examined tests
+
+A finding lists every related test ripr examined, not only the ones whose
+assertions matched. Each line gives the test file, line and name, then why that
+test would not notice the change being wrong:
+
+```text
+related test tests/it.rs:3 discount_runs uses none unknown oracle; misses: has no assertion
+```
+
+`ripr explain` repeats the list under "Why this verdict". In JSON the same
+facts are `related_tests[].miss` (a controlled value) and `related_tests[].why`
+(the sentence). Both are omitted when ripr established no miss, for example for
+the test that catches an `exposed` change. The reason is evidence only: it
+does not change the finding's class or next step. Rust findings carry it today;
+Python, TypeScript and Perl findings do not yet. `no_assertion`,
+`assertion_not_observing` and `assertion_not_credited` can appear under any
+class. The other values appear only under `no_static_path`, `weakly_exposed` and
+`reachable_unrevealed`.
+
+| `why` reads | `miss` value | What to do |
+| --- | --- | --- |
+| no call to the changed code found | `no_call_path` | The test is linked by name or file location only. Check that it is the right test; if it is, call the owner from it. |
+| has no assertion | `no_assertion` | Add an assertion on the changed value. |
+| asserts, but not on the changed value | `assertion_not_observing` | Move or add the assertion so it observes the changed value, error or field. |
+| assertion not credited: ripr could not establish that it runs as the standard macro | `assertion_not_credited` | An assertion exists, but ripr could not confirm it is the standard `assert!` family (a same-named local macro, for example), and it does not yet say whether the assertion is inert. Read the macro. If it expands to a real check, file an analyzer follow-up; if not, use the standard macro. |
+| assertion too weak to tell the old behavior from the new | `weak_assertion` | Replace `is_ok`, `unwrap` or a broad comparison with the exact expected value. |
+| assertion does not mention the changed expression | `observation_unconfirmed` | Assert on the changed expression directly. |
+| no test input reaches `<boundary>` | `missing_input` | Add a case whose input is the boundary value named. |
+| no assertion pins `<value>` | `missing_exact_assertion` | Assert the exact value named, such as the error variant or field. |
+
 ## 3. Choose fix, follow-up, or suppression
 
 - **Fix the behavior gap** when the changed behavior lacks a meaningful test.

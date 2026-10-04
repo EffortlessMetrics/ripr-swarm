@@ -528,11 +528,18 @@ agent action:
 seam: helper-derived predicate
 grip: opaque
 diagnostic task: inspect_static_limitation
+limitation: Reach unresolved (...): `total_sums` (tests/it.rs:5) calls `total`,
+  which may lead to `clamp_total` through a call path ripr does not fully trace
 agent action:
-  do not add a test. Identify the helper or fixture that hides the
-  activation values. Decide whether to inline / refactor for
-  visibility, or accept the opacity and document the intent.
+  do not add a test. Open the test the limitation names and check whether it
+  exercises this seam. Identify the helper, macro, or trait impl that hides
+  the path. Decide whether to inline / refactor for visibility, or accept
+  the opacity and document the intent.
 ```
+
+The limitation names the test and the call path ripr could not trace. When the
+named test does exercise the seam, the seam needs no new test. See
+[Static Limits](STATIC_LIMITS.md#seam-readings-opaque-and-activation_unknown).
 
 ### Declared intent
 

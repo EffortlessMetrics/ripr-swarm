@@ -68,6 +68,33 @@ action.
 | `wrapper_error_binding_unresolved` | A wrapper error conversion (`callee(..).map_err(..)`) takes its error-variant identity from the converted callee, and RIPR cannot establish that the boxed conversion preserves that variant. | Keep the seam below `exposed`; verify the variant through the wrapper directly. This names the unresolved conversion binding, not a coverage or repair claim. |
 | `python_transitive_reach_unresolved` | A Python test constructs or calls into the owner's class, and a bounded same-class method path may lead toward the changed method. | Treat this as a named `no_static_path` limitation. Inspect the candidate class/method path before adding or delegating repair work. It is not a related-test or coverage claim. |
 
+## Seam Readings: `opaque` and `activation_unknown`
+
+Repo-wide output (`ripr pilot`, `ripr check --format repo-exposure-json`, and
+the editor's seam diagnostics) grades every seam with a grip class. Two of the
+classes mean ripr stopped short of a verdict about the tests. Human output
+prints both with the plain word `unknown`, for example `unknown, opaque`.
+
+| Reading | What ripr found | What it could not establish | What to do |
+| --- | --- | --- | --- |
+| `opaque` | A test appears to reach the seam through a path ripr does not trace: a public function calling a private helper, a macro, or a trait impl that the test runs through a call such as `to_string()`. The seam's `opaque_static_evidence` limitation names the test and the path. | Whether that test notices a wrong value at the seam. | Do not write a test from this reading alone. Open the test the limitation names and check whether it exercises the seam's behavior. If it does, leave the seam. If it does not, add a direct test of the owner. |
+| `activation_unknown` | A related test reaches the seam, and no missing or weak discriminator is recorded. | Which input the test passes: the value comes through a helper, fixture, environment variable or computed local, so the `activation_value_unresolved` limitation is recorded. | Open the related test and read the value it passes. If it lands on the changed boundary, there is nothing to add. If you cannot tell, pass the value as a literal or a named constant at the call, then rerun so ripr and the reviewer can both read it. |
+
+How the two count:
+
+- `opaque` is not headline-eligible, so it stays out of the headline gap count,
+  and `ripr pilot` lists it after every other class. In the editor its
+  diagnostic severity is `[severity.seams] opaque`, default `info`.
+- `activation_unknown` is headline-eligible. In the editor its severity is
+  `[severity.seams] activation_unknown`, default `info`.
+- `ungripped` now means ripr found no related test and no unresolved candidate
+  path. A seam with an unresolved path reads `opaque`, not `ungripped`.
+
+`opaque` errs toward unknown. Matching is by name, so a trait impl of a type
+that your tests use reads `opaque` even when no test runs that impl (`Debug`,
+`Hash` and `Drop` impls are typical). `opaque` is a prompt to look, not
+evidence that a test exists. RIPR-SPEC-0230 lists the limits.
+
 ## External-Language Related-Test Inventory
 
 Which related-test files count as external-language evidence is read from the
