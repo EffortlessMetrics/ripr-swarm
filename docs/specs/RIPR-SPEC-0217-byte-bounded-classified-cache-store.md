@@ -1,4 +1,4 @@
-# RIPR-SPEC-0216: Byte-bounded classified-cache store publication
+# RIPR-SPEC-0217: Byte-bounded classified-cache store publication
 
 Status: proposed
 
