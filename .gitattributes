@@ -38,6 +38,8 @@ xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.c
 # pinned by sha256, so whitespace rules cannot rewrite either.
 fixtures/rust-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
 fixtures/rust-verdict-corpus/subjects/** -whitespace
+fixtures/python-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
+fixtures/python-verdict-corpus/subjects/** -whitespace
 
 # Append-only logs: entries are self-contained blocks added at the head of
 # their section, so concurrent additions union cleanly (evidence: 5 PRs in
