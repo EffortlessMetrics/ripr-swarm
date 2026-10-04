@@ -1269,6 +1269,44 @@ fn an_unknown_ingested_metric_is_refused_with_where_to_declare_it() -> Result<()
 }
 
 #[test]
+fn a_review_only_count_that_moves_with_unchanged_evidence_is_listed() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let boards = vec!["agent".to_string()];
+    let receipt = |calls: u64| {
+        json!({
+            "schema_version": INPUT_SCHEMA_VERSION,
+            "source": "agent-as-user",
+            "metrics": [{"id": "agent.stub_calls", "value": calls}],
+        })
+    };
+    let base = parse_ingest(&receipt(5), &config)?;
+    let baseline = build_report(&config, &boards, &base, &context("r"), None, false);
+    let current = parse_ingest(&receipt(8), &config)?;
+    let report = build_report(
+        &config,
+        &boards,
+        &current,
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        report["gate"]
+    );
+    let review = report["gate"]["review"].to_string();
+    assert!(review.contains("agent.stub_calls"), "{review}");
+    let rendered = render_markdown(&report);
+    assert!(
+        rendered.contains("`agent.stub_calls` changed: baseline [5.0] → current [8.0]"),
+        "{rendered}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_status_flip_is_listed_next_to_a_lost_completion() -> Result<(), String> {
     let base = smoke_receipt(&[("a", "analyzed", 900), ("b", "analyzed", 1200)]);
     let current = smoke_receipt(&[("a", "timed_out", 600_000), ("b", "not_fetched", 0)]);

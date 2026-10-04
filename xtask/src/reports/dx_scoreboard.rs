@@ -1231,8 +1231,9 @@ pub(crate) fn build_report(
     })
 }
 
-/// For a `review_on_change` metric, the sample details now and in the
-/// baseline when they differ. Listed for a person to judge; never a failure.
+/// For a `review_on_change` metric, the sample details and values now and in
+/// the baseline when either differs. Listed for a person to judge; never a
+/// failure.
 fn review_change(row: &Value, baseline: Option<&Value>) -> Option<Value> {
     let base_row = baseline?["metrics"]
         .as_array()?
@@ -1246,8 +1247,25 @@ fn review_change(row: &Value, baseline: Option<&Value>) -> Option<Value> {
             .map(|s| s["detail"].as_str().unwrap_or("").to_string())
             .collect()
     };
+    // Values too: a count can move while the evidence text stays the same.
+    let values = |r: &Value| -> Vec<Value> {
+        r["samples"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|s| s["value"].clone())
+            .collect()
+    };
     let (before, after) = (details(base_row), details(row));
-    (before != after).then(|| json!({"baseline": before, "current": after}))
+    let (before_values, after_values) = (values(base_row), values(row));
+    (before != after || before_values != after_values).then(|| {
+        json!({
+            "baseline": before,
+            "current": after,
+            "baseline_values": before_values,
+            "current_values": after_values,
+        })
+    })
 }
 
 /// Per-repository view: every per-repo sample for one corpus entry, so a
@@ -1829,11 +1847,16 @@ pub(crate) fn render_markdown(report: &Value) -> String {
     if !review.is_empty() {
         out.push_str("**For review (does not fail the gate):**\n\n");
         for item in review {
+            let change = &item["change"];
+            // Show the evidence when it changed, else the values that moved.
+            let (before, after) = if change["baseline"] == change["current"] {
+                (&change["baseline_values"], &change["current_values"])
+            } else {
+                (&change["baseline"], &change["current"])
+            };
             out.push_str(&format!(
-                "- `{}` changed: baseline {} → current {}\n",
+                "- `{}` changed: baseline {before} → current {after}\n",
                 item["metric"].as_str().unwrap_or("?"),
-                item["change"]["baseline"],
-                item["change"]["current"],
             ));
         }
         out.push('\n');
