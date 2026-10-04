@@ -1,11 +1,12 @@
 mod adapter;
+pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod module_tree;
 mod nesting;
 mod owner_pin;
 pub(crate) use owner_pin::{
     OwnerPinAssertions, empty_macro_binding_ambiguities, local_empty_macro_names,
-    owner_pin_assertions, trusted_macro_binding_ambiguities,
+    macro_binding_scan, owner_pin_assertions, trusted_macro_binding_ambiguities,
 };
 pub(crate) mod ra;
 

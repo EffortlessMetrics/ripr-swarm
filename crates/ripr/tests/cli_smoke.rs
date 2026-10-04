@@ -2710,6 +2710,26 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
+/// diff has no dependent packages to narrow.
+#[test]
+fn check_rejects_an_invalid_dependent_scope_without_dependents() {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr_with_env(
+        &["check", "--root", &root, "--diff", &diff, "--json"],
+        &[("RIPR_DIFF_DEPENDENT_SCOPE", "everything")],
+    );
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`"
+        ),
+        "stderr should name the invalid override: {stderr}"
+    );
+}
+
 #[test]
 fn diff_json_reports_changed_surface_before_full_repo_context() -> Result<(), String> {
     let workspace = unique_temp_workspace("diff-first");
@@ -17157,10 +17177,12 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
         ));
     }
     // Clean-install walk (0.11): Start-here must name the flag that analyzes
-    // uncommitted edits, not only "make a change".
-    if !stdout.contains("add `--worktree` to include uncommitted edits") {
+    // uncommitted edits, not only "make a change". "tracked" per #5258: the
+    // runtime wording must match `check --help` and cannot promise that
+    // `--worktree` covers untracked files.
+    if !stdout.contains("add `--worktree` to include uncommitted tracked edits") {
         return Err(format!(
-            "empty-range Start-here must name `--worktree`; got:\n{stdout}"
+            "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
         ));
     }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
