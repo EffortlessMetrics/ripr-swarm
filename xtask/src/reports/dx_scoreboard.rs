@@ -541,10 +541,7 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
 /// - unknown verdicts: cases whose verdict is a `*_unknown` class.
 pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     let setup = value["setup"].as_array().map(Vec::as_slice).unwrap_or(&[]);
-    let cases = value["cases"]
-        .as_array()
-        .filter(|cases| !cases.is_empty())
-        .ok_or("first_run.v1 receipt needs a non-empty cases array")?;
+    let cases = value["cases"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     let install_steps: Vec<&Value> = setup
         .iter()
         .filter(|step| {
@@ -557,9 +554,17 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
         .iter()
         .filter_map(|step| step["secs"].as_f64())
         .reduce(|a, b| a + b);
+    // A walk whose install failed writes no cases but keeps the timed install
+    // step; that receipt still carries the install sample.
+    if cases.is_empty() && install_steps.is_empty() {
+        return Err("first_run.v1 receipt needs a non-empty cases array".to_string());
+    }
     // A partial sum would let a slow install look fast, so one untimed
     // install step leaves the row incomplete.
     let install_timed = install_steps.iter().all(|step| step["secs"].is_number());
+    let install_failed = install_steps
+        .iter()
+        .find(|step| step["exit"].as_i64().is_some_and(|code| code != 0));
     let ripr = value["ripr"].as_str().unwrap_or("unknown ripr");
     let friction_in = |steps: &[Value]| -> usize {
         steps
@@ -599,11 +604,22 @@ pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
             "completed": reached,
         }));
     }
-    if let Some(install) = install_secs {
+    // An install step with no duration at all is an incomplete sample, not an
+    // absent one, so a previously timed install cannot silently drop out.
+    if !install_steps.is_empty() {
         rows.push(json!({
             "id": "first_run.install_seconds",
-            "value": install,
-            "completed": install_timed,
+            "value": install_secs.unwrap_or(0.0),
+            "completed": install_timed && install_secs.is_some() && install_failed.is_none(),
+        }));
+    }
+    if cases.is_empty() {
+        // Install-only walk: case-dependent metrics stay absent.
+        return Ok(json!({
+            "schema_version": INPUT_SCHEMA_VERSION,
+            "source": "first-run",
+            "evidence": format!("first_run.v1 receipt for {ripr}, install only (no cases ran)"),
+            "metrics": rows,
         }));
     }
     rows.push(json!({"id": "first_run.friction_events", "value": friction}));

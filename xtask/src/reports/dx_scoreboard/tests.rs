@@ -534,6 +534,43 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
             .any(|s| s.metric == "first_run.time_to_first_useful_result_s"
                 || s.metric == "first_run.install_seconds")
     );
+
+    // An install step with no duration at all is an incomplete sample, not a
+    // missing one, so a previously timed install cannot drop out unnoticed.
+    let mut untimed = first_run_receipt(false);
+    if let Some(setup) = untimed["setup"].as_array_mut() {
+        setup.push(json!({"step": "install_published", "exit": 0, "friction": []}));
+    }
+    let samples = parse_ingest(&untimed, &config)?;
+    assert_eq!(
+        samples
+            .iter()
+            .find(|s| s.metric == "first_run.install_seconds")
+            .map(|s| s.outcome.clone()),
+        Some(SampleOutcome::Incomplete(0.0))
+    );
+
+    // A failed install writes no cases; its timing still becomes an
+    // incomplete install sample and no case-dependent metric appears.
+    let failed = json!({
+        "schema_version": "first_run.v1",
+        "ripr": "ripr 0.11.0",
+        "setup": [{"step": "install_published", "secs": 20.0, "exit": 101, "friction": []}],
+        "cases": [],
+    });
+    let samples = parse_ingest(&failed, &config)?;
+    assert_eq!(samples.len(), 1);
+    assert_eq!(
+        samples
+            .first()
+            .map(|s| (s.metric.as_str(), s.outcome.clone())),
+        Some(("first_run.install_seconds", SampleOutcome::Incomplete(20.0)))
+    );
+
+    // No install step and no cases is still rejected.
+    let empty = json!({"schema_version": "first_run.v1", "ripr": "r", "setup": [], "cases": []});
+    let rejected = parse_ingest(&empty, &config).err();
+    assert!(rejected.is_some_and(|e| e.contains("non-empty cases")));
     Ok(())
 }
 

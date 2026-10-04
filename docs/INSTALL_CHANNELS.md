@@ -30,8 +30,10 @@ Measured on one Linux container with a cold target directory (#5311):
 The 0.11 figure ran beside light unrelated work, so read it as roughly five
 times 0.10, not an exact ratio. What dominates that compile (new parser
 dependencies or the crate's own size) is not isolated. `cargo xtask first-run
---install-published` times the source route and the scoreboard gates it as
-`first_run.install_seconds`; the prebuilt route is not timed by the walk.
+--install-published` times the source route and the scoreboard records it as
+`first_run.install_seconds`. The metric has a regression rule but no committed
+baseline sample and no nightly ingest yet, so nothing fails on a slower install
+until both exist; the prebuilt route is not timed by the walk.
 
 ## What blocks a developer who is not us
 

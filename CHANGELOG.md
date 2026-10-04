@@ -157,7 +157,7 @@ are scoped or reviewed.
 ### Changed
 
 - The install route is now timed as its own scoreboard metric,
-  `first_run.install_seconds`, gated on a rise (#5311). The README, quickstart
+  `first_run.install_seconds` with a rise rule, active once a baseline sample is committed (#5311). The README, quickstart
   and install-channel notes state the measured source-build time of a 0.11
   development build (about 11 minutes against about 2 for 0.10.0) and that no
   prebuilt 0.11 archive exists until 0.11.0 is published.
