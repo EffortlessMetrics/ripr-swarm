@@ -1856,7 +1856,7 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
     }
 
     /// #5348: a child that exits in a few milliseconds must not cost a full
-    /// 50 ms poll interval. The best of five trials bounds out load spikes.
+    /// 50 ms poll interval. Up to 20 trials, stopping at the first under the bound, absorb load spikes.
     /// Negative experiment: with the pre-#5348 fixed 50 ms sleep restored in
     /// `poll_child`, the first `try_wait` right after spawn sees a running
     /// child in every trial and each trial takes >= 50 ms. Unix only: a
