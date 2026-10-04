@@ -3421,8 +3421,7 @@ mod tests {
         // literal is committed (check-local-context) while the drive-letter
         // and extended-length prefix handling stay exercised.
         let sep = std::path::MAIN_SEPARATOR;
-        let windows_path =
-            PathBuf::from(format!("F:{sep}dir{sep}corpus{sep}src{sep}lib.rs"));
+        let windows_path = PathBuf::from(format!("F:{sep}dir{sep}corpus{sep}src{sep}lib.rs"));
         let uri = file_uri(&windows_path);
         assert_eq!(uri, "file:///F:/dir/corpus/src/lib.rs");
         // fs::canonicalize yields extended-length paths on Windows.
