@@ -1068,7 +1068,7 @@ mod tests {
             return Err(format!("cancel/commit limitations drifted: {text}"));
         }
         if text.contains("is never committed as a completed snapshot") {
-            return Err(format!("false never-committed claim survived: {text}"));
+            return Err(format!("false never-committed claim remained: {text}"));
         }
         Ok(())
     }
