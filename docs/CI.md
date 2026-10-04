@@ -438,14 +438,16 @@ after a hostile path broke it (#5188, #5232, #5247, #5269).
   correctly yet, each with its surface and reason. The ledger is strict both
   ways: a listed gap is reported, not failed, and a row whose gap stops
   reproducing fails the lane until the row is deleted.
-- **Shells.** A shell the platform should provide but does not fails the job
-  under GitHub Actions. Locally a missing shell is skipped with a notice;
-  `RIPR_PASTE_REQUIRE=zsh,pwsh` makes it a failure. `RIPR_PASTE_REPORT=<file>`
+- **Shells.** A shell named in `RIPR_PASTE_REQUIRE` that is missing fails the
+  run; the workflow sets it per OS. Anywhere else a missing shell is skipped
+  with a notice, which is how the test behaves in the required Rust lane. `RIPR_PASTE_REPORT=<file>`
   writes every collected command as JSON lines, and `RIPR_PASTE_KEEP=1` keeps
   the fixture.
 - **Selection.** A nightly schedule, `workflow_dispatch`, and pull requests
   that touch `crates/ripr/src/**`, the harness files, `Cargo.lock` or the
-  workflow. It is advisory and not a required check.
+  workflow. The workflow is advisory, but the same test also runs as an
+  ordinary test in the required Rust lane (with whatever shells that runner
+  has), so a new unlisted gap fails that lane too until it is fixed or listed.
 
 ### Advisory Specification Maintenance Digest
 

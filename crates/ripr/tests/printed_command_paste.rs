@@ -33,8 +33,8 @@
 //! Markdown and plain text are pasted from a foreign directory; JSON-carried
 //! commands are portable records meant to run at the repository root.
 //!
-//! Shells absent from a developer machine are skipped with a notice. Under
-//! GitHub Actions, or when `RIPR_PASTE_REQUIRE` lists a shell, absence fails.
+//! Shells absent from a machine are skipped with a notice. `RIPR_PASTE_REQUIRE`
+//! lists the shells whose absence fails; the paste workflow sets it per OS.
 
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -860,8 +860,23 @@ struct KnownGap {
     /// PowerShell form that PowerShell cannot parse; the row applies only
     /// while that is the case.
     shells: GapShells,
+    /// Prefixes of the problems this gap explains. Any other problem on the
+    /// same command is a new failure, so the ledger cannot hide it.
+    explains: &'static [&'static str],
     reason: &'static str,
 }
+
+/// What a PowerShell parse of a Bash-only command with a hostile root looks
+/// like: a parse error, a command that never ran, or a split argument.
+const POWERSHELL_SPLIT: &[&str] = &[
+    "shell error",
+    "reached the program",
+    "argument ",
+    "--root ",
+    "argv differs",
+];
+/// A drill-in that repeats a typed relative root names another repository.
+const WRONG_ROOT: &[&str] = &["--root ", "argument "];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GapShells {
@@ -874,18 +889,21 @@ const KNOWN_GAPS: &[KnownGap] = &[
         source: "start-here.md",
         command: "ripr first-pr --root",
         shells: GapShells::PowershellWithoutForm,
+        explains: POWERSHELL_SPLIT,
         reason: "the missing-base recovery sentence embeds a Bash command with no PowerShell form",
     },
     KnownGap {
         source: "relative-root:check",
         command: "ripr explain --root",
         shells: GapShells::Every,
+        explains: WRONG_ROOT,
         reason: "the `check` drill-in repeats a typed relative --root, so pasting from another directory targets another repository",
     },
     KnownGap {
         source: "relative-root:check",
         command: "ripr context --root",
         shells: GapShells::Every,
+        explains: WRONG_ROOT,
         reason: "the `check` drill-in repeats a typed relative --root, so pasting from another directory targets another repository",
     },
 ];
@@ -946,6 +964,20 @@ fn judge_call(
             }
             other => problems.push(format!("first argument {other:?} is not a ripr subcommand")),
         }
+    }
+    if call.program == "git"
+        && let Some(dir) = call
+            .args
+            .iter()
+            .position(|arg| arg == "-C")
+            .and_then(|at| call.args.get(at + 1))
+        && resolve(cwd, dir) != root
+    {
+        problems.push(format!(
+            "git -C {dir:?} resolves to {} from {}, not the fixture root",
+            resolve(cwd, dir).display(),
+            cwd.display()
+        ));
     }
     for arg in &call.args {
         if !arg.contains(MARK_HEAD) && !arg.contains(MARK_TAIL) {
@@ -1094,9 +1126,13 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
         // to its command. Known-gap cases get a batch of their own, and only
         // that batch may leave a canary behind.
         let (gap_cases, other_cases): (Vec<Case>, Vec<Case>) = if shell.is_powershell() {
-            cases
-                .into_iter()
-                .partition(|case| known_gap(&commands[case.id], shell).is_some())
+            cases.into_iter().partition(|case| {
+                // Only a command printed with no PowerShell form may run
+                // its tail; a wrong-root gap must still leave no canary.
+                known_gap(&commands[case.id], shell).is_some_and(|index| {
+                    matches!(KNOWN_GAPS[index].shells, GapShells::PowershellWithoutForm)
+                })
+            })
         } else {
             (Vec::new(), cases)
         };
@@ -1157,17 +1193,34 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
                 if case_problems.is_empty() {
                     continue;
                 }
-                let report = format!("{label}\n    {}", case_problems.join("\n    "));
                 match known_gap(printed, shell) {
                     Some(index) => {
-                        gap_hits[index] += 1;
-                        known.push(format!(
-                            "{} ({})",
-                            report.lines().next().unwrap_or_default(),
-                            KNOWN_GAPS[index].reason
-                        ));
+                        let gap = &KNOWN_GAPS[index];
+                        let (explained, unexplained): (Vec<&String>, Vec<&String>) =
+                            case_problems.iter().partition(|problem| {
+                                gap.explains
+                                    .iter()
+                                    .any(|prefix| problem.starts_with(prefix))
+                            });
+                        if !explained.is_empty() {
+                            gap_hits[index] += 1;
+                            known.push(format!(
+                                "{label_line} ({})",
+                                gap.reason,
+                                label_line = label.lines().next().unwrap_or_default()
+                            ));
+                        }
+                        if !unexplained.is_empty() {
+                            let rest: Vec<&str> =
+                                unexplained.iter().map(|problem| problem.as_str()).collect();
+                            problems.push(format!(
+                                "{label}\n    {}\n    (a different failure from the listed gap: {})",
+                                rest.join("\n    "),
+                                gap.reason
+                            ));
+                        }
                     }
-                    None => problems.push(report),
+                    None => problems.push(format!("{label}\n    {}", case_problems.join("\n    "))),
                 }
             }
             for hit in canary_hits(&fixture) {

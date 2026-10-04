@@ -267,10 +267,8 @@ pub fn run_cases(
     // The case text itself is untouched.
     let bash_env = dir.join("bash_env.sh");
     if cfg!(windows) && shell == Shell::Bash {
-        let line = format!(
-            "PATH=\"$(/usr/bin/cygpath -u '{}'):$PATH\"\n",
-            shell_path(recorders)
-        );
+        let quoted = shell_path(recorders).replace('\'', "'\\''");
+        let line = format!("PATH=\"$(/usr/bin/cygpath -u '{quoted}'):$PATH\"\n");
         std::fs::write(&bash_env, line)
             .map_err(|err| format!("write {}: {err}", bash_env.display()))?;
     }
