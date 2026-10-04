@@ -848,6 +848,14 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         };
+        // Release the transition guard now that the terminal check, publish,
+        // and commit are done. Everything below is post-commit disclosure:
+        // log notifications plus `workspace/diagnostic/refresh` and code-lens
+        // refresh client round-trips that wait for a client response. Holding
+        // the guard across those round-trips would let an unresponsive client
+        // stall shutdown (which must acquire this guard to reach
+        // `refresh_scheduler.stop()` and the terminal clear) (#5202).
+        drop(_root_transition);
         // Disclose lifted quarantines symmetrically (#1970): the fresh
         // publication (push) or the next pull re-serves the document against
         // the newly analyzed saved content.
