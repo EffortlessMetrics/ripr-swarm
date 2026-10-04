@@ -258,6 +258,15 @@ rule only for an assertion whose context was admitted.
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
   crate with indexed files is workspace-owned.
+- `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
+  counts as the standard assertion only when the importing file's nearest
+  `Cargo.toml` inside the analysis root declares `pretty_assertions` as a
+  plain registry requirement (version, features, `optional`; through
+  `[workspace.dependencies]` for `workspace = true`), and no manifest or
+  `.cargo/config` between the file and the root patches or replaces it. A
+  `package`, `path`, `git` or `registry` key binds the name to another
+  package that Rust source cannot reveal, so the import then refuses with
+  that reason. Cargo configuration outside the root is not read.
 
 ### Matched before/after observations
 

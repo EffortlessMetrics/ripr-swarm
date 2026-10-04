@@ -132,13 +132,24 @@ impl OwnerPinAssertions {
 /// definitions and private imports confined to one inline module, function
 /// or block ([`MacroBindingSite::scope`]); callers apply those only to tests
 /// inside it.
+///
+/// `drop_in_verified` says whether a drop-in crate name (`pretty_assertions`)
+/// resolves to the registry package for this file's crate.
 pub(crate) fn trusted_macro_binding_sites(
     source: &str,
     packages: &BTreeSet<String>,
     trusted: &[&str],
     module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
-    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), module_resolved)
+    macro_binding_ambiguities(
+        source,
+        packages,
+        trusted,
+        &BTreeSet::new(),
+        module_resolved,
+        drop_in_verified,
+    )
 }
 
 /// Apply the same binding/import/opaque-expansion authority to candidate empty
@@ -156,7 +167,8 @@ pub(crate) fn empty_macro_binding_ambiguities(
     } else {
         BTreeSet::new()
     };
-    macro_binding_ambiguities(source, packages, &trusted, &allowed, module_resolved)
+    // Empty-macro names are local declarations, never a drop-in import.
+    macro_binding_ambiguities(source, packages, &trusted, &allowed, module_resolved, &|_| false)
         .into_iter()
         .map(|(name, _)| name)
         .collect()
@@ -189,6 +201,9 @@ pub(crate) enum MacroBindingKind {
     Definition,
     /// A `use` that brings the trusted name into scope.
     Import,
+    /// A drop-in import (`use pretty_assertions::assert_eq`) whose crate no
+    /// read manifest pins to the registry package; the text is the crate.
+    UnverifiedDropIn(String),
     /// Another macro's arguments mention the name, so its expansion may
     /// define it.
     MacroArgument(String),
@@ -220,8 +235,16 @@ pub(crate) fn macro_binding_scan(
     source: &str,
     packages: &BTreeSet<String>,
     trusted: &[&str],
+    drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
-    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), &|_, _| false)
+    macro_binding_ambiguities(
+        source,
+        packages,
+        trusted,
+        &BTreeSet::new(),
+        &|_, _| false,
+        drop_in_verified,
+    )
         .into_iter()
         .filter(|(_, site)| site.scope.is_none())
         .collect()
@@ -233,6 +256,7 @@ fn macro_binding_ambiguities(
     trusted: &[&str],
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
     let mut ambiguous = Vec::new();
     if !source.contains("macro")
@@ -456,15 +480,24 @@ fn macro_binding_ambiguities(
                 };
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
-                    if trusted.contains(&name)
-                        && (!is_drop_in_assertion(&item, name) || drop_in_shadowed(root, external))
+                    let kind = if !trusted.contains(&name) {
+                        None
+                    } else if !is_drop_in_assertion(&item, name) || drop_in_shadowed(root, external)
                     {
+                        Some(MacroBindingKind::Import)
+                    } else if !drop_in_verified(root) {
+                        // Cargo can bind the crate name to another package.
+                        Some(MacroBindingKind::UnverifiedDropIn(root.to_string()))
+                    } else {
+                        None
+                    };
+                    if let Some(kind) = kind {
                         let line = line_of(&node);
                         ambiguous.push((
                             name.to_string(),
                             MacroBindingSite {
                                 line,
-                                kind: MacroBindingKind::Import,
+                                kind,
                                 scope: scope_of(import_scope(&import)),
                             },
                         ));

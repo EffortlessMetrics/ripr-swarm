@@ -126,6 +126,10 @@ pub struct RustIndex {
     /// `package_names`, because a sibling crate's function can still take a
     /// bare call meant for the owner.
     pub(crate) macro_owned_crates: BTreeSet<String>,
+    /// Whether a drop-in assertion crate (`pretty_assertions`) imported by a
+    /// file is the registry package. Unset for an index assembled without a
+    /// manifest walk, which verifies nothing.
+    pub(crate) drop_in_manifests: super::drop_in::DropInManifests,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,

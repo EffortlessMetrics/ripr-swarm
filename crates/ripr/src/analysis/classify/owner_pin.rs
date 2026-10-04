@@ -44,6 +44,7 @@ use crate::analysis::extract::{
     fact_body_defines_callee_fn, fact_body_let_shadow_line, mask_comments_and_strings,
     test_body_defines_callee_fn, test_body_let_shadow_line,
 };
+use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
     AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
@@ -107,11 +108,15 @@ impl WithheldMacroBindings {
         path: &Path,
         source: &str,
         packages: &BTreeSet<String>,
+        drop_ins: &DropInManifests,
     ) -> bool {
         if self.any_name {
             return true;
         }
-        for (name, site) in macro_binding_scan(source, packages, NON_RETURNING_MACROS) {
+        let drop_in_verified = |krate: &str| drop_ins.verified(path, krate);
+        for (name, site) in
+            macro_binding_scan(source, packages, NON_RETURNING_MACROS, &drop_in_verified)
+        {
             self.any_name |= site.kind.binds_any_name();
             self.trusted.insert(name.clone());
             self.sites
@@ -465,6 +470,9 @@ impl AssertionRefusal {
                         MacroBindingKind::Import => {
                             format!("{place} imports a different `{name}` by name")
                         }
+                        MacroBindingKind::UnverifiedDropIn(krate) => format!(
+                            "{place} imports `{name}` from `{krate}`, and no Cargo.toml ripr read declares `{krate}` as the plain registry package; declare it by version only (no `package`, `path`, `git`, `registry` or `[patch]`)"
+                        ),
                         MacroBindingKind::MacroArgument(macro_name) => format!(
                             "`{macro_name}!` at {place} mentions `{name}` in its arguments, so its expansion may define it"
                         ),
@@ -525,6 +533,7 @@ fn macro_binding_sites(
         index.macro_scope_crates(),
         &[name],
         &|line, declaration| module_resolved(path, line, declaration),
+        &|krate| index.drop_in_manifests.verified(path, krate),
     )
 }
 
@@ -548,6 +557,7 @@ fn trusted_macro_sites_in(
                     index.macro_scope_crates(),
                     NON_RETURNING_MACROS,
                     &|line, declaration| module_resolved(path, line, declaration),
+                    &|krate| index.drop_in_manifests.verified(path, krate),
                 )
                 .into_iter()
                 .map(|(name, site)| ((*path).clone(), name, site))

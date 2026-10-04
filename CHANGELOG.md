@@ -63,8 +63,11 @@ are scoped or reviewed.
   `assert_eq!` inside a `loop` first iteration, and `#[macro_use]` on a
   resolved module, are admitted with compiled runtime controls.
   `pretty_assertions::assert_eq` imported under its own name counts as the
-  standard assertion; an exported (`#[macro_export]`) redefinition still
-  refuses every `assert_eq!` in the crate.
+  standard assertion when the crate's `Cargo.toml` declares
+  `pretty_assertions` as a plain registry dependency; a renamed package,
+  `path`, `git`, `registry` or `[patch]` source still refuses, and says so.
+  An exported (`#[macro_export]`) redefinition still refuses every
+  `assert_eq!` in the crate.
 - Verdicts: a refused `assert_eq!` is named with its blocker, for example
   "the test carries `#[cfg(feature = "std")]`" or "`#[macro_use] extern crate
   other;` at src/other.rs:3", in a `Not credited:` line and an `assertion not

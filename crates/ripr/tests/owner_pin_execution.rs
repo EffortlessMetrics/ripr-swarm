@@ -1510,6 +1510,100 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
     Ok(())
 }
 
+/// `use pretty_assertions::assert_eq;` is the standard assertion only when
+/// Cargo resolves that crate name to the registry package. A dependency key
+/// renamed onto another package compiles the same source against a
+/// different macro, which here never panics.
+#[test]
+fn drop_in_crate_admission_matches_cargo_resolution() -> Result<(), String> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/owner_return_pin_direct");
+    let production = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let manifest = std::fs::read_to_string(fixture.join("input/Cargo.toml"))
+        .map_err(|error| error.to_string())?;
+    let source = format!(
+        "{production}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    use pretty_assertions::assert_eq;\n    #[test]\n    fn checks() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+    );
+    for (case, dependency, exposed) in [
+        ("registry", "pretty_assertions = \"1\"", true),
+        (
+            "renamed_package",
+            "pretty_assertions = { package = \"fake-assertions\", path = \"../fake\" }",
+            false,
+        ),
+    ] {
+        // The fake package sits outside the analyzed root, as a registry or
+        // path dependency would.
+        let scratch = Scratch::create()?;
+        let root = scratch.0.join("ws");
+        let fake = scratch.0.join("fake");
+        for directory in [root.join("src"), fake.join("src")] {
+            std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        }
+        let write = |path: PathBuf, text: &str| {
+            std::fs::write(path, text).map_err(|error| error.to_string())
+        };
+        write(
+            root.join("Cargo.toml"),
+            // `[workspace]` keeps an enclosing checkout from claiming it.
+            &format!("{manifest}\n[workspace]\n\n[dev-dependencies]\n{dependency}\n"),
+        )?;
+        write(root.join("src/lib.rs"), &source)?;
+        write(
+            fake.join("Cargo.toml"),
+            "[package]\nname = \"fake-assertions\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write(
+            fake.join("src/lib.rs"),
+            "#[macro_export]\nmacro_rules! assert_eq { ($a:expr, $b:expr) => {{ let _ = (&$a, &$b); }}; }\n",
+        )?;
+        let report = check_workspace(CheckInput {
+            root: root.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let findings = json["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{case}");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{case}: {}",
+            findings[0]["classification"]
+        );
+        if exposed {
+            // Running the registry case needs the network; the shipped crate
+            // panics exactly when the standard macro does.
+            continue;
+        }
+        // Offline: the renamed package resolves from its path.
+        write(
+            root.join("src/lib.rs"),
+            &source.replace("input * 3", "input * 2"),
+        )?;
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let result = Command::new(cargo)
+            .args(["test", "--offline", "--quiet", "--manifest-path"])
+            .arg(root.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", scratch.0.join("target"))
+            .output()
+            .map_err(|error| error.to_string())?;
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            result.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "{case}: the wrong library must pass under the renamed macro: {stdout}; {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");

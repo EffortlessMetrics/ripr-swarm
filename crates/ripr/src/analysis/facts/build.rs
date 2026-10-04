@@ -93,6 +93,7 @@ fn build_index_with_file_fact_cache(
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
@@ -356,6 +357,7 @@ fn build_index_with_adapters(
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
     index.macro_owned_crates = macro_owned_crates(root, &index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
     cancellation::checkpoint()?;
     Ok(index)
 }

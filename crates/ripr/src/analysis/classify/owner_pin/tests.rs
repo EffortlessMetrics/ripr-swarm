@@ -862,9 +862,21 @@ fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
 /// The first refusal for the one test's first assertion, with `others`
 /// indexed beside the weight library and the test file.
 fn weight_refusal(tests: &str, others: &[(&str, &str)]) -> Option<AssertionRefusal> {
+    weight_refusal_under(tests, others, None)
+}
+
+/// `weight_refusal` with the drop-in manifest authority rooted at `root`.
+fn weight_refusal_under(
+    tests: &str,
+    others: &[(&str, &str)],
+    root: Option<&Path>,
+) -> Option<AssertionRefusal> {
     let mut files = vec![(LIB, WEIGHT_LIB), (TESTS, tests)];
     files.extend_from_slice(others);
-    let index = index(&files);
+    let mut index = index(&files);
+    if let Some(root) = root {
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+    }
     let test = index
         .tests()
         .iter()
@@ -1050,21 +1062,85 @@ fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() 
 }
 
 #[test]
-fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() {
+fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> Result<(), String> {
     let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
-    for other in [
+    let manifest = |dependency: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\n{dependency}\n")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-plain",
+        &[("Cargo.toml", &manifest("pretty_assertions = \"1\""))],
+    )?;
+    // Cargo binds the name to another package; the source cannot tell.
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest("pretty_assertions = { package = \"fake-assertions\", version = \"1\" }"),
+        )],
+    )?;
+    let imports = [
         "use pretty_assertions::assert_eq;",
         "use ::pretty_assertions::assert_eq;",
         "use pretty_assertions::{assert_eq, assert_ne};",
         "use pretty_assertions::assert_eq as assert_eq;",
         "mod pretty_assertions {}\nuse ::pretty_assertions::assert_eq;",
-    ] {
-        assert_eq!(
-            weight_refusal(outside, &[("src/other.rs", other)]),
-            None,
-            "{other}"
-        );
+    ];
+    let mut outcomes = Vec::new();
+    for other in imports {
+        let others = [("src/other.rs", other)];
+        outcomes.push((
+            other,
+            weight_refusal_under(outside, &others, Some(&plain)),
+            weight_refusal_under(outside, &others, Some(&aliased)),
+            weight_refusal(outside, &others),
+        ));
     }
+    // The refusal names the import and what would verify it.
+    let mut index = index(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, outside),
+        ("src/other.rs", "use pretty_assertions::assert_eq;"),
+    ]);
+    index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&aliased);
+    let test = index.tests().at(0);
+    let probe = return_probe(owner(&index, "weight"), "x * 3");
+    let located = OwnerPinSyntax::default().equality_assertion_refusal(
+        &probe,
+        test,
+        &test.assertions[0],
+        &index,
+    );
+    let _ = std::fs::remove_dir_all(&plain);
+    let _ = std::fs::remove_dir_all(&aliased);
+    for (other, under_plain, under_alias, unrooted) in outcomes {
+        assert_eq!(under_plain, None, "{other}");
+        for refusal in [under_alias, unrooted] {
+            assert!(
+                matches!(
+                    refusal,
+                    Some(AssertionRefusal::Syntax(
+                        AssertionContextRefusal::MacroBinding(_)
+                    ))
+                ),
+                "{other}: {refusal:?}"
+            );
+        }
+    }
+    assert!(
+        matches!(
+            &located,
+            Some(AssertionRefusal::MacroBinding { site: Some((_, site)), .. })
+                if site.kind == MacroBindingKind::UnverifiedDropIn("pretty_assertions".into())
+        ),
+        "{located:?}"
+    );
+    assert_eq!(
+        located.as_ref().map(AssertionRefusal::describe).as_deref(),
+        Some(
+            "src/other.rs:1 imports `assert_eq` from `pretty_assertions`, and no Cargo.toml ripr read declares `pretty_assertions` as the plain registry package; declare it by version only (no `package`, `path`, `git`, `registry` or `[patch]`)"
+        )
+    );
     for other in [
         "use pretty_assertions::assert_ne as assert_eq;",
         "use pretty_assertions::inner::assert_eq;",
@@ -1087,6 +1163,7 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() {
             "{other}"
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -1221,6 +1298,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
                     index.macro_scope_crates(),
                     NON_RETURNING_MACROS,
                     &|_, _| false,
+                    &|_| false,
                 )
             })
             .filter(|(_, site)| site.scope.is_none())
