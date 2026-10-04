@@ -353,6 +353,14 @@ happens, check crates.io manually before retrying.
 
 ## Post-Publish
 
+After the crates.io publication is verified, bump
+`LATEST_RELEASED_VERSION` in `crates/ripr/src/cli/commands/init_workflow.rs`
+to the published version as its own commit — never in the release-prep PR
+and never for a release candidate (#5208). The constant must always name a
+published version: `init --ci github` self-pins generators at or below it,
+so a premature bump would make candidate-built generators emit an
+unresolvable install pin with no warning.
+
 ```bash
 cargo install ripr --version 0.8.0 --locked --root target/ripr/install-smoke-cratesio --force
 target/ripr/install-smoke-cratesio/bin/ripr --version

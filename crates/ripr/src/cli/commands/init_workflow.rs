@@ -1150,10 +1150,13 @@ fn generated_workflow_template() -> String {
 /// the install step always resolves (#5208). Released generators pin
 /// themselves and render byte-identical output to before.
 ///
-/// Bump on every release, before the release candidate is cut: a stale
-/// constant makes a released generator warn and pin the older release
-/// (degraded but resolvable, and loud). Forgetting the bump can never emit
-/// an unresolvable pin.
+/// Bump only after the crates.io publication is verified, as a
+/// post-publication commit — never in the release-prep PR and never for a
+/// release candidate (Codex P1): the constant must always name a published
+/// version, or a candidate-built generator would self-pin an unresolvable
+/// version with no warning. A stale constant makes a released generator
+/// warn and pin the older release (degraded but resolvable, and loud), so
+/// forgetting the bump can never emit an unresolvable pin.
 const LATEST_RELEASED_VERSION: &str = "0.10.0";
 
 /// Parse `major.minor.patch`; `None` for anything else. Unknown shapes fail
@@ -1345,16 +1348,26 @@ mod install_version_tests {
         }
     }
 
+    /// A version that always exceeds the release constant, so this test
+    /// stays unreleased no matter how far the constant advances (a hardcoded
+    /// `0.11.0` would rot into a released version at the next bump).
+    fn version_beyond_latest_release() -> Result<String, String> {
+        let (major, minor, _) = parse_release_version(LATEST_RELEASED_VERSION)
+            .ok_or_else(|| "LATEST_RELEASED_VERSION must parse".to_string())?;
+        Ok(format!("{major}.{}.0", minor + 1))
+    }
+
     /// Unreleased generators pin the latest release, never themselves (#5208).
     #[test]
-    fn install_version_pins_the_latest_release_when_unreleased() {
-        for version in ["0.11.0", "0.12.0", "1.0.0"] {
+    fn install_version_pins_the_latest_release_when_unreleased() -> Result<(), String> {
+        for version in [version_beyond_latest_release()?, "1.0.0".to_string()] {
             assert_eq!(
-                workflow_install_version(version),
+                workflow_install_version(&version),
                 LATEST_RELEASED_VERSION,
                 "{version}"
             );
         }
+        Ok(())
     }
 
     /// Unknown shapes fail toward the resolvable pin (#5208).
@@ -1371,7 +1384,8 @@ mod install_version_tests {
 
     /// The constant must parse, and must never lead the package version: a
     /// constant ahead of the package would self-pin unreleased generators
-    /// and silently defeat #5208. Bump it on every release.
+    /// and silently defeat #5208. Bump it after each crates.io publication
+    /// is verified, never in release-prep.
     #[test]
     fn latest_released_constant_is_ordered_behind_the_package() -> Result<(), String> {
         let latest = parse_release_version(LATEST_RELEASED_VERSION)
@@ -1411,20 +1425,23 @@ mod install_version_tests {
 
     /// Unreleased rendering pins the latest release and says why (#5208).
     #[test]
-    fn unreleased_rendering_pins_the_latest_release_with_an_honest_comment() {
-        let workflow = generated_workflow_for_version("0.11.0");
+    fn unreleased_rendering_pins_the_latest_release_with_an_honest_comment() -> Result<(), String> {
+        let future = version_beyond_latest_release()?;
+        let workflow = generated_workflow_for_version(&future);
         assert!(
-            workflow.contains("run: cargo install ripr --version 0.10.0 --locked\n"),
+            workflow.contains(&format!(
+                "run: cargo install ripr --version {LATEST_RELEASED_VERSION} --locked\n"
+            )),
             "must pin the latest release"
         );
         assert!(
-            !workflow.contains("--version 0.11.0"),
+            !workflow.contains(&format!("--version {future}")),
             "must not name the unreleased version"
         );
         assert!(
-            workflow.contains(
-                "      # Pinned to released ripr 0.10.0: the generating ripr (0.11.0) is\n"
-            ),
+            workflow.contains(&format!(
+                "      # Pinned to released ripr {LATEST_RELEASED_VERSION}: the generating ripr ({future}) is\n"
+            )),
             "missing honest comment"
         );
         assert!(!workflow.contains("@RIPR_"), "unsubstituted placeholder");
@@ -1433,5 +1450,6 @@ mod install_version_tests {
             .filter(|line| line.contains("run: cargo install"))
             .collect();
         assert_eq!(installs.len(), 1, "{installs:?}");
+        Ok(())
     }
 }

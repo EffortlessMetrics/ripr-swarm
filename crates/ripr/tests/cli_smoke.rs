@@ -11298,23 +11298,39 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workspace.join("ripr.toml").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
-    // #5208: the test binary reports the unreleased package version, so it
-    // must not pin itself (that version does not exist on crates.io). It
-    // pins an exact released version instead and warns on stderr. Exact
-    // released/dev renderings are pinned by unit tests without rebuilding.
-    assert!(!workflow.contains(&format!(
-        "run: cargo install ripr --version {} --locked\n",
-        env!("CARGO_PKG_VERSION")
-    )));
+    // #5208: the pin/warning pair must stay consistent in both release
+    // states. A released generator self-pins silently; an unreleased one
+    // pins an exact released version (its own would not resolve) and warns
+    // on stderr. Branching on the observed warning keeps this test valid
+    // when the package and release constant meet at parity (CodeRabbit
+    // Major): at that commit the released path is the correct expectation.
+    // Exact released/dev mappings are pinned by unit tests without
+    // rebuilding; this test pins the end-to-end wiring and consistency.
+    let generator = env!("CARGO_PKG_VERSION");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let warned = stderr.contains("is not released");
+    if warned {
+        assert!(
+            !workflow.contains(&format!(
+                "run: cargo install ripr --version {generator} --locked\n"
+            )),
+            "a warned run must not self-pin the unreleased generator"
+        );
+        assert!(
+            stderr.contains("pins the latest release")
+                && stderr.contains("ripr init --ci github --force"),
+            "missing unreleased-generator warning: {stderr}"
+        );
+    } else {
+        assert!(
+            workflow.contains(&format!(
+                "run: cargo install ripr --version {generator} --locked\n"
+            )),
+            "an unwarned run must self-pin the released generator"
+        );
+    }
     assert!(workflow.contains("run: cargo install ripr --version "));
     assert!(!workflow.contains("cargo install ripr --locked"));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("is not released")
-            && stderr.contains("pins the latest release")
-            && stderr.contains("ripr init --ci github --force"),
-        "missing unreleased-generator warning: {stderr}"
-    );
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(
