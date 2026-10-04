@@ -17,7 +17,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | `metrics/public-proof/first-run-current.json` | New-developer walk, current build | ripr 0.11.0 (a7a089e) | 3 crates |
 | `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (PR #5293); ripr 0.11.0 a7a089e |
 | `metrics/public-proof/install.json` | Time to install a prebuilt release | install | one cloud container, not hosted CI |
-| `benchmarks/rust_corpus/manifest.json` | Pinned corpus the scoreboards draw from | corpus 2026-10-04.4 | read directly |
+| `benchmarks/rust_corpus/manifest.json` | Pinned corpus the scoreboards draw from | corpus 2026-10-04.5 | read directly |
 
 ## Scoreboard
 
@@ -67,7 +67,7 @@ Each line below is computed from the receipts above. Detail sections follow.
 - **Warm `ripr check` on the last commit.** Worst repository: ripr-swarm at 11.5 s; the bar is at most 2.0 s.
 - **Warm `ripr check` peak memory.** Worst repository: ripr-swarm at 1187 MB; the bar is at most 512 MB.
 - **First-run verdicts are unresolved.** 3 of 3 first-run crates ended in an `*_unknown` verdict on ripr 0.11.0 (a7a089e); 1 of 3 did on ripr 0.10.0.
-- **Narrow coverage.** The speed scoreboard measured 4 repositories and the first-run walk 3 crates, out of 31 pinned in the corpus.
+- **Narrow coverage.** The speed scoreboard measured 4 repositories and the first-run walk 3 crates, out of 34 pinned in the corpus.
 
 ## Mutation agreement
 
@@ -221,13 +221,7 @@ Across the runs: fix success 1, stale re-check cycles 3, white-box tests written
 
 ## The corpus behind the numbers
 
-31 real repositories are pinned to exact upstream commits (corpus 2026-10-04.4): 14 well-maintained, 8 legacy, 9 ordinary. The class is a judgment recorded per repository, not a measurement. Scoreboards run on subsets of it, so a number above describes the subset named in its section.
-
-Known gaps in the corpus:
-
-- no repository that runs tests through cargo-nextest-only configuration
-- no Windows-only or cfg(windows)-dominant crate
-- no crate whose tests live exclusively in a separate tests crate of another repository
+34 real repositories are pinned to exact upstream commits (corpus 2026-10-04.5): 15 well-maintained, 9 legacy, 10 ordinary. The class is a judgment recorded per repository, not a measurement. Scoreboards run on subsets of it, so a number above describes the subset named in its section.
 
 Repositories the speed scoreboard ran on:
 
