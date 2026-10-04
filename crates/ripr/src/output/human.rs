@@ -1,7 +1,7 @@
+use crate::agent::loop_commands::needs_terminal_escape;
 use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
-use crate::terminal_text::needs_terminal_escape;
 use std::collections::BTreeSet;
 
 /// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`

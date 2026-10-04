@@ -1,7 +1,4 @@
-#[path = "../terminal_text.rs"]
-mod terminal_text;
 use std::path::{Component, Path, PathBuf};
-use terminal_text::needs_terminal_escape;
 
 pub(crate) const AGENT_LOOP_COMMAND_TEMPLATE_VERSION: &str = "0.1";
 
@@ -389,6 +386,23 @@ pub(crate) fn shell_arg(value: &str) -> String {
         return ansi_c_quote(value);
     }
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Which characters must not reach a terminal raw: every control character
+/// except `\n` and `\t`, plus the bidi formatting characters. One owner for the
+/// policy; `output::human::terminal_safe` escapes the same set in reports. It
+/// lives here, dependency-free, because `xtask` includes this file by path.
+pub(crate) fn needs_terminal_escape(ch: char) -> bool {
+    match ch {
+        '\n' | '\t' => false,
+        c if c.is_control() => true,
+        // Arabic letter mark, LRM/RLM, embeddings/overrides (LRE..RLO), and
+        // isolates (LRI..PDI): they reorder text without any visible glyph.
+        '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Control and bidi characters cannot be printed raw in a report, and the
