@@ -276,6 +276,7 @@ Fixture coverage:
 - `consumed_matcher_err_return_guard_keeps_its_exact_oracle`
 - `asserted_bound_matcher_keeps_the_actual_assertion`
 - `matcher_computation_and_asserted_result_have_different_runtime_grip`
+- `discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers`
 - `fixtures/infection_expected_value_literal`
 - `predicate_infection_ignores_boundary_literal_used_only_as_expected_value`
 - `predicate_infection_credits_the_same_literal_when_it_is_an_owner_input`

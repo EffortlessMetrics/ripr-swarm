@@ -255,7 +255,7 @@ jobs:
         id: goldens
         run: cargo xtask goldens check
 
-      # Retain these six bounded calibration subjects even on success: the
+      # Retain bounded wildcard and affected matcher/guard calibration subjects:
       # drift report contains counts and first differences, not full stdout.
       # This uses the actual canonical producer outputs; it does not rerun,
       # normalize, bless, or weaken the golden comparison.
@@ -268,6 +268,18 @@ jobs:
             target/ripr/fixtures/wildcard_oracle_*/check.json
             target/ripr/fixtures/wildcard_oracle_*/human.txt
             target/ripr/fixtures/wildcard_oracle_*/human-full.txt
+            target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/check.json
+            target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human*.txt
+            target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/check.json
+            target/ripr/fixtures/error_variant_boxed_wrapper_fail_closed/human*.txt
+            target/ripr/fixtures/error_variant_wrapper_callee_only_pin/check.json
+            target/ripr/fixtures/error_variant_wrapper_callee_only_pin/human*.txt
+            target/ripr/fixtures/error_variant_wrapper_foreign_pin/check.json
+            target/ripr/fixtures/error_variant_wrapper_foreign_pin/human*.txt
+            target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/check.json
+            target/ripr/fixtures/error_variant_wrapper_wrong_receiver_pin/human*.txt
+            target/ripr/fixtures/guarded_result_match_owner_observation/check.json
+            target/ripr/fixtures/guarded_result_match_owner_observation/human*.txt
           if-no-files-found: error
           retention-days: 5
 
