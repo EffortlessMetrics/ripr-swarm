@@ -111,8 +111,10 @@ hold:
    literals whose leaves are themselves admissible (`4`, `MAX`, `"x".into()`,
    `Some(4)`, `Retries(4)`, `Retries { n: Count(4) }`). An expected value
    that names any local binding or calls any function of the workspace
-   (including a constructor function such as `Retries::new(4)`) gives no
-   credit, because
+   (including a constructor function such as `Retries::new(4)`, and a
+   `From`/`Into` conversion or `Default` whose impl is in the workspace)
+   gives no credit; functional update (`..base`) is not admissible at any
+   nesting depth, because
    it can carry the owner's result (`retries: c.retries`, `let r =
    c.retries; .. retries: r`, `retries: build(3).retries`).
 3. `T` is a workspace type with a visible `#[derive(PartialEq)]` and no
@@ -200,7 +202,7 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 9. `let c = build(3); assert_eq!(c.name, "x")`: `weakly_exposed`, `FieldValue`
    missing discriminator kept.
 10. `assert_ne!(build(3), Config { retries: 9, name: "x".into() })`: `weakly_exposed`, no field credit.
-11. `retries` of type `Retries(u32)` with `impl PartialEq for Retries { fn eq(&self, _: &Self) -> bool { true } }`,
+11. The owner writes `retries: Retries(n + 1)`; `retries` of type `Retries(u32)` with `impl PartialEq for Retries { fn eq(&self, _: &Self) -> bool { true } }`,
     test `assert_eq!(build(3), Config { retries: Retries(4), name: "x".into() })`:
     not `exposed`.
 12. `let c = build(3); assert_eq!(c, Config { retries: c.retries, name: "x".into() })`:
@@ -214,7 +216,7 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
     not `exposed`.
 15. `let c = build(3); let r = c.retries; assert_eq!(c, Config { retries: r, name: "x".into() })`:
     not `exposed`.
-16. `retries` of type `Retries { n: Count }` with derived `PartialEq` on
+16. The owner writes `retries: Retries { n: Count(n + 1) }`; `retries` of type `Retries { n: Count }` with derived `PartialEq` on
     `Retries`, `Count(u32)` and `impl PartialEq for Count { fn eq(&self, _: &Self) -> bool { true } }`,
     test `assert_eq!(build(3), Config { retries: Retries { n: Count(4) }, name: "x".into() })`:
     not `exposed`. The same test with derived `PartialEq` on `Count` reads
