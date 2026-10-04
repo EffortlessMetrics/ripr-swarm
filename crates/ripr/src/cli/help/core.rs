@@ -154,7 +154,16 @@ Options:
                            diff-scoped modes (instant, draft, fast) on large
                            workspaces. See docs/CONFIGURATION.md "Analysis
                            modes".
-  --format FORMAT          Output format. Defaults to human. Groups:
+  --format FORMAT          Output format. Defaults to human.
+                           Choose by task: eye review -> human (the default);
+                           every finding with drill-in commands -> human-full;
+                           machine consumer (jq, CI scripts) -> json (--json);
+                           file annotations in Actions logs -> github; code
+                           scanning upload -> sarif; README badge ->
+                           repo-badge-shields (repo ledger); PR/CI status
+                           badge -> badge-shields (diff); whole-repo
+                           inventory -> repo-exposure-json; agent repair
+                           evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
                                human, human-full, json, github, sarif
                              Badge (diff-scoped, for README status):
@@ -169,14 +178,6 @@ Options:
                                repo-exposure-md, repo-sarif
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
-                           Choose by task: eye review -> human (the default);
-                           every finding with drill-in commands -> human-full;
-                           machine consumer (jq, CI scripts) -> json (--json);
-                           file annotations in Actions logs -> github; code
-                           scanning upload -> sarif; README badge ->
-                           badge-shields (diff) or repo-badge-shields (repo
-                           ledger); whole-repo inventory -> repo-exposure-json;
-                           agent repair evidence -> agent-seam-packets-json.
                            badge-plus-* and repo-badge-plus-* formats read
                            target/ripr/reports/test-efficiency.json when present;
                            missing input renders a neutral "needs test-efficiency"
