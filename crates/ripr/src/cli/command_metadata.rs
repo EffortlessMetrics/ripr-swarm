@@ -223,11 +223,23 @@ const TOOL_PROBES: CommandEffects = CommandEffects {
     may_start_child_process: true,
 };
 
+/// The CI packet runs the workflow's analysis and report commands as child
+/// `ripr` processes and resolves the PR diff through `crate::git`; it never
+/// compiles, runs tests, or uses the network.
+const CI_PACKET_RUNNER: CommandEffects = CommandEffects {
+    may_run_analysis: true,
+    may_compile: false,
+    may_run_tests: false,
+    may_run_mutation: false,
+    may_use_network: false,
+    may_start_child_process: true,
+};
+
 /// The governed rich-metadata table. One row per described catalog entry.
 const METADATA: &[CommandMetadata] = &[
     CommandMetadata {
         id: "cmd:help",
-        summary: "Route to per-command options and the exhaustive reference.",
+        summary: "Route to per-command options, the exhaustive reference, and the versioned machine catalog.",
         task: "Read detailed help",
         workflows: &["setup"],
         operation: CommandOperation::ReadOnly,
@@ -239,11 +251,15 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        // #5266: `ripr help --json` (RIPR-SPEC-0190) is this route's own
+        // machine catalog, so the row cannot claim otherwise — a consumer
+        // consulting the catalog as authority would never try the one
+        // command that produces it.
+        json_support: true,
         example: "ripr help <command>",
         next_routes: &["help", "doctor", "check"],
         stop_states: &[],
-        limitations: "prints text only; performs no analysis, compilation, test, process, network, mutation, or product-artifact work.",
+        limitations: "prints text and, with --json, the versioned machine command catalog; performs no analysis, compilation, test, process, network, mutation, or product-artifact work.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1119,6 +1135,33 @@ const METADATA: &[CommandMetadata] = &[
         not_applicable_reason: None,
     },
     CommandMetadata {
+        id: "cmd:reports.ci-packet",
+        summary: "Run the generated CI workflow's RIPR steps and write its artifact packet.",
+        task: "Compose PR evidence",
+        workflows: &["reports", "pr-evidence"],
+        operation: CommandOperation::WritesArtifacts,
+        cost: CommandCost::Workspace,
+        effects: CI_PACKET_RUNNER,
+        primary_inputs: &[
+            "the checkout under --root",
+            "RIPR_* workflow settings and the GitHub Actions run environment",
+        ],
+        outputs: CommandOutputs {
+            default: Some("target/ripr and target/ci artifact packet under --root"),
+            optional: &[],
+        },
+        state_target: None,
+        json_support: false,
+        example: "ripr reports ci-packet --root .",
+        next_routes: &["reports ci-summary", "reports index", "first-pr"],
+        stop_states: &[
+            "advisory steps log a failure and continue",
+            "a failed diff capture, gate evaluation, or blocking-mode producer exits nonzero after the packet is written",
+        ],
+        limitations: "runs the same ripr commands the workflow steps ran; it reads no token and posts no PR comments.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
         id: "cmd:reports.ci-summary",
         summary: "Print the generated CI workflow's step summary from existing artifacts.",
         task: "Compose PR evidence",
@@ -1539,6 +1582,29 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["agent packet", "agent repair"],
         stop_states: &[],
         limitations: "the complete canonical packet stays behind the explicit `ripr agent packet` route; the card never embeds it.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:agent.stub",
+        summary: "Write a compiling Rust test stub for one gap, ready to fill and run.",
+        task: "Repair a selected Rust gap",
+        workflows: &["repair-loop", "editor-agent"],
+        operation: CommandOperation::StateChanging,
+        cost: CommandCost::Analysis,
+        effects: ANALYSIS_RUNNER,
+        primary_inputs: &["--seam-id", "--at"],
+        outputs: CommandOutputs {
+            default: None,
+            optional: &[],
+        },
+        state_target: Some(
+            "the owner file's inline test module or a new tests/ file, only when --write names it",
+        ),
+        json_support: true,
+        example: "ripr agent stub --root . --at src/lib.rs:12",
+        next_routes: &["agent repair"],
+        stop_states: &[],
+        limitations: "the stub stops at a labelled todo!() for the expected value; --write is the only path that edits files, and only the owner file's test module or a new tests/ file.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2462,6 +2528,39 @@ mod tests {
             return Ok(());
         }
         Err(format!("production metadata violations: {violations:?}"))
+    }
+
+    /// #5266: the catalog is the authority a machine consumer consults, so
+    /// the `help` row must not report `json_support: false` for the very
+    /// route (`ripr help --json`, RIPR-SPEC-0190) that emits the catalog.
+    /// Pinning it here keeps the row from drifting back behind the parser,
+    /// which accepts `help --json` (`command.rs`).
+    #[test]
+    fn help_row_reports_its_machine_catalog_route() -> Result<(), String> {
+        let row = metadata()
+            .iter()
+            .find(|row| row.id == "cmd:help")
+            .ok_or("cmd:help has no metadata row")?;
+        if !row.json_support {
+            return Err(
+                "cmd:help reports json_support: false while `ripr help --json` emits the \
+                 versioned machine catalog"
+                    .to_string(),
+            );
+        }
+        if !row.limitations.contains("--json") {
+            return Err(format!(
+                "cmd:help limitations {:?} do not name the --json catalog route",
+                row.limitations
+            ));
+        }
+        if !row.summary.contains("machine catalog") {
+            return Err(format!(
+                "cmd:help summary {:?} still omits the machine catalog route",
+                row.summary
+            ));
+        }
+        Ok(())
     }
 
     #[test]
