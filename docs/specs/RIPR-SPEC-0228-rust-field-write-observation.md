@@ -99,7 +99,13 @@ matches that full path: a read of `r.count` never observes a write to
 
 The probe is confirmed by a related test that:
 
-1. calls the owner method on a local binding `r` (the receiver), and
+In this section `f` is the full projection path (`r.child.count`, never
+`r.count`, for a write to `self.child.count`).
+
+1. calls the owner method on a local binding `r` (the receiver), and the
+   owner body has no later write to the same path after the changed
+   statement on any path to its return (`self.count += 1; self.count = 0`
+   gives no credit), and
 2. after that call, holds an admitted exact oracle that reads `r.f`
    (`assert_eq!(r.f, v)`, or a whole-value comparison of `r` that names `f`
    under RIPR-SPEC-0225); and
@@ -195,6 +201,9 @@ changes `self.count += 2` to `self.count += 1`.
    `ripr check --diff`, sink `state_write`).
 9. `c.bump(); c.reset(); assert_eq!(c.count, 0)` with `reset` taking
    `&mut self`: not `exposed`.
+10. `bump` writes `self.count += 1; self.count = 0;` (first statement
+    changed from `+= 2`), test `c.bump(); assert_eq!(c.count, 0)`: not
+    `exposed`.
 
 ## Test Mapping
 

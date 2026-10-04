@@ -161,7 +161,11 @@ credit, because different text can compute the same value.
 
 When every related call is resolved and none selects the changed arm, a
 variant token in an assertion does not confirm the arm. This closes the
-expected-side confirmation in Problem item 3.
+expected-side confirmation in Problem item 3. When any related call is
+unresolved, token matching does not confirm the arm either: only a resolved
+selecting call with an exact oracle confirms, and otherwise the finding
+stays below `exposed` (under the #5416 unknown-not-a-gap rule 3 it reads
+`static_unknown` when its nearest oracle is strong).
 
 ### Decisions for the owner
 
