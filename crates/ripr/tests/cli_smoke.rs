@@ -45,6 +45,20 @@ fn run_ripr(args: &[&str]) -> Output {
     Command::new(bin).args(args).output().unwrap()
 }
 
+#[cfg(feature = "lang-rust")]
+fn run_ripr_with_deadline(
+    args: &[&str],
+    budget: std::time::Duration,
+) -> Result<Output, std::io::Error> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    run_owned_stdin_probe(command, &[], budget)
+}
+
 fn run_ripr_in_workspace(args: &[&str]) -> Result<Output, std::io::Error> {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root = workspace_root();

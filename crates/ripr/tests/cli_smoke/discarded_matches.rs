@@ -1,4 +1,4 @@
-use super::{Digest, Sha256, run_ripr, unique_temp_workspace, workspace_root};
+use super::{Digest, Sha256, run_ripr_with_deadline, unique_temp_workspace, workspace_root};
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ
 /// only in the returned offset; their patches each describe the actual source.
@@ -14,6 +14,31 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 .ok_or("missing control invocation identity")?,
         );
     let result = (|| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let run = |args: &[&str]| {
+            let budget = deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .min(std::time::Duration::from_secs(10));
+            if budget.is_zero() {
+                return Err(
+                    "current CLI control batch exceeded its 120s instrument budget".to_string(),
+                );
+            }
+            run_ripr_with_deadline(args, budget).map_err(|error| error.to_string())
+        };
+        let mut binary =
+            std::fs::File::open(env!("CARGO_BIN_EXE_ripr")).map_err(|error| error.to_string())?;
+        let mut binary_digest = Sha256::new();
+        let mut buffer = [0_u8; 65_536];
+        loop {
+            let count =
+                std::io::Read::read(&mut binary, &mut buffer).map_err(|error| error.to_string())?;
+            if count == 0 {
+                break;
+            }
+            binary_digest.update(&buffer[..count]);
+        }
+        let binary_sha256 = format!("{:x}", binary_digest.finalize());
         std::fs::create_dir_all(&retained).map_err(|error| error.to_string())?;
         let cases = [
             ("bare-wildcard", "matches!(value, _);", "discarded"),
@@ -56,18 +81,34 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 std::fs::write(&patch, &diff).map_err(|error| error.to_string())?;
                 let root_arg = fixture.to_string_lossy();
                 let patch_arg = patch.to_string_lossy();
-                let json = run_ripr(&[
+                let json = run(&[
                     "check", "--root", &root_arg, "--diff", &patch_arg, "--mode", "fast",
                     "--format", "json",
-                ]);
-                let human = run_ripr(&[
+                ])?;
+                let human = run(&[
                     "check", "--root", &root_arg, "--diff", &patch_arg, "--mode", "fast",
                     "--format", "human",
-                ]);
+                ])?;
+                let human_full = run(&[
+                    "check",
+                    "--root",
+                    &root_arg,
+                    "--diff",
+                    &patch_arg,
+                    "--mode",
+                    "fast",
+                    "--format",
+                    "human-full",
+                ])?;
                 let output = retained.join(&id);
                 std::fs::create_dir_all(&output).map_err(|error| error.to_string())?;
                 assert!(
-                    json.stdout.len() + json.stderr.len() + human.stdout.len() + human.stderr.len()
+                    json.stdout.len()
+                        + json.stderr.len()
+                        + human.stdout.len()
+                        + human.stderr.len()
+                        + human_full.stdout.len()
+                        + human_full.stderr.len()
                         <= 262_144,
                     "{id}: the bounded control must retain at most 256KiB of CLI output"
                 );
@@ -76,8 +117,10 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     ("diff.patch", diff.as_bytes()),
                     ("check.json", json.stdout.as_slice()),
                     ("human.txt", human.stdout.as_slice()),
+                    ("human-full.txt", human_full.stdout.as_slice()),
                     ("json.stderr", json.stderr.as_slice()),
                     ("human.stderr", human.stderr.as_slice()),
+                    ("human-full.stderr", human_full.stderr.as_slice()),
                 ] {
                     std::fs::write(output.join(file), bytes).map_err(|error| error.to_string())?;
                 }
@@ -90,6 +133,11 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     human.status.success(),
                     "{id} human: {}",
                     String::from_utf8_lossy(&human.stderr)
+                );
+                assert!(
+                    human_full.status.success(),
+                    "{id} full human: {}",
+                    String::from_utf8_lossy(&human_full.stderr)
                 );
                 let report: serde_json::Value = serde_json::from_slice(&json.stdout)
                     .map_err(|error| format!("{id}: {error}"))?;
@@ -107,6 +155,54 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 let strength = finding["oracle_strength"]
                     .as_str()
                     .ok_or("missing oracle strength")?;
+                let related = finding["related_tests"]
+                    .as_array()
+                    .ok_or("missing related tests")?;
+                assert_eq!(
+                    related.len(),
+                    1,
+                    "{id}: intended consumer must remain reachable"
+                );
+                assert_eq!(related[0]["name"], "observes_score", "{id}");
+                assert_eq!(related[0]["file"], "src/lib.rs", "{id}");
+                assert_eq!(related[0]["line"], 8, "{id}");
+                assert_eq!(related[0]["relation_reason"], "direct_owner_call", "{id}");
+                assert_eq!(
+                    related[0]["oracle_kind"], finding["oracle_kind"],
+                    "{id}: kind projection"
+                );
+                assert_eq!(
+                    related[0]["oracle_strength"], finding["oracle_strength"],
+                    "{id}: strength projection"
+                );
+                let human_text =
+                    std::str::from_utf8(&human.stdout).map_err(|error| error.to_string())?;
+                let human_full_text =
+                    std::str::from_utf8(&human_full.stdout).map_err(|error| error.to_string())?;
+                assert!(
+                    human_text.lines().any(|line| line
+                        .trim()
+                        .starts_with("Related test: src/lib.rs:8 observes_score")),
+                    "{id}: concise output must retain the intended consumer"
+                );
+                let exposure = human_text
+                    .lines()
+                    .filter(|line| line.trim().starts_with("Static exposure:"))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    exposure.len(),
+                    1,
+                    "{id}: concise classification must be nonempty"
+                );
+                assert!(
+                    exposure[0].contains(
+                        finding["classification"]
+                            .as_str()
+                            .ok_or("missing classification")?
+                    ),
+                    "{id}: human/JSON classification agreement"
+                );
+                let projection = "- related test src/lib.rs:8 observes_score uses ";
                 match expected {
                     "discarded" => {
                         assert_ne!(
@@ -118,9 +214,6 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                             "{id}: discarded pattern cannot provide an oracle"
                         );
                         assert_ne!(strength, "strong", "{id}: unused boolean cannot fail");
-                        let related = finding["related_tests"]
-                            .as_array()
-                            .ok_or("missing related tests")?;
                         for test in related {
                             assert_ne!(
                                 test["oracle_strength"], "strong",
@@ -131,26 +224,48 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                                 "{id}: related-test pattern must not leak"
                             );
                         }
+                        for line in human_full_text.lines().map(str::trim) {
+                            if line.starts_with(projection) {
+                                assert!(
+                                    !line.contains("uses strong "),
+                                    "{id}: false strong human projection"
+                                );
+                                assert!(
+                                    !line.contains(" exact value oracle:"),
+                                    "{id}: discarded pattern in human projection"
+                                );
+                            }
+                            assert!(
+                                !line.starts_with("- discriminator yes: Strong oracle found:"),
+                                "{id}: false strong human explanation"
+                            );
+                        }
                     }
                     "weak" => {
                         assert_eq!(finding["classification"], "weakly_exposed", "{id}");
                         assert_eq!(kind, "relational_check", "{id}");
                         assert_eq!(strength, "weak", "{id}");
+                        assert!(
+                            human_full_text
+                                .lines()
+                                .any(|line| line.trim().starts_with(&format!(
+                                    "{projection}weak relational check oracle: {oracle}"
+                                ))),
+                            "{id}: full weak oracle projection"
+                        );
                     }
                     "strong" => {
                         assert_eq!(finding["classification"], "exposed", "{id}");
                         assert_eq!(kind, "exact_value", "{id}");
                         assert_eq!(strength, "strong", "{id}");
-                        let related = finding["related_tests"]
-                            .as_array()
-                            .ok_or("missing related tests")?;
-                        assert_eq!(
-                            related.len(),
-                            1,
-                            "{id}: genuine consumer must remain reachable"
+                        assert!(
+                            human_full_text
+                                .lines()
+                                .any(|line| line.trim().starts_with(&format!(
+                                    "{projection}strong exact value oracle: {oracle}"
+                                ))),
+                            "{id}: full strong oracle projection"
                         );
-                        assert_eq!(related[0]["name"], "observes_score", "{id}");
-                        assert_eq!(related[0]["relation_reason"], "direct_owner_call", "{id}");
                     }
                     _ => return Err(format!("unsupported expectation {expected}")),
                 }
@@ -161,6 +276,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     "diff_sha256": format!("{:x}", Sha256::digest(diff.as_bytes())),
                     "json_sha256": format!("{:x}", Sha256::digest(&json.stdout)),
                     "human_sha256": format!("{:x}", Sha256::digest(&human.stdout)),
+                    "human_full_sha256": format!("{:x}", Sha256::digest(&human_full.stdout)),
                     "classification": finding["classification"],
                     "oracle_kind": kind,
                     "oracle_strength": strength,
@@ -175,9 +291,13 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
         let receipt = serde_json::json!({
             "kind": "discarded_matcher_current_cli_controls",
             "binary": env!("CARGO_BIN_EXE_ripr"),
+            "binary_sha256": binary_sha256,
             "run_id": std::env::var("GITHUB_RUN_ID").ok(),
             "run_attempt": std::env::var("GITHUB_RUN_ATTEMPT").ok(),
-            "command": "ripr check --root CASE --diff PATCH --mode fast --format json/human",
+            "command": "ripr check --root CASE --diff PATCH --mode fast --format json/human/human-full",
+            "command_timeout_seconds": 10,
+            "batch_deadline_seconds": 120,
+            "post_capture_retained_output_limit_bytes_per_subject": 262144,
             "independent_contract": "score(1) == 2; original returns2, wrong returns3",
             "denominator": "14 authored static CLI subjects; not representative accuracy or fixture runtime execution",
             "records": records,
