@@ -42,6 +42,22 @@ repository owner. Protection is never weakened to clear a merge.
 - If a rebase drops or rewrites a hunk, keep `main`'s version of any file
   another PR has already fixed; do not carry an old copy of it.
 
+## Required check runs on Draft to Ready (#4986)
+
+Applies once #4990 merges; as of this page it is open, so confirm in
+`.github/workflows/routed-rust.yml` before relying on it.
+
+`Ripr Rust Small Result` runs only when a PR moves from Draft to Ready.
+
+- Open PRs as Draft and mark them Ready once the head is final.
+- A PR opened directly as Ready, or pushed to after it went Ready, has no
+  required check and cannot merge. Convert it to Draft and mark it Ready again.
+- Before toggling, check that no Ready-triggered `routed-rust.yml` run is still
+  queued or running on that head, because the toggle cancels it.
+- Re-check auto-merge after toggling.
+- Labels such as `full-ci` take effect at the next Ready transition.
+- Do not `workflow_dispatch` `routed-rust.yml` on a PR branch (#5394).
+
 ## Combined-tree check
 
 Branch protection does not test the combined tree, so two individually green
