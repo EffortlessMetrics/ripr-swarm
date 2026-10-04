@@ -1,16 +1,17 @@
 //! Public proof page (`cargo xtask public-proof`).
 //!
 //! Renders `docs/PUBLIC_PROOF.md`, the page a skeptical developer reads before
-//! adopting ripr, from committed receipts under `metrics/public-proof/` and the
-//! pinned corpus manifest. Nothing on the page is typed by hand: every number,
-//! trend and shortfall line is computed from a receipt, and a receipt that is
-//! missing a field the page needs is a hard error, not a silent omission.
+//! adopting ripr, from committed receipts under `metrics/public-proof/`.
+//! Nothing on the page is typed by hand: every number, trend and shortfall
+//! line is computed from a receipt, and a receipt that is missing a field the
+//! page needs is a hard error, not a silent omission.
 //!
 //! `--check` fails when the committed page differs from what the receipts
 //! render, or when a receipt has drifted from the canonical in-repo source it
 //! was copied from. `--refresh-receipts` re-copies those canonical sources
-//! before rendering. The same check runs as an xtask unit test, so the required
-//! Rust gate fails on a stale page.
+//! before rendering. The xtask unit test that the required Rust gate runs
+//! checks only the page against its receipts, so a PR that moves a canonical
+//! source does not fail required CI; source drift is advisory.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,15 +21,20 @@ use serde_json::Value;
 const PAGE: &str = "docs/PUBLIC_PROOF.md";
 const RECEIPTS: &str = "metrics/public-proof";
 const CORPUS_MANIFEST: &str = "benchmarks/rust_corpus/manifest.json";
+const CORPUS_RECEIPT: &str = "metrics/public-proof/corpus-manifest.json";
 
-/// Receipts that are verbatim copies of a canonical in-repo output. When the
-/// canonical file exists it must equal the receipt byte for byte.
-const CANONICAL_SOURCES: [(&str, &str); 2] = [
+/// Receipts that are verbatim copies of a canonical in-repo output. The
+/// canonical file must equal the receipt byte for byte, but only
+/// `public-proof --check` compares them. The required unit test checks the page
+/// against its receipts alone, so a PR that moves a source (a corpus update, say)
+/// does not fail required CI; the page lags until someone refreshes it.
+const CANONICAL_SOURCES: [(&str, &str); 3] = [
     ("dx-scoreboard.json", "metrics/dx-scoreboard/baseline.json"),
     (
         "verdict-corpus.json",
         "fixtures/rust-verdict-corpus/expected/report.json",
     ),
+    ("corpus-manifest.json", CORPUS_MANIFEST),
 ];
 
 const NULL: &Value = &Value::Null;
@@ -47,8 +53,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let rendered = render(root)?;
     let page = root.join(PAGE);
     if options.check {
+        check_receipts(root)?;
         check_page(root, &rendered)?;
-        println!("{PAGE} matches its receipts.");
+        println!("{PAGE} matches its receipts, and the receipts match their sources.");
         return Ok(());
     }
     fs::write(&page, rendered).map_err(|err| format!("failed to write {PAGE}: {err}"))?;
@@ -81,15 +88,20 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
-/// Fails with the next step when the page or a receipt is out of date.
-fn check_page(root: &Path, rendered: &str) -> Result<(), String> {
+/// Fails with the next step when a receipt has drifted from its canonical source.
+fn check_receipts(root: &Path) -> Result<(), String> {
     let drift = receipt_drift(root)?;
-    if !drift.is_empty() {
-        return Err(format!(
-            "{}\nrun `cargo xtask public-proof --refresh-receipts` and commit the result",
-            drift.join("\n")
-        ));
+    if drift.is_empty() {
+        return Ok(());
     }
+    Err(format!(
+        "{}\nrun `cargo xtask public-proof --refresh-receipts`, then `cargo xtask public-proof`, and commit the result",
+        drift.join("\n")
+    ))
+}
+
+/// Fails with the next step when the page no longer matches its receipts.
+fn check_page(root: &Path, rendered: &str) -> Result<(), String> {
     let committed = fs::read_to_string(root.join(PAGE))
         .map_err(|err| format!("failed to read {PAGE}: {err}; run `cargo xtask public-proof`"))?;
     if committed != rendered {
@@ -158,7 +170,7 @@ fn load(root: &Path) -> Result<Receipts, String> {
         first_current: receipt("first-run-current.json")?,
         agent: receipt("agent-as-user.json")?,
         install: receipt("install.json")?,
-        corpus: read_json(&root.join(CORPUS_MANIFEST))?,
+        corpus: receipt("corpus-manifest.json")?,
     })
 }
 
@@ -667,7 +679,7 @@ fn header(page: &mut Page, r: &Receipts) -> Result<(), String> {
     page.blank();
     page.line("This page is for a developer deciding whether to trust ripr. Every number comes from a committed receipt, names the revision it was measured at, and sits next to the bar we set for it. Where ripr misses a bar, the page says so before it says anything else.");
     page.blank();
-    page.line("The page is generated. `cargo xtask public-proof --check` (also run by the xtask unit tests that CI requires) fails when the page no longer matches its receipts, or when a receipt has drifted from the in-repo output it was copied from.");
+    page.line("The page is generated. A unit test that CI requires fails when the page no longer matches its receipts. `cargo xtask public-proof --check` also fails when a receipt has drifted from the in-repo output it was copied from; that comparison is advisory and is not part of required CI, so the page can lag the corpus until someone refreshes it.");
     page.blank();
     page.line("## Receipts");
     page.blank();
@@ -738,13 +750,13 @@ fn header(page: &mut Page, r: &Receipts) -> Result<(), String> {
             "one cloud container, not hosted CI".to_string(),
         ],
         vec![
-            format!("`{CORPUS_MANIFEST}`"),
+            format!("`{CORPUS_RECEIPT}`"),
             "Pinned corpus the scoreboards draw from".to_string(),
             format!(
                 "corpus {}",
                 req_str(&r.corpus, "corpus_version", CORPUS_MANIFEST)?
             ),
-            "read directly".to_string(),
+            "copy of the pinned manifest".to_string(),
         ],
     ];
     page.table(&["Receipt", "Measures", "Revision", "Detail"], &rows);
@@ -1464,7 +1476,7 @@ fn reproduce(page: &mut Page) {
     page.line("cargo xtask public-proof --check             # fail if this page is stale");
     page.line("```");
     page.blank();
-    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json` and `verdict-corpus.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json` and `fixtures/rust-verdict-corpus/expected/report.json`; the check fails when either source moves ahead of its copy. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
+    page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json`, `fixtures/rust-verdict-corpus/expected/report.json` and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.");
 }
 
 #[cfg(test)]
@@ -1597,6 +1609,9 @@ mod tests {
             "{}",
         )
         .map_err(|e| e.to_string())?;
+        fs::create_dir_all(dir.join("benchmarks/rust_corpus")).map_err(|e| e.to_string())?;
+        fs::write(receipts.join("corpus-manifest.json"), "{}").map_err(|e| e.to_string())?;
+        fs::write(dir.join(CORPUS_MANIFEST), "{}").map_err(|e| e.to_string())?;
         let drift = receipt_drift(&dir)?;
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
         assert_eq!(drift.len(), 1);

@@ -4,7 +4,7 @@
 
 This page is for a developer deciding whether to trust ripr. Every number comes from a committed receipt, names the revision it was measured at, and sits next to the bar we set for it. Where ripr misses a bar, the page says so before it says anything else.
 
-The page is generated. `cargo xtask public-proof --check` (also run by the xtask unit tests that CI requires) fails when the page no longer matches its receipts, or when a receipt has drifted from the in-repo output it was copied from.
+The page is generated. A unit test that CI requires fails when the page no longer matches its receipts. `cargo xtask public-proof --check` also fails when a receipt has drifted from the in-repo output it was copied from; that comparison is advisory and is not part of required CI, so the page can lag the corpus until someone refreshes it.
 
 ## Receipts
 
@@ -17,7 +17,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | `metrics/public-proof/first-run-current.json` | New-developer walk, current build | ripr 0.11.0 (a7a089e) | 3 crates |
 | `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (PR #5293); ripr 0.11.0 a7a089e |
 | `metrics/public-proof/install.json` | Time to install a prebuilt release | install | one cloud container, not hosted CI |
-| `benchmarks/rust_corpus/manifest.json` | Pinned corpus the scoreboards draw from | corpus 2026-10-04.5 | read directly |
+| `metrics/public-proof/corpus-manifest.json` | Pinned corpus the scoreboards draw from | corpus 2026-10-04.5 | copy of the pinned manifest |
 
 ## Scoreboard
 
@@ -263,4 +263,4 @@ cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then r
 cargo xtask public-proof --check             # fail if this page is stale
 ```
 
-Receipts live in `metrics/public-proof/`. `dx-scoreboard.json` and `verdict-corpus.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json` and `fixtures/rust-verdict-corpus/expected/report.json`; the check fails when either source moves ahead of its copy. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.
+Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are verbatim copies of `metrics/dx-scoreboard/baseline.json`, `fixtures/rust-verdict-corpus/expected/report.json` and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check has no command in this repository yet.

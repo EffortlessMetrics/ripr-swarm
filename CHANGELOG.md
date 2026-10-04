@@ -15,10 +15,11 @@ are scoped or reviewed.
   receipts in `metrics/public-proof/`: scoreboard bars with trends, mutation
   agreement per verdict class, verdict-corpus rates, speed and memory on the
   pinned corpus, first-run results, and a computed list of where ripr falls
-  short. `public-proof --check` and an xtask unit test fail when the page no
-  longer matches its receipts, and when the scoreboard or verdict-corpus
-  receipt differs from its in-repo source. The other receipts have no in-repo
-  source and are committed harness output.
+  short. An xtask unit test fails when the page no longer matches its
+  receipts. `public-proof --check` also fails when the scoreboard, verdict-corpus
+  or corpus-manifest receipt differs from its in-repo source; that comparison is
+  advisory, so a corpus update does not fail required CI. The other receipts
+  have no in-repo source and are committed harness output.
 
 ### Fixed
 
