@@ -18,6 +18,8 @@ const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
 ];
 const EXPECTED_CONCURRENCY_GROUP: &str =
     "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
+const EXPECTED_CANCEL_IN_PROGRESS: &str =
+    "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
 
 /// Read the candidate workflow from the repository root above the xtask package.
@@ -109,6 +111,7 @@ fn required_pr_context_is_withheld_until_ready() {
         "protected workflow must expose only Ready PR, main push, and manual authorities",
     );
     assert!(source.contains(EXPECTED_CONCURRENCY_GROUP));
+    assert!(source.contains(EXPECTED_CANCEL_IN_PROGRESS));
     assert_eq!(terminal_context(&source), Some(REQUIRED_CONTEXT));
     assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
     assert!(!source.contains("github.event.pull_request.draft"));
@@ -126,6 +129,20 @@ fn contract_rejects_draft_or_mutation_triggers() {
         event_declarations(&changed),
         EXPECTED_EVENT_DECLARATIONS,
         "synchronize must violate the protected event law",
+    );
+}
+
+#[test]
+fn contract_rejects_disabled_ready_cancellation() {
+    let source = workflow_source();
+    let changed = source.replace(
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        "  cancel-in-progress: false",
+    );
+    assert_ne!(changed, source, "cancellation mutation must engage");
+    assert!(
+        !changed.contains(EXPECTED_CANCEL_IN_PROGRESS),
+        "mutation must remove the pinned Ready-run cancellation expression"
     );
 }
 

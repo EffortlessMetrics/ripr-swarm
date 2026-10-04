@@ -521,32 +521,31 @@ fork or otherwise untrusted PR:
   GitHub-hosted only
 ```
 
-Label events are not an implicit full-gate refresh:
+Label events are not an implicit full-gate refresh, and Draft iteration does not
+allocate the heavy required gate (#4986):
 
 ```text
-opened / reopened / synchronize / push to main / workflow_dispatch:
-  launch the required Rust or docs gate (unchanged)
+opened / reopened / synchronize while Draft:
+  no Routed Rust Small run; cheap feedback only
 
-labeled full-ci:
-  launch the required gate with advisory reports and success artifacts
+ready_for_review (Draft -> Ready):
+  the sole pull-request qualification request; validates the exact Ready head
 
-labeled windows-ci, coverage, release-check, or any other non-full-ci label:
-  do not launch rust-gates; post Ripr Rust Small Ignored Label Event;
-  leave the previous exact-head Ripr Rust Small Result in place
+labeled / unlabeled (any label):
+  no Routed Rust Small run; labels never create or refresh the required context
 
-unlabeled (including windows-ci or full-ci removal):
-  do not start Routed Rust Small; the previous exact-head result remains
+push to main / workflow_dispatch:
+  launch under their own authorities, unchanged
 ```
 
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
-Removing that label does not imply Windows proof and must not spend a required
-Rust run. `full-ci` unlabeled does not re-run the gate to turn advisories off;
-the next opened/synchronize/reopened proof observes the current labels.
-`cancel-in-progress` stays synchronize-only. Unrelated `labeled` events use a
-distinct `Routed Rust Small-<pr>-label-ignore` concurrency group so they cannot
-replace a pending synchronize proof. An ignored labeled run is cheap, does not
-post the protected result context, and cannot manufacture a green required
-check for untested or previously failed code.
+`cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
+group is qualified by `github.event_name`, so a second Ready transition replaces
+the prior admission attempt while independent main and manual work cannot replace
+each other. No run ever posts a pseudo-result: the required context is either
+earned by an exact Ready-head run or absent, so a Draft PR with no required check
+blocks rather than inheriting stale proof. The result job keeps its static
+`Ripr Rust Small Result` name on every run.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -858,12 +857,11 @@ no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
 head SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
 remedy used during the incidents — capped at 5 dispatches per sweep. The
-required check, not run existence, is the discriminator: an unrelated `labeled`
-event produces a same-workflow run whose result job renames itself to the
-non-required `Ripr Rust Small Ignored Label Event` (`routed-rust.yml:228`; two
-of the three runs on #4923's opened head). The next sweep's required-check
-check dedupes; its racy window after a dispatch is bounded by the cap plus the
-30-minute cadence. No PR comments are posted: the
+required check, not run existence, is the discriminator: with Ready-only
+admission there is no pseudo-result path, so any `Ripr Rust Small Result` check
+run on the head SHA is a real qualification attempt on that exact head. The next
+sweep's required-check check dedupes; its racy window after a dispatch is bounded
+by the cap plus the 30-minute cadence. No PR comments are posted: the
 dispatched run itself delivers the required `Ripr Rust Small Result` check,
 and each sweep's summary table is the audit trail. The alert-only alternative
 (report the dark head instead of dispatching; zero duplicate-gate risk by
