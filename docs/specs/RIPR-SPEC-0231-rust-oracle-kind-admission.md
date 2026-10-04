@@ -140,7 +140,8 @@ strength.
 ### Admission rules
 
 A **catch-all binding** is a pattern that matches every value: a
-lowercase-initial identifier (including `_name`), optionally with `ref`,
+lowercase-initial identifier other than `true` and `false` (including
+`_name`), optionally with `ref`,
 `mut` or `ref mut`, or `name @ p` where `p` is itself `_`, `..` or a
 catch-all binding. `name @ E::X` and `name @ Some(_)` are not catch-all;
 they are read through their sub-pattern.
@@ -166,8 +167,8 @@ they are read through their sub-pattern.
    binding assigns `relational_check` / weak; the wildcard pre-check already
    covers an unguarded `_`. A constructor pattern whose every payload
    sub-pattern is `_`, `..` or a catch-all binding (`Some(_)`, `Ok(..)`,
-   `Some(ref x)`, `Ok(mut x)`, `Ok(x @ _)`), and `None`, assign
-   `smoke_only` / smoke when unguarded, because they only check the side (RIPR-SPEC-0227);
+   `Some(ref x)`, `Ok(mut x)`, `Ok(x @ _)`), and `None`, assign `smoke_only` /
+   smoke when unguarded, because they only check the side (RIPR-SPEC-0227);
    with a guard they assign `relational_check` / weak. Any other pattern stays
    `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
@@ -236,7 +237,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 1. `assert_ne!(score(2), 0)`: `relational_check` / weak.
 2. `assert_ne!(check(20), Ok(20))`: `relational_check` / weak.
-3. `assert!(matches!(check(20), Err(e) if !e.is_empty()))`: `broad_error` / weak.
+3. `assert!(matches!(check(20), Err(e) if !e.is_empty()))`: `broad_error` /
+   weak.
 4. `assert!(matches!(check(20), Err(_)))`: `broad_error` / weak (unchanged).
 5. `assert_eq!(check(20), Err(e))`: `exact_error_variant` / strong (unchanged).
 6. `assert!(matches!(check(5), Ok(5)))`: `exact_value` / strong (unchanged).

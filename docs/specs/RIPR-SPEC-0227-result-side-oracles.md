@@ -114,17 +114,18 @@ or `Err` (or `Some` or `None`):
 it belongs to message-bound authorities.
 
 Kinds keep their existing names: the `Err` side reads `broad_error`, the `Ok`
-side reads `smoke_only`. Both are weak for every case below except rule 3.
-A bare `unwrap_err()` and `should_panic` produce the oracle instead of nothing.
+side reads `smoke_only`. Both are weak for every case below except rules 3 and
+3b. A bare `unwrap_err()` and `should_panic` produce the oracle instead of
+nothing.
 
 ### Rule 1: variants and values
 
-A result-side oracle never confirms a changed error variant
-(`Err(E::A)` to `Err(E::B)`), a changed `Ok` or `Some` value, or a changed
-payload. The finding reads at most `weakly_exposed`, and the gap is kept:
-the #5416 unknown-not-a-gap rules do not withhold a gap whose only oracle is
-result-side, because ripr read the oracle and it is weak. An `exposed` reading in these
-shapes is a defect.
+A result-side oracle never confirms a changed error variant (`Err(E::A)` to
+`Err(E::B)`), a changed `Ok` or `Some` value, or a changed payload. The
+finding reads at most `weakly_exposed`, and the gap is kept: the #5416
+unknown-not-a-gap rules do not withhold a gap whose only oracle is
+result-side, because ripr read the oracle and it is weak. An `exposed` reading
+in these shapes is a defect.
 
 ### Rule 2: far inputs
 
@@ -206,15 +207,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    `reachable_unrevealed` to `weakly_exposed` and letting rule 3 apply,
    because a test that panics on the wrong side does observe the side.
    Rejected: keep them unread.
-3. **The `?` operator.** An added or removed `?` swaps `Err` for `Ok` the
-   same way a guard does, but a `?` line is an `error_path` probe, and
-   RIPR-SPEC-0107 says a broad oracle never confirms `error_path`.
-   Adopted: amend RIPR-SPEC-0107 so rule 3 applies to `?` when the test
-   input provably reaches the `?` call's `Err` and the original and changed
-   code provably return different sides on that input (rule 3b), because then the side alone tells the original from the
-   change; when any of these is not established, RIPR-SPEC-0107 still
-   applies. RIPR-SPEC-0107 records this exception. Rejected: leave `?`
-   under RIPR-SPEC-0107 (always weak with a broad oracle).
+3. **The `?` operator.** An added or removed `?` swaps `Err` for `Ok` the same
+   way a guard does, but a `?` line is an `error_path` probe, and
+   RIPR-SPEC-0107 says a broad oracle never confirms `error_path`. Adopted:
+   amend RIPR-SPEC-0107 so rule 3 applies to `?` when the test input provably
+   reaches the `?` call's `Err` and the original and changed code provably
+   return different sides on that input (rule 3b), because then the side alone
+   tells the original from the change; when any of these is not established,
+   RIPR-SPEC-0107 still applies. RIPR-SPEC-0107 records this exception.
+   Rejected: leave `?` under RIPR-SPEC-0107 (always weak with a broad oracle).
 
 ## Required Evidence
 
@@ -260,8 +261,8 @@ Source: `check` as in Problem.
    returned `Ok`, test `assert!(total("x").is_err())`: `exposed` (rule 3b;
    `weakly_exposed` under RIPR-SPEC-0107 before this spec).
 10. `withdraw` changed to return `Err(PayError::Frozen)`; the only related
-    test pinning a variant is `assert!(matches!(refund(20_000), Err(PayError::Limit)))`
-    for another function: not `exposed` (rule 4).
+    test pinning a variant is `assert!(matches!(refund(20_000),
+    Err(PayError::Limit)))` for another function: not `exposed` (rule 4).
 11. `parse_amount` changed to return `Err(ParseError::TooLong)`; related tests
     pin `Err(ParseError::Empty)` and `Err(ParseError::BadDigit('x'))` and one
     asserts `is_err()` on a too-long input: `weakly_exposed` (rules 1 and 4).
@@ -284,8 +285,9 @@ Source: `check` as in Problem.
 - `crates/ripr/src/analysis/extract/oracles/scan.rs` and `classify.rs`: read
   bare `unwrap_err()` and `should_panic` as result-side oracles.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`: side-flip pairing
-  for rule 3.
-- `crates/ripr/src/analysis/classify/reveal.rs`: rule 1 and rule 3 gates.
+  for rules 3 and 3b.
+- `crates/ripr/src/analysis/classify/reveal.rs`: rule 1 and rules 3 and 3b
+  gates.
 
 ## Metrics
 
