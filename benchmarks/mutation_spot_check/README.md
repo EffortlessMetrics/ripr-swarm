@@ -81,16 +81,18 @@ recommendation is the first error a developer meets. A recommendation is:
 
 | Verdict | Rule |
 | --- | --- |
-| confirmed | a viable non-`FnValue` mutant on the recommended line was missed; with none on the line, a whole-body (`FnValue`) mutant of the innermost function containing the line was missed |
+| confirmed | on a predicate or return seam, a viable operator mutant of the seam's own expression was missed (`seam` tier); with none, a viable non-`FnValue` mutant on the recommended line was missed (`line` tier, coarse: it can belong to another expression on that line); with none on the line, a whole-body (`FnValue`) mutant of the innermost function containing the line was missed (`owner` tier) |
 | refuted | every such mutant was caught |
-| unscored | neither tier has a caught or missed mutant |
+| unscored | no tier has a caught or missed mutant |
 
 `pilot_top_recommendations.precision` is confirmed over confirmed plus
-refuted, with counts split by tier (`line`, `owner`) and grip class. The
+refuted, with counts split by tier (`seam`, `line`, `owner`) and grip class. The
 owner tier is coarser: a caught whole-body mutant shows the function's tests
 notice when the function does nothing, not that they discriminate the seam.
 If `ripr pilot` fails, times out, or writes a summary whose status is not
 `complete` (pilot's own budget ran out) on a repository, that repository's entry
 carries `unavailable` with the reason and counts in `unavailable_repos`; its
 mutation results still feed the rest of the report. The dx-scoreboard reads
-the precision as `trust.pilot_top_recommendation_precision`.
+the precision as `trust.pilot_top_recommendation_precision`, and publishes no
+pilot row for a run with any unavailable repository, since that run measured
+a smaller population than its baseline.

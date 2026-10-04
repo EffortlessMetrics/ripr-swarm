@@ -25,7 +25,7 @@ use std::path::Path;
 /// the scoreboard enough scored recommendations on small crates.
 pub(super) const PILOT_MAX_SEAMS: usize = 10;
 
-pub(super) const CLAIM_BOUNDARY: &str = "A pilot recommendation is confirmed when a viable mutant on its line was missed (or, with none on the line, a whole-body mutant of its innermost function was missed), refuted when every such mutant was caught, and unscored otherwise. Precision is confirmed over confirmed plus refuted, for the recorded revisions and cargo-mutants versions only.";
+pub(super) const CLAIM_BOUNDARY: &str = "A pilot recommendation is confirmed when a viable operator mutant of its predicate or return expression was missed (with none, a viable mutant on its line; with none there either, a whole-body mutant of its innermost function), refuted when every such mutant was caught, and unscored otherwise. Precision is confirmed over confirmed plus refuted, for the recorded revisions and cargo-mutants versions only.";
 
 /// Run `ripr pilot` on `checkout` and return its ranked top seams.
 pub(super) fn pilot_top_seams(
@@ -76,6 +76,8 @@ fn top_seams_from_summary(name: &str, summary: &Value) -> Result<Vec<Value>, Str
 
 /// One viable runtime outcome with the location facts the judge needs.
 struct Outcome<'a> {
+    name: &'a str,
+    genre: &'a str,
     file: &'a str,
     line: u64,
     function_span: Option<(u64, u64)>,
@@ -113,11 +115,15 @@ fn viable_outcomes<'a>(mutants: &'a Value, outcomes: &'a Value) -> Vec<Outcome<'
                     .pointer(&format!("/function/span/{end}/line"))
                     .and_then(Value::as_u64)
             };
+            let name = mutant.get("name")?.as_str()?;
+            let genre = mutant.get("genre").and_then(Value::as_str).unwrap_or("");
             Some(Outcome {
+                name,
+                genre,
                 file: mutant.get("file")?.as_str()?,
                 line: mutant.pointer("/span/start/line")?.as_u64()?,
                 function_span: span("start").zip(span("end")),
-                whole_body: mutant.get("genre").and_then(Value::as_str) == Some("FnValue"),
+                whole_body: genre == "FnValue",
                 missed,
             })
         })
@@ -125,10 +131,17 @@ fn viable_outcomes<'a>(mutants: &'a Value, outcomes: &'a Value) -> Vec<Outcome<'
 }
 
 /// Judge each recommendation, in pilot's rank order.
+///
+/// `expressions` maps seam id to the seam's source expression (from the repo
+/// exposure JSON). On a predicate or return seam, operator mutants of that
+/// expression form the `seam` tier and decide alone, so a mutant of another
+/// expression on the same line cannot grade the seam. Otherwise the coarser
+/// `line` tier, then the `owner` tier, applies.
 pub(super) fn judge_recommendations(
     top: &[Value],
     mutants: &Value,
     outcomes: &Value,
+    expressions: &BTreeMap<&str, &str>,
 ) -> Vec<Value> {
     let viable = viable_outcomes(mutants, outcomes);
     top.iter()
@@ -140,7 +153,21 @@ pub(super) fn judge_recommendations(
                 .iter()
                 .filter(|o| !o.whole_body && o.file == file && o.line == line)
                 .collect::<Vec<_>>();
-            let (tier, joined) = if on_line.is_empty() {
+            let kind = seam.get("kind").and_then(Value::as_str).unwrap_or("");
+            let expression = seam
+                .get("seam_id")
+                .and_then(Value::as_str)
+                .and_then(|id| expressions.get(id))
+                .copied()
+                .unwrap_or("");
+            let precise = on_line
+                .iter()
+                .copied()
+                .filter(|o| super::pairing_for(o.genre, o.name, kind, expression) == "seam_precise")
+                .collect::<Vec<_>>();
+            let (tier, joined) = if !precise.is_empty() {
+                ("seam", precise)
+            } else if on_line.is_empty() {
                 let containing = viable
                     .iter()
                     .filter(|o| o.whole_body && o.file == file)
@@ -325,7 +352,12 @@ mod tests {
             outcome("op-unviable", "Unviable"),
             outcome("body-missed", "MissedMutant"),
         ]});
-        let judged = judge_recommendations(&[seam(3), seam(4), seam(5)], &mutants, &outcomes);
+        let judged = judge_recommendations(
+            &[seam(3), seam(4), seam(5)],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+        );
         let verdicts = judged
             .iter()
             .map(|row| (row["verdict"].as_str(), row["tier"].as_str()))
@@ -344,6 +376,41 @@ mod tests {
     }
 
     #[test]
+    fn seam_expression_mutants_decide_over_other_expressions_on_the_line() {
+        // `let y = x + 1; x > 0` on one line: the missed `+` mutant belongs
+        // to another expression, so the caught `>` mutant refutes the
+        // predicate seam.
+        let mutants = json!([
+            mutant(
+                "src/a.rs:3:13: replace + with - in gate",
+                3,
+                "BinaryOperator",
+                (1, 9)
+            ),
+            mutant(
+                "src/a.rs:3:22: replace > with >= in gate",
+                3,
+                "BinaryOperator",
+                (1, 9)
+            ),
+        ]);
+        let outcomes = json!({"outcomes": [
+            outcome("src/a.rs:3:13: replace + with - in gate", "MissedMutant"),
+            outcome("src/a.rs:3:22: replace > with >= in gate", "CaughtMutant"),
+        ]});
+        let mut predicate = seam(3);
+        predicate["kind"] = json!("predicate_boundary");
+        let expressions = BTreeMap::from([("s3", "x > 0")]);
+        let judged = judge_recommendations(&[predicate.clone()], &mutants, &outcomes, &expressions);
+        assert_eq!(judged[0]["verdict"], "refuted");
+        assert_eq!(judged[0]["tier"], "seam");
+        // Without the expression the coarse line tier still reads both.
+        let judged = judge_recommendations(&[predicate], &mutants, &outcomes, &BTreeMap::new());
+        assert_eq!(judged[0]["verdict"], "confirmed");
+        assert_eq!(judged[0]["tier"], "line");
+    }
+
+    #[test]
     fn owner_tier_reads_only_the_innermost_function() {
         let mutants = json!([
             mutant("outer-missed", 1, "FnValue", (1, 20)),
@@ -353,7 +420,12 @@ mod tests {
             outcome("outer-missed", "MissedMutant"),
             outcome("inner-caught", "CaughtMutant"),
         ]});
-        let judged = judge_recommendations(&[seam(7), seam(12), seam(30)], &mutants, &outcomes);
+        let judged = judge_recommendations(
+            &[seam(7), seam(12), seam(30)],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+        );
         let verdicts = judged
             .iter()
             .map(|row| row["verdict"].as_str())

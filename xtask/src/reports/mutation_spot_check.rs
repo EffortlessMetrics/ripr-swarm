@@ -398,7 +398,14 @@ fn spot_check_repo(
             .map(str::to_string),
         metrics: calibration.get("metrics").cloned().unwrap_or(Value::Null),
         pairs: classify_matches(&calibration, &exposure_json, &mutant_records),
-        pilot: pilot_top.map(|top| pilot::judge_recommendations(&top, &mutant_records, &outcomes)),
+        pilot: pilot_top.map(|top| {
+            pilot::judge_recommendations(
+                &top,
+                &mutant_records,
+                &outcomes,
+                &seam_expressions(&exposure_json),
+            )
+        }),
     })
 }
 
@@ -666,6 +673,22 @@ struct Pair {
     mutant: String,
 }
 
+/// Seam id to source expression, from the repo exposure JSON.
+fn seam_expressions(exposure: &Value) -> BTreeMap<&str, &str> {
+    exposure
+        .get("seams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|seam| {
+            Some((
+                seam.get("seam_id")?.as_str()?,
+                seam.get("expression").and_then(Value::as_str).unwrap_or(""),
+            ))
+        })
+        .collect()
+}
+
 /// Classify every unambiguous calibration match. Ambiguous and unmatched
 /// runtime records stay in the calibration metrics and are never scored.
 fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> Vec<Pair> {
@@ -680,18 +703,7 @@ fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> V
             ))
         })
         .collect();
-    let expressions: BTreeMap<&str, &str> = exposure
-        .get("seams")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|seam| {
-            Some((
-                seam.get("seam_id")?.as_str()?,
-                seam.get("expression").and_then(Value::as_str).unwrap_or(""),
-            ))
-        })
-        .collect();
+    let expressions = seam_expressions(exposure);
     let text = |value: &Value, pointer: &str| {
         value
             .pointer(pointer)

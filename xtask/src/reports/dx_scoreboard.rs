@@ -1000,7 +1000,11 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             "mutation spot-check pilot_top_recommendations needs scored as a non-negative integer",
         )?
     };
-    if scored > 0 {
+    // A run that lost a repository's pilot ranking measured a different
+    // population than the baseline, so it publishes no pilot row rather
+    // than a precision the regression gate would compare as like for like.
+    let unavailable = pilot["unavailable_repos"].as_u64().unwrap_or(0);
+    if scored > 0 && unavailable == 0 {
         let precision = pilot["precision"]
             .as_f64()
             .filter(|rate| (0.0..=1.0).contains(rate))

@@ -620,7 +620,13 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 
     // A receipt from before the pilot section, or with nothing scored, adds
     // no pilot row rather than a misleading zero.
-    for section in [None, Some(json!({"scored": 0, "precision": null}))] {
+    // A run with a repository's pilot unavailable measured a smaller
+    // population, so it publishes no pilot row either.
+    for section in [
+        None,
+        Some(json!({"scored": 0, "precision": null})),
+        Some(json!({"scored": 39, "precision": 0.4, "unavailable_repos": 1})),
+    ] {
         let mut older = receipt.clone();
         match section {
             Some(section) => older["pilot_top_recommendations"] = section,
