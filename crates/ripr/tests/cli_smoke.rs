@@ -12200,6 +12200,7 @@ fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), Str
     let cwd = unique_temp_workspace("missing-root-refusal");
     std::fs::create_dir_all(&cwd).map_err(|e| format!("create cwd: {e}"))?;
     let missing = cwd.join("no-such-repo").display().to_string();
+    std::fs::write(cwd.join("readable.json"), "{}").map_err(|e| format!("write source: {e}"))?;
     for args in [
         vec!["first-pr", "--root", missing.as_str()],
         vec!["first-pr", "--root", missing.as_str(), "--check"],
@@ -12210,6 +12211,14 @@ fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), Str
             missing.as_str(),
             "--repo-exposure",
             "no-such-exposure.json",
+        ],
+        vec![
+            "reports",
+            "gap-ledger",
+            "--root",
+            missing.as_str(),
+            "--repo-exposure",
+            "readable.json",
         ],
     ] {
         let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&cwd), &args)
