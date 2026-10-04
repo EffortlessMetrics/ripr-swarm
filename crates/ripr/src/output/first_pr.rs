@@ -651,7 +651,7 @@ fn missing_base_command(options: &FirstPrOptions) -> String {
         .filter(|branch| !branch.trim().is_empty())
         .map(|branch| {
             format!(
-                "git fetch origin {}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                "git fetch origin -- {}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
                 shell_arg(branch),
                 shell_arg(&options.command_root()),
                 shell_arg(&options.base),

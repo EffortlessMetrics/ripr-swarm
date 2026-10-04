@@ -1122,6 +1122,12 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
             "HEAD",
             "git_base",
         ),
+        (
+            "option-shaped base",
+            "origin/--upload-pack=touch injected-marker",
+            "HEAD",
+            "git_base",
+        ),
         ("no diff", "HEAD", "HEAD", "git_diff"),
     ];
     for (label, base_ref, head_ref, check_id) in cases {
@@ -1153,7 +1159,11 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
         );
         for text in recovery {
             // The refs and root must appear shell-quoted wherever they occur.
-            for hostile in [unsafe_ref, "origin/x;touch injected-marker"] {
+            for hostile in [
+                unsafe_ref,
+                "origin/x;touch injected-marker",
+                "origin/--upload-pack=touch injected-marker",
+            ] {
                 for (at, _) in text.match_indices(hostile) {
                     let quoted = at > 0
                         && text[..at].ends_with('\'')
@@ -1162,6 +1172,35 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
                         text[..at].ends_with('`') && text[at + hostile.len()..].starts_with('`');
                     assert!(quoted || in_prose, "{label}: unquoted ref in `{text}`");
                 }
+            }
+            // The fetch half of a missing-base hint is a real git command:
+            // run it against a local `origin` so an option-shaped branch that
+            // git would read as `--upload-pack` executes the marker command.
+            if let Some(fetch) = text
+                .split("; then rerun")
+                .next()
+                .filter(|fetch| fetch.starts_with("git fetch origin "))
+            {
+                assert!(
+                    fetch.starts_with("git fetch origin -- "),
+                    "{label}: fetch does not end option parsing before the branch: {fetch}"
+                );
+                replay::git(&repo, &["remote", "add", "origin", "."]).ok();
+                let run = replay::bash(
+                    &foreign,
+                    &format!(
+                        "git -C '{}' {}",
+                        canonical_repo.display(),
+                        &fetch["git ".len()..]
+                    ),
+                    &[],
+                )?;
+                drop(run);
+                assert!(
+                    !foreign.join("injected-marker").exists()
+                        && !repo.join("injected-marker").exists(),
+                    "{label}: fetch hint executed an injected command: {fetch}"
+                );
             }
             let rerun = text
                 .split('`')
