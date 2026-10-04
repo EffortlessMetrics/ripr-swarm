@@ -17021,8 +17021,8 @@ Field contract:
 - `matches[].static.column`, `end_line`, `end_column` and the same fields on
   runtime rows — 1-based character columns with an exclusive end, present
   only when that side carries a complete span.
-- runtime rows' `span_status` — `"conflicting_runtime_spans"` when merged
-  records for one mutant carried different complete spans or lines; the span
+- runtime rows' `span_status` — `"conflicting_runtime_location"` when merged
+  records for one mutant carried different complete spans, files or lines; the span
   is dropped and the record is unmatched unless its `seam_id` joins it.
 - `matches[].static` — static seam evidence copied from `repo-exposure.json`:
   seam identity, class, strongest visible oracle kind/strength, observed values,
@@ -17047,8 +17047,8 @@ Field contract:
   any candidate seam.
 - `unmatched_mutants[]` — runtime records that did not match a static seam.
 - `unmatched_mutants[].unmatched_reason` — `no_location` (no file or no
-  line), `conflicting_runtime_spans` (merged duplicates disagreed on span or
-  line, so only a `seam_id` can join the record), `no_seam_on_line` (no seam
+  line), `conflicting_runtime_location` (merged duplicates disagreed on span,
+  file or line, so only a `seam_id` can join the record), `no_seam_on_line` (no seam
   on the line and no seam span to compare), or `no_containing_seam` (complete
   spans on both sides and none contains the record).
 - `unmatched_mutants[].line_seams` — for `no_containing_seam`, the seams that

@@ -591,7 +591,7 @@ enum LocationJoin {
 const UNMATCHED_NO_LOCATION: &str = "no_location";
 /// Unmatched reason: merged duplicates of the record carried different
 /// complete spans, so its location is untrusted and only a `seam_id` joins it.
-const UNMATCHED_CONFLICTING_SPANS: &str = "conflicting_runtime_spans";
+const UNMATCHED_CONFLICTING_LOCATION: &str = "conflicting_runtime_location";
 /// Unmatched reason: no static seam starts on the runtime record's line and
 /// no seam span is available to compare against.
 const UNMATCHED_NO_SEAM_ON_LINE: &str = "no_seam_on_line";
@@ -624,7 +624,7 @@ fn location_join(
     mutation: &MutationOutcomeRecord,
 ) -> LocationJoin {
     if mutation.span_conflict {
-        return LocationJoin::Unmatched(UNMATCHED_CONFLICTING_SPANS);
+        return LocationJoin::Unmatched(UNMATCHED_CONFLICTING_LOCATION);
     }
     let (Some(file), Some(line)) = (
         mutation.file.as_deref().map(normalize_report_path),
@@ -1044,7 +1044,7 @@ fn mutation_outcome_json(record: &MutationOutcomeRecord) -> Value {
         if record.span_conflict {
             object.insert(
                 "span_status".to_string(),
-                "conflicting_runtime_spans".into(),
+                "conflicting_runtime_location".into(),
             );
         }
     }
@@ -1080,6 +1080,13 @@ fn merge_mutation_outcome_record(
     if target.seam_id.is_none() {
         target.seam_id = source.seam_id;
     }
+    // Compare locations before the fill-ins below move source fields.
+    let source_file = source.file.as_deref().map(normalize_report_path);
+    let target_file = target
+        .file
+        .as_deref()
+        .or(source.file.as_deref())
+        .map(normalize_report_path);
     if target.file.is_none() {
         target.file = source.file;
     }
@@ -1101,7 +1108,9 @@ fn merge_mutation_outcome_record(
             target.span_conflict = true;
         }
     }
-    if source.line.is_some() && source.line != target.line {
+    if (source.line.is_some() && source.line != target.line)
+        || (source_file.is_some() && source_file != target_file)
+    {
         target.span = None;
         target.span_conflict = true;
     }
@@ -1937,7 +1946,7 @@ mod tests {
         assert_eq!(conflicting[0].span, None);
         assert!(conflicting[0].span_conflict);
         let json = mutation_outcome_json(&conflicting[0]);
-        assert_eq!(json["span_status"], "conflicting_runtime_spans");
+        assert_eq!(json["span_status"], "conflicting_runtime_location");
         assert!(json.get("column").is_none());
         Ok(())
     }
@@ -1954,6 +1963,10 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].span, None);
         assert!(merged[0].span_conflict, "a disagreeing line is a conflict");
+        let in_a = spanned_runtime("m-file", "src/a.rs", (4, 9), (4, 10));
+        let in_b = spanned_runtime("m-file", "src/b.rs", (4, 9), (4, 10));
+        let files = merge_mutation_outcome_records(vec![in_a, in_b]);
+        assert!(files[0].span_conflict, "a disagreeing file is a conflict");
 
         let mut no_line = runtime("m-no-line", None, Some("src/lib.rs"), None, "missed");
         no_line.span = None;
@@ -1970,7 +1983,7 @@ mod tests {
         assert_eq!(
             unmatched(&report),
             vec![
-                ("m-conflict", UNMATCHED_CONFLICTING_SPANS),
+                ("m-conflict", UNMATCHED_CONFLICTING_LOCATION),
                 ("m-no-line", UNMATCHED_NO_LOCATION),
             ]
         );

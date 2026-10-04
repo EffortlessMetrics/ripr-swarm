@@ -92,8 +92,8 @@ runtime outcome, duration, and test command when available, plus an
 `unmatched_reason`:
 
 - `no_location`: the runtime record names no file or no line;
-- `conflicting_runtime_spans`: merged duplicates of the record disagreed on
-  span or line, so its location is untrusted;
+- `conflicting_runtime_location`: merged duplicates of the record disagreed on
+  span, file or line, so its location is untrusted;
 - `no_seam_on_line`: no static seam starts on the record's line and no seam
   span in the file could be compared;
 - `no_containing_seam`: the record has a complete span, the file has seam
@@ -116,8 +116,8 @@ keeps that range as one atomic value:
 - `function.span` is never the mutant's span;
 - when `mutants.json` and `outcomes.json` records for one mutant merge, a
   complete span fills an absent one; two different complete spans drop the
-  span and mark the record `span_status: "conflicting_runtime_spans"` rather
-  than choosing one, as does a duplicate that disagrees on the line; such a
+  span and mark the record `span_status: "conflicting_runtime_location"` rather
+  than choosing one, as does a duplicate that disagrees on the file or line; such a
   record joins only by `seam_id`;
 - the span is rendered on runtime rows as `column`, `end_line` and
   `end_column` next to `line`.
