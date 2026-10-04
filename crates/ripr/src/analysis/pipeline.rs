@@ -733,6 +733,10 @@ fn run_pipeline_for_diff_text(
         None => &changed_files,
     };
 
+    // Limitations kept only because they describe caller-supplied evidence
+    // (#5421). They say nothing about whether the diff parsed, so the
+    // malformed-diff check below must not treat them as an explanation.
+    let mut supplied_evidence_limitations = 0usize;
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (Campaign 31 PR 10, #1403): a preview-language
@@ -783,7 +787,10 @@ fn run_pipeline_for_diff_text(
                 let diff_touches_language = preview_changed_files
                     .iter()
                     .any(|file| route(&file.path) == Some(adapter_language));
-                if diff_touches_language || produced_findings || reads_only_supplied_evidence {
+                if diff_touches_language || produced_findings {
+                    limitations.extend(result.limitations);
+                } else if reads_only_supplied_evidence {
+                    supplied_evidence_limitations += result.limitations.len();
                     limitations.extend(result.limitations);
                 }
                 if result.changed_files_by_language.is_empty() {
@@ -964,7 +971,7 @@ fn run_pipeline_for_diff_text(
         && deleted_file_count == 0
         && submodule_file_count == 0
         && renamed_file_count == 0
-        && limitations.is_empty()
+        && limitations.len() == supplied_evidence_limitations
     {
         limitations.push(
             AnalysisLimitation::new(

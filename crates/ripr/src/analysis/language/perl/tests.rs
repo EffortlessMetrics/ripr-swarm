@@ -4002,16 +4002,52 @@ fn streamed_file_digest_matches_in_memory_digest() -> Result<(), String> {
 /// unrelated workspace scan's refusal must not drop this one.
 #[test]
 fn supplied_partial_packet_is_disclosed_on_a_rust_only_diff() -> Result<(), String> {
+    let limitations = partial_packet_outcome_limitations(
+        "rust-only",
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+pub fn discount(amount: u32) -> u32 {\n",
+    )?;
+    assert!(
+        limitations
+            .iter()
+            .any(|(_, detail)| detail.contains("packet partial")),
+        "a supplied partial Perl packet must stay disclosed on a Rust-only diff: {limitations:?}"
+    );
+    Ok(())
+}
+
+/// #5421 review: the kept packet limitation says nothing about the diff, so a
+/// non-empty diff with no parseable change is still reported as malformed.
+#[test]
+fn supplied_partial_packet_does_not_hide_a_malformed_diff() -> Result<(), String> {
+    let limitations =
+        partial_packet_outcome_limitations("malformed", "this is not a unified diff\n")?;
+    let kinds: Vec<&str> = limitations.iter().map(|(kind, _)| kind.as_str()).collect();
+    assert!(kinds.contains(&"malformed_diff"), "{limitations:?}");
+    assert!(
+        limitations
+            .iter()
+            .any(|(_, detail)| detail.contains("packet partial")),
+        "{limitations:?}"
+    );
+    Ok(())
+}
+
+/// Runs `check` with Perl enabled and a supplied, finding-free partial packet
+/// over `diff_text`; returns each outcome limitation as `(kind, detail)`.
+fn partial_packet_outcome_limitations(
+    name: &str,
+    diff_text: &str,
+) -> Result<Vec<(String, String)>, String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| format!("system time: {error}"))?
         .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "ripr-perl-partial-rust-only-{}-{stamp}",
+        "ripr-perl-partial-{name}-{}-{stamp}",
         std::process::id()
     ));
     std::fs::create_dir_all(root.join("src")).map_err(|error| format!("create src: {error}"))?;
-    let proof = (|| -> Result<Vec<String>, String> {
+    let proof = (|| -> Result<Vec<(String, String)>, String> {
         let write = |path: &std::path::Path, text: &str| {
             std::fs::write(path, text).map_err(|error| format!("write {}: {error}", path.display()))
         };
@@ -4034,10 +4070,7 @@ fn supplied_partial_packet_is_disclosed_on_a_rust_only_diff() -> Result<(), Stri
         let facts = root.join("facts.json");
         write(&facts, &bless_fingerprint(packet))?;
         let diff = root.join("change.diff");
-        write(
-            &diff,
-            "diff --git a/src/lib.rs b/src/lib.rs\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+pub fn discount(amount: u32) -> u32 {\n",
-        )?;
+        write(&diff, diff_text)?;
         let config =
             crate::config::tests_only_parse("[languages]\nenabled = [\"rust\", \"perl\"]\n")?;
         let output = crate::app::check_workspace_with_config(
@@ -4064,24 +4097,21 @@ fn supplied_partial_packet_is_disclosed_on_a_rust_only_diff() -> Result<(), Stri
             .ok_or_else(|| format!("missing limitations: {json}"))?;
         Ok(limitations
             .iter()
-            .filter_map(|entry| {
-                entry
-                    .get("bounded_detail")
-                    .or_else(|| entry.get("detail"))
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
+            .map(|entry| {
+                let text = |key: &str| {
+                    entry
+                        .get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                (text("kind"), text("bounded_detail"))
             })
             .collect())
     })();
     let cleanup = std::fs::remove_dir_all(&root)
         .map_err(|error| format!("remove {}: {error}", root.display()));
-    let details = proof?;
+    let limitations = proof?;
     cleanup?;
-    assert!(
-        details
-            .iter()
-            .any(|detail| detail.contains("packet partial")),
-        "a supplied partial Perl packet must stay disclosed on a Rust-only diff: {details:?}"
-    );
-    Ok(())
+    Ok(limitations)
 }
