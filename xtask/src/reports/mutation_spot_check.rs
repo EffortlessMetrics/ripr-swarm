@@ -323,7 +323,7 @@ fn require_mutants_match_checkout(
     check_mutant_diffs(records, |file| {
         fs::read_to_string(checkout.join(file))
             .ok()
-            .map(|text| text.lines().map(str::to_string).collect())
+            .map(|text| source_lines(&text))
     })
     .map_err(|problem| {
         format!("mutants.out for `{name}` does not match the checkout at {revision}: {problem}")
@@ -378,6 +378,16 @@ fn check_mutant_diffs(
         ));
     }
     Ok(records.len())
+}
+
+/// Splits source the way cargo-mutants' diff library counts lines: `\n`,
+/// `\r\n`, and a bare `\r` each end a line, so hunk line numbers agree.
+fn source_lines(text: &str) -> Vec<String> {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
 
 /// Returns the first source line where a mutant diff's context or removed
@@ -905,6 +915,11 @@ mod tests {
         assert_eq!(first_stale_line(diff, &source("    a > 1")), None);
         assert_eq!(first_stale_line(diff, &source("    a >= 1")), Some(3));
         assert_eq!(first_stale_line(diff, &source("    a > 1")[..2]), Some(3));
+
+        assert_eq!(
+            source_lines("a\r\nb\rc\nd"),
+            ["a", "b", "c", "d"].map(String::from)
+        );
 
         let records = [json!({"file": "src/a.rs", "diff": diff})];
         assert_eq!(
