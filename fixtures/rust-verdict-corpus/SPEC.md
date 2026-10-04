@@ -11,8 +11,8 @@ with license files (Rust sources stored as `.rs.txt`), small authored
 crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-ledger` and `authored-config` for verdict and probe-family cells;
 `authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`,
-`authored-roles`, `authored-old-errors`, `authored-old-tool` and
-`authored-old-deps` for test shapes other RIPR specs define, each case naming
+`authored-roles`, `authored-old-errors`, `authored-old-tool`,
+`authored-old-shell` and `authored-old-deps` for test shapes other RIPR specs define, each case naming
 its specs in its reasoning), and one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned

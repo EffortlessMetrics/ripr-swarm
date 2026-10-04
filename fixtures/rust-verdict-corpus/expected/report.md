@@ -5,9 +5,9 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 132.
 | Rate | Count | Rate |
 | --- | --- | --- |
 | False verdicts (all cases) | 41/132 | 0.3106 |
-| False actionable (of discriminated) | 37/74 | 0.5000 |
-| False exposed (of not fully discriminated) | 4/58 | 0.0690 |
-| False silent (of not fully discriminated) | 0/58 | 0.0000 |
+| False actionable (of discriminated) | 37/73 | 0.5068 |
+| False exposed (of not fully discriminated) | 4/59 | 0.0678 |
+| False silent (of not fully discriminated) | 0/59 | 0.0000 |
 | Ideal verdict | 39/132 | 0.2955 |
 | Abstained (limited or silent where acceptable) | 52/132 | 0.3939 |
 | Findings with a contradiction | 2/171 | 0.0117 |
@@ -16,7 +16,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 98 | 31/98 | 27/54 | 4/44 | 0/44 | 34/98 | 33/98 |
+| authored | 98 | 31/98 | 27/53 | 4/45 | 0/45 | 34/98 | 33/98 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -126,7 +126,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `roles-limit-const-value` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `roles-cfg-test-helper-input` | authored | discriminated | credited | silent | none | abstained | no | none |
 | `old-code-too-long-exact-value-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
-| `old-tag-boxed-into-wrapper` | authored | discriminated | credited | limited | weakly_exposed | abstained | no | none |
+| `old-tag-boxed-into-wrapper` | authored | partially_discriminated | gap | limited | weakly_exposed | abstained | no | none |
 | `old-slot-downcast-type-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `old-unit-assert-matches-macro` | authored | discriminated | credited | gap | exposed, weakly_exposed | false_actionable | no | none |
 | `old-retry-default-overridden` | authored | not_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
@@ -145,7 +145,7 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `old-version-text-printed-only` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `old-head-unsafe-shared-edge-line` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `old-tool-exit-code-subprocess` | authored | discriminated | credited | limited | no_static_path | abstained | no | none |
-| `old-tool-banner-sh-negative` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
+| `old-shell-banner-sh-negative` | authored | not_discriminated | gap | limited | no_static_path | abstained | no | none |
 | `old-tool-build-script-limit` | authored | discriminated | credited | limited | no_static_path | abstained | no | none |
 | `old-tool-out-of-line-test-helper` | authored | discriminated | credited | silent | none | abstained | no | none |
 | `old-tool-included-test-fixture` | authored | discriminated | credited | silent | none | abstained | no | none |

@@ -4,9 +4,9 @@
   "corpus_version": "2026-10-04.6",
   "cases_total": 132,
   "by_truth": {
-    "discriminated": 74,
+    "discriminated": 73,
     "not_discriminated": 41,
-    "partially_discriminated": 17
+    "partially_discriminated": 18
   },
   "by_outcome": {
     "abstained": 52,
@@ -27,17 +27,17 @@
   },
   "false_actionable_rate": {
     "numerator": 37,
-    "denominator": 74,
-    "rate": "0.5000"
+    "denominator": 73,
+    "rate": "0.5068"
   },
   "false_exposed_rate": {
     "numerator": 4,
-    "denominator": 58,
-    "rate": "0.0690"
+    "denominator": 59,
+    "rate": "0.0678"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 58,
+    "denominator": 59,
     "rate": "0.0000"
   },
   "ideal_rate": {
@@ -74,17 +74,17 @@
       },
       "false_actionable_rate": {
         "numerator": 27,
-        "denominator": 54,
-        "rate": "0.5000"
+        "denominator": 53,
+        "rate": "0.5094"
       },
       "false_exposed_rate": {
         "numerator": 4,
-        "denominator": 44,
-        "rate": "0.0909"
+        "denominator": 45,
+        "rate": "0.0889"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 44,
+        "denominator": 45,
         "rate": "0.0000"
       },
       "ideal_rate": {
@@ -2160,8 +2160,8 @@
       "behavior_family": "error_variant",
       "test_shape": "boxed_into_wrapper_downcast_pin",
       "hard_case": true,
-      "truth": "discriminated",
-      "ideal_verdict": "credited",
+      "truth": "partially_discriminated",
+      "ideal_verdict": "gap",
       "observed_verdict": "limited",
       "followed_retarget": false,
       "changed_since_labeling": false,
@@ -2500,7 +2500,7 @@
       "case_id": "old-tool-exit-code-subprocess",
       "subject_id": "authored-old-tool",
       "origin": "authored",
-      "anchor": "src/main.rs:5",
+      "anchor": "src/main.rs:4",
       "behavior_family": "return_value",
       "test_shape": "binary_owner_via_cargo_bin_exe",
       "hard_case": false,
@@ -2516,10 +2516,10 @@
       "contradictions": []
     },
     {
-      "case_id": "old-tool-banner-sh-negative",
-      "subject_id": "authored-old-tool",
+      "case_id": "old-shell-banner-sh-negative",
+      "subject_id": "authored-old-shell",
       "origin": "authored",
-      "anchor": "src/main.rs:9",
+      "anchor": "src/main.rs:4",
       "behavior_family": "return_value",
       "test_shape": "sh_command_names_binary_variable",
       "hard_case": false,

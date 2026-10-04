@@ -1,9 +1,34 @@
-//! A second crate with a same-named type and associated function.
+//! A second crate whose types and associated functions share the meter
+//! crate's names, so every owner name is ambiguous across the workspace.
 
 pub struct Meter;
 
 impl Meter {
     pub fn tick() -> u32 {
         1
+    }
+}
+
+pub struct Gauge;
+
+impl Gauge {
+    pub fn reading() -> u32 {
+        0
+    }
+}
+
+pub struct Dial;
+
+impl Dial {
+    pub fn level() -> u32 {
+        0
+    }
+}
+
+pub struct Lamp;
+
+impl Lamp {
+    pub fn lumens() -> u32 {
+        0
     }
 }

@@ -131,7 +131,11 @@ mod tests {
     fn slot_zero_is_a_slot_error() {
         match open_slot("0") {
             Ok(slot) => panic!("slot {slot} opened"),
-            Err(error) => assert!(error.downcast_ref::<SlotError>().is_some()),
+            Err(error) => {
+                if error.downcast_ref::<SlotError>().is_none() {
+                    panic!("unexpected error: {error}");
+                }
+            }
         }
     }
 
