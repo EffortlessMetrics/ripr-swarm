@@ -239,31 +239,14 @@ impl<'a> ReachGraph<'a> {
                 continue;
             }
             saw_reaching_function = true;
-            match impl_self_type_name(&function.id.0) {
+            match super::related_tests::impl_self_type_name(&function.id.0) {
                 None => return true,
-                Some(self_type) if contains_identifier(test_body, self_type) => return true,
+                Some(self_type) if contains_identifier(test_body, &self_type) => return true,
                 Some(_) => {}
             }
         }
         !saw_reaching_function
     }
-}
-
-/// The bare self-type name of the `impl` block a function symbol id names, or
-/// `None` for a free function. Ids look like `src/lib.rs::impl Site::build`
-/// or `src/lib.rs::impl Display for Site<T>::fmt`; this returns `Site`.
-fn impl_self_type_name(id: &str) -> Option<&str> {
-    let (prefix, _name) = id.rsplit_once("::")?;
-    let impl_start = prefix.rfind("::impl ")? + "::impl ".len();
-    let header = prefix.get(impl_start..)?;
-    let self_type = header.rsplit_once(" for ").map_or(header, |(_, ty)| ty);
-    let self_type = self_type.split('<').next().unwrap_or(self_type);
-    let self_type = self_type.rsplit("::").next().unwrap_or(self_type).trim();
-    let self_type = self_type
-        .trim_start_matches(['&', '*'])
-        .trim_start_matches("mut ")
-        .trim();
-    (!self_type.is_empty()).then_some(self_type)
 }
 
 impl<'a> TransitiveReachIndex<'a> {
@@ -1367,24 +1350,6 @@ mod tests {
                 .map(|w| w.test_name.as_str()),
             Some("cache_builds")
         );
-    }
-
-    #[test]
-    fn impl_self_type_name_reads_inherent_trait_generic_and_path_impls() {
-        assert_eq!(
-            impl_self_type_name("src/lib.rs::impl Site::build"),
-            Some("Site")
-        );
-        assert_eq!(
-            impl_self_type_name("src/lib.rs::m::impl Display for Site<T>::fmt"),
-            Some("Site")
-        );
-        assert_eq!(
-            impl_self_type_name("src/lib.rs::impl crate::site::Site::build#L4"),
-            Some("Site")
-        );
-        assert_eq!(impl_self_type_name("src/lib.rs::m::build"), None);
-        assert_eq!(impl_self_type_name("build"), None);
     }
 
     // The witness pointer names the test/entry symbol with candidate language

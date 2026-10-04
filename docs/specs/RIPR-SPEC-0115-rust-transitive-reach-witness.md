@@ -87,7 +87,9 @@ A candidate is **corroborated** when its entry symbol names a production functio
 the owner and that function is either a free function or an associated function whose `impl` self
 type the test body names. Name-only facts cannot tell `Site::build` from `Cache::build`, so without
 this rank a unit test calling an unrelated type's same-named method could win on file order alone
-(#5481). Corroboration only ranks candidates: it never removes one, never changes the count, and
+(#5481). Corroboration is name presence only: it checks that the test body names the self type as an
+identifier, not that the call's receiver has that type. A function's own name in its call facts does
+not count as a call onward. Corroboration only ranks candidates: it never removes one, never changes the count, and
 never changes classification. Within one test, a corroborated entry symbol is preferred over a bare
 name match before the lexicographic tiebreak.
 
@@ -229,8 +231,6 @@ requirements in this spec remain unchanged.
   — deterministic witness ordering
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_same_named_method_on_other_type_then_corroborated_witness_is_named`
   — a test whose body names the reaching type outranks an unrelated same-named method call
-- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::impl_self_type_name_reads_inherent_trait_generic_and_path_impls`
-  — self-type extraction from function symbol ids
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_uses_may_language_and_no_coverage_claim`
   — message honesty (contains "may lead here"; excludes reaches/covers/tests/exercises)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured`
