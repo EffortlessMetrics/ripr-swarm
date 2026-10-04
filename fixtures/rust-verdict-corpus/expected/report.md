@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.5. Cases: 104.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.6. Cases: 111.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 37/104 | 0.3558 |
-| False actionable (of discriminated) | 33/56 | 0.5893 |
-| False exposed (of not fully discriminated) | 4/48 | 0.0833 |
-| False silent (of not fully discriminated) | 0/48 | 0.0000 |
-| Ideal verdict | 33/104 | 0.3173 |
-| Abstained (limited or silent where acceptable) | 34/104 | 0.3269 |
-| Findings with a contradiction | 2/138 | 0.0145 |
+| False verdicts (all cases) | 40/111 | 0.3604 |
+| False actionable (of discriminated) | 36/60 | 0.6000 |
+| False exposed (of not fully discriminated) | 4/51 | 0.0784 |
+| False silent (of not fully discriminated) | 0/51 | 0.0000 |
+| Ideal verdict | 34/111 | 0.3063 |
+| Abstained (limited or silent where acceptable) | 37/111 | 0.3333 |
+| Findings with a contradiction | 2/145 | 0.0138 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 70 | 27/70 | 23/36 | 4/34 | 0/34 | 28/70 | 15/70 |
+| authored | 77 | 30/77 | 26/40 | 4/37 | 0/37 | 29/77 | 18/77 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -125,6 +125,13 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `shop-gate-let-bound-input` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
 | `roles-limit-const-value` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
 | `roles-cfg-test-helper-input` | authored | discriminated | credited | silent | none | abstained | no | none |
+| `mined-doctest-only-read-u16` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `mined-doctest-ignored-read-u16-le` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `mined-bool-property-read-u32` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `mined-macro-closure-header-length` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `mined-roundtrip-symmetric-mask` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
+| `mined-hex-table-tested-row` | authored | discriminated | credited | limited | static_unknown | abstained | no | none |
+| `mined-hex-table-unasserted-row` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 
 Non-claims:
 

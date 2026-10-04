@@ -5806,7 +5806,6 @@
         "ripr_commit": "da6a44d",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
-          "static_unknown",
           "weakly_exposed"
         ],
         "excerpt_parity": "matched"
@@ -6061,9 +6060,9 @@
       }
     },
     {
-      "case_id": "mined-hex-table-untested-row",
+      "case_id": "mined-hex-table-unasserted-row",
       "subject_id": "authored-mined-wire",
-      "diff": "cases/mined-hex-table-untested-row.diff",
+      "diff": "cases/mined-hex-table-unasserted-row.diff",
       "anchor": {
         "file": "src/lib.rs",
         "line": 57

@@ -223,6 +223,23 @@ the distinct codes seen in that case's run.
   passes and the truth is `not_discriminated`. ripr's `exposed` scores
   `false_exposed`, the self-computed expected value RIPR-SPEC-0004 and
   RIPR-SPEC-0035 say must not count as a strong oracle.
+- authored `mined-doctest-only-read-u16` (`u16::from_be_bytes` rewritten
+  as shifts): the only test is the function's doc example, which `cargo test`
+  runs, so both byte-order mutants fail it and the truth is `discriminated`.
+  ripr's `weakly_exposed` scores `false_actionable`. The shape is mined from
+  bytes, where most `try_get_*` methods are pinned only by doc examples. Its
+  twin `mined-doctest-ignored-read-u16-le` fences the example `ignore`, so
+  nothing runs it and the same `weakly_exposed` scores `ideal`.
+- authored `mined-macro-closure-header-length` (`*len as usize + 2`
+  rewritten as `2 + *len as usize`): a `macro_rules!` test whose
+  `assert_eq!` sits in a closure the generated body always calls, mined from
+  httparse's `req!` tests. Both mutants fail it, so ripr's `weakly_exposed`
+  scores `false_actionable`. The corpus's other macro-generated cases are
+  all `not_discriminated`.
+- authored `mined-roundtrip-symmetric-mask` (`0x5a` rewritten as `90`): the
+  only test masks twice and checks the payload comes back, which holds for
+  every key, so the truth is `not_discriminated` and ripr's `static_unknown`
+  scores `abstained`.
 - bytesize `as_kb` division (`src/lib.rs:258`): ripr reports
   `no_static_path` while naming related tests, recorded as
   `no_static_path_with_related_tests`. semver `op()` at 1.0.23

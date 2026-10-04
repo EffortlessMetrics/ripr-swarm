@@ -1,101 +1,101 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.5",
-  "cases_total": 104,
+  "corpus_version": "2026-10-04.6",
+  "cases_total": 111,
   "by_truth": {
-    "discriminated": 56,
-    "not_discriminated": 32,
+    "discriminated": 60,
+    "not_discriminated": 35,
     "partially_discriminated": 16
   },
   "by_outcome": {
-    "abstained": 34,
-    "false_actionable": 33,
+    "abstained": 37,
+    "false_actionable": 36,
     "false_exposed": 4,
-    "ideal": 33
+    "ideal": 34
   },
   "by_observed_verdict": {
     "credited": 10,
-    "gap": 60,
-    "limited": 33,
+    "gap": 64,
+    "limited": 36,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 37,
-    "denominator": 104,
-    "rate": "0.3558"
+    "numerator": 40,
+    "denominator": 111,
+    "rate": "0.3604"
   },
   "false_actionable_rate": {
-    "numerator": 33,
-    "denominator": 56,
-    "rate": "0.5893"
+    "numerator": 36,
+    "denominator": 60,
+    "rate": "0.6000"
   },
   "false_exposed_rate": {
     "numerator": 4,
-    "denominator": 48,
-    "rate": "0.0833"
+    "denominator": 51,
+    "rate": "0.0784"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 48,
+    "denominator": 51,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 33,
-    "denominator": 104,
-    "rate": "0.3173"
+    "numerator": 34,
+    "denominator": 111,
+    "rate": "0.3063"
   },
   "abstention_rate": {
-    "numerator": 34,
-    "denominator": 104,
-    "rate": "0.3269"
+    "numerator": 37,
+    "denominator": 111,
+    "rate": "0.3333"
   },
   "contradiction_rate": {
     "numerator": 2,
-    "denominator": 138,
-    "rate": "0.0145"
+    "denominator": 145,
+    "rate": "0.0138"
   },
   "contradictions_by_code": {
     "no_static_path_with_related_tests": 2
   },
   "by_origin": {
     "authored": {
-      "cases_total": 70,
+      "cases_total": 77,
       "by_observed_verdict": {
         "credited": 10,
-        "gap": 45,
-        "limited": 14,
+        "gap": 49,
+        "limited": 17,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 27,
-        "denominator": 70,
-        "rate": "0.3857"
+        "numerator": 30,
+        "denominator": 77,
+        "rate": "0.3896"
       },
       "false_actionable_rate": {
-        "numerator": 23,
-        "denominator": 36,
-        "rate": "0.6389"
+        "numerator": 26,
+        "denominator": 40,
+        "rate": "0.6500"
       },
       "false_exposed_rate": {
         "numerator": 4,
-        "denominator": 34,
-        "rate": "0.1176"
+        "denominator": 37,
+        "rate": "0.1081"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 34,
+        "denominator": 37,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 28,
-        "denominator": 70,
-        "rate": "0.4000"
+        "numerator": 29,
+        "denominator": 77,
+        "rate": "0.3766"
       },
       "abstention_rate": {
-        "numerator": 15,
-        "denominator": 70,
-        "rate": "0.2143"
+        "numerator": 18,
+        "denominator": 77,
+        "rate": "0.2338"
       }
     },
     "upstream": {
@@ -2130,6 +2130,139 @@
       "followed_retarget": false,
       "changed_since_labeling": false,
       "observed_classifications": [],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "mined-doctest-only-read-u16",
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "anchor": "src/lib.rs:12",
+      "behavior_family": "return_value",
+      "test_shape": "doctest_only_oracle",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "mined-doctest-ignored-read-u16-le",
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "anchor": "src/lib.rs:21",
+      "behavior_family": "return_value",
+      "test_shape": "doctest_marked_ignore",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": []
+    },
+    {
+      "case_id": "mined-bool-property-read-u32",
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "anchor": "src/lib.rs:26",
+      "behavior_family": "return_value",
+      "test_shape": "bool_property_fn_in_loop",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "mined-macro-closure-header-length",
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "anchor": "src/lib.rs:39",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "macro_test_closure_body_assert",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": []
+    },
+    {
+      "case_id": "mined-roundtrip-symmetric-mask",
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "anchor": "src/lib.rs:45",
+      "behavior_family": "behavior_selector_const",
+      "test_shape": "roundtrip_only_symmetric_constant",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "mined-hex-table-tested-row",
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "anchor": "src/lib.rs:56",
+      "behavior_family": "field_construction",
+      "test_shape": "static_lookup_table_row_asserted",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": []
+    },
+    {
+      "case_id": "mined-hex-table-unasserted-row",
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "anchor": "src/lib.rs:57",
+      "behavior_family": "field_construction",
+      "test_shape": "static_lookup_table_row_unasserted",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
       "outcome": "abstained",
       "contradictions": []
     }
