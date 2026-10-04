@@ -13,7 +13,8 @@ crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`
 and `authored-roles` for test shapes other RIPR specs define, each case naming
 its specs in its reasoning; `authored-mined-wire` for test shapes mined from
-real crates, each case naming the upstream code it mirrors without copying it), and one-line edits under `cases/`. Each case is labeled
+real crates, each case naming the real-crate shape it mirrors, or its twin,
+without copying code), and one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
 checkout (for an authored crate, the whole stored crate).

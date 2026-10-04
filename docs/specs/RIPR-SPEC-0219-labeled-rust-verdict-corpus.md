@@ -234,8 +234,8 @@ the distinct codes seen in that case's run.
   rewritten as `2 + *len as usize`): a `macro_rules!` test whose
   `assert_eq!` sits in a closure the generated body always calls, mined from
   httparse's `req!` tests. Both mutants fail it, so ripr's `weakly_exposed`
-  scores `false_actionable`. The corpus's other macro-generated cases are
-  all `not_discriminated`.
+  scores `false_actionable`. The corpus's other test-generating macro
+  cases (itoa) are `not_discriminated`.
 - authored `mined-roundtrip-symmetric-mask` (`0x5a` rewritten as `90`): the
   only test masks twice and checks the payload comes back, which holds for
   every key, so the truth is `not_discriminated` and ripr's `static_unknown`

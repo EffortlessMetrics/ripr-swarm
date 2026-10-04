@@ -667,7 +667,7 @@
     {
       "subject_id": "authored-mined-wire",
       "origin": "authored",
-      "version_label": "authored 2026-10-04 from test shapes mined in real crates (bytes, httparse, byteorder)",
+      "version_label": "authored 2026-10-04 from test shapes mined in real crates (bytes, httparse, byteorder, base64)",
       "license": "MIT OR Apache-2.0",
       "shared_corpus": null,
       "retained_files": [
@@ -5772,12 +5772,12 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value",
       "test_shape": "doctest_only_oracle",
-      "hard_case": "The only test is the doc example on read_u16, which `cargo test` runs as a doctest. Mined from bytes, where 69 of 134 Buf/BufMut methods (the try_get_* family, e.g. https://github.com/tokio-rs/bytes/blob/7930d93d583757e922014312d4aa3e58a415131f/src/buf/buf_impl.rs#L1368) are pinned only by doc examples.",
+      "hard_case": "The only test is the doc example on read_u16, which `cargo test` runs as a doctest. Mined from bytes, where 35 of 38 try_get_* methods appear in no file under tests/ and are pinned only by doc examples (e.g. https://github.com/tokio-rs/bytes/blob/7930d93d583757e922014312d4aa3e58a415131f/src/buf/buf_impl.rs#L1368).",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "cargo test",
-        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
             "replacement": "u16::from_le_bytes([bytes[0], bytes[1]])",
@@ -5827,7 +5827,7 @@
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "cargo test",
-        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
             "replacement": "u16::from_be_bytes([bytes[0], bytes[1]])",
@@ -5876,7 +5876,7 @@
         "state": "discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "cargo test",
-        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
             "replacement": "u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])",
@@ -5921,12 +5921,12 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "return_value_arithmetic",
       "test_shape": "macro_test_closure_body_assert",
-      "hard_case": "A macro_rules! generates each #[test]; the test's assert_eq! sits in a closure the generated body always calls. Mined from httparse's req!/res! macros (https://github.com/seanmonstar/httparse/blob/a0fa552e4e0fa9a5914a736ef3a556748fef709b/src/lib.rs#L1332), about 360 tests. The corpus's other macro-generated cases are all not_discriminated.",
+      "hard_case": "A macro_rules! generates each #[test]; the test's assert_eq! sits in a closure the generated body always calls. Mined from httparse's req!/res! macros, which put the asserts in a nested fn the generated test always calls (https://github.com/seanmonstar/httparse/blob/a0fa552e4e0fa9a5914a736ef3a556748fef709b/src/lib.rs#L1332), about 300 macro-generated tests. The corpus's other test-generating macro cases (itoa) are not_discriminated.",
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "cargo test",
-        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
             "replacement": "[1, len, ..] => Status::Complete(*len as usize + 3),",
@@ -5971,12 +5971,12 @@
       "edit_kind": "behavior_preserving_rewrite",
       "behavior_family": "behavior_selector_const",
       "test_shape": "roundtrip_only_symmetric_constant",
-      "hard_case": "The only test masks twice and checks the payload is restored. XOR with any key is its own inverse, so a round trip cannot tell keys apart. Round-trip oracles are common in codecs (byteorder, base64, toml); a constant shared by both directions defeats them.",
+      "hard_case": "The only test masks twice and checks the payload is restored. XOR with any key is its own inverse, so a round trip cannot tell keys apart. Round-trip oracles are common in codecs (byteorder's quickcheck properties read back what they write); a constant shared by both directions defeats them.",
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "cargo test",
-        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
             "replacement": "const MASK: u8 = 0x5b;",
@@ -6025,7 +6025,7 @@
         "state": "discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "cargo test",
-        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
             "replacement": "b'9', b'9',",
@@ -6075,7 +6075,7 @@
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
         "test_command": "cargo test",
-        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
         "mutants": [
           {
             "replacement": "b'A', b'b', b'c', b'd', b'e', b'f',",
