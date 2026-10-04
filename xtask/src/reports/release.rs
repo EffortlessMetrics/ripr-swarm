@@ -3167,14 +3167,19 @@ fn run_command_path(program: &Path, args: &[&str]) -> Result<CommandResult, Stri
 mod tests {
     use super::{
         EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
-        ReleaseReadinessCheck, ReleaseReadinessReport, ci_summary_first_run_missing,
-        create_external_doctor_fixture, extension_version_check_from, extract_packaged_crate,
-        missing_required_needles, package_version, parse_release_readiness_args,
-        read_crate_version, readiness_check, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, validate_binary_identity, validate_doctor_result,
-        validate_installed_version, validate_package_entry,
-        vsix_start_current_repair_command_present,
+        ReleaseReadinessCheck, ReleaseReadinessReport, create_external_doctor_fixture,
+        extension_version_check_from, extract_packaged_crate, missing_required_needles,
+        package_version, parse_release_readiness_args, read_crate_version, readiness_check,
+        release_readiness_json, release_readiness_markdown, release_readiness_status,
+        validate_binary_identity, validate_doctor_result, validate_installed_version,
+        validate_package_entry, vsix_start_current_repair_command_present,
     };
+    // Unix-only like its only caller (`ci_summary_first_run_probe_reads_the_
+    // binary_output`); ungated, the import is dead on Windows and fails
+    // clippy -D warnings there (inherited from main; file untouched by this
+    // branch).
+    #[cfg(unix)]
+    use super::ci_summary_first_run_missing;
     use serde_json::Value;
     use std::fs;
     use std::path::Path;
