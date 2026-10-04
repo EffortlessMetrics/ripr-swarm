@@ -126,7 +126,20 @@ pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>>
             .self_ty()
             .is_some_and(|ty| ty.syntax().text().to_string().trim() == name);
         if let (true, Some(trait_ty)) = (self_is_name, item.trait_()) {
-            traits.push(last_segment(&trait_ty.syntax().text().to_string()));
+            // `impl PartialEq<u8> for Name` compares with another type, so
+            // only a bare trait or one parameterized by `Self`/`Name` counts
+            // as the trait; any other argument keeps its generics and so
+            // never matches a bare-name lookup.
+            let text = trait_ty.syntax().text().to_string();
+            let (path, argument) = match text.split_once('<') {
+                Some((path, rest)) => (path, rest.trim_end().trim_end_matches('>').trim()),
+                None => (text.as_str(), ""),
+            };
+            if argument.is_empty() || argument == "Self" || argument == name {
+                traits.push(last_segment(path));
+            } else {
+                traits.push(format!("{}<{argument}>", last_segment(path)));
+            }
         }
     }
     Some(traits)
@@ -392,5 +405,27 @@ mod tests {
         );
         assert_eq!(single_comparison("a > 1 && b < 2"), None);
         assert_eq!(single_comparison("is_ready(x)"), None);
+    }
+
+    #[test]
+    fn local_type_traits_count_partial_eq_only_against_the_type_itself() {
+        let source = "#[derive(Debug, Clone)]
+pub struct Seen(u8);
+impl PartialEq<u8> for Seen {
+    fn eq(&self, other: &u8) -> bool { self.0 == *other }
+}
+#[derive(Debug)]
+pub struct Own(u8);
+impl std::cmp::PartialEq<Self> for Own {
+    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+}
+";
+        let seen = local_type_traits(source, "Seen").unwrap_or_default();
+        assert!(seen.iter().any(|t| t == "Debug"), "{seen:?}");
+        assert!(seen.iter().any(|t| t == "PartialEq<u8>"), "{seen:?}");
+        assert!(!seen.iter().any(|t| t == "PartialEq"), "{seen:?}");
+        let own = local_type_traits(source, "Own").unwrap_or_default();
+        assert!(own.iter().any(|t| t == "PartialEq"), "{own:?}");
+        assert_eq!(local_type_traits(source, "Missing"), None);
     }
 }
