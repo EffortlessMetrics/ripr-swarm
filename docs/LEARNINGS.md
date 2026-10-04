@@ -11,8 +11,10 @@ cannot recover that `ripr check` exits 0 on `exposed` findings, that
 standalone `agent verify` refuses with exit 3 and empty stdout. Put a closed
 `exit` object on every command row, pin the orchestrator-branching rows to
 the implemented `CommandError` / `gate evaluate` mapping, and bump
-`HELP_JSON_SCHEMA_VERSION`. Do not treat a limitation sentence or a
-"non-zero" stop-state as the contract.
+`HELP_JSON_SCHEMA_VERSION`. The `config_error` / `blocked` tokens are owned
+by `output::gate` (`top_level_status`); the CLI exit map and `help --json`
+serde keys consume those bytes rather than restating them. Do not treat a
+limitation sentence or a "non-zero" stop-state as the contract.
 
 ## 2026-10-04: `help --json` must be named and self-reported (#5266)
 

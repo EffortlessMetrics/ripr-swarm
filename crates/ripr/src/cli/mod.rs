@@ -30,14 +30,6 @@ pub(crate) const EXIT_COULD_NOT_COMPLETE: i32 = 2;
 /// The command reached a blocking decision or typed refusal. Maps from
 /// [`CommandError::Decision`].
 pub(crate) const EXIT_DECISION_OR_REFUSAL: i32 = 3;
-/// `gate evaluate` status that maps to [`CommandError::Failure`]. Must stay
-/// identical to `output::gate`'s `config_error` status string; the
-/// `help --json` exit object uses this same token as a field name.
-pub(crate) const GATE_EVALUATE_CONFIG_ERROR_STATUS: &str = "config_error";
-/// `gate evaluate` status that maps to [`CommandError::Decision`]. Must stay
-/// identical to `output::gate`'s `blocked` status string; the `help --json`
-/// exit object uses this same token as a field name.
-pub(crate) const GATE_EVALUATE_BLOCKED_STATUS: &str = "blocked";
 
 /// Top-level error of command dispatch, carrying the process exit-code
 /// contract documented in `docs/EXIT_CODES.md`.

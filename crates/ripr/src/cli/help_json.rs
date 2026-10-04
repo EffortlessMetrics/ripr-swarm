@@ -31,7 +31,7 @@ use crate::cli::command_metadata::{
 use crate::cli::workflow_catalog::{
     WorkflowCatalogEntry, WorkflowNext, workflow_catalog, workflow_catalog_violations,
 };
-use crate::cli::{GATE_EVALUATE_BLOCKED_STATUS, GATE_EVALUATE_CONFIG_ERROR_STATUS};
+use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
 
 /// Schema version of the `help --json` document. Bump on any material shape
 /// change to the DTO; the value is pinned by unit tests and documented in
@@ -171,14 +171,11 @@ const fn str_bytes_eq(left: &str, right: &str) -> bool {
     true
 }
 
-/// `ExitJson::GateEvaluate` serde keys must be the same tokens `gate evaluate`
-/// maps onto `CommandError`.
+/// `ExitJson::GateEvaluate` serde keys must be the producer status tokens
+/// `output::gate::top_level_status` writes and the CLI maps onto `CommandError`.
 const GATE_EXIT_JSON_KEYS_MATCH_STATUS_TOKENS: () = {
-    assert!(str_bytes_eq(
-        GATE_EVALUATE_CONFIG_ERROR_STATUS,
-        "config_error"
-    ));
-    assert!(str_bytes_eq(GATE_EVALUATE_BLOCKED_STATUS, "blocked"));
+    assert!(str_bytes_eq(GATE_STATUS_CONFIG_ERROR, "config_error"));
+    assert!(str_bytes_eq(GATE_STATUS_BLOCKED, "blocked"));
 };
 const _: () = GATE_EXIT_JSON_KEYS_MATCH_STATUS_TOKENS;
 
@@ -932,8 +929,8 @@ mod tests {
     fn orchestrator_exit_contracts_match_the_implemented_mapping() -> Result<(), String> {
         use crate::cli::{
             CommandError, EXIT_COMPLETED, EXIT_COULD_NOT_COMPLETE, EXIT_DECISION_OR_REFUSAL,
-            GATE_EVALUATE_BLOCKED_STATUS, GATE_EVALUATE_CONFIG_ERROR_STATUS,
         };
+        use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
 
         let check = command_exit_json("cmd:check")?;
         if check["kind"] != "advisory_findings" {
@@ -950,9 +947,8 @@ mod tests {
         if gate["kind"] != "gate_evaluate" {
             return Err(format!("cmd:gate.evaluate kind misprojected: {gate}"));
         }
-        if gate[GATE_EVALUATE_CONFIG_ERROR_STATUS]
-            != CommandError::Failure("config".to_string()).exit_code()
-            || gate[GATE_EVALUATE_BLOCKED_STATUS]
+        if gate[GATE_STATUS_CONFIG_ERROR] != CommandError::Failure("config".to_string()).exit_code()
+            || gate[GATE_STATUS_BLOCKED]
                 != CommandError::Decision("blocked".to_string()).exit_code()
         {
             return Err(format!(
