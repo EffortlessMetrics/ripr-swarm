@@ -185,6 +185,16 @@ fn helpers_that_cannot_be_resolved_to_one_cfg_test_function_grant_nothing()
             "        check(10, false);\n",
         ),
         (
+            "call only inside an uncalled closure in the test",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
+            "        let _later = || check(10, false);\n",
+        ),
+        (
+            "call only inside an unpolled async block in the test",
+            "    fn check(x: u32, want: bool) {\n        assert_eq!(gate(x), want);\n    }\n",
+            "        let _later = async { check(10, false) };\n",
+        ),
+        (
             "use item in the helper body",
             "    fn check(x: u32, want: bool) {\n        use crate::other::gate;\n        assert_eq!(gate(x), want);\n    }\n",
             "        check(10, false);\n",

@@ -149,7 +149,8 @@ pub(crate) struct ModuleItemScopes {
     /// only builds a future) or a body holding a closure or `async` block.
     pub(crate) fns_with_deferred_code: std::collections::BTreeSet<(usize, String)>,
     /// Names each fn calls as a parsed single-segment free function
-    /// (`check(..)`), outside macro arguments, strings and comments.
+    /// (`check(..)`), outside macro arguments, strings, comments, closures
+    /// and `async` blocks.
     pub(crate) direct_calls: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
     /// Fns carrying a `cfg` or `cfg_attr` attribute anywhere in their
     /// syntax (outer, inner `#![..]`, or on a statement), whitespace
@@ -230,6 +231,18 @@ pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
                 .syntax()
                 .descendants()
                 .filter_map(ast::CallExpr::cast)
+                // A call inside a closure or `async` block may never run.
+                .filter(|call| {
+                    !call
+                        .syntax()
+                        .ancestors()
+                        .take_while(|node| node != body.syntax())
+                        .any(|node| {
+                            ast::ClosureExpr::can_cast(node.kind())
+                                || ast::BlockExpr::cast(node)
+                                    .is_some_and(|block| block.async_token().is_some())
+                        })
+                })
                 .filter_map(|call| match call.expr()? {
                     ast::Expr::PathExpr(path) => {
                         let path = path.path()?;

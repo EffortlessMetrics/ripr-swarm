@@ -28,7 +28,8 @@
 //!   test whose body holds a `use` item or any `cfg`/`cfg_attr` attribute;
 //! - the parsed test body calls it as a single-segment free function
 //!   (`check(..)`, not `self.check(..)`, `path::check(..)`, or the text
-//!   `check(` in a string or comment), and the test binds no name equal
+//!   `check(` in a string or comment), outside any closure or `async`
+//!   block it may never run, and the test binds no name equal
 //!   to it anywhere (parameter, `let`, `for`, `if let`, closure or match
 //!   binding, or any named item such as `const`, `static`, nested `fn` or
 //!   tuple `struct`);
