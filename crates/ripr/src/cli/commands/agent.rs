@@ -66,6 +66,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         // and maps them to the decision exit code 3; operational failures
         // stay exit 2.
         AgentCommand::Card(options) => super::agent_card::run_agent_card(options),
+        // A named stub refusal is a decision (exit 3); a failed read or
+        // analysis stays exit 2.
+        AgentCommand::Stub(options) => super::agent_stub::run_agent_stub(options),
         // A deliberate named refusal (drifted analysis inputs, no movement)
         // maps to exit code 3, as it does inside `repair --phase after`.
         // Stdout stays empty on every refusal: the release negative corpus
@@ -92,6 +95,7 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         | AgentCommand::BriefHelp
         | AgentCommand::PacketHelp
         | AgentCommand::CardHelp
+        | AgentCommand::StubHelp
         | AgentCommand::VerifyHelp
         | AgentCommand::VerifyExecuteHelp
         | AgentCommand::ReceiptHelp
@@ -1910,7 +1914,7 @@ mod tests {
         assert_eq!(
             agent(&args(&["unknown"])),
             Err(CommandError::Failure(
-                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `stub`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
             ))
         );
@@ -1979,7 +1983,7 @@ mod tests {
                 "f3c9e4d21a0b7c88",
             ])),
             Err(CommandError::Failure(
-                "agent start root target/ripr/missing-agent-start-root is not a directory"
+                "agent start root target/ripr/missing-agent-start-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -1995,7 +1999,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent status root target/ripr/missing-agent-status-root is not a directory"
+                "agent status root target/ripr/missing-agent-status-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2011,7 +2015,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory"
+                "agent review-summary root target/ripr/missing-agent-review-summary-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2029,7 +2033,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent packet root target/ripr/missing-agent-packet-root is not a directory"
+                "agent packet root target/ripr/missing-agent-packet-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );
@@ -2176,7 +2180,7 @@ mod tests {
                 "--json",
             ])),
             Err(CommandError::Failure(
-                "agent brief root target/ripr/missing-agent-brief-root is not a directory"
+                "agent brief root target/ripr/missing-agent-brief-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)"
                     .to_string()
             ))
         );

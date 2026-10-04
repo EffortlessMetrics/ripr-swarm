@@ -46,6 +46,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "agent review-summary",
     "agent start",
     "agent status",
+    "agent stub",
     "agent verify",
     "agent verify-execute",
     "annotations",
@@ -91,6 +92,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "pr-summary",
     "receipt check",
     "receipt write",
+    "reports ci-packet",
     "reports ci-summary",
     "reports gap-ledger",
     "reports index",
@@ -112,6 +114,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
 pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
     let help_text = match command {
         "agent card" => AGENT_CARD_HELP,
+        "agent stub" => AGENT_STUB_HELP,
         "agent brief" => AGENT_BRIEF_HELP,
         "agent packet" => AGENT_PACKET_HELP,
         "agent repair" => AGENT_REPAIR_HELP,
@@ -161,7 +164,8 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "pr-summary" => PR_SUMMARY_HELP,
         "receipt check" => RECEIPT_CHECK_HELP,
         "receipt write" => RECEIPT_WRITE_HELP,
-        "reports ci-summary"
+        "reports ci-packet"
+        | "reports ci-summary"
         | "reports gap-ledger"
         | "reports index"
         | "reports ts-false-actionable"
@@ -301,6 +305,10 @@ pub(super) fn print_agent_packet_help() {
 
 pub(super) fn print_agent_card_help() {
     println!("{AGENT_CARD_HELP}");
+}
+
+pub(super) fn print_agent_stub_help() {
+    println!("{AGENT_STUB_HELP}");
 }
 
 pub(super) fn print_agent_verify_help() {
@@ -498,6 +506,10 @@ mod tests {
             "ripr init --ci github",
             "ripr help <command>",
             "ripr help --all",
+            // #5266: the machine-discovery route must be reachable from the
+            // documented first surface; before this line existed, an agent
+            // following `--help` could never learn `help --json` exists.
+            "ripr help --json",
         ] {
             assert!(
                 HELP.contains(needle),
@@ -507,6 +519,60 @@ mod tests {
         // The advisory boundary belongs on the first screen; a reader should not
         // have to opt into `--all` to learn that ripr does not run mutants.
         assert!(HELP.contains("does not run mutants"));
+    }
+
+    /// The machine catalog is a first-screen discovery route (#5266). A
+    /// mention buried in the advisory footer would still satisfy a whole-file
+    /// `contains`; this pins the `More:` block itself.
+    #[test]
+    fn help_overview_more_block_names_the_machine_catalog() -> Result<(), String> {
+        let Some(after_more) = HELP.split("\nMore:\n").nth(1) else {
+            return Err("default help lost its More: block".to_string());
+        };
+        let Some(more_block) = after_more.split("\n\n").next() else {
+            return Err("More: block should be a contiguous route list".to_string());
+        };
+        for needle in ["ripr help <command>", "ripr help --all", "ripr help --json"] {
+            if !more_block.contains(needle) {
+                return Err(format!(
+                    "the More: block should name {needle}, got:\n{more_block}"
+                ));
+            }
+        }
+        if more_block.contains("does not run mutants") {
+            return Err(
+                "the More: block should stay a route list, not absorb the advisory footer"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// `ripr help --all` documents `help` in its header rather than as a
+    /// catalog listing row. The machine route must appear there so the
+    /// exhaustive screen is not a dead end (#5266), and the header must
+    /// except the route from the global `-v` claim.
+    #[test]
+    fn help_all_header_names_the_machine_catalog() -> Result<(), String> {
+        let Some(header) = HELP_ALL.split("\nSetup:\n").next() else {
+            return Err("help --all should keep a header before the Setup: listing".to_string());
+        };
+        if !header.contains("ripr help --json") {
+            return Err("the help --all header should name the machine catalog".to_string());
+        }
+        if !header.contains("this route accepts no other arguments") {
+            return Err(
+                "the help --all header should name the machine catalog's strict grammar"
+                    .to_string(),
+            );
+        }
+        if !header.contains("except on ripr help --json") {
+            return Err(
+                "the help --all global-flags paragraph should except the machine catalog route"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     /// `ripr help --all` claims to be every command, so it is checked against
@@ -944,6 +1010,7 @@ mod tests {
     const AGENT_PARSER_RS: &str = include_str!("agent.rs");
     const CLI_COMMANDS_RS: &str = include_str!("commands.rs");
     const CHECK_PARSER_RS: &str = include_str!("commands/check.rs");
+    const CI_PACKET_PARSER_RS: &str = include_str!("commands/ci_packet.rs");
     const CI_SUMMARY_PARSER_RS: &str = include_str!("commands/ci_summary.rs");
     const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
@@ -990,6 +1057,7 @@ mod tests {
             &["parse_agent_packet_options"],
         ),
         ("agent card", AGENT_PARSER_RS, &["parse_agent_card_options"]),
+        ("agent stub", AGENT_PARSER_RS, &["parse_agent_stub_options"]),
         (
             "agent repair",
             AGENT_PARSER_RS,
@@ -1185,6 +1253,11 @@ mod tests {
             "receipt write",
             RECEIPT_PARSER_RS,
             &["parse_receipt_write_options"],
+        ),
+        (
+            "reports ci-packet",
+            CI_PACKET_PARSER_RS,
+            &["parse_ci_packet_options"],
         ),
         (
             "reports ci-summary",

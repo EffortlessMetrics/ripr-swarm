@@ -488,6 +488,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
         DiscoveryPosture::OrdinaryPublic,
     ),
     nested(
+        "cmd:reports.ci-packet",
+        "reports ci-packet",
+        CommandClass::Public,
+        CommandDispatch::Reports,
+        REPORTS,
+        DiscoveryPosture::OrdinaryPublic,
+    ),
+    nested(
         "cmd:reports.ci-summary",
         "reports ci-summary",
         CommandClass::Public,
@@ -606,6 +614,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
     nested(
         "cmd:agent.card",
         "agent card",
+        CommandClass::Advanced,
+        CommandDispatch::Agent,
+        AGENT,
+        DiscoveryPosture::Advanced,
+    ),
+    nested(
+        "cmd:agent.stub",
+        "agent stub",
         CommandClass::Advanced,
         CommandDispatch::Agent,
         AGENT,
