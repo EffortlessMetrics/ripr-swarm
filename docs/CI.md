@@ -857,9 +857,17 @@ no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
 head SHA, and dispatches `routed-rust.yml` on the head branch — the same manual
 remedy used during the incidents — capped at 5 dispatches per sweep. The
-required check, not run existence, is the discriminator: with Ready-only
-admission there is no pseudo-result path, so any `Ripr Rust Small Result` check
-run on the head SHA is a real qualification attempt on that exact head. The next
+dispatch is recovery, not qualification (#4986): it exists for an admitted
+candidate whose Ready-triggered run was dropped before it could post its
+expected exact-head result. A head mutated after Ready has revoked its own
+admission; it must return to Draft and perform a fresh Draft -> Ready
+transaction rather than being qualified by a watchdog dispatch, and the
+watchdog must never dispatch heavy proof for Draft iteration. The required
+check, not run existence, is the discriminator: with Ready-only admission
+there is no pseudo-result path, so any `Ripr Rust Small Result` check run on
+the head SHA is a real qualification attempt on that exact head. Restricting
+the sweep to demonstrably dropped Ready attempts (versus any dark non-draft
+head) is tracked with the protected-queue work (#4985/#4988). The next
 sweep's required-check check dedupes; its racy window after a dispatch is bounded
 by the cap plus the 30-minute cadence. No PR comments are posted: the
 dispatched run itself delivers the required `Ripr Rust Small Result` check,

@@ -5967,17 +5967,16 @@ fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
         ];
     };
     let mut violations = Vec::new();
-    if !types.iter().any(|value| value == ROUTED_RUST_READY_EVENT) {
+    let ready_only = [ROUTED_RUST_READY_EVENT];
+    let unexpected: Vec<&str> = types
+        .iter()
+        .map(String::as_str)
+        .filter(|value| !ready_only.contains(value))
+        .collect();
+    if !unexpected.is_empty() || types.len() != ready_only.len() {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml pull_request types must keep `{ROUTED_RUST_READY_EVENT}`; the Draft -> Ready transition is the sole pull-request qualification request (#4986)"
+            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. The Draft -> Ready transition is the sole pull-request qualification request and every other pull_request activity type must stay withheld (#4986)"
         ));
-    }
-    for forbidden in ["opened", "synchronize", "reopened", "labeled", "unlabeled"] {
-        if types.iter().any(|value| value == forbidden) {
-            violations.push(format!(
-                ".github/workflows/routed-rust.yml pull_request types must not subscribe to `{forbidden}`; Draft iteration and label events must not create the required Rust context (#4986)"
-            ));
-        }
     }
     if !workflow.contains(ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET) {
         violations.push(

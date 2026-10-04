@@ -10939,7 +10939,9 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     assert!(
         routed_rust_ready_event_contract_violations(&draft_resurrected)
             .iter()
-            .any(|violation| violation.contains("must not subscribe to `synchronize`")),
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("synchronize")
+            }),
         "re-admitting synchronize must fail the Ready-only contract: {:?}",
         routed_rust_ready_event_contract_violations(&draft_resurrected)
     );
@@ -10951,9 +10953,25 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     assert!(
         routed_rust_ready_event_contract_violations(&label_resurrected)
             .iter()
-            .any(|violation| violation.contains("must not subscribe to `labeled`")),
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("labeled")
+            }),
         "re-admitting label events must fail the Ready-only contract: {:?}",
         routed_rust_ready_event_contract_violations(&label_resurrected)
+    );
+
+    let edited_resurrected = workflow.replace(
+        "    types: [ready_for_review]",
+        "    types: [ready_for_review, edited]",
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
+            .iter()
+            .any(|violation| {
+                violation.contains("must be exactly") && violation.contains("edited")
+            }),
+        "re-admitting the edited activity type must fail the Ready-only contract: {:?}",
+        routed_rust_ready_event_contract_violations(&edited_resurrected)
     );
 
     let ready_dropped = workflow.replace(
@@ -10963,7 +10981,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     assert!(
         routed_rust_ready_event_contract_violations(&ready_dropped)
             .iter()
-            .any(|violation| violation.contains("must keep `ready_for_review`")),
+            .any(|violation| violation.contains("must be exactly")),
         "dropping the Ready transition must fail closed: {:?}",
         routed_rust_ready_event_contract_violations(&ready_dropped)
     );
