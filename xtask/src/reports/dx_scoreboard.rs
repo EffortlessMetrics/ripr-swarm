@@ -922,6 +922,28 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
     }))
 }
 
+/// Scored pilot recommendations per judge tier, so the scoreboard row shows
+/// how much of its precision rests on the coarse `line` and `owner` tiers.
+fn pilot_tier_split(pilot: &Value) -> String {
+    ["seam", "line", "owner"]
+        .iter()
+        .map(|tier| {
+            let count = |verdict: &str| {
+                pilot
+                    .pointer(&format!("/by_tier/{tier}/{verdict}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            format!(
+                "{tier} {}/{}",
+                count("confirmed"),
+                count("confirmed") + count("refuted")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Convert a `ripr-mutation-spot-check-v1` receipt into scoreboard rows:
 ///
 /// - discriminator claim agreement: when ripr says a test discriminates the
@@ -1014,7 +1036,10 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         rows.push(json!({
             "id": "trust.pilot_top_recommendation_precision",
             "value": precision,
-            "evidence": format!("{scored} pilot recommendations scored"),
+            "evidence": format!(
+                "{scored} pilot recommendations scored ({})",
+                pilot_tier_split(pilot)
+            ),
         }));
     }
     if mutants > 0 {
