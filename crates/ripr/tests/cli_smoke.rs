@@ -11495,16 +11495,65 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workspace.join("ripr.toml").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
-    // The steps use the generating version's CLI, so the install is pinned
-    // to it rather than taking the newest crates.io release.
-    assert!(workflow.contains(&format!(
-        "          version={}\n",
-        env!("CARGO_PKG_VERSION")
-    )));
-    assert!(workflow.contains(&format!(
-        "            cargo install ripr --version {} --locked\n",
-        env!("CARGO_PKG_VERSION")
-    )));
+    // #5208: the pin/warning pair must stay consistent in both release
+    // states, on both install routes (the prebuilt `version=` and the
+    // cargo fallback). A released generator self-pins silently; an
+    // unreleased one pins an exact released version (its own would
+    // neither download nor install) and warns on stderr. Branching on the
+    // observed warning keeps this test valid when the package and release
+    // constant meet at parity (CodeRabbit Major): at that commit the
+    // released path is the correct expectation. Exact released/dev
+    // mappings are pinned by unit tests without rebuilding; this test
+    // pins the end-to-end wiring and consistency.
+    let generator = env!("CARGO_PKG_VERSION");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let warned = stderr.contains("is not released");
+    if warned {
+        // The warning names the fallback pin; both install routes must
+        // carry exactly it (#5244 review: positive exact pins, not just
+        // the absence of the generator version).
+        let pinned = stderr
+            .split("pins the latest release (")
+            .nth(1)
+            .and_then(|rest| rest.split(") instead").next())
+            .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
+        assert!(
+            workflow.contains(&format!("          version={pinned}\n")),
+            "a warned run must pin the fallback {pinned} on the prebuilt route"
+        );
+        assert!(
+            workflow.contains(&format!(
+                "            cargo install ripr --version {pinned} --locked\n"
+            )),
+            "a warned run must pin the fallback {pinned} on the cargo route"
+        );
+        assert!(
+            !workflow.contains(&format!("          version={generator}\n")),
+            "a warned run must not self-pin the unreleased generator"
+        );
+        assert!(
+            !workflow.contains(&format!(
+                "            cargo install ripr --version {generator} --locked\n"
+            )),
+            "a warned run must not self-pin the fallback either"
+        );
+        assert!(
+            stderr.contains("pins the latest release")
+                && stderr.contains("ripr init --ci github --force"),
+            "missing unreleased-generator warning: {stderr}"
+        );
+    } else {
+        assert!(
+            workflow.contains(&format!("          version={generator}\n")),
+            "an unwarned run must self-pin the released generator"
+        );
+        assert!(
+            workflow.contains(&format!(
+                "            cargo install ripr --version {generator} --locked\n"
+            )),
+            "an unwarned run must self-pin the fallback too"
+        );
+    }
     assert!(!workflow.contains("cargo install ripr --locked"));
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
@@ -12245,6 +12294,141 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "a budget-truncated pilot snapshot must not carry the comparable identity"
     );
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #5205: pilot honors `[languages] enabled` like `check` does. With Rust
+/// disabled, pilot ranks no Rust seam and discloses the exclusion — in the
+/// terminal and the summary packet — instead of silently ranking Rust.
+/// Requires `lang-python`: the fixture excludes Rust via `enabled = ["python"]`,
+/// which is a (correct, fail-closed) config error on binaries built without
+/// that feature, so the rust-only lane cannot express this case.
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_excludes_rust_when_disabled_in_language_config() -> Result<(), String> {
+    let root = unique_temp_workspace("pilot-rust-disabled");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"gate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"python\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let out_dir = unique_temp_workspace("pilot-rust-disabled-out");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    // Terminal: no Rust seam ranked; the exclusion disclosed with its remedy.
+    let terminal = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !terminal.contains("gate_state"),
+        "must rank no Rust seam: {terminal}"
+    );
+    assert!(
+        terminal.contains("Excluded from pilot's Rust seam scan:")
+            && terminal.contains("not enabled in ripr.toml [languages]"),
+        "missing exclusion disclosure: {terminal}"
+    );
+    // Markdown: the exclusion section.
+    let md =
+        std::fs::read_to_string(out_dir.join("pilot-summary.md")).map_err(|err| err.to_string())?;
+    assert!(
+        md.contains("## Excluded From Pilot's Rust Seam Scan"),
+        "missing md exclusion section"
+    );
+    // Packet: empty ranking, exclusion object, nulled follow-up commands.
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+    let empty: Vec<serde_json::Value> = Vec::new();
+    assert_eq!(
+        summary
+            .pointer("/top_actionable_seams")
+            .and_then(serde_json::Value::as_array),
+        Some(&empty),
+        "{summary}"
+    );
+    assert_eq!(
+        summary
+            .pointer("/language_routes/rust_excluded_from_scope/file_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "{summary}"
+    );
+    assert!(
+        summary
+            .pointer("/next/after_snapshot_command")
+            .is_some_and(serde_json::Value::is_null),
+        "exclusion must null the snapshot follow-up: {summary}"
+    );
+    // Codex P1: the exclusion must not depend on the inventory it skips.
+    // With Rust disabled, pilot bypasses the Rust walk entirely, so even a
+    // 1ms budget completes with the exclusion packet instead of timing out
+    // (pre-bypass, a large workspace could exhaust the timeout and return
+    // the timeout branch with no exclusion at all).
+    let impatient = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+        "--timeout-ms",
+        "1",
+    ]);
+    assert_success(&impatient);
+    let impatient_summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| err.to_string())?;
+    assert_eq!(
+        impatient_summary
+            .pointer("/status")
+            .and_then(|v| v.as_str()),
+        Some("complete"),
+        "a bypassed run completes under any budget: {impatient_summary}"
+    );
+    assert_eq!(
+        impatient_summary
+            .pointer("/language_routes/rust_excluded_from_scope/file_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "{impatient_summary}"
+    );
+    // Precondition guard: the fixture really holds a rankable Rust seam —
+    // with the default config the same pilot run ranks it.
+    std::fs::remove_file(root.join("ripr.toml")).map_err(|err| err.to_string())?;
+    let enabled = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&enabled);
+    let enabled_terminal = String::from_utf8_lossy(&enabled.stdout);
+    assert!(
+        enabled_terminal.contains("gate_state"),
+        "fixture must hold a rankable Rust seam: {enabled_terminal}"
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+    std::fs::remove_dir_all(&out_dir).map_err(|err| err.to_string())?;
     Ok(())
 }
 

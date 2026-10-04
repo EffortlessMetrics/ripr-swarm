@@ -5,7 +5,7 @@
 //! snapshot is committed; MCP never re-runs classification, ranking, or
 //! evidence production. List responses carry only the small summary document;
 //! the complete bounded evidence document is served lazily by
-//! `ripr_get_gap` / `ripr://gap/{canonical_item_id}`.
+//! `ripr_get_gap` / `ripr://gap/{canonical_id}`.
 
 use crate::domain::Finding;
 use serde_json::{Value, json};
@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v1";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
-/// `ripr_get_gap` / `ripr://gap/{canonical_item_id}` never authorizes an
+/// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
 /// edit by itself: the readiness block reports the producer repair-readiness
 /// facts projected at snapshot commit time, and `ripr_prepare_repair` (#3090)
 /// is the only route that binds a repair transaction — and only when every
@@ -297,6 +297,11 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
                 "oracle_strength": test.oracle_strength.as_str(),
                 "relation_reason": test.relation_reason.map(|reason| reason.as_str()),
                 "relation_confidence": test.relation_confidence.map(|confidence| confidence.as_str()),
+                "miss": test.miss.map(|miss| miss.as_str()),
+                "why": crate::output::related_test_miss::related_test_miss_reason(
+                    test,
+                    &finding.activation.missing_discriminators,
+                ),
             })
         })
         .collect::<Vec<_>>();
@@ -522,6 +527,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             oracle_strength: crate::domain::OracleStrength::Strong,
             relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
+            miss: None,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),
