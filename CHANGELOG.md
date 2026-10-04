@@ -204,6 +204,16 @@ are scoped or reviewed.
   did not compile it, so its truth comes from `--features profiling-traced`.
   The corpus is now 34 cases with 0 of 14 false exposed (RIPR-SPEC-0219,
   #5332, #5335).
+- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
+  scoreboards (speed, ci, trust, paste, first_run) on a pinned
+  real-repository corpus: cold pilot and warm check time and peak memory,
+  generated workflow size, false-clean and self-contradicting output, and
+  paste safety of printed commands under a hostile repository path. Targets
+  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
+  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
+  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
+  nightly `DX Scoreboard` workflow runs it.
+
 - Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
   second semver and bytesize pins), now 32 cases across 10 subjects. The
   report adds 3 false actionable gaps (strsim `==` and bytesize `as_kib` and

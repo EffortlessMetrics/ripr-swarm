@@ -7,6 +7,7 @@ mod bun;
 mod candidate_control;
 mod ci_budget;
 mod dogfood;
+mod dx_scoreboard;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
@@ -15,6 +16,7 @@ mod first_pr;
 mod fixtures;
 mod index;
 mod issue_intake;
+mod issue_lifecycle;
 mod lsp;
 mod lsp_performance;
 mod merge_queue;
@@ -99,6 +101,7 @@ pub(crate) use blind_journey_execute::{
 pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_bridge_inventory};
 pub(crate) use ci_budget::ci_budget;
 pub(crate) use dogfood::dogfood;
+pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{
@@ -116,6 +119,9 @@ pub(crate) use fixtures::{
 };
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
+pub(crate) use issue_lifecycle::{
+    assess_issue_lifecycle_fixture_corpus, issue_lifecycle_scorecard_report,
+};
 pub(crate) use lsp::lsp_cockpit_report;
 pub(crate) use lsp_performance::lsp_performance_report;
 pub(crate) use merge_queue::merge_queue;
