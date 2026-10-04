@@ -185,8 +185,17 @@ pub(super) fn discarded_matcher_scrutinee(statement: &str) -> Option<(String, us
         .into_iter()
         .next()?;
     let open = mask_comments_and_strings(expression).find(['(', '[', '{'])?;
+    // `expression` is a borrowed source slice. An earlier comment may repeat
+    // its complete text, so substring search cannot establish its position.
+    let expression_start = expression
+        .as_ptr()
+        .addr()
+        .checked_sub(original.as_ptr().addr())?;
+    // The first comma-delimited operand is trimmed, not comment-projected.
+    // Its start therefore follows only this opening delimiter's whitespace.
+    let after_open = &expression[open + 1..];
     let scrutinee_start =
-        original.find(expression)? + open + 1 + expression[open + 1..].find(&scrutinee)?;
+        expression_start + open + 1 + after_open.len() - after_open.trim_start().len();
     let preceding_lines = original[..scrutinee_start]
         .bytes()
         .filter(|byte| *byte == b'\n')
@@ -207,7 +216,11 @@ pub(super) fn complete_block_body(text: &str) -> Option<(String, usize, usize)> 
     if !expression[body.len() + 2..].trim().is_empty() {
         return None;
     }
-    let body_start = text.find(expression)? + 1;
+    let body_start = expression
+        .as_ptr()
+        .addr()
+        .checked_sub(text.as_ptr().addr())?
+        + 1;
     let before = text[..body_start]
         .bytes()
         .filter(|byte| *byte == b'\n')

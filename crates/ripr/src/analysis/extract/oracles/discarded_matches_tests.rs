@@ -135,6 +135,24 @@ fn discarded_matchers_cannot_supply_an_unrelated_observers_pattern() -> Result<(
 }
 
 #[test]
+fn repeated_matcher_text_in_type_trivia_cannot_move_the_observer() -> Result<(), String> {
+    let body = "let expect_match: (\n/* matches!(\nresult.unwrap(),\n2) */\nbool\n) = matches!(\nresult.unwrap(),\n2);";
+    let facts = extract_assertions(body, 10);
+    let [fact] = facts.as_slice() else {
+        return Err(format!("expected one actual scrutinee observer: {facts:?}"));
+    };
+    if fact.line != 16
+        || fact.text != "result.unwrap();"
+        || fact.kind != OracleKind::SmokeOnly
+        || fact.strength != OracleStrength::Smoke
+        || fact.observed_tokens != ["result"]
+    {
+        return Err(format!("repeated comment moved the observer: {fact:?}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn discarded_matches_in_a_parsed_owner_test_are_not_oracles() -> Result<(), String> {
     for statement in DISCARDED {
         let source = format!(

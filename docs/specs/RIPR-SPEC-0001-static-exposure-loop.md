@@ -268,6 +268,7 @@ Fixture coverage:
 - `discarded_matches_are_not_lexical_oracles`
 - `deeply_nested_discarded_matchers_fail_closed`
 - `discarded_matchers_cannot_supply_an_unrelated_observers_pattern`
+- `repeated_matcher_text_in_type_trivia_cannot_move_the_observer`
 - `discarded_matches_in_a_parsed_owner_test_are_not_oracles`
 - `registered_trials_do_not_credit_discarded_matcher_computations`
 - `asserting_wrappers_keep_consumed_pattern_oracles`
