@@ -9,6 +9,13 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Fixed
+
+- Source-subject stamps keep whitespace-bearing path identity, so a check JSON
+  stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
+  tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
+  prefix components stay rejected (#5128).
+
 ### Changed
 
 - Classified seam-cache publication serializes borrowed records through a
@@ -20,6 +27,10 @@ are scoped or reviewed.
   (#4999). Cache load/decode bounds remain #5124. Host-scoped store-phase RSS
   remains `not_established` (#3794).
 
+- LSP: the actionable-profile line-findings hover names the editor-neutral
+  `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
+  `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
+  instead of telling every client to set the VS Code-only name (#5094).
 - Rust finding output preserves the matched related-test/oracle count before
   bounded packing. JSON, SARIF, and human totals agree while retained rows and
   exposure classification remain unchanged. (#5146)
