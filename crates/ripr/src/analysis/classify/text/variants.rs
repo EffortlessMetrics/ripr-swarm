@@ -38,13 +38,12 @@ const PRIMITIVE_TYPE_NAMES: &[&str] = &[
 ///   no variants;
 /// - the qualifying segment starts lowercase (`crate::KIB`, `limits::MAX`): a
 ///   module path names an item, while a variant is named through its
-///   CamelCase enum;
-/// - the last segment contains `_` (`Limits::MAX_LEN`): rustc's
-///   `non_camel_case_types` lint rejects that spelling for a variant.
+///   CamelCase enum.
 ///
-/// `Kind::ON` or `Grade::A` stay variants: an all-caps name under a CamelCase
-/// type is legal for both a variant and an associated constant, so the label
-/// keeps its prior meaning there instead of guessing.
+/// `Kind::ON`, `Grade::A` or `Limits::MAX_LEN` stay variants: an all-caps
+/// name under a CamelCase type is legal for both a variant and an associated
+/// constant (a `MAX_LEN` variant only draws a naming lint warning), so the
+/// label keeps its prior meaning there instead of guessing.
 pub(in crate::analysis) fn path_value_is_constant(path: &str) -> bool {
     let mut segments = path.rsplit("::");
     let Some(last) = segments.next() else {
@@ -63,7 +62,6 @@ pub(in crate::analysis) fn path_value_is_constant(path: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_lowercase())
-        || last.contains('_')
 }
 
 #[cfg(test)]
@@ -101,13 +99,15 @@ mod tests {
         assert!(path_value_is_constant("f64::EPSILON"));
         assert!(path_value_is_constant("crate::KIB"));
         assert!(path_value_is_constant("bytesize::units::KIB"));
-        assert!(path_value_is_constant("Limits::MAX_LEN"));
         // Real variants keep their label.
         assert!(!path_value_is_constant("AuthError::RevokedToken"));
         assert!(!path_value_is_constant("std::cmp::Ordering::Less"));
         assert!(!path_value_is_constant("Level::V2"));
         // Ambiguous all-caps under a CamelCase type: no evidence either way.
         assert!(!path_value_is_constant("Kind::ON"));
+        // An underscore is no evidence: `enum Limits { MAX_LEN }` compiles
+        // with only a naming lint warning.
+        assert!(!path_value_is_constant("Limits::MAX_LEN"));
         assert!(!path_value_is_constant("Grade::A"));
         // Not a path.
         assert!(!path_value_is_constant("KIB"));
