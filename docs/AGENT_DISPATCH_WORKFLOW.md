@@ -538,7 +538,8 @@ agent action:
 ```
 
 The limitation names the test and the call path ripr could not trace. When the
-named test does exercise the seam, the seam needs no new test. See
+named test exercises the seam and asserts on the changed value, the seam needs
+no new test; a test that only runs the code is not enough. See
 [Static Limits](STATIC_LIMITS.md#seam-readings-opaque-and-activation_unknown).
 
 ### Declared intent

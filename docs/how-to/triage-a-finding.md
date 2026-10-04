@@ -52,8 +52,8 @@ related test tests/it.rs:3 discount_runs uses none unknown oracle; misses: has n
 `ripr explain` repeats the list under "Why this verdict". In JSON the same
 facts are `related_tests[].miss` (a controlled value) and `related_tests[].why`
 (the sentence). Both are omitted when ripr established no miss, for example for
-the test that catches an `exposed` change. The reason is evidence only: it
-does not change the finding's class or next step. Rust findings carry it today;
+the test that catches an `exposed` change. The reason does not change the
+finding's class. Use it to choose a follow-up from the table below. Rust findings carry it today;
 Python, TypeScript and Perl findings do not yet. `no_assertion`,
 `assertion_not_observing` and `assertion_not_credited` can appear under any
 class. The other values appear only under `no_static_path`, `weakly_exposed` and
