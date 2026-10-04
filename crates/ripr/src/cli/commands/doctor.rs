@@ -1633,10 +1633,12 @@ fn generated_workflow_line(workflow: &str, current_version: &str) -> Option<Stri
     }
 }
 
-/// Workspace-relative Cargo config paths Cargo reads `[env]` from. When both
-/// exist, `config.toml` is the one Cargo resolves first, so the first
-/// existing regular file here is the config a build against this root uses.
-const CARGO_CONFIG_PATHS: [&str; 2] = [".cargo/config.toml", ".cargo/config"];
+/// Workspace-relative Cargo config paths Cargo reads `[env]` from, in Cargo's
+/// own precedence order: the extensionless name wins when both exist ("If
+/// both files exist, Cargo will use the file without the extension", Cargo
+/// reference), so the first existing regular file here is the config a build
+/// against this root uses.
+const CARGO_CONFIG_PATHS: [&str; 2] = [".cargo/config", ".cargo/config.toml"];
 
 /// The variables MSVC `link.exe` and other native linkers take their temp
 /// directory from.
@@ -1656,10 +1658,28 @@ struct LinkerTempRedirect {
     all_forced: bool,
 }
 
+/// Whether an `[env]` entry's `relative = true` value stays inside the
+/// workspace. Cargo joins such a value to the config's parent directory, but
+/// an absolute value replaces it (on Windows a root-only `/x` does too) and
+/// a `..` component escapes it — those are not workspace-relative
+/// directories, so the preflight must not label or probe them as ones it
+/// owns.
+fn is_workspace_relative_value(dir: &str) -> bool {
+    let path = Path::new(dir);
+    !path.is_absolute()
+        && !path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::RootDir
+            )
+        })
+}
+
 /// Parse the `[env]` linker-temp redirect out of a Cargo config's text. Only
-/// table entries with `relative = true` redirect into a workspace directory;
-/// plain string values, absolute entries and other variables do not, so they
-/// are not reported. An over-broad match would warn on workspaces the
+/// table entries with `relative = true` whose value stays inside the
+/// workspace redirect into a workspace directory; plain string values,
+/// absolute or parent-escaping entries and other variables do not, so they
+/// are not reported — an over-broad match would warn on workspaces the
 /// failure cannot hit, and a missing directory is only a defect while it is
 /// the linker's temp directory.
 fn linker_temp_redirect(config_text: &str) -> Option<LinkerTempRedirect> {
@@ -1684,6 +1704,9 @@ fn linker_temp_redirect(config_text: &str) -> Option<LinkerTempRedirect> {
         let Some(dir) = entry.get("value").and_then(|value| value.as_str()) else {
             continue;
         };
+        if !is_workspace_relative_value(dir) {
+            continue;
+        }
         if !redirect.vars.contains(&var) {
             redirect.vars.push(var);
         }
@@ -1701,12 +1724,12 @@ fn linker_temp_redirect(config_text: &str) -> Option<LinkerTempRedirect> {
     (!redirect.vars.is_empty()).then_some(redirect)
 }
 
-/// Read the workspace's own Cargo config (`.cargo/config.toml`, else the
-/// legacy `.cargo/config`). Returns the relative path for evidence and the
-/// text. A repository can commit these paths as a symlink (to `/dev/zero`,
-/// say); read nothing but a regular file, and an unreadable or oversized
-/// config stays silent — the preflight never fires on evidence it could not
-/// read.
+/// Read the workspace's own Cargo config, in Cargo's precedence order (the
+/// extensionless `.cargo/config` wins when both names exist). Returns the
+/// relative path for evidence and the text. A repository can commit these
+/// paths as a symlink (to `/dev/zero`, say); read nothing but a regular
+/// file, and an unreadable or oversized config stays silent — the preflight
+/// never fires on evidence it could not read.
 fn read_workspace_cargo_config(root: &Path) -> Option<(&'static str, String)> {
     for relative in CARGO_CONFIG_PATHS {
         let path = root.join(relative);
@@ -1745,7 +1768,36 @@ fn linker_temp_redirect_advisory(root: &Path) -> Option<String> {
     if absent.is_empty() {
         return None;
     }
-    let dirs = absent.join(", ");
+    // Grammar and repair follow the count: the repair names the workspace-
+    // rooted path, not a bare relative name, so running it from a different
+    // working directory than the selected root still creates the directory
+    // cargo will actually use.
+    let (dirs_phrase, existence, persistence, repair) = if absent.len() == 1 {
+        (
+            format!("{}/", absent[0]),
+            "does not exist",
+            "it exists",
+            format!(
+                "Create it before building from source (for example `mkdir {}`)",
+                output::path::human_path(&root.join(absent[0]))
+            ),
+        )
+    } else {
+        let dirs_list = absent
+            .iter()
+            .map(|dir| format!("{dir}/"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (
+            dirs_list,
+            "do not exist",
+            "they exist",
+            format!(
+                "Create each before building from source (for example `mkdir {}`)",
+                output::path::human_path(&root.join(absent[0]))
+            ),
+        )
+    };
     let override_note = if redirect.all_forced {
         "exported TEMP/TMP cannot override it (force = true)"
     } else {
@@ -1753,12 +1805,11 @@ fn linker_temp_redirect_advisory(root: &Path) -> Option<String> {
     };
     Some(format!(
         "{relative_path} redirects linker temp variables ({}) into workspace-relative \
-         {dirs}/, which does not exist; building with an isolated CARGO_TARGET_DIR fails \
-         MSVC linking (LNK1104 naming {}/lnk*.tmp) until it exists. Create the missing \
-         directory before building from source (for example `mkdir {}`); {override_note}",
+         {dirs_phrase}, which {existence}; building with an isolated CARGO_TARGET_DIR fails \
+         MSVC linking (LNK1104 naming {}/lnk*.tmp) until {persistence}. {repair}; \
+         {override_note}",
         redirect.vars.join(", "),
         output::path::human_path(&root.join(absent[0])),
-        absent[0],
     ))
 }
 
@@ -1964,6 +2015,25 @@ mod tests {
             "the relative TMPDIR entry must redirect: {redirect:?}"
         );
 
+        // Absolute and parent-escaping values are not workspace-relative
+        // directories, so they are not recorded at all — not as variables,
+        // directories, or force summary — even when a valid entry coexists.
+        let escaping = "[env]\n\
+            TEMP = { value = \"/elsewhere\", relative = true }\n\
+            TMP = { value = \"../outside\", relative = true, force = true }\n\
+            TMPDIR = { value = \"target\", relative = true }\n";
+        let redirect = linker_temp_redirect(escaping);
+        assert!(
+            redirect.as_ref().is_some_and(|redirect| {
+                redirect.vars == ["TMPDIR"] && redirect.dirs == ["target"] && !redirect.all_forced
+            }),
+            "absolute and parent-escaping entries must be rejected, valid ones kept: {redirect:?}"
+        );
+        assert_eq!(
+            linker_temp_redirect("[env]\nTEMP = { value = \"../outside\", relative = true }\n",),
+            None
+        );
+
         assert_eq!(linker_temp_redirect("[env]\nTEMP = \"target\"\n"), None);
         assert_eq!(linker_temp_redirect("[env]\nRUST_LOG = \"debug\"\n"), None);
         assert_eq!(linker_temp_redirect("[profile.dev]\nopt-level = 0\n"), None);
@@ -2000,11 +2070,26 @@ mod tests {
         std::fs::write(root.join(".cargo/config"), REPO_SHAPED_CARGO_CONFIG)
             .map_err(|err| format!("write legacy config: {err}"))?;
         let legacy = linker_temp_redirect_advisory(&root);
-        // An unreadable (here: oversized) config stays silent.
+        // Cargo's precedence: when both names exist, the extensionless file
+        // wins, so the advisory must reflect its redirect, not config.toml's.
+        std::fs::write(
+            &config,
+            "[env]\nTMP = { value = \"other\", relative = true }\n",
+        )
+        .map_err(|err| format!("write conflicting config.toml: {err}"))?;
+        let conflicting = linker_temp_redirect_advisory(&root);
+        // An unreadable (here: oversized) config stays silent: with the
+        // extensionless file removed, the oversized config.toml is the first
+        // existing name, and an unreadable first name is never traded for a
+        // later readable one.
+        std::fs::remove_file(root.join(".cargo/config"))
+            .map_err(|err| format!("remove legacy config: {err}"))?;
         let mut oversized = REPO_SHAPED_CARGO_CONFIG.to_string();
         oversized.push_str(&"#".repeat(CARGO_CONFIG_MAX_BYTES as usize));
         std::fs::write(&config, oversized).map_err(|err| format!("write oversized: {err}"))?;
         let too_big = linker_temp_redirect_advisory(&root);
+        // Compute the rooted-repair expectation before the tree is removed.
+        let rooted_target = output::path::human_path(&root.join("target"));
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
 
         let absent = absent.unwrap_or_default();
@@ -2014,8 +2099,12 @@ mod tests {
         );
         assert!(absent.contains("(TEMP, TMP, TMPDIR)"), "{absent}");
         assert!(absent.contains("workspace-relative target/"), "{absent}");
+        assert!(absent.contains("which does not exist"), "{absent}");
         assert!(absent.contains("LNK1104"), "{absent}");
-        assert!(absent.contains("mkdir target"), "{absent}");
+        assert!(
+            absent.contains(&format!("mkdir {rooted_target}")),
+            "the repair must name the workspace-rooted directory, not a cwd-relative one: {absent}"
+        );
         assert!(
             absent.contains("exported TEMP/TMP cannot override it (force = true)"),
             "{absent}"
@@ -2027,7 +2116,48 @@ mod tests {
             legacy.starts_with(".cargo/config redirects linker temp variables"),
             "legacy extensionless config must be read, got: {legacy:?}"
         );
+        let conflicting = conflicting.unwrap_or_default();
+        assert!(
+            conflicting.starts_with(".cargo/config redirects linker temp variables")
+                && conflicting.contains("workspace-relative target/")
+                && !conflicting.contains("other"),
+            "when both config names exist the extensionless redirect must win: {conflicting:?}"
+        );
         assert_eq!(too_big, None);
+        Ok(())
+    }
+
+    #[test]
+    fn linker_temp_redirect_advisory_pluralizes_multiple_absent_dirs() -> Result<(), String> {
+        // Two variables redirected into two distinct absent directories:
+        // the evidence must read as plural and the repair must name every
+        // directory, not just the first.
+        let config_text = "[env]\n\
+            TEMP = { value = \"target\", relative = true, force = true }\n\
+            TMPDIR = { value = \"elsewhere\", relative = true }\n";
+        let redirect = linker_temp_redirect(config_text);
+        assert!(
+            redirect.as_ref().is_some_and(|redirect| {
+                redirect.dirs == ["target", "elsewhere"] && !redirect.all_forced
+            }),
+            "distinct directories must both be recorded: {redirect:?}"
+        );
+        let root = unique_command_test_dir("linker-temp-redirect-multi");
+        std::fs::create_dir_all(root.join(".cargo"))
+            .map_err(|err| format!("create .cargo: {err}"))?;
+        std::fs::write(root.join(".cargo/config.toml"), config_text)
+            .map_err(|err| format!("write config: {err}"))?;
+        let advisory = linker_temp_redirect_advisory(&root).unwrap_or_default();
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        assert!(
+            advisory.contains("target/, elsewhere/, which do not exist"),
+            "{advisory}"
+        );
+        assert!(advisory.contains("until they exist"), "{advisory}");
+        assert!(
+            advisory.contains("Create each before building"),
+            "{advisory}"
+        );
         Ok(())
     }
 

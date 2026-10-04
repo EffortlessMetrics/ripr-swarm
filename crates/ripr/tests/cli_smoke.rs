@@ -9470,7 +9470,7 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
         })
         .unwrap_or_default()
         .to_string();
-    for needle in ["LNK1104", "workspace-relative target/", "mkdir target"] {
+    for needle in ["LNK1104", "workspace-relative target/", "mkdir "] {
         assert!(
             evidence.contains(needle),
             "evidence must name {needle}: {evidence}"
@@ -9488,7 +9488,9 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
         "the analysis profile must not carry the source-build preflight"
     );
 
-    // The human surface prints the same advisory with its repair.
+    // The human surface prints the same advisory with its repair. The repair
+    // names the workspace-rooted directory (the binary is invoked from a
+    // different working directory here), not a bare cwd-relative name.
     let human = run_ripr(&["doctor", "--root", &root, "--profile", "source-build"]);
     let stdout = String::from_utf8_lossy(&human.stdout);
     assert!(
@@ -9496,7 +9498,16 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
         "{stdout}"
     );
     assert!(stdout.contains("LNK1104"), "{stdout}");
-    assert!(stdout.contains("mkdir target"), "{stdout}");
+    let raw_target = workspace.join("target").display().to_string();
+    let rooted_target = if cfg!(windows) {
+        raw_target.replace('\\', "/")
+    } else {
+        raw_target
+    };
+    assert!(
+        stdout.contains(&format!("mkdir {rooted_target}")),
+        "repair must name the workspace-rooted directory {rooted_target}:\n{stdout}"
+    );
 
     // Once the directory exists (a normal workspace build creates it), the
     // preflight is silent again.
