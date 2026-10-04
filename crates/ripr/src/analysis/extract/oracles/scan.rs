@@ -2127,14 +2127,14 @@ fn matcher_free_text_at_depth(text: &str, depth: usize) -> String {
         return output;
     }
     let masked = mask_comments_and_strings(text);
-    let mut depth = 0usize;
+    let mut delimiter_depth = 0usize;
     let mut start = 0usize;
     let mut output = String::new();
     for (index, character) in masked.char_indices() {
         match character {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth = depth.saturating_sub(1),
-            ';' if depth == 0 => {
+            '(' | '[' | '{' => delimiter_depth += 1,
+            ')' | ']' | '}' => delimiter_depth = delimiter_depth.saturating_sub(1),
+            ';' if delimiter_depth == 0 => {
                 append_matcher_free_statement(&text[start..=index], &mut output, depth);
                 start = index + 1;
             }
