@@ -24,4 +24,6 @@ silently as an uncapped baseline. Within each size, format samples interleave
 in alternating order and each sample records its execution order. A sample
 whose run exits successfully but reports a missing or zero inventory is
 recorded as `empty_inventory`, which makes the report `inconclusive` instead
-of a silent pass.
+of a silent pass. (The cap check runs first: a capped sample with a missing
+or zero inventory is recorded as `capped`, not `empty_inventory`. Both
+statuses make the report `inconclusive`.)
