@@ -198,7 +198,8 @@ made `ripr outcome` fail to parse it. That failure was the shim's, not ripr's.
 log="${AAU_LOG:?}"
 o=$(mktemp); e=$(mktemp)
 /path/to/real/ripr "$@" >"$o" 2>"$e"; rc=$?
-{ printf '\n### cwd=%s rc=%s\n$ ripr' "$PWD" "$rc"; printf ' %q' "$@"
+{ printf '\n### %s cwd=%s rc=%s\n$ ripr' "$(date -u +%H:%M:%S)" "$PWD" "$rc"
+  printf ' %q' "$@"
   printf '\n--- stdout\n'; cat "$o"; printf '\n--- stderr\n'; cat "$e"; } >>"$log"
 cat "$o"; cat "$e" >&2; rm -f "$o" "$e"; exit $rc
 ```
@@ -255,7 +256,9 @@ help beyond the brief.
 | semver | 20 | 0/3 → 3/3 | 2/2 caught (1 unviable) | 5 exposed, 1 reachable_unrevealed |
 
 ripr steered every agent to the real gap: each finished with tests that catch
-every answer-key mutant, and no agent edited production code. ripr never
+every answer-key mutant, and no agent edited production code. On the
+evaluator side (`cargo mutants` before and after each run, kept with the
+run logs outside the repo), ripr never
 reported `exposed` for a probe whose mutants survived. All three agents ended
 with findings they judged, correctly, to be ripr limitations rather than
 missing tests.
@@ -270,15 +273,18 @@ missing tests.
    base or the head it analyzed. `ripr --help` describes the loop as "you add
    one focused test -> ripr records whether the gap closed", which the
    default does not do for an uncommitted test.
+   Since this run the human header prints ``edits: uncommitted changes not
+   analyzed (reads HEAD; add `--worktree`)`` above the summary; whether the
+   default should read the worktree when it is dirty is #5358.
 2. **Tests that discriminate stay `weakly_exposed` when they don't quote the
    changed text.** Measured:
    - humantime: exact-value tests through `parse_duration` catch all answer-key
      mutants and all `cargo mutants` mutants, yet both `parse_unit` arms stay
      `weakly_exposed` (`reach weak: No test is seen calling parse_unit`).
      The agent flipped them to `exposed` only by writing a white-box test that
-     constructs the private `Parser` and calls `parse_unit`. Removing that one
-     test returns both arms to `weakly_exposed` while every mutant is still
-     caught. ripr rewarded an implementation-coupled test over the end-to-end
+     constructs the private `Parser` and calls `parse_unit`. In an evaluator re-run
+     with that one test removed, both arms return to `weakly_exposed` while
+     every mutant is still caught. ripr rewarded an implementation-coupled test over the end-to-end
      tests that already did the job.
    - bytesize: `return None` and `Some(self.0 / unit)` stay `weakly_exposed`
      (`observation_unverified: no assertion text references this probe's
@@ -307,7 +313,7 @@ missing tests.
 6. **Smaller output defects.**
    - `--format human-full` cut a short source line mid-token
      (`BuildMetadata::EM` / `PTY,`) when a multi-line changed fragment
-     passed the 180-column budget in total. Fixed with this document.
+     passed the 180-column budget in total. Fixed in #5293.
    - For the bytesize predicate, `context` reports the stage
      `"discriminate": "yes"` (infection is the weak stage) while `explain`
      prints the verdict line `discriminator not established`. Both may be

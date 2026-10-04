@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Human `ripr check` output now says in its header when uncommitted edits
+  were not analyzed (``edits: uncommitted changes not analyzed (reads HEAD; add
+  `--worktree`)``), so a re-check after adding a test no longer looks
+  unchanged without saying why. The same `--worktree` note still closes the
+  report.
+
 - Errors and `pilot`: `ripr pilot` now says on the terminal when its top seam
   has a focused test but no `ripr agent repair` command, and closes with
   `Next, by hand:` instead of silence. `ripr init --ci` names the accepted

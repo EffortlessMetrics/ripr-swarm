@@ -13,6 +13,10 @@ const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test 
 `ripr check` reads each file as committed at HEAD; add `--worktree` to include staged and \
 unstaged edits (for example `ripr check --worktree`).\n";
 
+/// One-line header form of [`UNANALYZED_WORKING_TREE_NOTE`].
+const UNANALYZED_WORKING_TREE_HEADER: &str =
+    "edits: uncommitted changes not analyzed (reads HEAD; add `--worktree`)\n";
+
 /// Render the bounded triage report in the default human-readable CLI format.
 pub fn render(output: &CheckOutput) -> String {
     render_bounded_with_config(output, &RiprConfig::default())
@@ -186,10 +190,18 @@ pub(crate) fn render_full_with_config_and_navigation(
 fn render_header_summary(output: &CheckOutput) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n\n",
+        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
         output.root.display()
     ));
+    // The closing working-tree note sits below the whole report, so a reader
+    // who re-runs `ripr check` right after adding a test sees unchanged
+    // findings long before the reason. Name it beside the run identity too;
+    // the closing note keeps the full remedy.
+    if output.unanalyzed_working_tree {
+        out.push_str(UNANALYZED_WORKING_TREE_HEADER);
+    }
+    out.push('\n');
     // #4322: the only per-run denominator line a human sees must match the
     // finding vocabulary. All seven classes render with their canonical
     // `ExposureClass::as_str()` tokens (no `weak`/`unrevealed` abbreviations,
@@ -2488,6 +2500,40 @@ mod tests {
             "  Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`.\n"
         ), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
+    }
+
+    /// An agent re-running `ripr check` after adding a test saw identical
+    /// findings and missed the closing note. The header names the unanalyzed
+    /// edits beside the run identity; a clean tree adds no line.
+    #[test]
+    fn header_names_unanalyzed_working_tree_before_the_summary() {
+        let mut output = single_finding_output(sample_finding());
+        output.unanalyzed_working_tree = true;
+        for rendered in [
+            render(&output),
+            super::render_full_with_config(&output, &crate::config::RiprConfig::default()),
+        ] {
+            assert!(
+                rendered.starts_with(
+                    "ripr static RIPR exposure analysis\nmode: draft\nroot: repo\n\
+                     edits: uncommitted changes not analyzed (reads HEAD; add `--worktree`)\n\n"
+                ),
+                "header must name the unanalyzed edits; got:\n{rendered}"
+            );
+            assert!(
+                rendered.contains("Note: uncommitted source and test changes were not analyzed")
+            );
+        }
+
+        output.unanalyzed_working_tree = false;
+        let clean = render(&output);
+        assert!(
+            clean.starts_with(
+                "ripr static RIPR exposure analysis\nmode: draft\nroot: repo\n\nSummary:"
+            ),
+            "a clean tree keeps the header unchanged; got:\n{clean}"
+        );
+        assert!(!clean.contains("edits:"));
     }
 
     fn single_finding_output(finding: Finding) -> CheckOutput {
