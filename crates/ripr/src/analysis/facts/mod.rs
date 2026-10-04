@@ -3,6 +3,7 @@ pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
 mod harness_registry;
 mod includes;
+mod index;
 mod model;
 mod parameterized_tests;
 mod role_composition;
@@ -29,10 +30,11 @@ pub fn build_index_with_test_harnesses(
     let mut index = index_phase("index_parse", || build::build_index(root, files))?;
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut index);
-        Ok(())
+        index.refresh_memberships()
     })?;
     index_phase("index_test_styles", || {
-        test_styles::normalize_index_test_styles(&mut index)
+        test_styles::normalize_index_test_styles(&mut index)?;
+        index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
     // recomputes every role from same-file text and would stomp composed
@@ -57,6 +59,7 @@ pub fn build_index_with_test_harnesses(
         test_helpers::credit_same_file_assertion_helpers(&mut index);
         Ok(())
     })?;
+    index.finalize()?;
     Ok(index)
 }
 
@@ -70,10 +73,11 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     })?;
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
-        Ok(())
+        cached.index.refresh_memberships()
     })?;
     index_phase("index_test_styles", || {
-        test_styles::normalize_index_test_styles(&mut cached.index)
+        test_styles::normalize_index_test_styles(&mut cached.index)?;
+        cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {
         role_composition::compose_index_source_roles(&mut cached.index, root);
@@ -95,6 +99,7 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
         test_helpers::credit_same_file_assertion_helpers(&mut cached.index);
         Ok(())
     })?;
+    cached.index.finalize()?;
     Ok(cached)
 }
 
@@ -105,6 +110,9 @@ pub(crate) use harness_registry::validated_file_wide_harness_targets;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
+pub use index::{FactSlice, FileData, FileFactsView};
+#[cfg(test)]
+pub(crate) use model::OwnedRustIndex;
 pub use model::{
     CallFact, FileFacts, FunctionContainer, FunctionFact, FunctionImplContext, FunctionItemFact,
     FunctionSourceRole, FunctionSummary, HarnessLimitationFact, HarnessSelectorCapability,

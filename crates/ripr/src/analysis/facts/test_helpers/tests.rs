@@ -22,10 +22,17 @@ fn index_for(source: &str) -> Result<RustIndex, Box<dyn Error>> {
 
 fn test_named<'index>(index: &'index RustIndex, name: &str) -> Result<&'index TestFact, String> {
     index
-        .tests
+        .tests()
         .iter()
         .find(|test| test.name == name)
-        .ok_or_else(|| format!("premise: test `{name}` is indexed: {:?}", index.tests))
+        .ok_or_else(|| {
+            let names: Vec<&str> = index
+                .tests()
+                .iter()
+                .map(|test| test.name.as_str())
+                .collect();
+            format!("premise: test `{name}` is indexed: {names:?}")
+        })
 }
 
 fn calls(test: &TestFact) -> Vec<&str> {
@@ -55,7 +62,7 @@ fn test_calling_cfg_test_helper_gains_the_helper_call_and_assertion() -> Result<
     assert_eq!(assertion_texts(test), vec!["assert_eq!(gate(x), want);"]);
     assert_eq!(test.assertions[0].line, 10, "the helper's own line");
     let file_test = index
-        .files
+        .files()
         .get(Path::new("src/lib.rs"))
         .and_then(|facts| facts.tests.iter().find(|test| test.name == "boundary"))
         .ok_or("premise: per-file test fact exists")?;

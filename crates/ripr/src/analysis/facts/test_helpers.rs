@@ -61,7 +61,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     let mut helpers_by_file: BTreeMap<PathBuf, BTreeMap<String, Vec<&FunctionFact>>> =
         BTreeMap::new();
     let mut scopes_by_file: BTreeMap<PathBuf, ModuleItemScopes> = BTreeMap::new();
-    for (file, facts) in &index.files {
+    for (file, facts) in index.files().iter() {
         if facts.used_lexical_fallback {
             continue;
         }
@@ -70,7 +70,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         };
         scopes_by_file.insert(file.clone(), scopes);
         let names = helpers_by_file.entry(file.clone()).or_default();
-        for function in &facts.functions {
+        for function in facts.functions.iter() {
             names
                 .entry(function.name.clone())
                 .or_default()
@@ -79,7 +79,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     }
 
     let mut widened: BTreeMap<(PathBuf, usize, String), TestFact> = BTreeMap::new();
-    for test in &index.tests {
+    for test in index.tests().iter() {
         let (Some(functions_by_name), Some(scopes)) = (
             helpers_by_file.get(&test.file),
             scopes_by_file.get(&test.file),
@@ -140,22 +140,14 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         return;
     }
 
-    for test in &mut index.tests {
+    // One write per stored record reaches both the flat and per-file views.
+    index.for_each_test_mut(|test| {
         if let Some(credited) =
             widened.get(&(test.file.clone(), test.start_line, test.name.clone()))
         {
             *test = credited.clone();
         }
-    }
-    for facts in index.files.values_mut() {
-        for test in &mut facts.tests {
-            if let Some(credited) =
-                widened.get(&(test.file.clone(), test.start_line, test.name.clone()))
-            {
-                *test = credited.clone();
-            }
-        }
-    }
+    });
 }
 
 /// The one same-file definition of `name`, when it is an evidence-only
