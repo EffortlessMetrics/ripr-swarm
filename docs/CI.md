@@ -61,7 +61,10 @@ workflow behavior documented in [Current Workflows](#current-workflows).
   - no-cancel preserves a running expensive job and allows only one pending
     replacement;
   - synchronize-cancel favors the latest commit and may abandon near-complete
-    work.
+    work;
+  - Ready-cancel (current `routed-rust.yml`, #4986) runs the PR qualification
+    only on Draft -> Ready and cancels only when a second Ready transition
+    replaces it.
 - Any switch to or from `cancel-in-progress` must document the affected
   workflows, rollback path, cost tradeoff, and review impact.
 - Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
@@ -266,7 +269,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. |
+| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -542,10 +545,23 @@ push to main / workflow_dispatch:
 `cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
 group is qualified by `github.event_name`, so a second Ready transition replaces
 the prior admission attempt while independent main and manual work cannot replace
-each other. No run ever posts a pseudo-result: the required context is either
-earned by an exact Ready-head run or absent, so a Draft PR with no required check
+each other. No run posts a pseudo-result, so a Draft PR with no required check
 blocks rather than inheriting stale proof. The result job keeps its static
-`Ripr Rust Small Result` name on every run.
+`Ripr Rust Small Result` name on every run. One gap is not enforced: a
+`workflow_dispatch` of `routed-rust.yml` on a PR branch also posts that context
+on the branch head, without the `pull_request`-scoped PR-evidence steps.
+Do not dispatch on PR branches; #5394 tracks enforcing this.
+
+What this means for authors and agents:
+
+- Open PRs as Draft (`gh pr create --draft`), then mark them Ready. A PR opened
+  directly as Ready never receives a `ready_for_review` event and never gets
+  the required check.
+- A push after Ready leaves the new head without the required check. Convert
+  to Draft and mark Ready again once the push is final. If the PR had
+  auto-merge armed, check that it is still armed after the toggle.
+- Labels such as `full-ci` take effect at the next Ready transition, not when
+  they are added.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -867,10 +883,16 @@ is the same: convert the PR to Draft and mark it Ready for review again, which
 runs the full Ready-triggered qualification on the exact head and also
 recovers a dropped delivery. The required check, not run existence, is the
 discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
-real qualification attempt on that exact head. Drafts and fork heads are
+real qualification attempt on that exact head. That check run is created only
+when the `result` job starts, after every implementation job (up to 120
+minutes), so before calling a head dark the watchdog also lists
+`routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
+in-progress run is reported as in flight. Re-toggling Draft -> Ready on such a
+head would cancel the real run, so the watchdog never recommends it. This uses
+`actions: read` only. Drafts and fork heads are
 skipped. No PR comments are posted; each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
-shape (no dispatch command, no `actions: write`).
+shape (no dispatch command, no `actions: write`) and the in-flight check.
 
 ### Self-Hosted Runner Placement
 

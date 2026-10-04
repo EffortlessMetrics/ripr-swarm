@@ -24,6 +24,12 @@ name: PR Staleness Watchdog
 #   that SHA. Run existence alone is not the discriminator: an unrelated
 #   same-workflow run can post a non-required result name, so coverage is
 #   judged by the presence of the exact check branch protection requires.
+# - The required check run is created only when the `result` job starts, after
+#   every implementation job finishes (up to 120 minutes). A head with no
+#   required check but a queued or in-progress Ready-triggered
+#   (`event=pull_request`) routed-rust.yml run is reported as in flight, not
+#   dark: re-toggling Draft -> Ready would cancel that run
+#   (`cancel-in-progress` for pull_request) and restart the qualification.
 # - Dark heads are reported in the step summary with the remedy (Draft ->
 #   Ready). The watchdog never dispatches a workflow, so it needs no
 #   `actions: write` and cannot create a duplicate or lighter required gate.
@@ -42,6 +48,9 @@ on:
 permissions:
   contents: read
   checks: read
+  # Read-only: list routed-rust.yml runs to tell an in-flight qualification
+  # from a dark head. Never `actions: write`.
+  actions: read
 
 jobs:
   watchdog:
@@ -68,7 +77,9 @@ jobs:
           {
             echo "### PR Staleness Watchdog (alert-only)"
             echo ""
-            echo "Dark = no \`$REQUIRED_CHECK\` check run on a Ready PR head SHA (#4937, #4986)."
+            echo "Dark = no \`$REQUIRED_CHECK\` check run and no queued or in-progress Ready-triggered"
+            echo "routed-rust.yml run on a Ready PR head SHA (#4937, #4986). In flight = the run exists"
+            echo "but has not reached its result job yet; leave it alone."
             echo "This sweep never dispatches. Remedy for a dark head: convert the PR to Draft,"
             echo "then mark it Ready for review again to run the Ready-triggered qualification."
             echo ""
@@ -76,7 +87,7 @@ jobs:
             echo "| --- | --- | --- |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          scanned=0 dark=0
+          scanned=0 dark=0 in_progress=0
           while IFS=$'\t' read -r number head_sha head_ref head_repo draft; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
@@ -89,13 +100,19 @@ jobs:
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)"
               else
-                dark=$((dark + 1))
-                disposition="DARK; needs Draft -> Ready (\`$head_ref\`)"
-                echo "::warning title=Dark Ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check; convert to Draft and mark Ready again."
+                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed")] | length' | awk '{s+=$1} END{print s+0}')"
+                if [ "$in_flight" != "0" ]; then
+                  in_progress=$((in_progress + 1))
+                  disposition="in flight ($in_flight Ready-triggered run(s) not yet at result; do not re-toggle)"
+                else
+                  dark=$((dark + 1))
+                  disposition="DARK; needs Draft -> Ready (\`$head_ref\`)"
+                  echo "::warning title=Dark Ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress Ready-triggered run (pushed after Ready, or the Ready event was dropped); convert to Draft and mark Ready again."
+                fi
               fi
             fi
             echo "| #$number | \`${head_sha:0:8}\` | $disposition |" >> "$GITHUB_STEP_SUMMARY"
           done <<<"$prs"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Open PRs scanned: $scanned; dark Ready heads reported: $dark." >> "$GITHUB_STEP_SUMMARY"
+          echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark Ready heads reported: $dark." >> "$GITHUB_STEP_SUMMARY"
