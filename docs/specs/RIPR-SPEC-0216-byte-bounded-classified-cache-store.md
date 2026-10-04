@@ -50,8 +50,10 @@ proving a universal RSS threshold.
   manifest. An unpublished generation directory is removed on those
   failure paths. A prior single entry is parked off the loader's
   preferred path until the new manifest is admitted, then removed; a
-  pre-commit failure restores it only when no newer single entry or
-  sharded manifest occupies the loader-visible paths.
+  pre-commit failure restores it only when no newer single entry occupies
+  the preferred path and the sharded manifest is unchanged since park
+  (a leftover manifest from an earlier single-entry publish does not
+  block restore; a replaced or unreadable manifest does).
 - If one classified seam cannot fit under the configured byte ceiling,
   the store returns `skipped_oversized_record_index_{i}_ceiling_{n}` and
   does not claim a populated cache. Analysis output stays usable.
@@ -87,7 +89,9 @@ proving a universal RSS threshold.
 - A failed sharded replacement of a single entry restores that entry;
   a successful replacement leaves no preferred single path.
 - Rollback restore does not replace a newer single entry or hide a
-  newer sharded manifest published after parking.
+  newer sharded manifest published after parking. An unchanged leftover
+  sharded manifest from an earlier single-entry publish does not block
+  restore.
 - Size probes stop once encoded bytes exceed the ceiling; a large record
   cap still splits on the byte bound without serializing a full
   record-limit window.
@@ -121,6 +125,7 @@ proving a universal RSS threshold.
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_sharded_replace_restores_the_previous_single_entry`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_replace_a_newer_single_entry`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_hide_a_newer_sharded_manifest`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_keeps_a_stale_leftover_manifest_from_blocking_restore`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::cancellation_before_manifest_preserves_the_prior_generation`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls`

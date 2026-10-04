@@ -437,6 +437,7 @@ struct ParkedSingleEntry {
     original: PathBuf,
     parked: PathBuf,
     manifest: PathBuf,
+    manifest_at_park: Option<Vec<u8>>,
     restore: bool,
 }
 
@@ -449,6 +450,15 @@ impl ParkedSingleEntry {
         if !original.exists() {
             return Ok(None);
         }
+        let manifest_at_park = match std::fs::read(&manifest) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(format!(
+                    "read sharded cache manifest before parking failed: {err}"
+                ));
+            }
+        };
         let mut parked = original.clone().into_os_string();
         parked.push(format!(".parked-{publication_id}"));
         let parked = PathBuf::from(parked);
@@ -458,6 +468,7 @@ impl ParkedSingleEntry {
             original,
             parked,
             manifest,
+            manifest_at_park,
             restore: true,
         }))
     }
@@ -467,14 +478,22 @@ impl ParkedSingleEntry {
         let _ = std::fs::remove_file(&self.parked);
     }
 
+    fn manifest_unchanged_since_park(&self) -> bool {
+        match std::fs::read(&self.manifest) {
+            Ok(bytes) => self.manifest_at_park.as_deref() == Some(bytes.as_slice()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => self.manifest_at_park.is_none(),
+            Err(_) => false,
+        }
+    }
+
     fn restore_if_uncontested(&self) {
-        if self.manifest.exists() {
+        if !self.manifest_unchanged_since_park() {
             let _ = std::fs::remove_file(&self.parked);
             return;
         }
         match std::fs::hard_link(&self.parked, &self.original) {
             Ok(()) => {
-                if self.manifest.exists() {
+                if !self.manifest_unchanged_since_park() {
                     let _ = std::fs::remove_file(&self.original);
                 }
                 let _ = std::fs::remove_file(&self.parked);
@@ -483,12 +502,12 @@ impl ParkedSingleEntry {
                 let _ = std::fs::remove_file(&self.parked);
             }
             Err(_) => {
-                if self.original.exists() || self.manifest.exists() {
+                if self.original.exists() || !self.manifest_unchanged_since_park() {
                     let _ = std::fs::remove_file(&self.parked);
                     return;
                 }
                 let _ = std::fs::rename(&self.parked, &self.original);
-                if self.manifest.exists() {
+                if !self.manifest_unchanged_since_park() {
                     let _ = std::fs::remove_file(&self.original);
                 }
             }
@@ -1357,6 +1376,28 @@ mod tests {
         assert!(
             !original.exists(),
             "rollback must not restore a single entry over a newer sharded manifest"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn parked_restore_keeps_a_stale_leftover_manifest_from_blocking_restore() -> Result<(), String>
+    {
+        let dir = isolated_dir("park-leftover-manifest");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let original = dir.join("entry.json");
+        let manifest = dir.join("manifest.json");
+        std::fs::write(&original, b"newer-single").map_err(|err| err.to_string())?;
+        std::fs::write(&manifest, b"stale-leftover-manifest").map_err(|err| err.to_string())?;
+        let parked = ParkedSingleEntry::park(original.clone(), manifest.clone(), "1")?
+            .ok_or_else(|| "expected a parked single entry".to_string())?;
+        drop(parked);
+        let body = std::fs::read(&original).map_err(|err| err.to_string())?;
+        assert_eq!(
+            body, b"newer-single",
+            "an unchanged leftover sharded manifest must not block restoring the parked single entry"
         );
         ignore_remove_dir_all(&dir);
         Ok(())

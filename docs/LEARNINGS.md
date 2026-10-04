@@ -19,8 +19,14 @@ existing atomic temp-file protocol, with an encoded-byte ceiling on both the
 single-entry and sharded paths. Size planning may use a same-length
 placeholder digest so planning does not retain a second encoded body.
 Generation-atomic shard names keep a failed replacement from mixing
-manifests. Load/decode auxiliary memory is a separate claim (#5124). A
-passing record-count test is not RSS proof; host-scoped 10k/self-dogfood
+manifests. Load prefers any non-`Miss` single entry over a sharded
+manifest, and `publish_single_entry` currently leaves the previous
+sharded manifest in place. A parked restore therefore cannot treat
+`manifest.exists()` as “newer shards”: that leftover file is not a
+newer generation. Compare the parked-at snapshot; restore when it is
+unchanged, and refuse restore when the bytes changed or the file is
+unreadable. Load/decode auxiliary memory is a separate claim (#5124).
+A passing record-count test is not RSS proof; host-scoped 10k/self-dogfood
 store-phase RSS stays `not_established` until #3794 observes it.
 
 ## 2026-10-03: `Path::is_dir()` is not a missing-path probe (#5101)

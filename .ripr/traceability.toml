@@ -11730,6 +11730,7 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::failed_sharded_replace_restores_the_previous_single_entry",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_replace_a_newer_single_entry",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_does_not_hide_a_newer_sharded_manifest",
+  "crates/ripr/src/analysis/seam_cache/store.rs::tests::parked_restore_keeps_a_stale_leftover_manifest_from_blocking_restore",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::cancellation_before_manifest_preserves_the_prior_generation",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::encoded_byte_ceiling_defaults_and_rejects_invalid_env",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::publication_ids_stay_unique_across_concurrent_calls",
