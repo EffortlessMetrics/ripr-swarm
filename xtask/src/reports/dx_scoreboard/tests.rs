@@ -913,14 +913,14 @@ fn first_run_rows_fail_closed_on_malformed_or_cut_off_input() {
     );
     // A failed install writes only setup rows; its timing still lands as an
     // incomplete install sample, and no per-case metric appears.
-    let failed_install = [
+    let failed_install_text = [
         row(
             r#""ripr":"r","case":"_setup","step":"install_published","metric":"secs","value":20.0"#,
         ),
         row(r#""ripr":"r","case":"_setup","step":"install_published","metric":"exit","value":101"#),
     ]
     .join("\n");
-    let install_rows = convert(failed_install).map(|input| {
+    let install_rows = convert(failed_install_text.clone()).map(|input| {
         input["metrics"]
             .as_array()
             .map(|rows| {
@@ -931,6 +931,17 @@ fn first_run_rows_fail_closed_on_malformed_or_cut_off_input() {
             })
             .unwrap_or_default()
     });
+    let measured_nothing = convert(failed_install_text.clone()).map(|input| {
+        input["metrics"].as_array().is_some_and(|rows| {
+            rows.iter().all(|r| {
+                !matches!(
+                    r["id"].as_str(),
+                    Some("first_run.friction_events" | "first_run.unknown_verdicts")
+                )
+            })
+        })
+    });
+    assert_eq!(measured_nothing, Ok(true));
     assert!(install_rows.is_ok_and(|rows| rows.len() == 1
         && rows[0]["value"] == json!(20.0)
         && rows[0]["completed"] == json!(false)));

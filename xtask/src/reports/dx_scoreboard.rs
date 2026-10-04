@@ -804,9 +804,13 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
         json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
-        json!({"id": "first_run.friction_events", "value": friction}),
-        json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}),
     ];
+    // An install-only walk ran no cases, so a zero here would read as "no
+    // friction, no unknown verdicts" rather than "not measured".
+    if !cases.is_empty() {
+        out.push(json!({"id": "first_run.friction_events", "value": friction}));
+        out.push(json!({"id": "first_run.unknown_verdicts", "value": unknown, "evidence": format!("verdicts: {}", list(&verdicts))}));
+    }
     if let Some(install) = install {
         // The install alone, so a slower compile is visible even when the
         // walk after it stays fast.
