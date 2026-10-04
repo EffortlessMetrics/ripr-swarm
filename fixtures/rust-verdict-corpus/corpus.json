@@ -2,7 +2,7 @@
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.5",
+  "corpus_version": "2026-10-04.6",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
@@ -661,6 +661,23 @@
         {
           "path": "src/lib.rs",
           "sha256": "53f26e973bc9ea2673d7956adb14fa67c5b6cf2e013edcb0ec2c1c566a50efd3"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-mined-wire",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 from test shapes mined in real crates (bytes, httparse, byteorder)",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "691031773a13f06597c44af20385189d753fb566e1e65e8a84c81496198a309f"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "36261f2ee6b79b76c694078c2140259f32c97ff8f4865763a3289b4c46e227cd"
         }
       ]
     }
@@ -5741,6 +5758,354 @@
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "silent",
         "full_checkout_classifications": [],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-doctest-only-read-u16",
+      "subject_id": "authored-mined-wire",
+      "diff": "cases/mined-doctest-only-read-u16.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 12
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "doctest_only_oracle",
+      "hard_case": "The only test is the doc example on read_u16, which `cargo test` runs as a doctest. Mined from bytes, where 69 of 134 Buf/BufMut methods (the try_get_* family, e.g. https://github.com/tokio-rs/bytes/blob/7930d93d583757e922014312d4aa3e58a415131f/src/buf/buf_impl.rs#L1368) are pinned only by doc examples.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "u16::from_le_bytes([bytes[0], bytes[1]])",
+            "outcome": "tests_failed",
+            "failing_test": "src/lib.rs - read_u16 (line 8)",
+            "equivalence_review": "not equivalent: [0x12, 0x34] reads as 0x3412"
+          },
+          {
+            "replacement": "u16::from_be_bytes([bytes[1], bytes[0]])",
+            "outcome": "tests_failed",
+            "failing_test": "src/lib.rs - read_u16 (line 8)",
+            "equivalence_review": "not equivalent: [0x12, 0x34] reads as 0x3412"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The doc example asserts read_u16(&[0x12, 0x34]) == 0x1234 and `cargo test` runs it, so both byte-order mutants fail the doctest; no unit test calls read_u16.",
+      "labeling_observation": {
+        "ripr_commit": "da6a44d",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "static_unknown",
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-doctest-ignored-read-u16-le",
+      "subject_id": "authored-mined-wire",
+      "diff": "cases/mined-doctest-ignored-read-u16-le.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 21
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "doctest_marked_ignore",
+      "hard_case": "The doc example names the right value but is fenced `ignore`, so `cargo test` never runs it. Negative twin of mined-doctest-only-read-u16: crediting doc examples must follow whether rustdoc runs them.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "u16::from_be_bytes([bytes[0], bytes[1]])",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: [0x34, 0x12] reads as 0x3412"
+          },
+          {
+            "replacement": "u16::from_le_bytes([bytes[1], bytes[0]])",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: [0x34, 0x12] reads as 0x3412"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The only example is marked ignore and no test calls read_u16_le, so neither byte-order mutant fails anything.",
+      "labeling_observation": {
+        "ripr_commit": "da6a44d",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-bool-property-read-u32",
+      "subject_id": "authored-mined-wire",
+      "diff": "cases/mined-bool-property-read-u32.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 26
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value",
+      "test_shape": "bool_property_fn_in_loop",
+      "hard_case": "The oracle is a test-local fn returning bool (value == read(write(value))), asserted with assert! over a sample loop. Mined from byteorder's quickcheck properties (https://github.com/BurntSushi/byteorder/blob/5a82625fae462e8ba64cec8146b24a372b4d75c6/src/lib.rs#L2307), written without quickcheck so the crate stays dependency-free.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])",
+            "outcome": "tests_failed",
+            "failing_test": "tests::u32_reads_what_was_written",
+            "equivalence_review": "not equivalent: 1 reads back as 0x0100_0000"
+          },
+          {
+            "replacement": "u32::from_be_bytes([bytes[0], bytes[1], bytes[3], bytes[2]])",
+            "outcome": "tests_failed",
+            "failing_test": "tests::u32_reads_what_was_written",
+            "equivalence_review": "not equivalent: 0x0102_0304 reads back as 0x0102_0403"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "reads_back(value) compares read_u32 of the big-endian bytes with the value, and the loop's samples are not byte palindromes, so both mutants make assert!(reads_back(..)) fail.",
+      "labeling_observation": {
+        "ripr_commit": "da6a44d",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-macro-closure-header-length",
+      "subject_id": "authored-mined-wire",
+      "diff": "cases/mined-macro-closure-header-length.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 39
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "macro_test_closure_body_assert",
+      "hard_case": "A macro_rules! generates each #[test]; the test's assert_eq! sits in a closure the generated body always calls. Mined from httparse's req!/res! macros (https://github.com/seanmonstar/httparse/blob/a0fa552e4e0fa9a5914a736ef3a556748fef709b/src/lib.rs#L1332), about 360 tests. The corpus's other macro-generated cases are all not_discriminated.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "[1, len, ..] => Status::Complete(*len as usize + 3),",
+            "outcome": "tests_failed",
+            "failing_test": "tests::version_one_counts_its_length",
+            "equivalence_review": "not equivalent: a 3-byte length reads as Complete(6)"
+          },
+          {
+            "replacement": "[1, len, ..] => Status::Complete(*len as usize * 2),",
+            "outcome": "tests_failed",
+            "failing_test": "tests::version_one_counts_its_length",
+            "equivalence_review": "not equivalent: a 3-byte length reads as Complete(6)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "version_one_counts_its_length expands to a #[test] that calls the closure with header(&[1, 3, ..]) and asserts Complete(5), so both arithmetic mutants fail it.",
+      "labeling_observation": {
+        "ripr_commit": "da6a44d",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-roundtrip-symmetric-mask",
+      "subject_id": "authored-mined-wire",
+      "diff": "cases/mined-roundtrip-symmetric-mask.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 45
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "behavior_selector_const",
+      "test_shape": "roundtrip_only_symmetric_constant",
+      "hard_case": "The only test masks twice and checks the payload is restored. XOR with any key is its own inverse, so a round trip cannot tell keys apart. Round-trip oracles are common in codecs (byteorder, base64, toml); a constant shared by both directions defeats them.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "const MASK: u8 = 0x5b;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: masked bytes differ on the wire"
+          },
+          {
+            "replacement": "const MASK: u8 = 0;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: masking becomes the identity"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "masking_twice_restores_the_payload holds for every MASK value, and nothing asserts the masked bytes, so both mutants pass.",
+      "labeling_observation": {
+        "ripr_commit": "da6a44d",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-hex-table-tested-row",
+      "subject_id": "authored-mined-wire",
+      "diff": "cases/mined-hex-table-tested-row.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 56
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "static_lookup_table_row_asserted",
+      "hard_case": "The edit is a row of a static lookup table, not code. Mined from httparse's byte_map! tables (https://github.com/seanmonstar/httparse/blob/a0fa552e4e0fa9a5914a736ef3a556748fef709b/src/lib.rs#L78) and base64 alphabets.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "b'9', b'9',",
+            "outcome": "tests_failed",
+            "failing_test": "tests::hex_of_decimal_digits",
+            "equivalence_review": "not equivalent: nibble 8 renders as '9'"
+          },
+          {
+            "replacement": "b'8', b'8',",
+            "outcome": "tests_failed",
+            "failing_test": "tests::hex_of_decimal_digits",
+            "equivalence_review": "not equivalent: nibble 9 renders as '8'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "hex_of_decimal_digits renders 0x89 and asserts \"0123456789\", so changing either entry in the 8/9 row fails it.",
+      "labeling_observation": {
+        "ripr_commit": "da6a44d",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "mined-hex-table-untested-row",
+      "subject_id": "authored-mined-wire",
+      "diff": "cases/mined-hex-table-untested-row.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 57
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "field_construction",
+      "test_shape": "static_lookup_table_row_unasserted",
+      "hard_case": "Negative twin of mined-hex-table-tested-row: the same table, but no test renders a nibble from 10 to 15. In httparse, dropping `~` from TOKEN_MAP is likewise missed by every test.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "b'A', b'b', b'c', b'd', b'e', b'f',",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: nibble 10 renders as 'A'"
+          },
+          {
+            "replacement": "b'a', b'b', b'c', b'd', b'e', b'e',",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: nibble 15 renders as 'e'"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The only test renders nibbles 0 to 9, so no test reads the a-f row and both mutants pass.",
+      "labeling_observation": {
+        "ripr_commit": "da6a44d",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
         "excerpt_parity": "matched"
       }
     }
