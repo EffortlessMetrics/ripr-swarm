@@ -580,7 +580,7 @@ fn path_text(path: &Path) -> String {
 /// when the packet listed forbidden files.
 fn comparison_key(path: &str, root: &str) -> Option<String> {
     let path = lexical_path(&resolve_existing_absolute_path(path));
-    let root = lexical_path(root);
+    let root = lexical_path(&resolve_existing_absolute_path(root));
     let relative = strip_root_prefix(&path, &root)?;
     if relative_escapes_root(&relative) {
         return None;
@@ -588,16 +588,30 @@ fn comparison_key(path: &str, root: &str) -> Option<String> {
     Some(relative.to_ascii_lowercase())
 }
 
-/// Canonicalize an existing absolute path so a symlink alias of `--root` still
-/// matches root-relative packet paths. Relative paths and missing files stay
-/// lexical: agent-reported edits often do not exist on the ingest host.
+/// Canonicalize an absolute path, or the deepest existing ancestor plus the
+/// missing tail, so a symlink alias of `--root` still matches. Relative
+/// paths stay lexical: agent-reported edits often do not exist as given.
 fn resolve_existing_absolute_path(path: &str) -> String {
-    if !Path::new(path).is_absolute() && !is_absolute_path(path) {
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() && !is_absolute_path(path) {
         return path.to_string();
     }
-    match std::fs::canonicalize(path) {
-        Ok(resolved) => path_text(&resolved),
-        Err(_) => path.to_string(),
+    let mut missing_tail = Vec::new();
+    let mut current = candidate;
+    loop {
+        if let Ok(mut resolved) = std::fs::canonicalize(current) {
+            for part in missing_tail.iter().rev() {
+                resolved.push(part);
+            }
+            return path_text(&resolved);
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => {
+                missing_tail.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path.to_string(),
+        }
     }
 }
 
@@ -937,11 +951,22 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn ingest_matches_absolute_packet_paths_through_root_symlink_alias() -> Result<(), String> {
-        // CLI passes canonicalize(--root). An absolute forbidden path written
-        // through a symlink alias of that root must still match a relative
-        // edit of the same file, and must not drop the forbidden key.
+    struct AliasTree {
+        base: std::path::PathBuf,
+        canonical_root: std::path::PathBuf,
+        alias_forbidden: String,
+        alias_allowed: String,
+    }
+
+    #[cfg(unix)]
+    impl Drop for AliasTree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.base);
+        }
+    }
+
+    #[cfg(unix)]
+    fn unix_symlink_alias_tree(create_forbidden_file: bool) -> Result<AliasTree, String> {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|err| format!("clock went backwards: {err}"))?
@@ -953,37 +978,71 @@ mod tests {
             .map_err(|err| format!("create physical src: {err}"))?;
         std::fs::create_dir_all(physical.join("tests"))
             .map_err(|err| format!("create physical tests: {err}"))?;
-        std::fs::write(physical.join("src/pricing.py"), b"")
-            .map_err(|err| format!("write pricing: {err}"))?;
+        if create_forbidden_file {
+            std::fs::write(physical.join("src/pricing.py"), b"")
+                .map_err(|err| format!("write pricing: {err}"))?;
+        }
         std::fs::write(physical.join("tests/test_pricing.py"), b"")
             .map_err(|err| format!("write test: {err}"))?;
         std::os::unix::fs::symlink(&physical, &alias)
             .map_err(|err| format!("symlink alias: {err}"))?;
         let canonical_root = std::fs::canonicalize(&alias)
             .map_err(|err| format!("canonicalize alias root: {err}"))?;
-        let alias_forbidden = path_text(&alias.join("src/pricing.py"));
-        let alias_allowed = path_text(&alias.join("tests/test_pricing.py"));
+        Ok(AliasTree {
+            base,
+            canonical_root,
+            alias_forbidden: path_text(&alias.join("src/pricing.py")),
+            alias_allowed: path_text(&alias.join("tests/test_pricing.py")),
+        })
+    }
 
+    #[cfg(unix)]
+    #[test]
+    fn ingest_matches_absolute_packet_paths_through_root_symlink_alias() -> Result<(), String> {
+        // CLI passes canonicalize(--root). An absolute forbidden path written
+        // through a symlink alias of that root must still match a relative
+        // edit of the same file, and must not drop the forbidden key.
+        let tree = unix_symlink_alias_tree(true)?;
         let flagged = render_value_at_root(
             &closed_attempt_json(
-                &alias_forbidden,
+                &tree.alias_forbidden,
                 &["tests/test_pricing.py", "src/pricing.py"],
             ),
-            &canonical_root,
-        );
+            &tree.canonical_root,
+        )?;
         let allowed_relative = render_value_at_root(
-            &closed_attempt_json(&alias_forbidden, &["tests/test_pricing.py"]),
-            &canonical_root,
-        );
+            &closed_attempt_json(&tree.alias_forbidden, &["tests/test_pricing.py"]),
+            &tree.canonical_root,
+        )?;
         let allowed_alias_absolute = render_value_at_root(
-            &closed_attempt_json("src/pricing.py", &[alias_allowed.as_str()]),
-            &canonical_root,
-        );
-        let _ = std::fs::remove_dir_all(&base);
+            &closed_attempt_json("src/pricing.py", &[tree.alias_allowed.as_str()]),
+            &tree.canonical_root,
+        )?;
+        assert_forbidden_edit(&flagged, "src/pricing.py")?;
+        assert_closed_not_forbidden(&allowed_relative)?;
+        assert_closed_not_forbidden(&allowed_alias_absolute)
+    }
 
-        assert_forbidden_edit(&flagged?, "src/pricing.py")?;
-        assert_closed_not_forbidden(&allowed_relative?)?;
-        assert_closed_not_forbidden(&allowed_alias_absolute?)
+    #[cfg(unix)]
+    #[test]
+    fn ingest_matches_missing_absolute_forbidden_path_through_root_symlink_alias()
+    -> Result<(), String> {
+        // Deleting a forbidden file is still a forbidden edit. The alias
+        // absolute path must not be dropped just because the file is gone.
+        let tree = unix_symlink_alias_tree(false)?;
+        let flagged = render_value_at_root(
+            &closed_attempt_json(
+                &tree.alias_forbidden,
+                &["tests/test_pricing.py", "src/pricing.py"],
+            ),
+            &tree.canonical_root,
+        )?;
+        let allowed_relative = render_value_at_root(
+            &closed_attempt_json(&tree.alias_forbidden, &["tests/test_pricing.py"]),
+            &tree.canonical_root,
+        )?;
+        assert_forbidden_edit(&flagged, "src/pricing.py")?;
+        assert_closed_not_forbidden(&allowed_relative)
     }
 
     #[test]
