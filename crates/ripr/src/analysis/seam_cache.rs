@@ -278,7 +278,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.29`: postmerge opaque-body oracle/reach refusal and ordinary generic
 /// call preservation (#5131). `1.28` remains a separate integration proposal,
 /// not an accepted generation owned by this candidate.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.29";
+/// `1.30`: the body writes each distinct related test once in a table and
+/// seams reference it by index; evidence is unchanged.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.30";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -344,7 +346,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.29";
 /// `0.33`: property-only call/fallback admission and package-scoped mentions.
 /// `0.35`: same postmerge opaque-boundary transition as full `1.29` (#5131).
 /// `0.34` remains a separate, unaccepted integration proposal.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.35";
+/// `0.36`: same related-test table body as full `1.30`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.36";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -412,7 +415,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.35";
 /// `0.33`: property-only call/fallback admission and package-scoped mentions.
 /// `0.35`: same postmerge opaque-boundary transition as full `1.29` (#5131).
 /// `0.34` remains a separate, unaccepted integration proposal.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.35";
+/// `0.36`: same related-test table body as full `1.30`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.36";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1972,6 +1976,7 @@ struct CacheEnvelope {
     workspace_manifests_hash: String,
     lockfile_hash: String,
     toolchain_hash: String,
+    #[serde(with = "related_test_table")]
     classified_seams: Vec<ClassifiedSeam>,
     /// `None` means this is a complete run (all seams were analyzed).
     /// `Some(...)` means the run was capped; the renderer uses this to
@@ -2171,6 +2176,7 @@ struct ShardedCacheEnvelope {
     toolchain_hash: String,
     shard_index: usize,
     shard_count: usize,
+    #[serde(with = "related_test_table")]
     classified_seams: Vec<ClassifiedSeam>,
 }
 
@@ -2403,6 +2409,8 @@ impl CorpusFingerprintEnvelope {
 }
 
 /// Codec module owns serialization format and integrity emission.
+mod related_test_table;
+
 mod codec {
     #[cfg(test)]
     use super::CountCacheEnvelope;
@@ -3626,7 +3634,8 @@ mod tests {
         // 1.19 -> 1.20: owner-return pins (#4478) confirm return-value
         // probes the token rule left unconfirmed.
         // 1.22 -> 1.23: integrate shared return-oracle admission after #4748.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.29");
+        // 1.29 -> 1.30: related-test table body (memory/size, no evidence change).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.30");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -3649,8 +3658,9 @@ mod tests {
         // 0.26 (sharded) / 0.26 (compact): owner-return pins (#4478) —
         // same semantic transition as the outer cache.
         // 0.28 -> 0.29: same combined semantic transition as the outer cache.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.35");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.35");
+        // 0.35 -> 0.36: same related-test table body as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.36");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.36");
     }
 
     #[test]
@@ -4113,7 +4123,8 @@ mod tests {
         *target = match field {
             "classified_seams" => {
                 let first = target
-                    .as_array_mut()
+                    .get_mut("seams")
+                    .and_then(serde_json::Value::as_array_mut)
                     .and_then(|seams| seams.first_mut())
                     .ok_or("must edit actual nonempty seam evidence")?;
                 let summary = first
