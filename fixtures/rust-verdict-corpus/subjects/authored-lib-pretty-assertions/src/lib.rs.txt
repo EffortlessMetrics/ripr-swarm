@@ -1,0 +1,51 @@
+//! A tiny report renderer tested with `pretty_assertions`, imported three
+//! ways: a `use` that shadows the std macros, a path-qualified call, and a
+//! shadowed `assert_ne!`.
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    pub label: String,
+    pub cents: u64,
+}
+
+pub fn line(label: &str, cents: u64) -> Line {
+    Line { label: label.trim().to_string(), cents }
+}
+
+pub fn render(lines: &[Line]) -> String {
+    let mut out = String::new();
+    for l in lines {
+        out.push_str(&format!("{:<8}{:>6}\n", l.label, l.cents));
+    }
+    out
+}
+
+pub fn total(lines: &[Line]) -> u64 {
+    lines.iter().map(|l| l.cents).sum::<u64>() + 50
+}
+
+pub fn discount(cents: u64) -> u64 {
+    cents - cents / 10
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    #[test]
+    fn renders_aligned_columns() {
+        let lines = vec![line("tea", 250), line("cake", 1200)];
+        assert_eq!(render(&lines), "tea        250\ncake      1200\n");
+    }
+
+    #[test]
+    fn line_trims_the_label() {
+        assert_eq!(line("  tea ", 250), Line { label: "tea".to_string(), cents: 250 });
+    }
+
+    #[test]
+    fn discount_changes_the_price() {
+        assert_ne!(discount(1000), 1000);
+    }
+}

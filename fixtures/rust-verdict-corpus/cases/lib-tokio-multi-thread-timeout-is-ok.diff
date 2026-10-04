@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 008cf8f..22f6e21 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -13,7 +13,7 @@
+ }
+ 
+ pub async fn backoff_total(n: u32) -> u64 {
+-    (1..=n).map(|i| 1u64 << i).sum()
++    (1..=n).map(|i| 2u64.pow(i)).sum()
+ }
+ 
+ #[cfg(test)]

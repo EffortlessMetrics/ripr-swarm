@@ -326,6 +326,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .and_modify(|previous| *previous = false)
             .or_insert(admitted);
     }
+    let serial_test_imported = source.contains("serial_test");
     let mut identities = BTreeMap::<FunctionKey, usize>::new();
     for function in parse
         .tree()
@@ -349,7 +350,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             || !supported_item_context(function.syntax())
             || function
                 .attrs()
-                .any(|attr| attr.simple_name().as_deref() != Some("test"))
+                .any(|attr| !runs_body_unchanged(&attr, serial_test_imported))
         {
             continue;
         }
@@ -454,6 +455,32 @@ fn supported_item_context(item: &SyntaxNode) -> bool {
         source_file |= ast::SourceFile::can_cast(node.kind());
     }
     source_file
+}
+
+/// Attributes a pinned test may carry: `#[test]` itself, and the
+/// `serial_test` locks, which run the unchanged body while holding a mutex or
+/// file lock. A bare `#[serial]` counts only in a file that names
+/// `serial_test`. Every other attribute (`ignore`, `should_panic`, an async
+/// runtime or a parameterizing macro) may skip, invert or rewrite the body,
+/// so it keeps the test out of the pin.
+fn runs_body_unchanged(attr: &ast::Attr, serial_test_imported: bool) -> bool {
+    const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
+    if attr.simple_name().as_deref() == Some("test") {
+        return true;
+    }
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    let path = path.syntax().text().to_string().replace(' ', "");
+    let (qualified, leaf) = match path.split_once("::") {
+        Some(("serial_test", leaf)) => (true, leaf),
+        Some(_) => return false,
+        None => (false, path.as_str()),
+    };
+    SERIAL_TEST_LOCKS.contains(&leaf) && (qualified || serial_test_imported)
 }
 
 fn has_escape(

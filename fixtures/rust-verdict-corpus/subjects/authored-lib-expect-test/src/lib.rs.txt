@@ -1,0 +1,72 @@
+//! A tiny tokenizer and report renderer tested with expect-test: inline
+//! `expect![[..]]` text, `assert_debug_eq` on tokens, an expectation that
+//! pins only the header line, and an `expect_file!` golden.
+
+#[derive(Debug, PartialEq)]
+pub enum Token {
+    Num(i64),
+    Word(String),
+}
+
+pub fn tokenize(src: &str) -> Vec<Token> {
+    src.split_whitespace()
+        .map(|w| match w.parse::<i64>() {
+            Ok(n) => Token::Num(n * 10),
+            Err(_) => Token::Word(w.to_lowercase()),
+        })
+        .collect()
+}
+
+pub fn render_row(name: &str, score: u32) -> String {
+    format!("{name}: {}", score + 1)
+}
+
+pub fn render_report(title: &str, scores: &[u32]) -> String {
+    let mut out = format!("== {} ==\n", title.to_uppercase());
+    let best = scores.iter().copied().max().unwrap_or(0);
+    out.push_str(&format!("best={}\n", best));
+    out
+}
+
+pub fn render_summary(count: usize) -> String {
+    format!("items: {}\nhalf: {}\n", count, count / 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use expect_test::{expect, expect_file};
+
+    #[test]
+    fn row_text_inline() {
+        expect![["alice: 42"]].assert_eq(&render_row("alice", 41));
+    }
+
+    #[test]
+    fn tokens_debug_inline() {
+        let tokens = tokenize("Go 7");
+        expect![[r#"
+            [
+                Word(
+                    "go",
+                ),
+                Num(
+                    70,
+                ),
+            ]
+        "#]]
+        .assert_debug_eq(&tokens);
+    }
+
+    #[test]
+    fn report_header_only() {
+        let report = render_report("weekly", &[3, 9, 4]);
+        let header = report.lines().next().unwrap_or_default();
+        expect![["== WEEKLY =="]].assert_eq(header);
+    }
+
+    #[test]
+    fn summary_golden_file() {
+        expect_file!["expect/summary.txt"].assert_eq(&render_summary(7));
+    }
+}

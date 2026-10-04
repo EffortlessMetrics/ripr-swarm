@@ -12,7 +12,10 @@ crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-ledger` and `authored-config` for verdict and probe-family cells;
 `authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`
 and `authored-roles` for test shapes other RIPR specs define, each case naming
-its specs in its reasoning), and one-line edits under `cases/`. Each case is labeled
+its specs in its reasoning; `authored-lib-*` for how tests written with common
+test libraries read as oracles, each declaring the library as a crates.io
+dependency with the labeled version in its `version_label`, never vendored),
+and one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
 checkout (for an authored crate, the whole stored crate).

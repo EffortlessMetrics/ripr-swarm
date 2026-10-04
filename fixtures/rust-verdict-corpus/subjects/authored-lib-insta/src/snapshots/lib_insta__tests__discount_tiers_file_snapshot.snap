@@ -1,0 +1,18 @@
+---
+source: src/lib.rs
+expression: discount_tiers(5_000)
+---
+[
+    (
+        1000,
+        50,
+    ),
+    (
+        5000,
+        250,
+    ),
+    (
+        10000,
+        0,
+    ),
+]

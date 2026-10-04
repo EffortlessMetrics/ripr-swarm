@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 529e5e3..c7f1060 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -23,7 +23,7 @@
+ }
+ 
+ pub fn triangle(n: u64) -> u64 {
+-    n * (n + 1) / 2
++    (n * (n + 1)) >> 1
+ }
+ 
+ pub fn clamp_pct(x: u32) -> u32 {

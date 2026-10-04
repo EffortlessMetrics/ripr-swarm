@@ -1,0 +1,2 @@
+items: 7
+half: 3

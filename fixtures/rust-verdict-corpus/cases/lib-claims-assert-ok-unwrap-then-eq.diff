@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 76d7894..c13edb5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19,7 +19,7 @@
+     if b == 0 {
+         return Err(DivByZero);
+     }
+-    Ok(a / b)
++    Ok((a - a % b) / b)
+ }
+ 
+ #[cfg(test)]

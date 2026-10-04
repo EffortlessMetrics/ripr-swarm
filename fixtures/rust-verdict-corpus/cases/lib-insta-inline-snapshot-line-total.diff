@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b384688..6486459 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -19,7 +19,7 @@
+ }
+ 
+ pub fn line_total(item: &LineItem) -> u64 {
+-    item.cents * u64::from(item.qty)
++    u64::from(item.qty) * item.cents
+ }
+ 
+ pub fn render_receipt(items: &[LineItem]) -> String {

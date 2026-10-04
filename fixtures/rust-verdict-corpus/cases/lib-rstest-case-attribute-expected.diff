@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b39b033..a9dd43c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+ //! injected account, and a `#[values]` matrix with a range-only assert.
+ 
+ pub fn scale(x: u32) -> u32 {
+-    x * 2
++    x << 1
+ }
+ 
+ pub fn is_adult(age: u32) -> bool {

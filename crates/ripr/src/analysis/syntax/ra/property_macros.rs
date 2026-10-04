@@ -131,6 +131,28 @@ mod tests {
     }
 
     #[test]
+    fn drop_in_assertion_crate_paths_keep_assertion_authority() {
+        for name in [
+            "pretty_assertions::assert_eq",
+            "pretty_assertions::assert_ne",
+            "similar_asserts::assert_eq",
+            "std::assert_eq",
+            "::core::assert",
+            "assert_matches::assert_matches",
+        ] {
+            assert!(is_assertion_macro(name), "{name}");
+        }
+        for name in [
+            "other::assert_eq",
+            "pretty_assertions::nested::assert_eq",
+            "pretty_assertions::assert_float",
+            "proptest::prop_assert_eq",
+        ] {
+            assert!(!is_assertion_macro(name), "{name}");
+        }
+    }
+
+    #[test]
     fn opaque_property_blocks_keep_mentions_without_inventing_tests() -> Result<(), String> {
         for macro_name in ["proptest", "quickcheck", "other::proptest"] {
             for attribute in [

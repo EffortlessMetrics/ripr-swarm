@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 5f23af7..35b669b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,7 +15,7 @@
+ pub fn render(lines: &[Line]) -> String {
+     let mut out = String::new();
+     for l in lines {
+-        out.push_str(&format!("{:<8}{:>6}\n", l.label, l.cents));
++        out += &format!("{:<8}{:>6}\n", l.label, l.cents);
+     }
+     out
+ }

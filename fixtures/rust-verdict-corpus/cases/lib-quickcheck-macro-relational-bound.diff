@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0b62f5f..1e0166e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -21,7 +21,7 @@
+ }
+ 
+ pub fn truncate(xs: &[u8], max: usize) -> Vec<u8> {
+-    xs[..xs.len().min(max)].to_vec()
++    xs[..max.min(xs.len())].to_vec()
+ }
+ 
+ #[cfg(test)]

@@ -1,0 +1,9 @@
+---
+source: src/lib.rs
+expression: record
+---
+{
+  "id": "[id]",
+  "total_cents": 215,
+  "items": 2
+}

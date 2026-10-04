@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ba79964..5b27412 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17,7 +17,7 @@
+ pub fn retries() -> u32 {
+     match std::env::var("APP_RETRIES") {
+         Ok(text) => text.parse().unwrap_or(3),
+-        Err(_) => 3,
++        Err(_) => 1 + 2,
+     }
+ }
+ 

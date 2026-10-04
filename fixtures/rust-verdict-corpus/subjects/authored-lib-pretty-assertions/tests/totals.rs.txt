@@ -1,0 +1,7 @@
+use lib_pretty_assertions::{line, total};
+
+#[test]
+fn total_adds_the_service_fee() {
+    let lines = vec![line("tea", 250), line("cake", 1200)];
+    pretty_assertions::assert_eq!(total(&lines), 1500);
+}

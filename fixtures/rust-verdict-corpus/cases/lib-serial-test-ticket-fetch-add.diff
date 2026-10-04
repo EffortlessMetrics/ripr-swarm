@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ba79964..7bbfef3 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -11,7 +11,7 @@
+ }
+ 
+ pub fn next_ticket() -> u32 {
+-    NEXT_TICKET.fetch_add(1, Ordering::SeqCst)
++    NEXT_TICKET.fetch_add(2 - 1, Ordering::SeqCst)
+ }
+ 
+ pub fn retries() -> u32 {

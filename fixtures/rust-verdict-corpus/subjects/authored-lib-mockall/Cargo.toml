@@ -1,0 +1,9 @@
+[package]
+name = "lib_mockall"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+mockall = "0.13"

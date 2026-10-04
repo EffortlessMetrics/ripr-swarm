@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 159e349..2b2e415 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -42,7 +42,7 @@
+ /// Parse `key=value`; the key is trimmed and lowercased.
+ pub fn parse_pair(text: &str) -> Option<(String, String)> {
+     let (key, value) = text.split_once('=')?;
+-    Some((key.trim().to_ascii_lowercase(), value.to_string()))
++    Some((key.trim_start().trim_end().to_ascii_lowercase(), value.to_string()))
+ }
+ 
+ #[cfg(test)]

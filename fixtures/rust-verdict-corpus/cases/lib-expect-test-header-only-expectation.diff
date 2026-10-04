@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 6c3b406..8990b7d 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -23,7 +23,7 @@
+ 
+ pub fn render_report(title: &str, scores: &[u32]) -> String {
+     let mut out = format!("== {} ==\n", title.to_uppercase());
+-    let best = scores.iter().copied().max().unwrap_or(0);
++    let best = scores.iter().max().copied().unwrap_or(0);
+     out.push_str(&format!("best={}\n", best));
+     out
+ }
