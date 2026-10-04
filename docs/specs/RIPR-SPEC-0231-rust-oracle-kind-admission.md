@@ -199,7 +199,10 @@ Two pattern terms are used below.
    `is_okay`. The combinator forms `.is_some_and(`, `.is_ok_and(`,
    `.is_err_and(` and `.is_none_or(` count as the same segment. `.unwrap(`
    and `.expect(` already match this way. At step 2, `is_err` matches the
-   same way, so `this_errs` is not a broad error.
+   same way, so `this_errs` is not a broad error. A condition that tests both sides
+   (`is_ok()` with `is_err()`, or `is_some()` with `is_none()`, joined by
+   `||`) assigns `relational_check` / weak at steps 0, 2 and 7, because it
+   accepts every value.
 5. **Effect observer words match whole identifier segments.** At step 9,
    `event`, `emitted`, `published`, `sent`, `saved`, `persist`, `state`,
    `stored`, `metric`, `counter` and `recorded` count only as a whole
