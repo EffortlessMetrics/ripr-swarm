@@ -202,14 +202,17 @@ fn error_seam_without_a_nameable_variant_asserts_the_whole_value() -> Result<(),
             .contains("let expected: Result<u8, String> = todo!(")
     );
     assert_eq!(
-        variant_pattern("Err(Error::TooLong(n))"),
+        variant_pattern("Err(Error::TooLong(n))", None, PathScope::ChildModule),
         Some("Error::TooLong { .. }".to_string())
     );
     assert_eq!(
-        variant_pattern("ErrorKind::Empty"),
+        variant_pattern("ErrorKind::Empty", None, PathScope::ChildModule),
         Some("ErrorKind::Empty { .. }".to_string())
     );
-    assert_eq!(variant_pattern("try_parse(raw)"), None);
+    assert_eq!(
+        variant_pattern("try_parse(raw)", None, PathScope::ChildModule),
+        None
+    );
     Ok(())
 }
 
@@ -241,8 +244,11 @@ fn integration_proposal_writes_a_new_file_through_the_crate_path() -> Result<(),
 }
 
 #[test]
-fn non_std_return_types_compare_debug_text_instead_of_requiring_partial_eq() -> Result<(), String> {
+fn return_types_without_visible_partial_eq_leave_the_assertion_to_fill_in() -> Result<(), String> {
     let source = "pub struct Out(u8);
+#[derive(Debug, Clone, PartialEq)]
+pub struct Seen(u8);
+pub fn seen(n: u8) -> Seen { if n > 4 { Seen(n) } else { Seen(0) } }
 pub fn build(n: u8) -> Result<Out, String> { if n > 2 { Ok(Out(n)) } else { Err(String::new()) } }
 pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None } }
 ";
@@ -254,9 +260,33 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         boundary(""),
     )?;
     let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    assert!(stub.text.contains("let _ = &actual;"), "{}", stub.text);
     assert!(
         stub.text
-            .contains("assert_eq!(format!(\"{actual:?}\"), format!(\"{expected:?}\"));")
+            .contains("todo!(\"ripr: assert that `actual` is the value `build` should return"),
+        "{}",
+        stub.text
+    );
+    assert!(!stub.text.contains("assert_eq!"), "{}", stub.text);
+    assert!(!stub.text.contains("format!"), "{}", stub.text);
+    // A local type whose derives name PartialEq and Debug compares directly.
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "n > 4",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    assert!(
+        stub.text.contains("let expected: Seen = todo!("),
+        "{}",
+        stub.text
+    );
+    assert!(
+        stub.text.contains("assert_eq!(actual, expected);"),
+        "{}",
+        stub.text
     );
     let seam = seam_at(
         "src/lib.rs",

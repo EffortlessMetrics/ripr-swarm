@@ -19,6 +19,9 @@ pub(crate) enum OwnerReceiver {
     Value,
     Ref,
     RefMut,
+    /// `self: Box<Self>`, `self: Rc<Self>` and other explicitly typed
+    /// receivers: the subject is not a plain value of the impl type.
+    Typed,
 }
 
 /// One non-`self` parameter as written in the signature.
@@ -74,6 +77,61 @@ pub(crate) fn owner_signature_at(source: &str, byte_offset: usize) -> Option<Own
     Some(signature_of(&function))
 }
 
+/// Traits a struct or enum named `name` in `source` is known to implement,
+/// from its `#[derive(..)]` list and from `impl Trait for Name` blocks. Only
+/// the last path segment of each trait is kept (`fmt::Debug` → `Debug`).
+/// `None` when the file does not parse or does not define exactly one type
+/// with that name, so callers cannot mistake an unknown type for one without
+/// the trait.
+pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let mut definitions = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Adt::cast)
+        .filter(|adt| adt.name().is_some_and(|ident| ident.text() == name));
+    let adt = definitions.next()?;
+    if definitions.next().is_some() {
+        return None;
+    }
+    let last_segment = |path: &str| {
+        path.rsplit("::")
+            .next()
+            .map(|segment| segment.trim().to_string())
+            .unwrap_or_default()
+    };
+    let mut traits = Vec::new();
+    for attr in ast::HasAttrs::attrs(&adt) {
+        let text = attr.syntax().text().to_string();
+        let Some(inner) = text
+            .trim()
+            .strip_prefix("#[")
+            .and_then(|rest| rest.trim_start().strip_prefix("derive"))
+            .and_then(|rest| rest.trim_start().strip_prefix('('))
+            .and_then(|rest| rest.trim_end().strip_suffix("]"))
+            .and_then(|rest| rest.trim_end().strip_suffix(')'))
+        else {
+            continue;
+        };
+        traits.extend(
+            inner
+                .split(',')
+                .map(last_segment)
+                .filter(|name| !name.is_empty()),
+        );
+    }
+    for item in tree.syntax().descendants().filter_map(ast::Impl::cast) {
+        let self_is_name = item
+            .self_ty()
+            .is_some_and(|ty| ty.syntax().text().to_string().trim() == name);
+        if let (true, Some(trait_ty)) = (self_is_name, item.trait_()) {
+            traits.push(last_segment(&trait_ty.syntax().text().to_string()));
+        }
+    }
+    Some(traits)
+}
+
 /// Whether `source` parses without errors under the analyzer's own parse.
 pub(crate) fn rust_source_parses_cleanly(source: &str) -> bool {
     parse_clean_source_file(source).is_some()
@@ -113,7 +171,9 @@ fn signature_of(function: &ast::Fn) -> OwnerSignature {
         .as_ref()
         .and_then(|list| list.self_param())
         .map(|self_param| {
-            if self_param.amp_token().is_none() {
+            if self_param.ty().is_some() {
+                OwnerReceiver::Typed
+            } else if self_param.amp_token().is_none() {
                 OwnerReceiver::Value
             } else if self_param.mut_token().is_some() {
                 OwnerReceiver::RefMut

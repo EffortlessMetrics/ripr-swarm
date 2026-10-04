@@ -103,6 +103,7 @@ pub(crate) enum TestStubRefusal {
     OutOfLineTestModule,
     AmbiguousTestModule,
     OwnerInNestedModule,
+    OwnerTraitMethod,
 }
 
 impl TestStubRefusal {
@@ -124,6 +125,7 @@ impl TestStubRefusal {
             Self::OutOfLineTestModule => "out_of_line_test_module",
             Self::AmbiguousTestModule => "ambiguous_test_module",
             Self::OwnerInNestedModule => "owner_in_nested_module",
+            Self::OwnerTraitMethod => "owner_trait_method",
         }
     }
 
@@ -140,12 +142,14 @@ impl TestStubRefusal {
             }
             Self::SourceUnparsed => "the owner file did not parse cleanly",
             Self::OwnerUnsupported => {
-                "the owner is a trait default method, nested function, or generic impl member"
+                "the owner is a trait default method, nested function, generic impl member, or takes a typed `self` receiver"
             }
             Self::OwnerAsync => "the owner is async and needs a runtime the stub cannot pick",
             Self::OwnerUnsafe => "the owner is unsafe; its preconditions need a person",
             Self::OwnerGeneric => "the owner has type parameters the stub cannot choose",
-            Self::ParameterUnsupported => "a parameter uses `impl Trait` or an unnamed pattern",
+            Self::ParameterUnsupported => {
+                "a parameter or the return type uses `impl Trait`, an unnamed pattern, or a module-relative path the test cannot reach"
+            }
             Self::NoReturnValue => "the owner returns no value to assert on",
             Self::OpaqueReturn => "the owner returns `impl Trait`, which cannot be compared",
             Self::OutOfLineTestModule => {
@@ -154,6 +158,9 @@ impl TestStubRefusal {
             Self::AmbiguousTestModule => "the owner file has more than one inline test module",
             Self::OwnerInNestedModule => {
                 "the owner is in a nested module with no inline test module of its own"
+            }
+            Self::OwnerTraitMethod => {
+                "the owner implements a trait method; calling it needs the trait in scope, which the stub does not resolve"
             }
         }
     }
@@ -232,7 +239,13 @@ pub(crate) fn rust_test_stub(
         name_suffix(seam.kind())
     );
     let test_name = unique_test_name(&base_name, existing_source.unwrap_or(source));
-    let body = stub_body(seam, &signature, &scope_import)?;
+    let path_scope = match &placement {
+        TestStubPlacement::NewIntegrationFile { .. } => {
+            PathScope::Integration(integration_crate.unwrap_or("crate"))
+        }
+        _ => PathScope::ChildModule,
+    };
+    let body = stub_body(seam, &signature, &scope_import, source, path_scope)?;
     let test_fn = render_test_fn(seam, &signature, &test_name, &body, &indent);
 
     let text = match &placement {
@@ -253,8 +266,13 @@ pub(crate) fn rust_test_stub(
 }
 
 fn check_signature(signature: &OwnerSignature) -> Result<(), TestStubRefusal> {
-    if matches!(signature.container, OwnerContainer::Unsupported(_)) {
+    if matches!(signature.container, OwnerContainer::Unsupported(_))
+        || signature.receiver == Some(OwnerReceiver::Typed)
+    {
         return Err(TestStubRefusal::OwnerUnsupported);
+    }
+    if matches!(signature.container, OwnerContainer::TraitImpl { .. }) {
+        return Err(TestStubRefusal::OwnerTraitMethod);
     }
     if signature.is_async {
         return Err(TestStubRefusal::OwnerAsync);
@@ -334,10 +352,22 @@ struct StubBody {
     derived_inputs: Vec<String>,
 }
 
+/// Where the test sits relative to the owner's module, which decides how
+/// module-relative paths in the signature are spelled from the test.
+#[derive(Clone, Copy)]
+enum PathScope<'a> {
+    /// An inline test module one level below the owner's module.
+    ChildModule,
+    /// A `tests/` file that reaches the crate by this name.
+    Integration(&'a str),
+}
+
 fn stub_body(
     seam: &RepoSeam,
     signature: &OwnerSignature,
     scope_import: &str,
+    source: &str,
+    path_scope: PathScope<'_>,
 ) -> Result<StubBody, TestStubRefusal> {
     let self_type = match &signature.container {
         OwnerContainer::Inherent { self_type } | OwnerContainer::TraitImpl { self_type } => {
@@ -353,6 +383,18 @@ fn stub_body(
     if return_type.contains("impl ") {
         return Err(TestStubRefusal::OpaqueReturn);
     }
+    let return_type =
+        rebase_paths(&return_type, path_scope).ok_or(TestStubRefusal::ParameterUnsupported)?;
+    // A parameter named `subject` would shadow the receiver binding.
+    let subject = if signature
+        .params
+        .iter()
+        .any(|param| param.name.as_deref() == Some("subject"))
+    {
+        "ripr_subject"
+    } else {
+        "subject"
+    };
 
     let mut lines = vec![scope_import.to_string()];
     let mut fill_ins = Vec::new();
@@ -365,14 +407,16 @@ fn stub_body(
                 "ripr: build the `{self_type}` that `{}` runs on",
                 signature.name
             );
-            let binding = if receiver == OwnerReceiver::RefMut {
-                "let mut subject"
+            let keyword = if receiver == OwnerReceiver::RefMut {
+                "let mut"
             } else {
-                "let subject"
+                "let"
             };
-            lines.push(format!("{binding}: {self_type} = todo!(\"{label}\");"));
+            lines.push(format!(
+                "{keyword} {subject}: {self_type} = todo!(\"{label}\");"
+            ));
             fill_ins.push(label);
-            Some("subject")
+            Some(subject)
         }
         (Some(_), None) => return Err(TestStubRefusal::OwnerUnsupported),
         (None, _) => None,
@@ -384,7 +428,8 @@ fn stub_body(
             .name
             .clone()
             .unwrap_or_else(|| format!("arg{}", index + 1));
-        let ty = concrete_type(&param.ty, self_type);
+        let ty = rebase_paths(&concrete_type(&param.ty, self_type), path_scope)
+            .ok_or(TestStubRefusal::ParameterUnsupported)?;
         let (binding_ty, argument, mutable) = match strip_mut_reference(&ty) {
             Some(inner) => (inner.trim().to_string(), format!("&mut {binding}"), true),
             None => (ty.clone(), binding.clone(), false),
@@ -420,7 +465,7 @@ fn stub_body(
         RequiredDiscriminator::ErrorVariant { variant }
             if seam.kind() == SeamKind::ErrorVariant =>
         {
-            variant_pattern(variant)
+            variant_pattern(variant, self_type, path_scope).filter(|_| is_result_type(&return_type))
         }
         _ => None,
     };
@@ -439,22 +484,33 @@ fn stub_body(
             } else {
                 format!(" for {}", derived_inputs.join(", "))
             };
-            let label = format!(
-                "ripr: write the value `{}` should return{hint}",
-                signature.name
-            );
-            lines.push(format!(
-                "let expected: {return_type} = todo!(\"{}\");",
-                escape(&label)
-            ));
-            if is_known_comparable(&return_type) {
-                lines.push("assert_eq!(actual, expected);".to_string());
-            } else {
-                // The return type may not implement PartialEq; its Debug
-                // text still discriminates the changed value.
-                lines.push(
-                    "assert_eq!(format!(\"{actual:?}\"), format!(\"{expected:?}\"));".to_string(),
-                );
+            let traits = value_traits(&return_type, source);
+            let label = match traits {
+                ValueTraits::Unknown => format!(
+                    "ripr: assert that `actual` is the value `{}` should return{hint}",
+                    signature.name
+                ),
+                ValueTraits::PartialEqAndDebug => format!(
+                    "ripr: write the value `{}` should return{hint}",
+                    signature.name
+                ),
+            };
+            match traits {
+                ValueTraits::PartialEqAndDebug => {
+                    lines.push(format!(
+                        "let expected: {return_type} = todo!(\"{}\");",
+                        escape(&label)
+                    ));
+                    lines.push("assert_eq!(actual, expected);".to_string());
+                }
+                // `PartialEq` or `Debug` is not visible for the return
+                // type, so no generated comparison is sure to compile (a
+                // Debug-text comparison also needs `format!`, which no_std
+                // crates lack): the assertion itself is the fill-in.
+                ValueTraits::Unknown => {
+                    lines.push("let _ = &actual;".to_string());
+                    lines.push(format!("todo!(\"{}\");", escape(&label)));
+                }
             }
             fill_ins.push(label);
         }
@@ -570,17 +626,114 @@ fn strip_integer_suffix(literal: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-/// Whether `ty` is built only from std types known to implement
-/// `PartialEq` and `Debug`, so `assert_eq!` on the value compiles.
-fn is_known_comparable(ty: &str) -> bool {
-    const COMPARABLE: [&str; 26] = [
+/// What the stub can assume about a return type when comparing values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ValueTraits {
+    /// `assert_eq!` on the value compiles.
+    PartialEqAndDebug,
+    Unknown,
+}
+
+/// Whether every named type in `ty` is known to have `PartialEq` and `Debug`:
+/// std types ripr knows implement `PartialEq` and `Debug` when their
+/// arguments do, and types defined in the owner file whose derives or
+/// impls name the traits. Anything else is `Unknown`, so no generated
+/// comparison depends on a trait ripr cannot see.
+fn value_traits(ty: &str, source: &str) -> ValueTraits {
+    const STD: [&str; 33] = [
         "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
-        "f32", "f64", "bool", "char", "str", "String", "Option", "Vec", "Box", "Ordering",
-        "Duration", "std", "cmp", "time",
+        "f32", "f64", "bool", "char", "str", "String", "Option", "Result", "Vec", "VecDeque",
+        "Box", "Rc", "Arc", "Cow", "Ordering", "Duration", "PathBuf", "HashMap", "HashSet",
+        "BTreeMap", "BTreeSet",
     ];
-    ty.split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .filter(|word| !word.is_empty() && !word.starts_with(|c: char| c.is_ascii_digit()))
-        .all(|word| word == "_" || COMPARABLE.contains(&word))
+    let mut weakest = ValueTraits::PartialEqAndDebug;
+    let chars = ty.char_indices().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        let (start, c) = chars[index];
+        if !(c.is_alphanumeric() || c == '_') {
+            index += 1;
+            continue;
+        }
+        let mut end_index = index;
+        while end_index < chars.len()
+            && (chars[end_index].1.is_alphanumeric() || chars[end_index].1 == '_')
+        {
+            end_index += 1;
+        }
+        let end = chars.get(end_index).map_or(ty.len(), |(at, _)| *at);
+        let word = &ty[start..end];
+        let lifetime = ty[..start].ends_with('\'');
+        let path_segment = ty[end..].starts_with("::");
+        index = end_index;
+        if lifetime
+            || path_segment
+            || word == "_"
+            || word == "mut"
+            || word.starts_with(|c: char| c.is_ascii_digit())
+            || STD.contains(&word)
+        {
+            continue;
+        }
+        let traits =
+            super::syntax::fn_signature::local_type_traits(source, word).unwrap_or_default();
+        let has = |name: &str| traits.iter().any(|item| item == name);
+        if !(has("PartialEq") && has("Debug")) {
+            weakest = ValueTraits::Unknown;
+        }
+    }
+    weakest
+}
+
+/// Whether `ty` is a `Result` (`Result<..>`, `io::Result<..>`, ...), so an
+/// `Err(..)` pattern can match it.
+fn is_result_type(ty: &str) -> bool {
+    let head = ty.split('<').next().unwrap_or_default().trim();
+    head.rsplit("::").next() == Some("Result") && ty.contains('<')
+}
+
+/// Respell module-relative paths in `ty` for where the test sits. In a
+/// child test module `self::` becomes `super::` and a leading `super::`
+/// gains one more; a `tests/` file reaches `crate::` by the crate name and
+/// cannot reach `self::` or `super::` at all (`None`).
+fn rebase_paths(ty: &str, scope: PathScope<'_>) -> Option<String> {
+    let mut out = String::new();
+    let mut index = 0;
+    while index < ty.len() {
+        let rest = &ty[index..];
+        let starts_path = ty[..index]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == ':'));
+        if starts_path {
+            let rewritten = match (scope, rest) {
+                (PathScope::ChildModule, _) if rest.starts_with("self::") => {
+                    Some(("self::".len(), "super::".to_string()))
+                }
+                (PathScope::ChildModule, _) if rest.starts_with("super::") => {
+                    Some(("super::".len(), "super::super::".to_string()))
+                }
+                (PathScope::Integration(_), _)
+                    if rest.starts_with("self::") || rest.starts_with("super::") =>
+                {
+                    return None;
+                }
+                (PathScope::Integration(name), _) if rest.starts_with("crate::") => {
+                    Some(("crate::".len(), format!("{name}::")))
+                }
+                _ => None,
+            };
+            if let Some((consumed, replacement)) = rewritten {
+                out.push_str(&replacement);
+                index += consumed;
+                continue;
+            }
+        }
+        let c = rest.chars().next()?;
+        out.push(c);
+        index += c.len_utf8();
+    }
+    Some(out)
 }
 
 fn is_integer_type(ty: &str) -> bool {
@@ -659,9 +812,10 @@ fn strip_mut_reference(ty: &str) -> Option<&str> {
 }
 
 /// `Error::Variant` (optionally written as `Err(Error::Variant(..))`) as a
-/// `matches!` pattern. Anything that is not a path ending in an
-/// upper-case segment is not a nameable variant.
-fn variant_pattern(variant: &str) -> Option<String> {
+/// `matches!` pattern spelled from the test's scope. Anything that is not a
+/// path ending in an upper-case segment is not a nameable variant, and a
+/// `Self::` path needs the impl type to respell it.
+fn variant_pattern(variant: &str, self_type: Option<&str>, scope: PathScope<'_>) -> Option<String> {
     let text = variant.trim();
     let text = text.strip_prefix("Err(").unwrap_or(text);
     let path = text.split(['(', '{', ' ', ')']).next().unwrap_or_default();
@@ -671,7 +825,16 @@ fn variant_pattern(variant: &str) -> Option<String> {
     }) && segments
         .last()
         .is_some_and(|last| last.starts_with(|c: char| c.is_ascii_uppercase()));
-    valid.then(|| format!("{path} {{ .. }}"))
+    if !valid {
+        return None;
+    }
+    let path = match (segments.first(), self_type) {
+        (Some(&"Self"), Some(self_type)) => replace_word(path, "Self", self_type),
+        (Some(&"Self"), None) => return None,
+        _ => path.to_string(),
+    };
+    let path = rebase_paths(&path, scope)?;
+    Some(format!("{path} {{ .. }}"))
 }
 
 fn input_hint(seam: &RepoSeam, binding: &str) -> String {
