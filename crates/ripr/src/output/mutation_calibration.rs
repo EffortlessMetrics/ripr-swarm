@@ -113,6 +113,9 @@ struct AmbiguousMutationCalibrationMatch {
 struct UnmatchedMutation {
     mutation: MutationOutcomeRecord,
     reason: &'static str,
+    /// For `no_containing_seam`: the spanned seams starting on the record's
+    /// line, so the refused same-line join can be checked from the report.
+    line_seams: Vec<StaticSeamRecord>,
 }
 
 pub(crate) fn mutation_calibration_report_from_json(
@@ -481,7 +484,28 @@ fn build_mutation_calibration_report(
                 continue;
             }
             LocationJoin::Unmatched(reason) => {
-                unmatched_mutants.push(UnmatchedMutation { mutation, reason });
+                let mut line_seams = if reason == UNMATCHED_NO_CONTAINING_SEAM {
+                    mutation
+                        .file
+                        .as_deref()
+                        .map(normalize_report_path)
+                        .zip(mutation.line)
+                        .and_then(|key| static_by_line.get(&key))
+                        .into_iter()
+                        .flatten()
+                        .map(|idx| static_seams[*idx].clone())
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                line_seams.sort_by(|left, right| {
+                    candidate_order_key(left).cmp(&candidate_order_key(right))
+                });
+                unmatched_mutants.push(UnmatchedMutation {
+                    mutation,
+                    reason,
+                    line_seams,
+                });
                 continue;
             }
             LocationJoin::AmbiguousFileLine(candidates) => (&mut ambiguous_file_line, candidates),
@@ -563,8 +587,11 @@ enum LocationJoin {
     Unmatched(&'static str),
 }
 
-/// Unmatched reason: the runtime record names no file.
+/// Unmatched reason: the runtime record names no file or no line.
 const UNMATCHED_NO_LOCATION: &str = "no_location";
+/// Unmatched reason: merged duplicates of the record carried different
+/// complete spans, so its location is untrusted and only a `seam_id` joins it.
+const UNMATCHED_CONFLICTING_SPANS: &str = "conflicting_runtime_spans";
 /// Unmatched reason: no static seam starts on the runtime record's line and
 /// no seam span is available to compare against.
 const UNMATCHED_NO_SEAM_ON_LINE: &str = "no_seam_on_line";
@@ -596,12 +623,17 @@ fn location_join(
     spanned_by_file: &BTreeMap<String, Vec<usize>>,
     mutation: &MutationOutcomeRecord,
 ) -> LocationJoin {
-    let Some(file) = mutation.file.as_deref().map(normalize_report_path) else {
+    if mutation.span_conflict {
+        return LocationJoin::Unmatched(UNMATCHED_CONFLICTING_SPANS);
+    }
+    let (Some(file), Some(line)) = (
+        mutation.file.as_deref().map(normalize_report_path),
+        mutation.line,
+    ) else {
         return LocationJoin::Unmatched(UNMATCHED_NO_LOCATION);
     };
-    let same_line = mutation
-        .line
-        .and_then(|line| static_by_line.get(&(file.clone(), line)))
+    let same_line = static_by_line
+        .get(&(file.clone(), line))
         .map(Vec::as_slice)
         .unwrap_or_default();
 
@@ -669,7 +701,7 @@ type SeamRange = ((usize, usize), (usize, usize));
 fn seam_span(seam: &StaticSeamRecord) -> Option<SeamRange> {
     let start = (seam.line, seam.column?);
     let end = (seam.end_line?, seam.end_column?);
-    (start < end).then_some((start, end))
+    (start.1 > 0 && end.1 > 0 && start < end).then_some((start, end))
 }
 
 /// Half-open containment of the mutated range in a seam range.
@@ -792,7 +824,7 @@ fn mutation_calibration_precision_notes() -> Vec<String> {
         "runtime clean signals are imported runtime labels such as caught or timeout".to_string(),
         "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import".to_string(),
         "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line".to_string(),
-        "ambiguous runtime gap signals (ambiguous_file_line: several line-only seams share the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available".to_string(),
+        "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available".to_string(),
     ]
 }
 
@@ -933,6 +965,17 @@ fn unmatched_mutation_json(record: &UnmatchedMutation) -> Value {
     let mut value = mutation_outcome_json(&record.mutation);
     if let Some(object) = value.as_object_mut() {
         object.insert("unmatched_reason".to_string(), record.reason.into());
+        if !record.line_seams.is_empty() {
+            object.insert(
+                "line_seams".to_string(),
+                record
+                    .line_seams
+                    .iter()
+                    .map(static_seam_json)
+                    .collect::<Vec<_>>()
+                    .into(),
+            );
+        }
     }
     value
 }
@@ -1046,16 +1089,21 @@ fn merge_mutation_outcome_record(
     // A complete span fills an absent one. Two different complete spans for
     // one mutant cannot both be right, so the record drops to line-only
     // evidence and says why rather than keeping either.
+    // A source line that disagrees with the kept line is the same conflict.
     match (target.span, source.span) {
         (_, None) => {}
         (None, Some(span)) if !target.span_conflict && target.line == Some(span.start.0) => {
             target.span = Some(span);
         }
-        (Some(existing), Some(span)) if existing != span => {
+        (Some(existing), Some(span)) if existing == span => {}
+        _ => {
             target.span = None;
             target.span_conflict = true;
         }
-        _ => {}
+    }
+    if source.line.is_some() && source.line != target.line {
+        target.span = None;
+        target.span_conflict = true;
     }
     target.span_conflict |= source.span_conflict;
     if target.mutation_operator == "unknown" && source.mutation_operator != "unknown" {
@@ -1894,6 +1942,67 @@ mod tests {
         Ok(())
     }
 
+    /// Conflicting or disagreeing duplicates fail closed: no span, and no
+    /// location join. A record with a file but no line has no location.
+    #[test]
+    fn untrusted_runtime_locations_stay_unmatched() {
+        let spanned = spanned_runtime("m-conflict", "src/lib.rs", (4, 9), (4, 10));
+        let mut moved = spanned.clone();
+        moved.line = Some(5);
+        moved.span = None;
+        let merged = merge_mutation_outcome_records(vec![spanned, moved]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].span, None);
+        assert!(merged[0].span_conflict, "a disagreeing line is a conflict");
+
+        let mut no_line = runtime("m-no-line", None, Some("src/lib.rs"), None, "missed");
+        no_line.span = None;
+        let mut runtime_mutants = merged;
+        runtime_mutants.push(no_line);
+        let static_seams = vec![
+            static_seam("line-only", "ungripped", "src/lib.rs", 4),
+            spanned_seam("spanned", "src/lib.rs", (4, 1), (4, 20)),
+        ];
+
+        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+
+        assert!(report.matched.is_empty(), "{report:?}");
+        assert_eq!(
+            unmatched(&report),
+            vec![
+                ("m-conflict", UNMATCHED_CONFLICTING_SPANS),
+                ("m-no-line", UNMATCHED_NO_LOCATION),
+            ]
+        );
+    }
+
+    /// Records without a mutant ID that differ only by span come out in the
+    /// same order whatever the input order.
+    #[test]
+    fn id_less_runtime_records_sort_independently_of_input_order() -> Result<(), String> {
+        let first = r#"{"file": "src/a.rs", "span": {"start": {"line": 5, "column": 2}, "end": {"line": 5, "column": 3}}, "replacement": "-", "outcome": "missed"}"#;
+        let second = r#"{"file": "src/a.rs", "span": {"start": {"line": 5, "column": 12}, "end": {"line": 5, "column": 13}}, "replacement": "-", "outcome": "missed"}"#;
+        let exposure = r#"{"seams": [
+  {"seam_id": "a", "kind": "predicate_boundary", "file": "src/a.rs", "line": 5, "column": 1, "end_line": 5, "end_column": 10, "grip_class": "ungripped"},
+  {"seam_id": "b", "kind": "predicate_boundary", "file": "src/a.rs", "line": 5, "column": 10, "end_line": 5, "end_column": 20, "grip_class": "ungripped"}
+]}"#;
+        let order = |mutants: String| -> Result<Vec<String>, String> {
+            let report = mutation_calibration_report_from_json(exposure, &mutants)?;
+            Ok(report
+                .matched
+                .iter()
+                .map(|record| record.seam.seam_id.clone())
+                .collect())
+        };
+
+        let forward = order(format!("[{first}, {second}]"))?;
+        let reverse = order(format!("[{second}, {first}]"))?;
+
+        assert_eq!(forward, vec!["a", "b"]);
+        assert_eq!(reverse, forward);
+        Ok(())
+    }
+
     #[test]
     fn span_join_reads_cargo_mutants_columns_end_to_end() -> Result<(), String> {
         let exposure = r#"{"seams": [
@@ -1939,6 +2048,10 @@ mod tests {
             json["metrics"]["unmatched_reason_counts"][UNMATCHED_NO_CONTAINING_SEAM],
             1
         );
+        let refused = &json["unmatched_mutants"][0]["line_seams"][0];
+        assert_eq!(refused["seam_id"], "call");
+        assert_eq!(refused["column"], 5);
+        assert_eq!(refused["end_column"], 12);
         Ok(())
     }
 

@@ -921,7 +921,7 @@
     "runtime clean signals are imported runtime labels such as caught or timeout",
     "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import",
     "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line",
-    "ambiguous runtime gap signals (ambiguous_file_line: several line-only seams share the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
+    "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
   ],
   "schema_version": "0.2",
   "scope": "repo",
@@ -1310,6 +1310,22 @@
       "end_line": 106,
       "file": "crates/atuin-ai/src/context.rs",
       "line": 99,
+      "line_seams": [
+        {
+          "column": 18,
+          "end_column": 29,
+          "end_line": 99,
+          "file": "crates/atuin-ai/src/context.rs",
+          "line": 99,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "1026575689c7153b",
+          "seam_kind": "call_presence"
+        }
+      ],
       "mutant_id": "crates/atuin-ai/src/context.rs:99:9: replace ClientContext::detect -> Self with Default::default()",
       "mutation_operator": "Default::default()",
       "runtime_outcome": "unviable",
@@ -1352,6 +1368,22 @@
       "end_line": 83,
       "file": "crates/atuin/src/command/client/store/rebuild.rs",
       "line": 71,
+      "line_seams": [
+        {
+          "column": 30,
+          "end_column": 84,
+          "end_line": 71,
+          "file": "crates/atuin/src/command/client/store/rebuild.rs",
+          "line": 71,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "ba5d32401a508d4d",
+          "seam_kind": "call_presence"
+        }
+      ],
       "mutant_id": "crates/atuin/src/command/client/store/rebuild.rs:71:9: replace Rebuild::rebuild_scripts -> Result<()> with Ok(())",
       "mutation_operator": "Ok(())",
       "runtime_outcome": "missed",
@@ -1366,6 +1398,36 @@
       "end_line": 107,
       "file": "crates/atuin/src/logs/otel/enabled.rs",
       "line": 99,
+      "line_seams": [
+        {
+          "column": 12,
+          "end_column": 54,
+          "end_line": 99,
+          "file": "crates/atuin/src/logs/otel/enabled.rs",
+          "line": 99,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "strongly_gripped",
+          "seam_id": "8a8382794c05b62b",
+          "seam_kind": "predicate_boundary"
+        },
+        {
+          "column": 27,
+          "end_column": 54,
+          "end_line": 99,
+          "file": "crates/atuin/src/logs/otel/enabled.rs",
+          "line": 99,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "weakly_gripped",
+          "seam_id": "eef0358604b2e8fa",
+          "seam_kind": "call_presence"
+        }
+      ],
       "mutant_id": "crates/atuin/src/logs/otel/enabled.rs:99:9: replace <impl Drop for OtelCtx>::drop with ()",
       "mutation_operator": "()",
       "runtime_outcome": "missed",

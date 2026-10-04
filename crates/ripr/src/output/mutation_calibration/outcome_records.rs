@@ -74,8 +74,20 @@ pub(super) fn parse_mutation_outcomes_json(
             .then(left.line.cmp(&right.line))
             .then(left.mutation_operator.cmp(&right.mutation_operator))
             .then(left.runtime_outcome.cmp(&right.runtime_outcome))
+            // Records without a mutant ID can share every field above; the
+            // span, ID and run details keep output independent of input
+            // order.
+            .then(left.span.map(span_key).cmp(&right.span.map(span_key)))
+            .then(left.mutant_id.cmp(&right.mutant_id))
+            .then(left.duration.cmp(&right.duration))
+            .then(left.test_command.cmp(&right.test_command))
+            .then(left.span_conflict.cmp(&right.span_conflict))
     });
     Ok(records)
+}
+
+fn span_key(span: RuntimeSpan) -> ((usize, usize), (usize, usize)) {
+    (span.start, span.end)
 }
 
 fn collect_mutation_outcome_records(value: &Value, records: &mut Vec<MutationOutcomeRecord>) {

@@ -37,7 +37,7 @@ The report should:
   carry complete spans (see Join Precedence);
 - fall back to normalized file + line matching only where span comparison is
   unavailable;
-- report file/line matches as ambiguous when multiple line-only candidates
+- report file/line fallback matches as ambiguous when multiple candidates
   share the same normalized file and line;
 - report equal or crossing containing spans as ambiguous span overlaps;
 - report unmatched runtime mutants separately, with the reason they did not
@@ -91,12 +91,15 @@ Unmatched runtime mutants should preserve their location, mutation operator,
 runtime outcome, duration, and test command when available, plus an
 `unmatched_reason`:
 
-- `no_location`: the runtime record names no file;
+- `no_location`: the runtime record names no file or no line;
+- `conflicting_runtime_spans`: merged duplicates of the record disagreed on
+  span or line, so its location is untrusted;
 - `no_seam_on_line`: no static seam starts on the record's line and no seam
   span in the file could be compared;
 - `no_containing_seam`: the record has a complete span, the file has seam
   spans, none contains the mutated range, and no span-less seam starts on the
-  record's line.
+  record's line. These rows also carry `line_seams`: the seams starting on
+  the record's line, with their spans.
 
 ## Runtime Source Spans
 
@@ -114,7 +117,8 @@ keeps that range as one atomic value:
 - when `mutants.json` and `outcomes.json` records for one mutant merge, a
   complete span fills an absent one; two different complete spans drop the
   span and mark the record `span_status: "conflicting_runtime_spans"` rather
-  than choosing one;
+  than choosing one, as does a duplicate that disagrees on the line; such a
+  record joins only by `seam_id`;
 - the span is rendered on runtime rows as `column`, `end_line` and
   `end_column` next to `line`.
 
@@ -205,9 +209,9 @@ then the report lists the runtime mutant under unmatched_mutants.
 ### Span containment picks the seam holding the mutated token
 
 ```text
-Given a predicate seam at src/context.rs:40:12-40:25 nested in a return seam
-at src/context.rs:40:5-40:40,
-and a cargo-mutants record replacing `&&` at src/context.rs:40:18-40:20,
+Given a predicate seam at src/gate.rs:10:12-10:25 nested in a return seam
+at src/gate.rs:10:5-10:40,
+and a cargo-mutants record replacing `&&` at src/gate.rs:10:18-10:20,
 when ripr calibrate cargo-mutants runs,
 then the report joins the record to the predicate seam with
 join_method = span_containment.
@@ -280,6 +284,8 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_ranks_containment_over_line_fallback_and_seam_id_over_both`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::merging_runtime_records_keeps_complete_spans_and_refuses_conflicts`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reads_cargo_mutants_columns_end_to_end`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::untrusted_runtime_locations_stay_unmatched`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::id_less_runtime_records_sort_independently_of_input_order`
 - `crates/ripr/src/output/mutation_calibration/outcome_records.rs::tests::reads_mutant_span_columns_and_drops_malformed_ends`
 - `crates/ripr/src/cli/commands.rs::tests::calibrate_parses_required_inputs_format_and_out`
 - `crates/ripr/src/cli/commands.rs::tests::calibrate_command_writes_json_file`

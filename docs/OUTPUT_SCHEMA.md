@@ -16926,11 +16926,27 @@ JSON shape:
       "column": 17,
       "end_line": 20,
       "end_column": 18,
-      "mutation_operator": "BinaryOperator",
+      "mutation_operator": "-",
       "runtime_outcome": "caught",
       "duration": null,
       "test_command": null,
-      "unmatched_reason": "no_containing_seam"
+      "unmatched_reason": "no_containing_seam",
+      "line_seams": [
+        {
+          "seam_id": "8828427428828b64",
+          "seam_kind": "call_presence",
+          "file": "src/display.rs",
+          "line": 20,
+          "column": 19,
+          "end_line": 20,
+          "end_column": 37,
+          "seam_grip_class": "ungripped",
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "observed_values": [],
+          "missing_discriminators": []
+        }
+      ]
     }
   ],
   "static_without_runtime_sample": []
@@ -16948,8 +16964,9 @@ Field contract:
   supplied JSON.
 - `metrics.matched_total` — runtime records joined to a static seam.
 - `metrics.ambiguous_file_line_total` — runtime records the file/line
-  fallback could not assign: several line-only candidates on the record's
-  line and no seam span containing the record.
+  fallback could not assign: several candidates on the record's line (seams
+  without a span when the record has a span that no seam contains; every seam
+  on the line when the record has no complete span).
 - `metrics.ambiguous_span_overlap_total` — runtime records contained by two or
   more innermost seam spans that are equal or cross, so no unique seam holds
   the mutated range.
@@ -17005,8 +17022,8 @@ Field contract:
   runtime rows — 1-based character columns with an exclusive end, present
   only when that side carries a complete span.
 - runtime rows' `span_status` — `"conflicting_runtime_spans"` when merged
-  records for one mutant carried different complete spans; the span is
-  dropped and the record joins as line-only evidence.
+  records for one mutant carried different complete spans or lines; the span
+  is dropped and the record is unmatched unless its `seam_id` joins it.
 - `matches[].static` — static seam evidence copied from `repo-exposure.json`:
   seam identity, class, strongest visible oracle kind/strength, observed values,
   and missing discriminators.
@@ -17019,7 +17036,7 @@ Field contract:
   map to `no_runtime_data` because they provide no usable support or
   contradiction for the static claim.
 - `ambiguous_file_line_matches[]` — runtime records the file/line fallback
-  matched to several line-only seams. These records are intentionally not
+  matched to several seams on their line. These records are intentionally not
   assigned to `matches[]` without a stronger seam/probe ID or span.
 - `ambiguous_span_overlap_matches[]` — runtime records contained by equal or
   crossing innermost seam spans, with the runtime span and every candidate
@@ -17029,10 +17046,14 @@ Field contract:
   `ambiguous_runtime_join`; ambiguous joins do not raise or lower confidence for
   any candidate seam.
 - `unmatched_mutants[]` — runtime records that did not match a static seam.
-- `unmatched_mutants[].unmatched_reason` — `no_location` (no file),
-  `no_seam_on_line` (no seam on the line and no seam span to compare), or
-  `no_containing_seam` (complete spans on both sides and none contains the
-  record).
+- `unmatched_mutants[].unmatched_reason` — `no_location` (no file or no
+  line), `conflicting_runtime_spans` (merged duplicates disagreed on span or
+  line, so only a `seam_id` can join the record), `no_seam_on_line` (no seam
+  on the line and no seam span to compare), or `no_containing_seam` (complete
+  spans on both sides and none contains the record).
+- `unmatched_mutants[].line_seams` — for `no_containing_seam`, the seams that
+  start on the record's line, with their spans, so the refused same-line join
+  can be checked.
 - `static_without_runtime_sample[]` — capped sample of static seams with no
   definitive or ambiguous runtime data in this import. Use
   `static_without_runtime_total` for the full count.

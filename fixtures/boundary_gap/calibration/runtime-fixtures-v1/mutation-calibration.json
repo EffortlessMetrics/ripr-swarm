@@ -294,7 +294,7 @@
     "runtime clean signals are imported runtime labels such as caught or timeout",
     "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import",
     "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line",
-    "ambiguous runtime gap signals (ambiguous_file_line: several line-only seams share the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
+    "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
   ],
   "schema_version": "0.2",
   "scope": "repo",

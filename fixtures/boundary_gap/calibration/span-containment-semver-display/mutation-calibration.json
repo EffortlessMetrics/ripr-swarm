@@ -31,7 +31,7 @@
     "runtime clean signals are imported runtime labels such as caught or timeout",
     "static_gap_without_runtime_signal includes static gap seams with no matched runtime gap signal in this import",
     "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line",
-    "ambiguous runtime gap signals (ambiguous_file_line: several line-only seams share the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
+    "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available"
   ],
   "schema_version": "0.2",
   "scope": "repo",
@@ -80,6 +80,22 @@
       "end_line": 20,
       "file": "src/display.rs",
       "line": 20,
+      "line_seams": [
+        {
+          "column": 19,
+          "end_column": 37,
+          "end_line": 20,
+          "file": "src/display.rs",
+          "line": 20,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "8828427428828b64",
+          "seam_kind": "call_presence"
+        }
+      ],
       "mutant_id": "src/display.rs:20:17: replace + with * in <impl Display for Version>::fmt",
       "mutation_operator": "*",
       "runtime_outcome": "caught",
@@ -94,6 +110,22 @@
       "end_line": 20,
       "file": "src/display.rs",
       "line": 20,
+      "line_seams": [
+        {
+          "column": 19,
+          "end_column": 37,
+          "end_line": 20,
+          "file": "src/display.rs",
+          "line": 20,
+          "missing_discriminators": [],
+          "observed_values": [],
+          "oracle_kind": "unknown",
+          "oracle_strength": "unknown",
+          "seam_grip_class": "ungripped",
+          "seam_id": "8828427428828b64",
+          "seam_kind": "call_presence"
+        }
+      ],
       "mutant_id": "src/display.rs:20:17: replace + with - in <impl Display for Version>::fmt",
       "mutation_operator": "-",
       "runtime_outcome": "caught",
