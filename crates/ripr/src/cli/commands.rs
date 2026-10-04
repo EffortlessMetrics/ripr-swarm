@@ -531,12 +531,30 @@ fn report_packet_index(args: &[String]) -> Result<(), String> {
 fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     let options = parse_gap_decision_ledger_options(args)?;
     let records_path = ledger_source_path(options.source.path())?;
+    // An unreadable source means the command could not complete: refuse (exit 2
+    // per docs/EXIT_CODES.md) before writing a `blocked` ledger and exiting 0
+    // as if the run succeeded. A root that is not a directory is the usual
+    // cause, so name it.
+    let records_json = read_optional_text_for_report(options.source.label(), options.source.path())
+        .map_err(|error| {
+            if Path::new(&options.root).is_dir() {
+                format!(
+                    "{error}; generate it first (for example `ripr pilot --root {}`) or pass the correct path",
+                    crate::agent::loop_commands::shell_arg(&options.root)
+                )
+            } else {
+                format!(
+                    "reports gap-ledger --root {} is not a directory ({error}); pass the repository root with --root",
+                    options.root
+                )
+            }
+        })?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
         root: options.root,
         generated_at: gap_decision_ledger_generated_at()?,
         source_kind: options.source.kind(),
         records_path,
-        records_json: read_optional_text_for_report(options.source.label(), options.source.path()),
+        records_json: Ok(records_json),
     };
     let selected_root = PathBuf::from(&input.root);
     let mut report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);

@@ -12193,6 +12193,41 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     Ok(())
 }
 
+/// A mistyped `--root` must not read as a completed run: `first-pr` and
+/// `reports gap-ledger` exit 2, say what is wrong, and write nothing.
+#[test]
+fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), String> {
+    let cwd = unique_temp_workspace("missing-root-refusal");
+    std::fs::create_dir_all(&cwd).map_err(|e| format!("create cwd: {e}"))?;
+    let missing = cwd.join("no-such-repo").display().to_string();
+    for args in [
+        vec!["first-pr", "--root", missing.as_str()],
+        vec!["first-pr", "--root", missing.as_str(), "--check"],
+        vec![
+            "reports",
+            "gap-ledger",
+            "--root",
+            missing.as_str(),
+            "--repo-exposure",
+            "no-such-exposure.json",
+        ],
+    ] {
+        let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&cwd), &args)
+            .map_err(|e| e.to_string())?;
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let code = output.status.code();
+        let wrote = cwd.join("target").exists();
+        if code != Some(2) || !stderr.contains("not a directory") || wrote {
+            let _ = std::fs::remove_dir_all(&cwd);
+            return Err(format!(
+                "{args:?}: expected exit 2, a `not a directory` message and no writes; got {code:?} wrote={wrote}\n{stderr}"
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&cwd);
+    Ok(())
+}
+
 #[test]
 fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), String> {
     let root = workspace_root().join("fixtures/boundary_gap/input");

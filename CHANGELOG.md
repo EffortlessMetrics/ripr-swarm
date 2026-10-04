@@ -11,6 +11,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
+  `--root` is not a directory or the gap-ledger input cannot be read, instead
+  of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
+  names the path and the next step. A root that exists but is not a workspace
+  still gets the `first-pr` recovery packet.
+
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
   commands they print, so `--root .` no longer yields a command that fails
