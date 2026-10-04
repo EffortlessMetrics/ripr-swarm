@@ -66,8 +66,6 @@ pub(crate) const PILOT_SEAM_BUDGET_ENV: &str = "RIPR_PILOT_SEAM_BUDGET";
 /// Operators can raise or remove the cap via `RIPR_PILOT_SEAM_BUDGET`.
 pub(crate) const DEFAULT_PILOT_SEAM_BUDGET: usize = 2_000;
 
-const LATENCY_TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
-
 /// Walk production Rust files at `root` and emit the raw seam inventory.
 /// Used by the `repo-seams-*` formats; the classified inventory used by
 /// `repo-exposure-*` formats lives in [`inventory_classified_seams_at`].
@@ -386,16 +384,14 @@ pub(crate) fn workspace_cache_key_at_with_config(
     Ok(key)
 }
 
-fn trace_latency_phase(phase: &str, status: &str, duration: Duration) {
-    if std::env::var_os(LATENCY_TRACE_ENV).is_some() {
-        eprintln!("{}", latency_trace_line(phase, status, duration));
-    }
-}
+/// The one owner of the wall-clock phase line and of the end-of-run
+/// resource-cost receipt (#5213).
+use super::resource_cost::{self as latency_trace, trace_latency_phase};
 
 /// A bounded, typed diagnostic channel for the latency runner. The ordinary
 /// human phase label cannot represent failure identities or overflow.
 fn trace_file_fact_cache(stats: &FileFactCacheStats) {
-    if std::env::var_os(LATENCY_TRACE_ENV).is_none() {
+    if !latency_trace::latency_trace_enabled() {
         return;
     }
     eprintln!(
@@ -458,13 +454,6 @@ fn cache_store_status_label(reason: &str) -> String {
         }
     }
     label
-}
-
-fn latency_trace_line(phase: &str, status: &str, duration: Duration) -> String {
-    format!(
-        "ripr_repo_exposure_latency phase={phase} status={status} duration_ms={}",
-        duration.as_millis()
-    )
 }
 
 /// Cold-path inventory + classify with no cache. Used by the cached
@@ -2238,11 +2227,13 @@ pub(crate) fn inventory_seams_from_index(
         if facts.probe_shapes.is_empty() {
             continue;
         }
+        let owners = rust_index::FileOwnerLookup::new(facts.functions.iter());
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
         for shape in &facts.probe_shapes {
-            let Some(seam) = build_seam_from_shape(path, shape, index, &facts.source, &line_starts)
+            let Some(seam) =
+                build_seam_from_shape(path, shape, &owners, &facts.source, &line_starts)
             else {
                 continue;
             };
@@ -2280,12 +2271,12 @@ pub(crate) fn inventory_seams_from_index(
 fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
-    index: &RustIndex,
+    owners: &rust_index::FileOwnerLookup<'_>,
     source: &str,
     line_starts: &[usize],
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(&shape.kind)?;
-    let owner_fact = rust_index::find_owner_function(index, path, shape.start_line)?;
+    let owner_fact = owners.owner(shape.start_line)?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
@@ -3397,28 +3388,6 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     #[test]
-    fn latency_trace_line_formats_phase_status_and_duration() {
-        let line = latency_trace_line("cache_load", "hit", Duration::from_millis(7));
-        assert_eq!(
-            line,
-            "ripr_repo_exposure_latency phase=cache_load status=hit duration_ms=7"
-        );
-    }
-
-    #[test]
-    fn latency_trace_line_can_report_start_input_context() {
-        let line = latency_trace_line(
-            "file_fact_cache",
-            "start_files_42_production_7",
-            Duration::ZERO,
-        );
-        assert_eq!(
-            line,
-            "ripr_repo_exposure_latency phase=file_fact_cache status=start_files_42_production_7 duration_ms=0"
-        );
-    }
-
-    #[test]
     fn cache_store_status_label_is_trace_safe() {
         let skip_reason = format!(
             "skipped_large_entry_seams_38124_limit_{}",
@@ -3953,6 +3922,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                 serde_json::from_slice(&original).map_err(|err| err.to_string())?;
             let seams = edited
                 .get_mut("classified_seams")
+                .and_then(|body| body.get_mut("seams"))
                 .and_then(|value| value.as_array_mut())
                 .ok_or("missing seams")?;
             let summary = seams
