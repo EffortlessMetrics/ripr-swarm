@@ -313,42 +313,69 @@ fn require_mutants_match_checkout(
     mutant_records: &Value,
 ) -> Result<usize, String> {
     let records = mutant_records.as_array().map(Vec::as_slice).unwrap_or(&[]);
+    check_mutant_diffs(records, |file| {
+        fs::read_to_string(checkout.join(file))
+            .ok()
+            .map(|text| text.lines().map(str::to_string).collect())
+    })
+    .map_err(|problem| {
+        format!("mutants.out for `{name}` does not match the checkout at {revision}: {problem}")
+    })
+}
+
+/// Checks every mutant record's diff against the source `read_source`
+/// returns, and returns how many were checked. A record without a diff
+/// (cargo-mutants before 27 omits it) cannot be checked, so it refuses the
+/// directory rather than scoring unverified outcomes.
+fn check_mutant_diffs(
+    records: &[Value],
+    mut read_source: impl FnMut(&str) -> Option<Vec<String>>,
+) -> Result<usize, String> {
     let mut sources: BTreeMap<String, Option<Vec<String>>> = BTreeMap::new();
-    let mut checked = 0;
     let mut stale = Vec::new();
+    let mut missing_files = BTreeSet::new();
     for record in records {
         let (Some(file), Some(diff)) = (
             record.get("file").and_then(Value::as_str),
             record.get("diff").and_then(Value::as_str),
         ) else {
-            continue;
+            return Err(
+                "mutants.json has a mutant without `file` and `diff`, so its source revision cannot be checked. Re-run with cargo-mutants 27 or later, which records each mutant's diff.".to_string(),
+            );
         };
-        let lines = sources.entry(file.to_string()).or_insert_with(|| {
-            fs::read_to_string(checkout.join(file))
-                .ok()
-                .map(|text| text.lines().map(str::to_string).collect())
-        });
-        checked += 1;
-        if let Some(line) = first_stale_line(diff, lines.as_deref()) {
-            stale.push(format!("{file}:{line}"));
+        let lines = sources
+            .entry(file.to_string())
+            .or_insert_with(|| read_source(file));
+        match lines {
+            None => {
+                missing_files.insert(file.to_string());
+            }
+            Some(lines) => {
+                if let Some(line) = first_stale_line(diff, lines) {
+                    stale.push(format!("{file}:{line}"));
+                }
+            }
         }
     }
-    if stale.is_empty() {
-        return Ok(checked);
+    if let Some(file) = missing_files.first() {
+        return Err(format!(
+            "{} mutated file(s) are missing from the checkout, first `{file}`. Pass the checkout root cargo-mutants ran in.",
+            missing_files.len()
+        ));
     }
-    Err(format!(
-        "mutants.out for `{name}` does not match the checkout at {revision}: {} of {checked} mutant diffs no longer apply (first at {}). Check out the revision cargo-mutants ran on, or re-run cargo mutants on this one.",
-        stale.len(),
-        stale[0]
-    ))
+    if let Some(first) = stale.first() {
+        return Err(format!(
+            "{} of {} mutant diffs no longer apply (first at {first}). Check out the revision cargo-mutants ran on, or re-run cargo mutants on this one.",
+            stale.len(),
+            records.len()
+        ));
+    }
+    Ok(records.len())
 }
 
 /// Returns the first source line where a mutant diff's context or removed
 /// lines differ from `source`, or `None` when the whole diff still applies.
-fn first_stale_line(diff: &str, source: Option<&[String]>) -> Option<usize> {
-    let Some(source) = source else {
-        return Some(0);
-    };
+fn first_stale_line(diff: &str, source: &[String]) -> Option<usize> {
     let mut cursor: Option<usize> = None;
     for line in diff.lines() {
         if let Some(header) = line.strip_prefix("@@ -") {
@@ -860,7 +887,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mutant_diffs_must_match_the_checkout_lines_they_replaced() {
+    fn mutant_diffs_must_match_the_checkout_lines_they_replaced() -> Result<(), String> {
         let diff = "--- src/a.rs\n+++ replace > with < in f\n@@ -2,3 +2,3 @@\n fn f(a: u8) -> bool {\n-    a > 1\n+    a < 1\n }\n";
         let source = |body: &str| -> Vec<String> {
             ["// header", "fn f(a: u8) -> bool {", body, "}"]
@@ -868,13 +895,31 @@ mod tests {
                 .map(|line| line.to_string())
                 .collect()
         };
-        assert_eq!(first_stale_line(diff, Some(&source("    a > 1"))), None);
-        assert_eq!(first_stale_line(diff, Some(&source("    a >= 1"))), Some(3));
+        assert_eq!(first_stale_line(diff, &source("    a > 1")), None);
+        assert_eq!(first_stale_line(diff, &source("    a >= 1")), Some(3));
+        assert_eq!(first_stale_line(diff, &source("    a > 1")[..2]), Some(3));
+
+        let records = [json!({"file": "src/a.rs", "diff": diff})];
         assert_eq!(
-            first_stale_line(diff, Some(&source("    a > 1")[..2])),
-            Some(3)
+            check_mutant_diffs(&records, |_| Some(source("    a > 1"))),
+            Ok(1)
         );
-        assert_eq!(first_stale_line(diff, None), Some(0));
+        let Err(stale) = check_mutant_diffs(&records, |_| Some(source("    a >= 1"))) else {
+            return Err("a changed source line must refuse the directory".to_string());
+        };
+        assert!(stale.contains("1 of 1 mutant diffs no longer apply (first at src/a.rs:3)"));
+        let Err(missing) = check_mutant_diffs(&records, |_| None) else {
+            return Err("a missing source file must refuse the directory".to_string());
+        };
+        assert!(missing.contains("missing from the checkout, first `src/a.rs`"));
+        // cargo-mutants 26.x writes mutants.json without diffs.
+        let Err(no_diff) = check_mutant_diffs(&[json!({"file": "src/a.rs"})], |_| {
+            Some(source("    a > 1"))
+        }) else {
+            return Err("a mutant without a diff must refuse the directory".to_string());
+        };
+        assert!(no_diff.contains("cargo-mutants 27 or later"));
+        Ok(())
     }
 
     #[test]

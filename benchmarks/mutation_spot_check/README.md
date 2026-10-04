@@ -7,7 +7,8 @@ cargo-mutants outcomes on real repositories. For each checkout it writes a
 the two through `ripr calibrate cargo-mutants`, so the join has one owner.
 cargo-mutants records no source revision, so before scoring the harness checks
 that every mutant diff's original lines still match the checkout. If any
-differ, it refuses the directory and names the first stale line.
+differ, or a mutant has no diff (cargo-mutants before 27), it refuses the
+directory and says why.
 
 There is no committed corpus. The harness takes checkouts, records each
 checkout's `HEAD`, and reports against those revisions. The first run used:
