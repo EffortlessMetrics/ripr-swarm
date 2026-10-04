@@ -3204,9 +3204,22 @@ mod tests {
         let searched = dependent_scope::with_forced_reach_limit(100, || {
             scoped_findings(&root, DependentScopeMode::NameAdmitted)
         })?;
+        let full_parses = dependent_scope::observed_reach_parses();
         assert!(
-            dependent_scope::observed_reach_parses() > 0 && !searched.0.contains(unsearched),
+            full_parses > 0 && !searched.0.contains(unsearched),
             "control: under a roomy limit the same closure admits and searches files"
+        );
+        // A limit one file short of the whole closure falls on a later caller
+        // level: the levels before it are parsed, the crossing one is not.
+        let main_files = searched.1.ok_or("the named mode must narrow")?.len();
+        let between =
+            dependent_scope::with_forced_reach_limit(main_files + full_parses - 1, || {
+                scoped_findings(&root, DependentScopeMode::NameAdmitted)
+            })?;
+        let partial = dependent_scope::observed_reach_parses();
+        assert!(
+            between.0.contains(unsearched) && partial > 0 && partial < full_parses,
+            "a later-level crossing parses only the levels before it: {partial} of {full_parses}"
         );
 
         let witnessed_root = temp_root("dependent-scope-over-limit-witnessed")?;
