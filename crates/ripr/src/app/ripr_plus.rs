@@ -48,6 +48,8 @@ const LAST_GOOD_IS_STALE: &str =
 /// The same limit as a standalone sentence, for messages that name no copy
 /// before it.
 const LAST_GOOD_IS_STALE_SENTENCE: &str = "A kept copy describes an earlier run, may be stale for the current HEAD, and is not current evidence.";
+const NO_COPY_KEPT_SENTENCE: &str =
+    "Any last-good copy still on disk is from an earlier run and is not current evidence.";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct RiprPlusOptions {
@@ -162,15 +164,20 @@ fn keep_last_good_receipt(repo: &Path) -> String {
                         Ok(false) => {}
                         Err(err) => failures.push(err),
                     }
-                    let kept_at = if kept.is_empty() {
-                        String::new()
+                    let failures = failures.join("; ");
+                    if kept.is_empty() {
+                        // Nothing was copied, so no copy is named as kept; a
+                        // file left from an even earlier run is still no
+                        // evidence for this one.
+                        format!(
+                            " The previous receipt (status `{status}`) could not be kept ({failures}). {NO_COPY_KEPT_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
+                        )
                     } else {
-                        format!(" Kept: {}.", kept.join(" and "))
-                    };
-                    format!(
-                        " The previous receipt (status `{status}`) was only partly kept ({}).{kept_at} {LAST_GOOD_IS_STALE_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
-                        failures.join("; ")
-                    )
+                        format!(
+                            " The previous receipt (status `{status}`) was only partly kept ({failures}). Kept: {}. {LAST_GOOD_IS_STALE_SENTENCE} {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
+                            kept.join(" and ")
+                        )
+                    }
                 }
             }
         }
@@ -1260,6 +1267,38 @@ mod tests {
         );
         assert!(kept.contains("may be stale for the current HEAD"), "{kept}");
         assert_eq!(json.map_err(|err| err.to_string())?, r#"{"status":"pass"}"#);
+        Ok(())
+    }
+
+    #[test]
+    fn no_surviving_copy_is_reported_as_not_kept() -> Result<(), String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock failed: {err}"))?
+            .as_nanos();
+        let repo = std::env::temp_dir().join(format!(
+            "ripr-plus-none-kept-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = repo.join("target/ripr/reports");
+        fs::create_dir_all(&reports)
+            .map_err(|err| format!("mkdir {}: {err}", reports.display()))?;
+        fs::write(repo.join(RIPR_PLUS_JSON), r#"{"status":"pass"}"#)
+            .map_err(|err| format!("seed json: {err}"))?;
+        fs::write(repo.join(RIPR_PLUS_MD), "good receipt")
+            .map_err(|err| format!("seed md: {err}"))?;
+        // Directories where both saved copies belong make both copies fail.
+        for blocked in [RIPR_PLUS_LAST_GOOD_JSON, RIPR_PLUS_LAST_GOOD_MD] {
+            fs::create_dir_all(repo.join(blocked))
+                .map_err(|err| format!("block {blocked}: {err}"))?;
+        }
+        let kept = keep_last_good_receipt(&repo);
+        let _ = fs::remove_dir_all(&repo);
+        assert!(kept.contains("could not be kept"), "{kept}");
+        assert!(!kept.contains("partly kept"), "{kept}");
+        assert!(!kept.contains("Kept:"), "{kept}");
+        assert!(!kept.contains("A kept copy"), "{kept}");
+        assert!(kept.contains("is not current evidence"), "{kept}");
         Ok(())
     }
 
