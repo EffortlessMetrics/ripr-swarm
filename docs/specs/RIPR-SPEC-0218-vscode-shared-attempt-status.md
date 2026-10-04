@@ -35,7 +35,8 @@ Support-tier impact:
 
 - None. This spec adds a read-only editor presentation over an existing CLI
   DTO. It does not promote a language, editor surface, gate, or public
-  support claim.
+  support claim. Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
