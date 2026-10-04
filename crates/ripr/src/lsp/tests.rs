@@ -14026,6 +14026,54 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
 }
 
 #[test]
+fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() {
+    use super::hover::diagnostic_at_position;
+
+    let finding = sample_finding();
+    let precise = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let line = precise.range.start.line;
+    let mut coarse = precise.clone();
+    coarse.message = "coarse".to_string();
+    coarse.range = Range {
+        start: Position { line, character: 0 },
+        end: Position { line, character: 0 },
+    };
+    let inside = Position {
+        line,
+        character: precise.range.start.character,
+    };
+    let past_end = Position {
+        line,
+        character: precise.range.end.character + 2,
+    };
+
+    let both = vec![coarse.clone(), precise.clone()];
+    assert_eq!(
+        diagnostic_at_position(&both, &inside).map(|d| d.range),
+        Some(precise.range)
+    );
+    assert_eq!(
+        diagnostic_at_position(&both, &past_end).map(|d| d.message.as_str()),
+        Some("coarse")
+    );
+    let coarse_only = vec![coarse];
+    assert_eq!(
+        diagnostic_at_position(&coarse_only, &inside).map(|d| d.message.as_str()),
+        Some("coarse")
+    );
+    assert!(
+        diagnostic_at_position(
+            &coarse_only,
+            &Position {
+                line: line + 1,
+                character: 0
+            }
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn finding_hover_avoids_mutation_runtime_language() -> Result<(), String> {
     use super::hover::finding_hover_response;
 
