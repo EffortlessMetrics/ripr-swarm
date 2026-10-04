@@ -39,6 +39,15 @@ pub(crate) struct CompactGripContext<'a> {
     /// admission reads. File-bounded and small, so it survives windows.
     pub(in crate::analysis::test_grip_evidence) inline_unit_layouts:
         crate::analysis::new_test_target::InlineUnitLayoutMemo,
+    /// Per seam file: functions sorted for owner lookup. Every seam resolves
+    /// its owner several times, and the plain lookup scans the whole file's
+    /// function list each time, so a 200k-function file spent 27% of cold
+    /// pilot there. File-bounded, so it survives windows.
+    owner_lookups: Mutex<BTreeMap<PathBuf, Option<Arc<rust_index::FileOwnerLookup<'a>>>>>,
+    /// Per owner file: fixture-shaped function names. The set depends only
+    /// on the file, but every seam re-filtered its file's whole function
+    /// list and searched each body for `#[fixture]`.
+    fixture_names: Mutex<BTreeMap<&'a Path, Arc<BTreeSet<String>>>>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -463,6 +472,8 @@ impl<'a> CompactGripContext<'a> {
             evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
             parsed_sources: Mutex::new(BTreeMap::new()),
             inline_unit_layouts: Default::default(),
+            owner_lookups: Mutex::new(BTreeMap::new()),
+            fixture_names: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -539,6 +550,45 @@ impl<'a> CompactGripContext<'a> {
             .map(|parse| Arc::new(ParsedTestFile::new(parse, &facts.source)));
         memo(&self.parsed_sources).insert(path.as_path(), parsed.clone());
         parsed
+    }
+
+    /// Innermost indexed function containing `line` of `file`; the same
+    /// answer as [`rust_index::find_owner_function`], from a per-file sorted
+    /// lookup built once.
+    pub(in crate::analysis::test_grip_evidence) fn owner_function(
+        &self,
+        file: &Path,
+        line: usize,
+    ) -> Option<&'a FunctionSummary> {
+        let cached = memo(&self.owner_lookups).get(file).cloned();
+        let lookup = match cached {
+            Some(lookup) => lookup,
+            None => {
+                let lookup = rust_index::find_file_facts(self.index, file).map(|facts| {
+                    Arc::new(rust_index::FileOwnerLookup::new(facts.functions.iter()))
+                });
+                memo(&self.owner_lookups).insert(file.to_path_buf(), lookup.clone());
+                lookup
+            }
+        };
+        lookup?.owner(line)
+    }
+
+    /// Fixture-shaped function names of an indexed owner file, built once
+    /// per file. Empty when `file` is not an exact index key.
+    pub(super) fn fixture_names_for_owner_file(&self, file: &'a Path) -> Arc<BTreeSet<String>> {
+        if let Some(names) = memo(&self.fixture_names).get(file) {
+            return names.clone();
+        }
+        let names = Arc::new(
+            self.index
+                .files()
+                .get(file)
+                .map(super::fixture_names_for_owner_file)
+                .unwrap_or_default(),
+        );
+        memo(&self.fixture_names).insert(file, names.clone());
+        names
     }
 
     pub(super) fn owner_named_indices(&self, owner_name_lower: &str) -> Vec<usize> {
@@ -787,6 +837,78 @@ fn value() -> i32 { 1 }
         }
         if context.function_name_count("") != 0 {
             return Err("empty name must count 0".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn owner_and_fixture_memos_match_the_per_seam_scans() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // Nested functions, two functions on one line, a fixture by name, a
+        // body holding a `#[fixture]` item, and lines outside any function.
+        let source = "\
+fn outer() -> i32 {
+    fn inner() -> i32 { 1 }
+    inner()
+}
+fn a() {} fn b() {}
+
+fn make_quote() -> i32 { 2 }
+fn rates() {
+    #[fixture]
+    fn rate() -> i32 { 3 }
+}
+";
+        let path = PathBuf::from("src/a.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            ..Default::default()
+        });
+        index.insert_file_only(path.clone(), facts);
+        let context = CompactGripContext::new(&index);
+        let line_count = source.lines().count() + 2;
+        for round in 0..2 {
+            for line in 0..=line_count {
+                let expected = rust_index::find_owner_function(&index, &path, line)
+                    .map(|function| (&function.name, function.start_line));
+                let actual = context
+                    .owner_function(&path, line)
+                    .map(|function| (&function.name, function.start_line));
+                if actual != expected {
+                    return Err(format!(
+                        "round {round} line {line}: {actual:?} != {expected:?}"
+                    ));
+                }
+            }
+        }
+        if context.owner_function(&path, 2).map(|f| f.name.as_str()) != Some("inner") {
+            return Err("the innermost function must own a nested line".to_string());
+        }
+        if context
+            .owner_function(Path::new("src/missing.rs"), 1)
+            .is_some()
+        {
+            return Err("an unindexed file has no owner".to_string());
+        }
+        let Some(facts) = index.files().get(path.as_path()) else {
+            return Err("fixture file must be indexed".to_string());
+        };
+        let expected = super::super::fixture_names_for_owner_file(facts);
+        for _ in 0..2 {
+            let actual = context.fixture_names_for_owner_file(path.as_path());
+            if *actual != expected {
+                return Err(format!("fixture names {actual:?} != {expected:?}"));
+            }
+        }
+        if !expected.contains("make_quote") || !expected.contains("rates") {
+            return Err(format!("both fixture shapes must be found: {expected:?}"));
+        }
+        if !context
+            .fixture_names_for_owner_file(Path::new("src/missing.rs"))
+            .is_empty()
+        {
+            return Err("an unindexed file has no fixtures".to_string());
         }
         Ok(())
     }

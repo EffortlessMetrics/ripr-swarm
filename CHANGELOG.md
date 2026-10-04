@@ -69,7 +69,10 @@ are scoped or reviewed.
   four-file ripr-swarm diff fell from 16.1s to 12.6s. The transitive-reach
   limitation check builds its call graph once per run and walks backwards
   from each owner, so a 22-file rust-lang/rust diff checks in 24s instead of
-  594s, with identical JSON.
+  594s, with identical JSON. The evidence pass also sorts each file's
+  functions once for owner lookup and collects each owner file's fixture names
+  once, so cold pilot on a generated one-file crate with 200,000 functions
+  takes 20s instead of 416s, with identical artifacts.
 
 - CI: the `ripr init --ci github` workflow downloads the pinned ripr
   release's prebuilt binary and checks its published SHA-256 instead of

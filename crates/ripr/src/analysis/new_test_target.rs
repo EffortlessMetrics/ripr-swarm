@@ -28,6 +28,7 @@ pub(crate) use region::validate_inline_region_edit;
 
 const SAFE_NEW_INLINE_UNIT_EVIDENCE: &str = "producer-owned new inline unit test proposal";
 
+#[cfg(test)]
 pub(crate) use integration::admit_new_integration_test;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -147,16 +148,20 @@ pub(crate) enum NewTestProposalProvenance {
 /// When both stay Missing, keep Integration's Cargo/layout blockers. A
 /// PrivateOwner Integration refusal does not replace an InlineUnit module
 /// reason: private items can still earn a same-file unit proposal.
+///
+/// `owner_fn` is the seam's owner as [`rust_index::find_owner_function`]
+/// resolves it; the evidence pass passes its memoized answer.
 pub(crate) fn admit_new_test_target(
     seam: &RepoSeam,
     index: &RustIndex,
+    owner_fn: Option<&FunctionSummary>,
     layouts: &InlineUnitLayoutMemo,
 ) -> NewTestTargetAdmission {
-    let integration = admit_new_integration_test(seam, index);
+    let integration = integration::admit_new_integration_test_for_owner(seam, index, owner_fn);
     if integration.proposal.is_some() {
         return integration;
     }
-    let inline = admit_new_inline_unit_test_with(seam, index, layouts);
+    let inline = admit_new_inline_unit_test_with(seam, index, owner_fn, layouts);
     if inline.proposal.is_some() {
         return inline;
     }
@@ -182,15 +187,17 @@ pub(crate) fn admit_new_inline_unit_test(
     seam: &RepoSeam,
     index: &RustIndex,
 ) -> NewTestTargetAdmission {
-    admit_new_inline_unit_test_with(seam, index, &InlineUnitLayoutMemo::default())
+    let owner_fn = rust_index::find_owner_function(index, seam.file(), seam.display_line());
+    admit_new_inline_unit_test_with(seam, index, owner_fn, &InlineUnitLayoutMemo::default())
 }
 
 fn admit_new_inline_unit_test_with(
     seam: &RepoSeam,
     index: &RustIndex,
+    owner_fn: Option<&FunctionSummary>,
     layouts: &InlineUnitLayoutMemo,
 ) -> NewTestTargetAdmission {
-    match try_admit_new_inline_unit_test(seam, index, layouts) {
+    match try_admit_new_inline_unit_test(seam, index, owner_fn, layouts) {
         Ok((proposal, region)) => NewTestTargetAdmission {
             proposal: Some(proposal),
             region: Some(region),
@@ -207,6 +214,7 @@ fn admit_new_inline_unit_test_with(
 fn try_admit_new_inline_unit_test(
     seam: &RepoSeam,
     index: &RustIndex,
+    owner_fn: Option<&FunctionSummary>,
     layouts: &InlineUnitLayoutMemo,
 ) -> Result<(NewTestTargetProposal, InlineTestRegionAuthority), NewTestProposalBlocker> {
     if !matches!(
@@ -229,8 +237,7 @@ fn try_admit_new_inline_unit_test(
         return Err(NewTestProposalBlocker::PathUnsafe);
     }
 
-    let owner_fn = rust_index::find_owner_function(index, seam.file(), seam.display_line())
-        .ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
+    let owner_fn = owner_fn.ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
     if owner_fn.source_role != FunctionSourceRole::Production {
         return Err(NewTestProposalBlocker::OwnerUnresolved);
     }

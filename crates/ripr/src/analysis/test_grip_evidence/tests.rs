@@ -2667,13 +2667,15 @@ fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), Str
 fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String> {
     use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
     let (index, seams) = parallel_evidence_fixture()?;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .map_err(|err| format!("pool: {err}"))?;
+    // The test thread is not a rayon worker, so the parallel pass injects
+    // every seam into the global pool and none of them runs on the thread
+    // that holds the token. That is the production shape: callers install
+    // the token on their own thread before analysis.
+    if rayon::current_thread_index().is_some() {
+        return Err("the caller must not be a rayon worker".into());
+    }
     let live = AnalysisCancellationToken::new();
-    let completed =
-        pool.install(|| cancellation::with_token(&live, || evidence_for_seams(&seams, &index)));
+    let completed = cancellation::with_token(&live, || evidence_for_seams(&seams, &index));
     if completed.len() != seams.len() {
         return Err("a live token must not drop seams".into());
     }
@@ -2681,8 +2683,7 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
     cancelled.cancel(AnalysisAbortKind::Cancelled);
     // Workers that did not inherit the token would see no cancellation and
     // evaluate every seam.
-    let evidence = pool
-        .install(|| cancellation::with_token(&cancelled, || evidence_for_seams(&seams, &index)));
+    let evidence = cancellation::with_token(&cancelled, || evidence_for_seams(&seams, &index));
     if !evidence.is_empty() {
         return Err(format!(
             "cancelled pass evaluated {} seams on rayon workers",

@@ -16,7 +16,7 @@ mod related_tests;
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
-    CompactTest, assertion_target_tokens, call_text_contains_named_call, find_owner_function,
+    CompactTest, assertion_target_tokens, call_text_contains_named_call,
     find_related_tests_compact, find_related_tests_with_context, required_discriminator_text,
     sort_related_tests_for_seam, strip_comments_and_strings,
     test_assertion_mentions_any_target_token,
@@ -306,7 +306,7 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, _reason)| *indexed)
         .collect();
-    let owner_fn = find_owner_function(seam, context.index);
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
 
@@ -349,6 +349,7 @@ fn new_test_target_admission(
         | SeamKind::MatchArm => Some(new_test_target::admit_new_test_target(
             seam,
             context.index,
+            context.owner_function(seam.file(), seam.display_line()),
             &context.inline_unit_layouts,
         )),
         SeamKind::SideEffect | SeamKind::CallPresence => None,
@@ -378,7 +379,7 @@ pub(crate) fn compact_evidence_for_seam(
 ) -> TestGripEvidence {
     let related_indexed = find_related_tests_compact(seam, context);
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
-    let owner_fn = find_owner_function(seam, context.index);
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related);
     let (activate, missing_discriminators) =
@@ -439,8 +440,9 @@ fn activate_evidence(
     let index = context.index;
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let mut observed: Vec<ValueFact> = Vec::new();
-    let observed_argument_selection =
-        (!owner_name.is_empty()).then(|| observed_argument_selection(seam, index, owner_name));
+    let observed_argument_selection = owner_fn
+        .filter(|owner| !owner.name.is_empty())
+        .map(|owner| observed_argument_selection(seam, owner));
 
     if let Some(selection) = &observed_argument_selection {
         for indexed in related {
@@ -589,7 +591,7 @@ fn activate_evidence(
                 constant.1
             )
         } else if boundary_local_unresolved && !related.is_empty() {
-            boundary_activation_operands_unresolved_summary(seam, index, owner_name)
+            boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if !observed.is_empty() {
             format!(
                 "Observed {} concrete activation value(s) for seam `{}`",
@@ -624,7 +626,7 @@ fn activate_evidence(
                     .unwrap_or(seam.expression())
             )
         } else if boundary_activation_operands_unresolved && !related.is_empty() {
-            boundary_activation_operands_unresolved_summary(seam, index, owner_name)
+            boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if requires_concrete_activation_values(seam) {
             format!(
                 "No concrete activation values observed for seam `{}`",
@@ -826,18 +828,12 @@ fn has_ambiguous_constructor_field_owner(
             .any(|oracle| field_construction_oracle_matches_seam_field(seam, &oracle.text))
 }
 
+/// `owner_fn` is the seam's resolved owner.
 fn observed_argument_selection(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: &FunctionSummary,
 ) -> ObservedArgumentSelection {
     if seam.kind() != SeamKind::PredicateBoundary {
-        return ObservedArgumentSelection::AllArguments;
-    }
-    let Some(owner_fn) = find_owner_function(seam, index) else {
-        return ObservedArgumentSelection::AllArguments;
-    };
-    if owner_fn.name != owner_name {
         return ObservedArgumentSelection::AllArguments;
     }
     let Some((left, right)) = comparison_operands(seam.expression()) else {
@@ -857,19 +853,18 @@ fn observed_argument_selection(
 
 fn boundary_activation_operands_unresolved_summary(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: Option<&FunctionSummary>,
 ) -> String {
     let expression = seam
         .expression()
         .lines()
         .next()
         .unwrap_or(seam.expression());
-    if boundary_activation_operands_are_iterator_derived(seam, index, owner_name) {
+    if boundary_activation_operands_are_iterator_derived(seam, owner_fn) {
         format!(
             "Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
         )
-    } else if boundary_activation_operands_are_closure_derived(seam, index, owner_name) {
+    } else if boundary_activation_operands_are_closure_derived(seam, owner_fn) {
         format!(
             "Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
         )
@@ -882,18 +877,14 @@ fn boundary_activation_operands_unresolved_summary(
 
 fn boundary_activation_operands_are_iterator_derived(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: Option<&FunctionSummary>,
 ) -> bool {
     if seam.kind() != SeamKind::PredicateBoundary {
         return false;
     }
-    let Some(owner_fn) = find_owner_function(seam, index) else {
+    let Some(owner_fn) = owner_fn else {
         return false;
     };
-    if owner_fn.name != owner_name {
-        return false;
-    }
     let Some((left, right)) = comparison_operands(seam.expression()) else {
         return false;
     };
@@ -903,18 +894,14 @@ fn boundary_activation_operands_are_iterator_derived(
 
 fn boundary_activation_operands_are_closure_derived(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: Option<&FunctionSummary>,
 ) -> bool {
     if seam.kind() != SeamKind::PredicateBoundary {
         return false;
     }
-    let Some(owner_fn) = find_owner_function(seam, index) else {
+    let Some(owner_fn) = owner_fn else {
         return false;
     };
-    if owner_fn.name != owner_name {
-        return false;
-    }
     let Some((left, right)) = comparison_operands(seam.expression()) else {
         return false;
     };
@@ -1179,15 +1166,15 @@ pub(super) struct SeamOwnerActivation<'index> {
 
 pub(super) fn seam_owner_activation<'index>(
     seam: &RepoSeam,
-    index: &'index RustIndex,
+    context: &CompactGripContext<'index>,
 ) -> Option<SeamOwnerActivation<'index>> {
-    let owner_fn = find_owner_function(seam, index)?;
+    let owner_fn = context.owner_function(seam.file(), seam.display_line())?;
     if owner_fn.name.is_empty() {
         return None;
     }
     Some(SeamOwnerActivation {
         owner_fn,
-        selection: observed_argument_selection(seam, index, &owner_fn.name),
+        selection: observed_argument_selection(seam, owner_fn),
     })
 }
 
