@@ -19,6 +19,19 @@ use std::time::{Duration, Instant};
 /// upper bound.
 const POST_KILL_DRAIN_GRACE: Duration = Duration::from_secs(5);
 
+/// Budget for confirming that a timed-out Unix process group has no live
+/// members (#5382).
+///
+/// A recorded `timed_out` result is not proof that descendants died: the first
+/// `kill -KILL -- -<pgid>` can race a fork (GNU `time` starting `ripr` is the
+/// motivating case). After reaping the direct child, the timeout path polls
+/// until the group is empty, re-sending SIGKILL each round, and refuses to
+/// return `timed_out: true` if the group is still populated when this budget
+/// expires. Two seconds is long enough for SIGKILL and a missed-fork retry,
+/// and short enough that an unkillable leftover becomes an explicit error
+/// instead of a silent timeout.
+const POST_KILL_GROUP_CONFIRM_GRACE: Duration = Duration::from_secs(2);
+
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
@@ -964,10 +977,19 @@ fn wait_for_child_sampled(
         if let Some(timeout) = deadline
             && started.elapsed() >= timeout
         {
+            #[cfg(unix)]
+            let pgid = child.id();
             let termination_requested = terminate_after_timeout(child, error_context)?;
             let status = child
                 .wait()
                 .map_err(|err| format!("failed to finish timed-out {error_context}: {err}"))?;
+            #[cfg(unix)]
+            if termination_requested {
+                // A timeout is only recorded after the Unix process group is
+                // confirmed empty (or this call fails closed that it could
+                // not). Windows Job Object termination already owns the tree.
+                confirm_timed_process_group_gone(pgid, error_context)?;
+            }
             return Ok(WaitOutcome {
                 status,
                 duration: started.elapsed(),
@@ -1079,13 +1101,104 @@ fn terminate_after_timeout(child: &mut OwnedProcess, error_context: &str) -> Res
 
 #[cfg(not(windows))]
 fn terminate_timed_process_tree(child: &OwnedProcess) -> bool {
-    let group = format!("-{}", child.id());
-    let status = Command::new("kill")
-        .args(["-KILL", "--", group.as_str()])
+    signal_process_group(child.id(), "-KILL").is_ok_and(|status| status.success())
+}
+
+#[cfg(not(windows))]
+fn signal_process_group(pgid: u32, signal: &str) -> std::io::Result<ExitStatus> {
+    let group = format!("-{pgid}");
+    Command::new("kill")
+        .args([signal, "--", group.as_str()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status();
-    status.is_ok_and(|status| status.success())
+        .status()
+}
+
+/// After a timeout kill, confirm the child's Unix process group has no live
+/// members, or fail closed that confirmation was impossible.
+#[cfg(unix)]
+fn confirm_timed_process_group_gone(pgid: u32, error_context: &str) -> Result<(), String> {
+    confirm_process_group_gone(pgid, POST_KILL_GROUP_CONFIRM_GRACE, error_context)
+}
+
+#[cfg(unix)]
+fn confirm_process_group_gone(
+    pgid: u32,
+    budget: Duration,
+    error_context: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + budget;
+    loop {
+        let members = process_group_live_members(pgid)?;
+        if members.is_empty() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "{error_context} timed out but could not confirm process group {pgid} is gone; still running: {members:?}"
+            ));
+        }
+        let _ = signal_process_group(pgid, "-KILL");
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Live members of `pgid`, fail-closed: a probe that cannot run is an error,
+/// not an empty group. On Linux, `/proc` is the authority so a SIGKILL zombie
+/// that `kill -0` still sees is not treated as still-running.
+#[cfg(unix)]
+fn process_group_live_members(pgid: u32) -> Result<Vec<u32>, String> {
+    #[cfg(target_os = "linux")]
+    if let Some(pids) = scan_proc_pgrp(pgid) {
+        return Ok(pids);
+    }
+    match signal_process_group(pgid, "-0") {
+        Ok(status) if status.success() => Ok(vec![pgid]),
+        Ok(_) => Ok(Vec::new()),
+        Err(err) => Err(format!("could not probe process group {pgid}: {err}")),
+    }
+}
+
+/// Non-zombie PIDs whose `/proc/<pid>/stat` pgrp matches `pgid`. `None` if
+/// `/proc` cannot be listed, so the caller can fall back to `kill -0`.
+#[cfg(target_os = "linux")]
+fn scan_proc_pgrp(pgid: u32) -> Option<Vec<u32>> {
+    let entries = fs::read_dir("/proc").ok()?;
+    let mut pids = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid_str) = name.to_str() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
+        let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        if let Some((_, group)) = parse_stat_pgrp(&stat)
+            && group == pgid
+        {
+            pids.push(pid);
+        }
+    }
+    Some(pids)
+}
+
+/// `/proc/<pid>/stat` state and pgrp. `comm` may contain spaces and
+/// parentheses, so this splits only after the last `)`. Zombies and dead
+/// tasks are omitted: they are not still-running descendants.
+fn parse_stat_pgrp(stat: &str) -> Option<(char, u32)> {
+    let close = stat.rfind(')')?;
+    let rest = stat.get(close.saturating_add(1)..)?;
+    let mut fields = rest.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    if matches!(state, 'Z' | 'X') {
+        return None;
+    }
+    let _ppid = fields.next()?;
+    let pgrp = fields.next()?.parse().ok()?;
+    Some((state, pgrp))
 }
 
 fn read_stream<T: Read>(mut stream: T) -> Result<String, String> {
@@ -1312,12 +1425,13 @@ fn spawn_stream_file_writer_channel<T: Read + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CapturedOutput, POST_KILL_DRAIN_GRACE, capture_output, capture_output_with_timeout,
-        capture_output_without_timeout, capture_stdout_to_file_with_timeout, command_success_owned,
-        drain_stream_reader_bounded, parse_env_timeout_secs, read_stream_with_latency_progress,
-        run, run_in_dir, run_output, run_output_optional, run_output_owned,
-        run_output_owned_with_envs, run_output_owned_with_timeout, run_owned,
-        spawn_stream_reader_channel, terminate_after_timeout, timeout_was_enforced,
+        CapturedOutput, POST_KILL_DRAIN_GRACE, POST_KILL_GROUP_CONFIRM_GRACE, capture_output,
+        capture_output_with_timeout, capture_output_without_timeout,
+        capture_stdout_to_file_with_timeout, command_success_owned, drain_stream_reader_bounded,
+        parse_env_timeout_secs, parse_stat_pgrp, read_stream_with_latency_progress, run,
+        run_in_dir, run_output, run_output_optional, run_output_owned, run_output_owned_with_envs,
+        run_output_owned_with_timeout, run_owned, spawn_stream_reader_channel,
+        terminate_after_timeout, timeout_was_enforced,
     };
     use crate::acquire_test_cwd_read_guard;
     use ripr::process_owner::OwnedProcess;
@@ -1328,6 +1442,9 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
 
     type TestCommand = (String, Vec<String>, Vec<(String, String)>);
 
@@ -1661,7 +1778,13 @@ mod tests {
     #[test]
     fn capture_output_with_timeout_terminates_pipe_inheriting_descendants() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
-        let args = vec!["-c".to_string(), "sleep 30 & wait".to_string()];
+        let marker = unique_pgid_marker("pipe-descendant");
+        let args = vec![
+            "-c".to_string(),
+            r#"printf %s "$$" > "$RIPR_XTASK_PGID_MARKER"; sleep 30 & wait"#.to_string(),
+        ];
+        let marker_env = marker.to_string_lossy().into_owned();
+        let envs = [("RIPR_XTASK_PGID_MARKER", marker_env.as_str())];
         // The timeout must comfortably exceed the time for `sh` to fork
         // `sleep 30` INTO its process group, otherwise the group-kill on
         // timeout can race a not-yet-grouped descendant: the descendant
@@ -1673,7 +1796,7 @@ mod tests {
         let output = capture_output_with_timeout(
             "sh",
             &args,
-            &[],
+            &envs,
             Duration::from_secs(5),
             "pipe-inheriting descendant",
         )?;
@@ -1682,6 +1805,39 @@ mod tests {
             output.timed_out,
             "pipe-inheriting descendant should time out"
         );
+        assert_recorded_timeout_left_process_group_gone(&marker)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_output_with_timeout_confirms_gnu_time_descendant_group_gone() -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        if !Path::new("/usr/bin/time").exists() {
+            return Ok(());
+        }
+        let marker = unique_pgid_marker("gnu-time");
+        // `exec` keeps the process-group leader pid while GNU `time` forks
+        // `sleep`, which is the scale-cliff wrapper shape that motivated #5382.
+        let args = vec![
+            "-c".to_string(),
+            r#"printf %s "$$" > "$RIPR_XTASK_PGID_MARKER"; exec /usr/bin/time -v sleep 30"#
+                .to_string(),
+        ];
+        let marker_env = marker.to_string_lossy().into_owned();
+        let envs = [("RIPR_XTASK_PGID_MARKER", marker_env.as_str())];
+        let output = capture_output_with_timeout(
+            "sh",
+            &args,
+            &envs,
+            Duration::from_secs(5),
+            "gnu-time descendant",
+        )?;
+
+        if !output.timed_out {
+            return Err("gnu-time wrapped sleep should time out".to_string());
+        }
+        assert_recorded_timeout_left_process_group_gone(&marker)?;
         Ok(())
     }
 
@@ -1930,6 +2086,174 @@ mod tests {
             return Err("terminated failure should be treated as timeout".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn parse_stat_pgrp_reads_the_field_after_comm() -> Result<(), String> {
+        if parse_stat_pgrp("42 (sleep) S 1 99 0 -1") != Some(('S', 99)) {
+            return Err("pgrp is the third field after the closing comm parenthesis".to_string());
+        }
+        if parse_stat_pgrp("7 (name with spaces) R 3 88 0") != Some(('R', 88)) {
+            return Err("comm may contain spaces; parse after the last ')'".to_string());
+        }
+        if parse_stat_pgrp("10 (weird)name) S 1 3 0") != Some(('S', 3)) {
+            return Err("comm may contain ')'; parse after the last ')'".to_string());
+        }
+        if parse_stat_pgrp("9 (sleep) Z 1 9 9 0").is_some() {
+            return Err("zombie group members are not still-running".to_string());
+        }
+        if parse_stat_pgrp("no-paren-line").is_some() {
+            return Err("malformed stat should not invent a pgrp".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn post_kill_group_confirm_grace_is_two_seconds() -> Result<(), String> {
+        if POST_KILL_GROUP_CONFIRM_GRACE != Duration::from_secs(2) {
+            return Err(format!(
+                "POST_KILL_GROUP_CONFIRM_GRACE should be 2 s; got {:?}",
+                POST_KILL_GROUP_CONFIRM_GRACE
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confirm_process_group_gone_kills_a_live_group_within_budget() -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let (mut child, pgid) = spawn_sleep_in_own_group()?;
+        wait_until_process_group_has_members(pgid)?;
+        if let Err(err) =
+            super::confirm_process_group_gone(pgid, Duration::from_secs(2), "live-group")
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(err);
+        }
+        let leftover = super::process_group_live_members(pgid)?;
+        let _ = child.wait();
+        if !leftover.is_empty() {
+            return Err(format!(
+                "confirm_process_group_gone should leave group {pgid} empty, still running: {leftover:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confirm_process_group_gone_reports_when_a_live_group_outlives_zero_budget()
+    -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let (mut child, pgid) = spawn_sleep_in_own_group()?;
+        if let Err(err) = wait_until_process_group_has_members(pgid) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(err);
+        }
+        let err = match super::confirm_process_group_gone(pgid, Duration::ZERO, "zero-budget") {
+            Ok(()) => {
+                let leftover = match super::process_group_live_members(pgid) {
+                    Ok(members) => members,
+                    Err(_) => Vec::new(),
+                };
+                let _ = super::signal_process_group(pgid, "-KILL");
+                let _ = child.wait();
+                return Err(format!(
+                    "zero-budget confirmation must not claim a live group is gone; leftover={leftover:?}"
+                ));
+            }
+            Err(err) => err,
+        };
+        let still_live = super::process_group_live_members(pgid);
+        let _ = super::signal_process_group(pgid, "-KILL");
+        let _ = child.wait();
+        for expected in ["could not confirm", "zero-budget", &pgid.to_string()] {
+            if !err.contains(expected) {
+                return Err(format!(
+                    "unconfirmed timeout should name {expected:?}; got {err}"
+                ));
+            }
+        }
+        match still_live {
+            Ok(members) if members.is_empty() => Err(
+                "zero-budget path should not kill the live group before reporting unconfirmed"
+                    .to_string(),
+            ),
+            Ok(_) => Ok(()),
+            Err(err) => Err(format!(
+                "live group should still be probeable after an unconfirmed report: {err}"
+            )),
+        }
+    }
+
+    #[cfg(unix)]
+    fn unique_pgid_marker(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ripr-xtask-pgid-{label}-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ))
+    }
+
+    #[cfg(unix)]
+    fn assert_recorded_timeout_left_process_group_gone(marker: &Path) -> Result<(), String> {
+        let pgid_text = fs::read_to_string(marker).map_err(|err| {
+            format!(
+                "timed-out child should have recorded its pgid at {}: {err}",
+                marker.display()
+            )
+        })?;
+        let _ = fs::remove_file(marker);
+        let pgid = pgid_text
+            .trim()
+            .parse::<u32>()
+            .map_err(|err| format!("pgid marker should contain a pid, got {pgid_text:?}: {err}"))?;
+        let members = super::process_group_live_members(pgid)?;
+        if !members.is_empty() {
+            let _ = super::signal_process_group(pgid, "-KILL");
+            return Err(format!(
+                "recorded timeout coexisted with live process group {pgid} members {members:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn spawn_sleep_in_own_group() -> Result<(std::process::Child, u32), String> {
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        command.process_group(0);
+        let child = command
+            .spawn()
+            .map_err(|err| format!("spawn sleep in its own process group: {err}"))?;
+        let pgid = child.id();
+        Ok((child, pgid))
+    }
+
+    #[cfg(unix)]
+    fn wait_until_process_group_has_members(pgid: u32) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match super::process_group_live_members(pgid) {
+                Ok(members) if !members.is_empty() => return Ok(()),
+                Ok(_) => {
+                    if Instant::now() >= deadline {
+                        return Err(format!(
+                            "sleep process group {pgid} did not appear in /proc or kill -0"
+                        ));
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     /// A `Read` implementation that blocks indefinitely on every `read` call.
