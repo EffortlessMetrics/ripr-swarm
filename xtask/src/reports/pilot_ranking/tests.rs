@@ -313,3 +313,70 @@ fn report_pools_scored_repos_and_marks_an_unavailable_one_incomplete() {
     assert_eq!(report["unavailable_repos"], 1);
     assert!(markdown(&report).contains("| c | unavailable: checkout missing |"));
 }
+
+/// The seam tier reads each label's name (original operator) and column, so
+/// a conversion that dropped or zeroed either would grade this pick by the
+/// coarser line tier instead.
+#[test]
+fn labels_keep_the_name_and_column_the_seam_tier_reads() -> Result<(), String> {
+    let mutants = json!([
+        // `>` inside `a > b`, the seam's expression: missed.
+        mutant(
+            "src/a.rs:3:10: replace > with >= in f",
+            3,
+            10,
+            "BinaryOperator"
+        ),
+        // `&&` elsewhere on the line: caught, and must not decide the seam.
+        mutant(
+            "src/a.rs:3:16: replace && with || in f",
+            3,
+            16,
+            "BinaryOperator"
+        ),
+    ]);
+    let outcomes = json!({"cargo_mutants_version": "27.1.0", "outcomes": [
+        outcome("src/a.rs:3:10: replace > with >= in f", "MissedMutant"),
+        outcome("src/a.rs:3:16: replace && with || in f", "CaughtMutant"),
+    ]});
+    let labels = labels_from_mutants_out(&repo(), &mutants, &outcomes)?;
+    let (mutants, outcomes) = judge_inputs(&labels);
+    let seam = json!({"seam_id": "s3", "file": "src/a.rs", "line": 3, "kind": "predicate_boundary", "grip_class": "weakly_gripped"});
+    let expressions = BTreeMap::from([("s3", "a > b")]);
+    let judged =
+        pilot::judge_recommendations(&[seam], &mutants, &outcomes, &expressions, &|_, _| {
+            Some("    if a > b && c {".to_string())
+        });
+    assert_eq!(judged[0]["tier"], "seam");
+    assert_eq!(judged[0]["verdict"], "confirmed");
+    assert_eq!(
+        (judged[0]["caught"].as_u64(), judged[0]["missed"].as_u64()),
+        (Some(0), Some(1))
+    );
+    Ok(())
+}
+
+/// The gate compares the receipt with this committed baseline; a ranking
+/// metric missing from it would be listed as not compared and pass.
+#[test]
+fn committed_baseline_carries_every_ranking_metric_completed() -> Result<(), String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../metrics/dx-scoreboard/pilot-ranking-baseline.json");
+    let text = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let baseline: Value = serde_json::from_str(&text).map_err(|err| err.to_string())?;
+    for id in [
+        "ranking.pilot_precision_top5",
+        "ranking.pilot_precision_top10",
+        "ranking.pilot_scored_share_top10",
+        "ranking.pilot_distinct_function_share_top10",
+        "ranking.pilot_picks_top10",
+    ] {
+        let metric = baseline["metrics"]
+            .as_array()
+            .and_then(|metrics| metrics.iter().find(|metric| metric["id"] == id))
+            .ok_or_else(|| format!("baseline has no `{id}`"))?;
+        assert!(metric["value"].is_number(), "{id}: {metric}");
+        assert_eq!(metric["partial"], false, "{id}");
+    }
+    Ok(())
+}

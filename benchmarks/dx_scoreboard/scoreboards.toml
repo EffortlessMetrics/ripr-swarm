@@ -650,31 +650,37 @@ source = "ingest:rust-corpus-smoke"
 # --------------------------------------------------------------- ranking --
 # Pilot's top picks judged against the checked-in mutation answer key in
 # benchmarks/pilot_ranking/ (`cargo xtask pilot-ranking score`). Pooled over
-# the five pinned crates; per-crate detail stays in the receipt. One pick
-# moves top-10 precision by about 0.025 and top-5 precision by about 0.05,
-# so each floor allows one pick of noise and fails on two.
+# the five pinned crates; per-crate detail stays in the receipt. Pins, labels
+# and pilot are deterministic, so there is no run-to-run noise to allow for:
+# each floor sits just under one pick (top-5 precision moves about 0.05 per
+# pick, top-10 precision about 0.025, the top-10 shares 0.02), so any pick
+# that moves the wrong way fails. An intended trade-off refreshes the
+# baseline in the same pull request.
+#
+# A pick is judged by mutants of its own expression, else of its line, else
+# whole-body mutants of its function; the evidence shows the tier mix.
 
 [[metric]]
 id = "ranking.pilot_precision_top5"
 board = "ranking"
-title = "Pilot's top 5 picks per crate where a real mutant there was missed (of picks a label can judge)"
+title = "Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge)"
 unit = "ratio"
 direction = "higher_is_better"
 target = 0.6
 regression_pct = 0
-regression_floor = 0.1
+regression_floor = 0.04
 runner_dependent = false
 source = "ingest:pilot-ranking"
 
 [[metric]]
 id = "ranking.pilot_precision_top10"
 board = "ranking"
-title = "Pilot's top 10 picks per crate where a real mutant there was missed (of picks a label can judge)"
+title = "Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge)"
 unit = "ratio"
 direction = "higher_is_better"
 target = 0.6
 regression_pct = 0
-regression_floor = 0.05
+regression_floor = 0.02
 runner_dependent = false
 source = "ingest:pilot-ranking"
 
@@ -686,7 +692,7 @@ unit = "ratio"
 direction = "higher_is_better"
 target = 0.8
 regression_pct = 0
-regression_floor = 0.1
+regression_floor = 0.015
 runner_dependent = false
 source = "ingest:pilot-ranking"
 
@@ -698,6 +704,18 @@ unit = "ratio"
 direction = "higher_is_better"
 target = 0.9
 regression_pct = 0
-regression_floor = 0.04
+regression_floor = 0.015
+runner_dependent = false
+source = "ingest:pilot-ranking"
+
+[[metric]]
+id = "ranking.pilot_picks_top10"
+board = "ranking"
+title = "Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams)"
+unit = "picks"
+direction = "higher_is_better"
+target = 50
+regression_pct = 0
+regression_floor = 0
 runner_dependent = false
 source = "ingest:pilot-ranking"

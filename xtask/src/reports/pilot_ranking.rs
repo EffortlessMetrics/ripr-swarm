@@ -40,7 +40,7 @@ const GIT_TIMEOUT: Duration = Duration::from_mins(10);
 
 const USAGE: &str = "usage: cargo xtask pilot-ranking check [--manifest <path>]
        cargo xtask pilot-ranking fetch --allow-network [--manifest <path>] [--root <dir>] [--repo <id>]...
-       cargo xtask pilot-ranking label --repo <id>=<checkout> --mutants-out <id>=<mutants.out dir> [--manifest <path>]
+       cargo xtask pilot-ranking label --repo <id>=<checkout> --mutants-out <id>=<mutants.out dir> [--mutants-arg <arg>]... [--manifest <path>]
        cargo xtask pilot-ranking score [--manifest <path>] [--root <dir>] [--repo <id>]... [--ripr <binary>]
 
 check validates the pinned manifest and its label files without network.
@@ -111,6 +111,9 @@ struct Options {
     ripr: Option<PathBuf>,
     label_checkout: Option<(String, PathBuf)>,
     label_mutants_out: Option<(String, PathBuf)>,
+    /// Arguments the labeled cargo-mutants run used, recorded in the label
+    /// file (the run's outcomes.json does not record them).
+    label_mutants_args: Vec<String>,
 }
 
 pub(crate) fn pilot_ranking(args: &[String]) -> Result<(), String> {
@@ -175,6 +178,7 @@ fn parse_options(command: &str, args: &[String]) -> Result<Options, String> {
             }
             "--repo" => options.repos.push(value()?),
             "--mutants-out" => options.label_mutants_out = Some(named_path(&value()?, flag)?),
+            "--mutants-arg" => options.label_mutants_args.push(value()?),
             _ => return Err(format!("unknown pilot-ranking option `{flag}`\n{USAGE}")),
         }
         index += 2;
@@ -446,6 +450,12 @@ fn materialize(repo: &RepoEntry, dir: &Path) -> Result<bool, String> {
     }
     fs::create_dir_all(dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
     git(dir, &["init", "--quiet"])?;
+    // Mark the directory as ours before any network step, so a fetch that
+    // fails halfway can be retried instead of refusing its own leftovers.
+    // The recheck below still keeps a bad checkout from being reused.
+    let marker = dir.join(".git").join(OWNER_MARKER);
+    fs::write(&marker, format!("{}\n", repo.url))
+        .map_err(|err| format!("write {}: {err}", marker.display()))?;
     git(dir, &["remote", "add", "origin", &repo.url])?;
     git(
         dir,
@@ -463,14 +473,12 @@ fn materialize(repo: &RepoEntry, dir: &Path) -> Result<bool, String> {
     if let Some(problem) = checkout_problem(repo, dir) {
         return Err(problem);
     }
-    let marker = dir.join(".git").join(OWNER_MARKER);
-    fs::write(&marker, format!("{}\n", repo.url))
-        .map_err(|err| format!("write {}: {err}", marker.display()))?;
     Ok(false)
 }
 
 /// Why `dir` is not the pinned subject, or `None` when it is. pilot reads
-/// the working tree, so a tracked edit would be scored under the pin's name.
+/// the working tree, so a tracked edit or an added source file would be
+/// scored under the pin's name. Ignored files (a build's `target/`) are fine.
 fn checkout_problem(repo: &RepoEntry, dir: &Path) -> Option<String> {
     if !dir.join(".git").exists() {
         return Some(format!("{} is not a git checkout", dir.display()));
@@ -485,9 +493,9 @@ fn checkout_problem(repo: &RepoEntry, dir: &Path) -> Option<String> {
         }
         Err(err) => return Some(err),
     }
-    match git(dir, &["status", "--porcelain", "--untracked-files=no"]) {
+    match git(dir, &["status", "--porcelain", "--untracked-files=normal"]) {
         Ok(status) if status.is_empty() => None,
-        Ok(_) => Some("tracked files are modified".to_string()),
+        Ok(_) => Some("the working tree has modified or untracked files".to_string()),
         Err(err) => Some(err),
     }
 }
@@ -526,7 +534,8 @@ fn label(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<()
     let mutants = read("mutants.json")?;
     let outcomes = read("outcomes.json")?;
     mutation_spot_check::require_mutants_match_checkout(id, checkout, &repo.revision, &mutants)?;
-    let labels = labels_from_mutants_out(repo, &mutants, &outcomes)?;
+    let mut labels = labels_from_mutants_out(repo, &mutants, &outcomes)?;
+    labels.cargo_mutants_args = options.label_mutants_args.clone();
     let path = labels_dir.join(&repo.labels);
     fs::write(&path, render_labels(&labels)?)
         .map_err(|err| format!("write {}: {err}", path.display()))?;
@@ -721,8 +730,20 @@ fn score(manifest: &Manifest, labels_dir: &Path, options: &Options) -> Result<()
             .map_err(|err| format!("clear {}: {err}", scratch.display()))?;
     }
     fs::create_dir_all(&scratch).map_err(|err| format!("create {}: {err}", scratch.display()))?;
+    let selected = select(manifest, &options.repos)?;
     let mut repos = Vec::new();
-    for repo in select(manifest, &options.repos)? {
+    for repo in &manifest.repos {
+        // A --repo subset is a different population than the pooled
+        // baseline, so the crates left out count as unavailable and the
+        // receipt is incomplete rather than comparable.
+        if !selected.iter().any(|chosen| chosen.id == repo.id) {
+            repos.push(RepoScore {
+                id: repo.id.clone(),
+                revision: repo.revision.clone(),
+                judged: Err("not selected by --repo".to_string()),
+            });
+            continue;
+        }
         let labels = load_labels(repo, labels_dir)?;
         let checkout = root.join(&repo.id);
         let judged = match checkout_problem(repo, &checkout) {

@@ -78,7 +78,7 @@ pub(crate) fn run_pilot(
             "--quiet".to_string(),
         ],
         EXPOSURE_TIMEOUT,
-        "ripr pilot for spot check",
+        &format!("ripr pilot for `{name}`"),
     )?;
     let summary = read_json(&out_dir.join("pilot-summary.json"))?;
     let top = top_seams_from_summary(name, &summary)?;

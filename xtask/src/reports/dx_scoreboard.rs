@@ -987,13 +987,14 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
 
 /// Convert a `ripr-pilot-ranking-v1` receipt (`cargo xtask pilot-ranking
 /// score`) into pooled `ranking` rows: precision of pilot's top 5 and top 10,
-/// the share of top-10 picks a label could judge, and the share of top-10
-/// picks that name a function no earlier pick named.
+/// the share of top-10 picks a label could judge, the share of top-10 picks
+/// whose function no higher pick named, and the number of top-10 picks.
 ///
 /// Scored share sits beside precision because precision can rise by making
-/// picks unjudgeable. A receipt that lost a repository measured a different
-/// population than its baseline, so every row is incomplete (lost completion
-/// to the gate) rather than a rate compared as like for like.
+/// picks unjudgeable, and the pick count because it can rise by ranking
+/// fewer seams. A receipt that lost or skipped a repository measured a
+/// different population than its baseline, so every row is incomplete (lost
+/// completion to the gate) rather than a rate compared as like for like.
 pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
     let corpus = value["corpus_version"].as_str().unwrap_or("unknown");
     let unavailable = value["unavailable_repos"]
@@ -1001,9 +1002,29 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
         .ok_or("pilot-ranking receipt needs unavailable_repos as a non-negative integer")?;
     let total = value["repos_total"]
         .as_u64()
-        .filter(|total| *total > 0)
-        .ok_or("pilot-ranking receipt needs a positive repos_total")?;
+        .filter(|total| *total > 0 && unavailable <= *total)
+        .ok_or(
+            "pilot-ranking receipt needs a positive repos_total no smaller than unavailable_repos",
+        )?;
     let complete = unavailable == 0 && value["status"].as_str() == Some("complete");
+    // How much of the precision rests on the coarse line and owner tiers.
+    let tiers = ["seam", "line", "owner"]
+        .iter()
+        .map(|tier| {
+            let count = |verdict: &str| {
+                value
+                    .pointer(&format!("/by_tier/{tier}/{verdict}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            format!(
+                "{tier} {}/{}",
+                count("confirmed"),
+                count("confirmed") + count("refuted")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut rows = Vec::new();
     for (metric, cut, field) in [
         ("ranking.pilot_precision_top5", "top5", "precision"),
@@ -1014,6 +1035,7 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
             "top10",
             "distinct_function_share",
         ),
+        ("ranking.pilot_picks_top10", "top10", "picks"),
     ] {
         let entry = &value["pooled"][cut];
         let count = |key: &str| {
@@ -1022,23 +1044,40 @@ pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
                 .ok_or_else(|| format!("pilot-ranking pooled.{cut} needs {key}"))
         };
         let (picks, confirmed, refuted) = (count("picks")?, count("confirmed")?, count("refuted")?);
-        let rate = match &entry[field] {
-            Value::Null => None,
-            rate => Some(
-                rate.as_f64()
-                    .filter(|rate| (0.0..=1.0).contains(rate))
-                    .ok_or_else(|| {
-                        format!("pilot-ranking pooled.{cut}.{field} must be between 0 and 1")
-                    })?,
-            ),
+        let distinct = count("distinct_functions")?;
+        if confirmed + refuted > picks || distinct > picks {
+            return Err(format!(
+                "pilot-ranking pooled.{cut} counts more confirmed, refuted or distinct picks than its {picks} picks"
+            ));
+        }
+        let rate = if field == "picks" {
+            Some(picks as f64)
+        } else {
+            match &entry[field] {
+                Value::Null => None,
+                rate => Some(
+                    rate.as_f64()
+                        .filter(|rate| (0.0..=1.0).contains(rate))
+                        .ok_or_else(|| {
+                            format!("pilot-ranking pooled.{cut}.{field} must be between 0 and 1")
+                        })?,
+                ),
+            }
         };
-        let mut evidence = format!(
-            "{confirmed} confirmed, {refuted} refuted of {picks} picks over {} of {total} repositories, corpus {corpus}",
+        let mut evidence = if field == "distinct_function_share" {
+            format!("{distinct} distinct functions in {picks} picks")
+        } else {
+            format!(
+                "{confirmed} confirmed, {refuted} refuted of {picks} picks (all top-10 judged picks by tier: {tiers})"
+            )
+        };
+        evidence.push_str(&format!(
+            " over {} of {total} repositories, corpus {corpus}",
             total - unavailable
-        );
+        ));
         if !complete {
             evidence.push_str(&format!(
-                "; {unavailable} repositories unavailable, so this run is not comparable"
+                "; {unavailable} repositories unavailable or not selected, so this run is not comparable"
             ));
         }
         rows.push(json!({

@@ -17,13 +17,20 @@ on:
     types: [ready_for_review]
     paths:
       - "crates/ripr/src/output/pilot/**"
+      - "crates/ripr/src/output/agent_seam_packets.rs"
       - "crates/ripr/src/analysis/seam_classification.rs"
+      - "crates/ripr/src/analysis/seams.rs"
+      - "crates/ripr/src/analysis/seam_inventory.rs"
+      - "crates/ripr/src/analysis/test_grip_evidence.rs"
       - "crates/ripr/src/analysis/test_grip_evidence/**"
       - "benchmarks/pilot_ranking/**"
       - "metrics/dx-scoreboard/pilot-ranking-baseline.json"
       - "xtask/src/reports/pilot_ranking.rs"
       - "xtask/src/reports/pilot_ranking/**"
       - "xtask/src/reports/mutation_spot_check/pilot.rs"
+      - "xtask/src/reports/dx_scoreboard.rs"
+      - "benchmarks/dx_scoreboard/scoreboards.toml"
+      - ".github/workflows/pilot-ranking.yml"
 
 permissions:
   contents: read

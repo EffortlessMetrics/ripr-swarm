@@ -6,7 +6,7 @@
       "counts": {
         "below_target": 3,
         "failed": 0,
-        "meets_target": 1,
+        "meets_target": 2,
         "not_measured": 0,
         "regressed": 0
       },
@@ -15,7 +15,8 @@
         "ranking.pilot_precision_top5",
         "ranking.pilot_precision_top10",
         "ranking.pilot_scored_share_top10",
-        "ranking.pilot_distinct_function_share_top10"
+        "ranking.pilot_distinct_function_share_top10",
+        "ranking.pilot_picks_top10"
       ],
       "status": "gaps"
     }
@@ -47,7 +48,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 7 confirmed, 13 refuted of 25 picks over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 7 confirmed, 13 refuted of 25 picks (all top-10 judged picks by tier: seam 0/7, line 9/14, owner 3/20) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "below_target",
           "value": 0.35
@@ -56,7 +57,7 @@
       "source": "ingest:pilot-ranking",
       "status": "below_target",
       "target": 0.6,
-      "title": "Pilot's top 5 picks per crate where a real mutant there was missed (of picks a label can judge)",
+      "title": "Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge)",
       "unit": "ratio",
       "value": 0.35
     },
@@ -73,7 +74,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 12 confirmed, 29 refuted of 50 picks over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 12 confirmed, 29 refuted of 50 picks (all top-10 judged picks by tier: seam 0/7, line 9/14, owner 3/20) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "below_target",
           "value": 0.2927
@@ -82,7 +83,7 @@
       "source": "ingest:pilot-ranking",
       "status": "below_target",
       "target": 0.6,
-      "title": "Pilot's top 10 picks per crate where a real mutant there was missed (of picks a label can judge)",
+      "title": "Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge)",
       "unit": "ratio",
       "value": 0.2927
     },
@@ -99,7 +100,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 12 confirmed, 29 refuted of 50 picks over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 12 confirmed, 29 refuted of 50 picks (all top-10 judged picks by tier: seam 0/7, line 9/14, owner 3/20) over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "meets_target",
           "value": 0.82
@@ -125,7 +126,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from pilot-ranking: 12 confirmed, 29 refuted of 50 picks over 5 of 5 repositories, corpus 2026-10-04.1",
+          "detail": "ingested from pilot-ranking: 19 distinct functions in 50 picks over 5 of 5 repositories, corpus 2026-10-04.1",
           "repo": null,
           "status": "below_target",
           "value": 0.38
@@ -137,6 +138,32 @@
       "title": "Pilot's top 10 picks that land in a function no higher pick named",
       "unit": "ratio",
       "value": 0.38
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "ranking",
+      "direction": "higher_is_better",
+      "id": "ranking.pilot_picks_top10",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from pilot-ranking: 12 confirmed, 29 refuted of 50 picks (all top-10 judged picks by tier: seam 0/7, line 9/14, owner 3/20) over 5 of 5 repositories, corpus 2026-10-04.1",
+          "repo": null,
+          "status": "meets_target",
+          "value": 50.0
+        }
+      ],
+      "source": "ingest:pilot-ranking",
+      "status": "meets_target",
+      "target": 50.0,
+      "title": "Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams)",
+      "unit": "picks",
+      "value": 50.0
     }
   ],
   "report": "dx-scoreboard",
@@ -198,11 +225,11 @@
       "status": "not_measured"
     }
   ],
-  "revision": "68b1ea6aa1f2c300807aeae45c95a84a18924aab",
+  "revision": "e1ce1ef6aa7659368a93a8a222e569cefa3a4129",
   "rollup": {
     "below_target": 3,
     "failed": 0,
-    "meets_target": 1,
+    "meets_target": 2,
     "not_measured": 0,
     "regressed": 0
   },

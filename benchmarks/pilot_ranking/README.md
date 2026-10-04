@@ -59,9 +59,12 @@ For the top 5 and top 10 picks of each crate, pooled and per crate:
 - **distinct functions**: the owning functions among the picks.
 
 The `ranking` scoreboard gates the pooled top-5 and top-10 precision, top-10
-scored share and top-10 distinct-function share. A run that cannot fetch or
-score a crate reports every row incomplete, which the gate treats as lost
-completion rather than a comparable rate.
+scored share, top-10 distinct-function share and the top-10 pick count (so a
+ranking that drops picks cannot raise the rates). The floors sit just under
+one pick, because nothing here varies between runs. A run that cannot fetch or
+score a crate, or that `--repo` narrowed to a subset, reports every row
+incomplete, which the gate treats as lost completion rather than a comparable
+rate.
 
 ## Limits
 
@@ -84,7 +87,10 @@ cargo xtask pilot-ranking label --repo semver=../pilot-ranking/semver \
   --mutants-out semver=../pilot-ranking/semver-run/mutants.out
 ```
 
-`label` refuses a `mutants.out` whose mutant diffs do not match the pinned
+Pass any argument that changed which mutants the run tried (`--re`, `--file`,
+`--package`) to `label` as `--mutants-arg <arg>`, so the label file records
+it; options that only change scheduling, such as `--jobs`, need not be
+recorded. `label` refuses a `mutants.out` whose mutant diffs do not match the pinned
 checkout, a mutant without an outcome, and an outcome without a mutant. After
 an intended ranking improvement, refresh the baseline from the new receipt:
 

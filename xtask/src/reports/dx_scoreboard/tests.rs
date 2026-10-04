@@ -1795,11 +1795,18 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
         value("ranking.pilot_distinct_function_share_top10"),
         Some(SampleOutcome::Value(0.8))
     );
+    assert_eq!(
+        value("ranking.pilot_picks_top10"),
+        Some(SampleOutcome::Value(50.0))
+    );
     assert!(
         samples
             .iter()
             .all(|sample| sample.detail.contains("over 5 of 5 repositories"))
     );
+    assert!(samples.iter().any(|sample| sample.metric
+        == "ranking.pilot_distinct_function_share_top10"
+        && sample.detail.contains("40 distinct functions in 50 picks")));
 
     // A crate that could not be fetched or scored changes the population, so
     // every row is incomplete instead of a rate the gate compares as like for
@@ -1808,7 +1815,7 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
     lost["status"] = json!("incomplete");
     lost["unavailable_repos"] = json!(1);
     let samples = parse_ingest(&lost, &config)?;
-    assert_eq!(samples.len(), 4);
+    assert_eq!(samples.len(), 5);
     assert!(
         samples
             .iter()
@@ -1826,8 +1833,11 @@ fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() ->
                 && matches!(sample.outcome, SampleOutcome::Incomplete(_)))
     );
 
-    let mut malformed = receipt;
+    let mut malformed = receipt.clone();
     malformed["pooled"]["top10"]["precision"] = json!(1.5);
     assert!(parse_ingest(&malformed, &config).is_err_and(|err| err.contains("between 0 and 1")));
+    let mut overcounted = receipt;
+    overcounted["pooled"]["top10"]["confirmed"] = json!(40);
+    assert!(parse_ingest(&overcounted, &config).is_err_and(|err| err.contains("more confirmed")));
     Ok(())
 }
