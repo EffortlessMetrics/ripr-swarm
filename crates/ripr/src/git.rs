@@ -1865,8 +1865,13 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
     #[test]
     fn poll_child_returns_promptly_for_a_fast_exiting_child() -> Result<(), String> {
         let bound = crate::process_owner::POLL_BACKOFF_CEILING;
+        // The old fixed 50 ms sleep can never come in under the bound, so
+        // more attempts cost no discrimination and absorb a loaded runner.
         let mut best = Duration::MAX;
-        for _ in 0..5 {
+        for _ in 0..20 {
+            if best < bound {
+                break;
+            }
             let mut command = Command::new("sh");
             command
                 .args(["-c", "exit 0"])

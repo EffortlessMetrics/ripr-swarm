@@ -658,8 +658,13 @@ mod tests {
     #[test]
     fn terminal_stage_joins_the_heartbeat_thread_without_waiting_out_a_tick() {
         let bound = HEARTBEAT_TICK / 2;
+        // A sleeping heartbeat thread can never come in under the bound, so
+        // more attempts cost no discrimination and absorb a loaded runner.
         let mut best = Duration::MAX;
-        for _ in 0..3 {
+        for _ in 0..20 {
+            if best < bound {
+                break;
+            }
             let sink =
                 CliProgressSink::with_writer(Box::new(Buffer::new()), false, non_tty_policy());
             sink.emit(event(AnalysisProgressStage::Analyzing));
