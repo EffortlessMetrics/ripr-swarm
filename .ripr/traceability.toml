@@ -7804,6 +7804,12 @@ id = "RIPR-SPEC-0134"
 name = "repair artifact provenance"
 spec = "docs/specs/RIPR-SPEC-0134-repair-artifact-provenance.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_preserves_exact_empty_and_same_length_checks",
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_growth_at_the_admitted_length",
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_missing_and_directory_replacements",
+  "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_same_byte_symlink_replacements",
+  "xtask/src/reports/release/candidate_harness/archive.rs::tests::extracted_install_inputs_refuse_growth_at_each_retained_length",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_package_install_custody_rejects_ignored_foreign_and_changed_bytes",
   "crates/ripr/src/agent/artifact.rs::tests::content_placeholder_is_fixed_width",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_duplicate_fields",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_non_hex_digest",
@@ -7869,6 +7875,8 @@ fixtures = [
   "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
 ]
 code = [
+  "xtask/src/reports/release/candidate_harness/archive.rs",
+  "xtask/src/reports/release/candidate_harness/input.rs",
   "crates/ripr/src/agent/artifact.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/config.rs",
@@ -8739,7 +8747,7 @@ id = "RIPR-SPEC-0136"
 name = "lsp configuration pull"
 spec = "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md"
 tests = [
-  "crates/ripr/src/git.rs::tests::git_timeout_tag_requires_exact_raw_error_prefix",
+  "crates/ripr/src/git.rs::tests::rendered_timeout_tags_do_not_create_typed_timeouts",
   "crates/ripr/src/lsp/capabilities.rs::tests::configuration_mode_follows_workspace_capabilities",
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_wrong_item_count",
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_non_object_item_and_bad_values",
@@ -8769,8 +8777,19 @@ tests = [
   "crates/ripr/src/lsp/config.rs::tests::validated_pulled_options_rejects_wrong_typed_git_timeout_ms",
   "crates/ripr/src/lsp/config.rs::tests::session_value_sources_disclose_git_timeout_ms_origin",
   "crates/ripr/src/lsp/config.rs::tests::effective_settings_eq_compares_git_timeout",
+  "crates/ripr/src/core_error.rs::tests::display_parity_matches_the_public_timeout_wording",
+  "crates/ripr/src/core_error.rs::tests::lookalike_message_is_not_a_timeout",
+  "crates/ripr/src/core_error.rs::tests::wrapped_timeout_keeps_its_kind_without_a_prefix_match",
+  "crates/ripr/src/core_error.rs::tests::source_chain_is_inspectable_without_command_output",
+  "crates/ripr/src/core_error.rs::tests::ordinary_message_with_timeout_words_is_not_typed",
+  "crates/ripr/src/core_error.rs::tests::prefix_matching_display_is_not_the_semantic_oracle",
   "crates/ripr/src/lsp/diagnostics.rs::git_timeout_error_converts_to_a_committed_limited_snapshot",
   "crates/ripr/src/lsp/diagnostics.rs::non_timeout_analysis_errors_are_not_converted",
+  "crates/ripr/src/lsp/diagnostics.rs::wrapped_timeout_still_converts_to_the_named_kind",
+  "crates/ripr/src/lsp/diagnostics.rs::real_git_stderr_timeout_words_do_not_convert_to_a_snapshot",
+  "crates/ripr/src/lsp/tests.rs::typed_worktree_timeout_recovers_origins_and_consumed_sources_for_open_paths",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_zero_git_timeout_commits_limited_once_and_recovers",
+  "crates/ripr/src/lsp/tests.rs::unresolvable_base_refresh_keeps_the_no_snapshot_error_route",
   "crates/ripr/src/lsp/git_inputs.rs::tests::timed_out_probe_fails_closed_as_unresolved",
   "crates/ripr/src/analysis/diff/load.rs::tests::zero_deadline_diff_load_fails_with_the_named_timeout_error",
   "crates/ripr/src/analysis/diff/load.rs::tests::zero_deadline_base_probes_fail_closed_instead_of_hanging",
@@ -8794,6 +8813,15 @@ code = [
   "crates/ripr/src/lsp/state.rs",
   "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/git.rs",
+  "crates/ripr/src/core_error.rs",
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/analysis/mod.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/analysis/committed_source.rs",
+  "crates/ripr/src/app/check.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/cli/commands/review_comments.rs",
+  "crates/ripr/src/testing/fixture_git.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0136-lsp-configuration-pull.md",
@@ -11874,6 +11902,53 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0219"
+name = "Labeled Rust verdict corpus"
+spec = "docs/specs/RIPR-SPEC-0219-labeled-rust-verdict-corpus.md"
+tests = [
+  "xtask/src/reports/verdict_corpus_tests.rs::score_follows_the_truth_table_in_both_error_directions",
+  "xtask/src/reports/verdict_corpus_tests.rs::finding_verdict_mirrors_triage_classes_and_named_limits",
+  "xtask/src/reports/verdict_corpus_tests.rs::anchored_findings_keep_only_candidate_current_findings_on_the_anchor",
+  "xtask/src/reports/verdict_corpus_tests.rs::case_verdict_ranks_gap_over_credit_over_limit",
+  "xtask/src/reports/verdict_corpus_tests.rs::contradictions_flag_each_internal_inconsistency_and_pass_a_clean_finding",
+  "xtask/src/reports/verdict_corpus_tests.rs::summary_contradictions_compare_counts_with_the_findings_list",
+  "xtask/src/reports/verdict_corpus_tests.rs::summary_contradictions_account_for_suppressed_findings",
+  "xtask/src/reports/verdict_corpus_tests.rs::ratio_text_is_fixed_precision_and_names_an_empty_denominator",
+  "xtask/src/reports/verdict_corpus_tests.rs::apply_patch_rewrites_the_anchored_line_and_reports_it_as_added",
+  "xtask/src/reports/verdict_corpus_tests.rs::apply_patch_refuses_drifted_context",
+  "xtask/src/reports/verdict_corpus_tests.rs::parse_patch_refuses_renames_and_empty_input",
+  "xtask/src/reports/verdict_corpus_tests.rs::parse_patch_holds_hunks_to_their_declared_counts_and_starts",
+  "xtask/src/reports/verdict_corpus_tests.rs::relativize_probe_files_strips_only_the_run_root",
+  "xtask/src/reports/verdict_corpus_tests.rs::committed_corpus_is_valid_and_measures_both_error_directions",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_label_that_contradicts_its_mutant_outcomes",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_expected_verdict_outside_the_truth_table",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_retained_file_whose_digest_moved",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_anchor_the_diff_does_not_add",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_ids_that_are_not_one_safe_path_segment",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_diff_that_patches_an_unretained_path",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_both_truth_directions",
+  "xtask/src/reports/verdict_corpus_tests.rs::expected_report_rows_agree_with_corpus_labels",
+  "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
+  "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
+  "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus",
+]
+code = [
+  "xtask/src/reports/verdict_corpus.rs",
+]
+outputs = [
+  "fixtures/rust-verdict-corpus/expected/report.json",
+  "fixtures/rust-verdict-corpus/expected/report.md",
+]
+metrics = [
+  "verdict_corpus_false_verdict_rate",
+  "verdict_corpus_false_actionable_rate",
+  "verdict_corpus_contradiction_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0217"
 name = "Repair-attempt discovery selection and fresh-process resume"
 spec = "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md"
@@ -11908,6 +11983,65 @@ outputs = [
 ]
 metrics = [
   "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0218"
+name = "Issue lifecycle attempt extension contract and scorecard projection"
+spec = "docs/specs/RIPR-SPEC-0218-issue-lifecycle-attempt-extension.md"
+tests = [
+  "xtask/src/issue_lifecycle_attempt.rs::tests::complete_lifecycle_row_counts_as_completed",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::schema_drift_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::altered_row_bytes_reject_the_digest_binding",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::blank_base_attempt_identity_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::empty_shared_facts_reject_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::unknown_shared_fact_family_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::open_intake_questions_cap_at_needs_evidence",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::spec_required_blocks_one_pr_qualification",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::unsuppressed_unchanged_progress_blocks_completion",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::merge_without_current_head_proof_stays_pending_closeout",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::incomplete_closeout_state_blocks_completed_without_merge",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::uncovered_burn_down_rows_keep_a_merge_partially_landed",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::uncovered_burn_down_rows_block_completed_without_merge",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::stale_current_main_receipt_forces_stale",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::first_established_downgrade_wins_across_closeout_gates",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::spec_required_without_acceptance_blocks_completed",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::negative_dispositions_pass_through_and_stay_visible",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::completed_closeout_requires_a_recorded_reason",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::zero_byte_intake_evidence_rejects_the_row",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::synthetic_flag_does_not_change_row_assessment",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::fixture_corpus_loader_rejects_duplicates_and_drifted_schemas",
+  "xtask/src/issue_lifecycle_attempt.rs::tests::missing_required_scenarios_are_reported",
+  "xtask/src/reports/issue_lifecycle.rs::tests::empty_corpus_reports_no_success_rate",
+  "xtask/src/reports/issue_lifecycle.rs::tests::synthetic_rows_never_enter_real_denominators",
+  "xtask/src/reports/issue_lifecycle.rs::tests::completed_row_enters_the_implementation_success_rate",
+  "xtask/src/reports/issue_lifecycle.rs::tests::negative_dispositions_never_count_as_implementation_success",
+  "xtask/src/reports/issue_lifecycle.rs::tests::duplicate_observations_of_one_lifecycle_deduplicate",
+  "xtask/src/reports/issue_lifecycle.rs::tests::conflicting_duplicate_observations_reject_both",
+  "xtask/src/reports/issue_lifecycle.rs::tests::reordered_inputs_preserve_the_corpus_identity",
+  "xtask/src/reports/issue_lifecycle.rs::tests::json_and_markdown_derive_from_one_dto_deterministically",
+  "xtask/src/reports/issue_lifecycle.rs::tests::parse_captured_accepts_at_most_one_path",
+  "xtask/src/reports/issue_lifecycle.rs::tests::digest_corrupted_duplicate_conflicts_in_either_input_order",
+]
+fixtures = [
+  "fixtures/issue_lifecycle_attempts",
+]
+code = [
+  "xtask/src/issue_lifecycle_attempt.rs",
+  "xtask/src/reports/issue_lifecycle.rs",
+  "xtask/src/fixture_contracts/general_validators.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "fixtures/issue_lifecycle_attempts/corpus.json",
+]
+metrics = [
+  "issue_lifecycle_fixture_scenarios",
+  "issue_lifecycle_scorecard_synthetic_lifecycles",
+  "issue_lifecycle_scorecard_rejected_rows",
+  "issue_lifecycle_scorecard_real_lifecycles",
+  "issue_lifecycle_scorecard_implementation_success_rate_state",
 ]
 
 [[behavior]]
