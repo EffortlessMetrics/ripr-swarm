@@ -192,6 +192,9 @@ pub(crate) fn render_pilot_summary_md(
         Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", display_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
+    if let Some(scope) = scope_line(context, true) {
+        out.push_str(&format!("- Scope: {scope}\n"));
+    }
     out.push_str(&format!(
         "- Actionable seams: {} total, showing up to {}\n\n",
         actionable_total, context.max_seams
@@ -437,6 +440,9 @@ pub(crate) fn render_pilot_terminal(
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
+    if let Some(scope) = scope_line(context, false) {
+        out.push_str(&format!("  scope: {scope}\n"));
+    }
     out.push('\n');
 
     let no_repair_target = if let Some(entry) = top.first() {
@@ -621,6 +627,28 @@ pub(crate) fn render_pilot_terminal(
 /// repair-packet eligibility flip, so no `ripr agent repair` command is printed.
 const NO_REPAIR_START_LINE: &str = "not available for this seam (static evidence does not admit a repair target); add the focused test by hand";
 
+/// What pilot's ranking covers: change-first when there is a current change,
+/// else the whole repository (with the reason when the change could not be
+/// loaded). `None` when change data was not collected.
+fn scope_line(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
+    let change = context.current_change?;
+    Some(if change.is_changed() {
+        match change.base() {
+            Some(base) if code => {
+                format!("change-first (seams on lines changed since `{base}` rank first)")
+            }
+            Some(base) => {
+                format!("change-first (seams on lines changed since {base} rank first)")
+            }
+            None => "change-first (seams on changed lines rank first)".to_string(),
+        }
+    } else if let Some(reason) = change.unavailable_reason() {
+        format!("whole repository (current change unavailable: {reason})")
+    } else {
+        "whole repository".to_string()
+    })
+}
+
 /// Whether the top recommendation is part of the current change.
 /// `None` when there is no current change or it could not be
 /// loaded: pilot's ranking is then repo-wide, as it always was.
@@ -697,6 +725,7 @@ fn push_current_change_json(
     out.push_str("{\n");
     json_string_field(out, 4, "state", change.state(), true);
     json_optional_string_field(out, 4, "base", change.base(), true);
+    json_optional_string_field(out, 4, "reason", change.unavailable_reason(), true);
     if change.is_changed() {
         out.push_str(&format!(
             "    \"actionable_seams_in_change\": {},\n",

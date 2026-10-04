@@ -29,20 +29,29 @@ pub(crate) enum PilotCurrentChange {
     NoChange { base: Option<String> },
     /// The default diff could not be loaded (not a Git work tree, no default
     /// base, git failed). Pilot keeps its repo-wide ranking; this is not
-    /// evidence that nothing changed.
-    Unavailable,
+    /// evidence that nothing changed. `reason` is a short fixed phrase.
+    Unavailable { reason: &'static str },
 }
 
 impl PilotCurrentChange {
     /// Build from the default diff loader's result. A load failure never
-    /// fails pilot; it is recorded as [`PilotCurrentChange::Unavailable`].
+    /// fails pilot; it is recorded as [`PilotCurrentChange::Unavailable`]
+    /// with the caller's short reason.
     pub(crate) fn from_diff_load(
         root: &Path,
-        loaded: Result<(String, Option<String>), String>,
+        loaded: Result<(String, Option<String>), &'static str>,
     ) -> Self {
         match loaded {
             Ok((text, base)) => Self::from_diff_text(root, base, &text),
-            Err(_) => Self::Unavailable,
+            Err(reason) => Self::Unavailable { reason },
+        }
+    }
+
+    /// Why the change could not be loaded, when it could not.
+    pub(crate) fn unavailable_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Unavailable { reason } => Some(reason),
+            Self::Changed { .. } | Self::NoChange { .. } => None,
         }
     }
 
@@ -71,14 +80,14 @@ impl PilotCurrentChange {
         match self {
             Self::Changed { .. } => "changed",
             Self::NoChange { .. } => "no_change",
-            Self::Unavailable => "unavailable",
+            Self::Unavailable { .. } => "unavailable",
         }
     }
 
     pub(crate) fn base(&self) -> Option<&str> {
         match self {
             Self::Changed { base, .. } | Self::NoChange { base } => base.as_deref(),
-            Self::Unavailable => None,
+            Self::Unavailable { .. } => None,
         }
     }
 

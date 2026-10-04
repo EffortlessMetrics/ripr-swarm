@@ -1590,7 +1590,7 @@ fn pilot_ranking_puts_seams_in_the_current_change_first() {
         )),
         Some(PilotCurrentChange::from_diff_load(
             Path::new("."),
-            Err("not a git work tree".to_string()),
+            Err("not a Git work tree"),
         )),
         None,
     ] {
@@ -1698,6 +1698,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
         serde_json::json!({
             "state": "changed",
             "base": "origin/main",
+            "reason": null,
             "actionable_seams_in_change": 1,
             "top_recommendation_in_change": true
         })
@@ -1722,39 +1723,73 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     assert_eq!(json["actionable_seams_in_change"], 0);
     assert_eq!(json["top_recommendation_in_change"], false);
 
-    // No change, an unavailable diff, or no change data: the human output is
-    // exactly what pilot printed before current-change detection existed,
-    // and the JSON keeps an unavailable diff distinct from no change.
+    // The Inspected block names the change-first scope when there is a change.
+    assert!(
+        terminal.contains(
+            "  timeout: 30000 ms\n  scope: change-first (seams on lines changed since origin/main rank first)\n\n"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        md.contains(
+            "- Scope: change-first (seams on lines changed since `origin/main` rank first)\n"
+        ),
+        "{md}"
+    );
+
+    // No change or an unavailable diff: the human output is what pilot printed
+    // before current-change detection existed plus one scope line in the
+    // Inspected block, and the JSON keeps an unavailable diff (with its
+    // reason) distinct from no change. No change data adds no scope line.
     let (baseline_terminal, baseline_md, baseline_json) = render(None)?;
     assert_eq!(baseline_json, serde_json::Value::Null);
     assert!(
-        !baseline_terminal.contains("current change"),
+        !baseline_terminal.contains("current change") && !baseline_terminal.contains("scope:"),
         "{baseline_terminal}"
     );
-    assert!(!baseline_md.contains("Current change"), "{baseline_md}");
-    for (change, state, base) in [
+    assert!(
+        !baseline_md.contains("Current change") && !baseline_md.contains("- Scope:"),
+        "{baseline_md}"
+    );
+    for (change, state, base, reason, scope) in [
         (
             PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), ""),
             "no_change",
             serde_json::json!("origin/main"),
+            serde_json::Value::Null,
+            "whole repository",
         ),
         (
-            PilotCurrentChange::from_diff_load(
-                Path::new("."),
-                Err("not a git work tree".to_string()),
-            ),
+            PilotCurrentChange::from_diff_load(Path::new("."), Err("not a Git work tree")),
             "unavailable",
             serde_json::Value::Null,
+            serde_json::json!("not a Git work tree"),
+            "whole repository (current change unavailable: not a Git work tree)",
         ),
     ] {
         let (terminal, md, json) = render(Some(&change))?;
-        assert_eq!(terminal, baseline_terminal);
-        assert_eq!(md, baseline_md);
+        assert_eq!(
+            terminal,
+            baseline_terminal.replacen(
+                "  timeout: 30000 ms\n",
+                &format!("  timeout: 30000 ms\n  scope: {scope}\n"),
+                1
+            )
+        );
+        assert_eq!(
+            md,
+            baseline_md.replacen(
+                "- Config: loaded `ripr.toml`\n",
+                &format!("- Config: loaded `ripr.toml`\n- Scope: {scope}\n"),
+                1
+            )
+        );
         assert_eq!(
             json,
             serde_json::json!({
                 "state": state,
                 "base": base,
+                "reason": reason,
                 "actionable_seams_in_change": null,
                 "top_recommendation_in_change": null
             })

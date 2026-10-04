@@ -13939,6 +13939,12 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         "{stdout}"
     );
     assert!(stdout.contains("run: ripr check --root "), "{stdout}");
+    assert!(
+        stdout.contains(
+            "  scope: change-first (seams on lines changed since origin/main rank first)\n"
+        ),
+        "{stdout}"
+    );
     assert!(md.contains("- Current change: not part of it."), "{md}");
 
     // An uncommitted edit to `is_digit` is the current change: its seam now

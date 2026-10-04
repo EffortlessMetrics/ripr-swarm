@@ -7,6 +7,7 @@ use crate::cli::parse::{expect_value, parse_mode};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::core_error::CoreError;
 use crate::output;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -321,19 +322,44 @@ fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentC
     // work tree, say) is `unavailable` without the working-tree probe, whose
     // failure warning would otherwise be new stderr noise there.
     let loaded = analysis::resolve_effective_base(&input.root, input.base.as_deref(), git_timeout)
+        .map_err(|err| {
+            current_change_unavailable_reason(&CoreError::from(err), "no default base resolved")
+        })
         .and_then(|base| {
             if analysis::working_tree_has_tracked_changes(&input.root) {
-                analysis::load_worktree_diff_with_effective_base(
+                analysis::load_worktree_diff_with_effective_base_core(
                     &input.root,
                     Some(&base),
                     git_timeout,
                 )
             } else {
-                analysis::load_diff_with_effective_base(&input.root, Some(&base), None, git_timeout)
+                analysis::load_diff_with_effective_base_core(
+                    &input.root,
+                    Some(&base),
+                    None,
+                    git_timeout,
+                )
             }
+            .map_err(|err| current_change_unavailable_reason(&err, "git diff failed"))
         })
         .map(|loaded| (loaded.text, loaded.effective_base));
     output::pilot::PilotCurrentChange::from_diff_load(&input.root, loaded)
+}
+
+/// A few fixed words for why the current change could not be loaded, shown
+/// in pilot's scope line. Fixed phrases keep pilot artifacts deterministic;
+/// the loader's full message (paths, git stderr) belongs to `ripr check`.
+fn current_change_unavailable_reason(error: &CoreError, fallback: &'static str) -> &'static str {
+    let message = error.to_string();
+    if crate::git::is_git_not_found_on_path(&message) {
+        "git is not on PATH"
+    } else if error.is_git_invocation_timeout() {
+        "git timed out"
+    } else if message.contains("is not inside a Git work tree") {
+        "not a Git work tree"
+    } else {
+        fallback
+    }
 }
 
 fn collect_pilot_python_first_use(

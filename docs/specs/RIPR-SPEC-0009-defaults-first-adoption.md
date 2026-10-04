@@ -195,8 +195,11 @@ lines first, and says in the terminal, Markdown and
 `pilot-summary.json` (`current_change`) whether the top recommendation is part
 of the change. When the change has no ranked seam, pilot says the
 recommendation is elsewhere in the repo and names `ripr check` for the change
-itself. With no change, or when the diff cannot be loaded, the ranking and the
-human output are unchanged and a failed load never fails pilot (#1169).
+itself. The terminal and Markdown "Inspected" block names the scope:
+change-first with a change, otherwise the whole repository, with a short reason
+when the change could not be loaded. With no change, or when the diff cannot be
+loaded, the ranking is unchanged, the human output differs only by that scope
+line, and a failed load never fails pilot (#1169).
 
 The pilot command must remain advisory. It should not edit source files,
 generate tests, run mutation testing, or enable CI blocking policy.
@@ -416,8 +419,9 @@ the current change, and names ripr check for the change itself.
 
 Given no current change, or a root where the diff cannot be loaded,
 when a user runs ripr pilot,
-then the ranking and the terminal and Markdown output are unchanged and
-pilot-summary.json records current_change state no_change or unavailable.
+then the ranking is unchanged, the terminal and Markdown name the whole
+repository as pilot's scope, and pilot-summary.json records current_change
+state no_change or unavailable.
 ```
 
 ### Outcome is public CLI

@@ -111,8 +111,10 @@ are scoped or reviewed.
   `pilot-summary.md` and `pilot-summary.json` say whether the top
   recommendation is part of that change. When the change has no ranked seam,
   pilot says the recommendation is elsewhere in the repo and points to
-  `ripr check` for the change itself. With no change, or when the diff cannot be
-  loaded, ranking and human output are unchanged; `pilot-summary.json` adds a
+  `ripr check` for the change itself. The "Inspected" block names the scope:
+  `change-first (...)` with a change, otherwise `whole repository` (with a short
+  reason when the change could not be loaded). With no change, or when the diff
+  cannot be loaded, the ranking is unchanged; `pilot-summary.json` adds a
   `current_change` object whose `state` keeps `no_change` and `unavailable`
   apart (#1169).
 

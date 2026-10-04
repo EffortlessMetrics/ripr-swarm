@@ -15049,6 +15049,7 @@ target/ripr/pilot/pilot-summary.md
   "current_change": {
     "state": "changed",
     "base": "origin/main",
+    "reason": null,
     "actionable_seams_in_change": 1,
     "top_recommendation_in_change": true
   },
@@ -15157,7 +15158,13 @@ that diff ahead of the others, keeping the repo-wide order inside each group.
 `state` is `changed`, `no_change` (the diff loaded and is empty) or
 `unavailable` (the diff could not be loaded, for example outside a Git work
 tree; the ranking stays repo-wide and this is not evidence that nothing
-changed). `base` is the resolved base, or `null` when unavailable.
+changed). `base` is the resolved base, or `null` when unavailable. `reason` is
+a short fixed phrase for an unavailable change (`not a Git work tree`, `no
+default base resolved`, `git is not on PATH`, `git timed out`, `git diff
+failed`) and `null` otherwise. The terminal and Markdown "Inspected" block
+carries a matching scope line: `change-first (seams on lines changed since
+<base> rank first)` for `changed`, `whole repository` for `no_change`, and
+`whole repository (current change unavailable: <reason>)` for `unavailable`.
 `actionable_seams_in_change` and `top_recommendation_in_change` are `null`
 unless `state` is `changed`; `top_recommendation_in_change` is also `null` when
 no seam is ranked. When it is `false`, the terminal and Markdown say the
