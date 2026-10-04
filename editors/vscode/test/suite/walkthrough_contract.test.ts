@@ -4,6 +4,10 @@ import * as path from 'path';
 
 const ALLOWED_COMPLETION_EVENT_PREFIXES = ['onCommand:', 'onSettingChanged:', 'onContext:', 'onView:', 'onLink:', 'extensionInstalled:'];
 
+// VS Code built-in when-clause keys this walkthrough may name after `onContext:`.
+// `workspaceTrusted` is not a VS Code context key; the built-in is `isWorkspaceTrusted`.
+const DOCUMENTED_ON_CONTEXT_KEYS = new Set(['isWorkspaceTrusted', 'resourceLangId']);
+
 interface WalkthroughStep {
   id: string;
   title: string;
@@ -15,7 +19,7 @@ const EXPECTED_FLOW: Array<{ id: string; media: string; completionEvents: string
   {
     id: 'ripr.trustWorkspace',
     media: 'walkthrough/trust.md',
-    completionEvents: ['onContext:workspaceTrusted']
+    completionEvents: ['onContext:isWorkspaceTrusted']
   },
   {
     id: 'ripr.openRustFile',
@@ -33,6 +37,15 @@ const EXPECTED_FLOW: Array<{ id: string; media: string; completionEvents: string
     completionEvents: ['onCommand:ripr.showStatus']
   }
 ];
+
+function onContextKey(event: string): string | undefined {
+  if (!event.startsWith('onContext:')) {
+    return undefined;
+  }
+  const expression = event.slice('onContext:'.length).trim();
+  const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(expression);
+  return match?.[0];
+}
 
 suite('Walkthrough Contribution Contract', () => {
   // Compiled tests live under out/test/suite; walk three levels back
@@ -58,6 +71,17 @@ suite('Walkthrough Contribution Contract', () => {
     assert.deepStrictEqual(actual, EXPECTED_FLOW);
   });
 
+  test('bare onContext completion events name documented VS Code context keys', () => {
+    assert.ok(
+      !DOCUMENTED_ON_CONTEXT_KEYS.has('workspaceTrusted'),
+      'workspaceTrusted must not be treated as a documented VS Code context key'
+    );
+    assert.strictEqual(onContextKey('onContext:workspaceTrusted'), 'workspaceTrusted');
+    assert.strictEqual(onContextKey('onContext:isWorkspaceTrusted'), 'isWorkspaceTrusted');
+    assert.strictEqual(onContextKey('onContext:resourceLangId == rust'), 'resourceLangId');
+    assert.strictEqual(onContextKey('onCommand:ripr.showStatus'), undefined);
+  });
+
   test('every media file exists and completion events use the supported vocabulary', () => {
     for (const step of EXPECTED_FLOW) {
       assert.ok(
@@ -69,6 +93,13 @@ suite('Walkthrough Contribution Contract', () => {
           ALLOWED_COMPLETION_EVENT_PREFIXES.some((prefix) => event.startsWith(prefix)),
           `unsupported completion event on step ${step.id}: ${event}`
         );
+        const contextKey = onContextKey(event);
+        if (contextKey !== undefined) {
+          assert.ok(
+            DOCUMENTED_ON_CONTEXT_KEYS.has(contextKey),
+            `onContext event on step ${step.id} names undocumented key ${contextKey}: ${event}`
+          );
+        }
       }
     }
   });
