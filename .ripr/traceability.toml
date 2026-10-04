@@ -571,6 +571,7 @@ code = [
   "crates/ripr/src/analysis/generated_rust_corpus.rs",
   "crates/ripr/src/config.rs",
   "crates/ripr/src/agent/artifact.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/test_grip_evidence/owner_result_binding.rs",
