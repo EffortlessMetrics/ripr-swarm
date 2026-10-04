@@ -15,8 +15,9 @@ are scoped or reviewed.
   receipts in `metrics/public-proof/`: scoreboard bars with trends, mutation
   agreement per verdict class, verdict-corpus rates, speed and memory on the
   pinned corpus, first-run results, and a computed list of where ripr falls
-  short. `public-proof --check` and an xtask unit test fail when the page or a
-  receipt is stale.
+  short. `public-proof --check` and an xtask unit test fail when the page no
+  longer matches its receipts, and when a receipt differs from its canonical
+  in-repo source once that source exists.
 
 ### Fixed
 
