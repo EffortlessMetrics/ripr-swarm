@@ -16,11 +16,13 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+mod benchmark_oracles;
 mod editor_validators;
 mod gap_validators;
 mod general_validators;
 mod installed_journey;
 mod report_validators;
+mod retained_files;
 mod upstream_python;
 
 pub(crate) use editor_validators::*;
@@ -32,7 +34,7 @@ pub(crate) use report_validators::*;
 pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     let fixtures_dir = Path::new("fixtures");
     if !fixtures_dir.exists() {
-        return finish_policy_report(
+        return finish_policy_report_with_disclosures(
             PolicyReportSpec {
                 report_file: "fixture-contracts.md",
                 check: "check-fixture-contracts",
@@ -47,13 +49,14 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
                 exception_template: None,
             },
             &[],
+            &[benchmark_oracles::unavailable_disclosure()],
         );
     }
 
     let mut violations = Vec::new();
     validate_evidence_record_contract_fixture_corpus(&mut violations)?;
     validate_lane1_evidence_quality_failure_fixture_corpus(&mut violations)?;
-    validate_evidence_quality_benchmark_fixture_corpus(&mut violations)?;
+    let benchmark_disclosure = validate_evidence_quality_benchmark_fixture_corpus(&mut violations)?;
     validate_editor_gap_cockpit_fixture_corpus(&mut violations)?;
     validate_editor_first_run_usability_fixture_corpus(&mut violations)?;
     validate_editor_first_pr_bridge_fixture_corpus(&mut violations)?;
@@ -84,6 +87,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_assistant_loop_health_fixture_corpus(&mut violations)?;
     validate_release_control_fixture_corpus(&mut violations)?;
     validate_release_scope_fixture_corpus(&mut violations)?;
+    validate_intervention_study_fixture_corpus(&mut violations)?;
     validate_blind_journey_contract_fixture_corpus(&mut violations)?;
     validate_orchestration_attempt_receipts_fixture_corpus(&mut violations)?;
     validate_blind_journey_execute_fixture_corpus(&mut violations)?;
@@ -134,7 +138,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
         }
     }
 
-    finish_policy_report(
+    finish_policy_report_with_disclosures(
         PolicyReportSpec {
             report_file: "fixture-contracts.md",
             check: "check-fixture-contracts",
@@ -150,7 +154,117 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
             exception_template: None,
         },
         &violations,
+        &[benchmark_disclosure],
     )
+}
+
+fn validate_intervention_study_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {
+    let root = Path::new("fixtures/intervention-study");
+    for required in ["SPEC.md", "valid.json", "expected.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "intervention-study fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec = root.join("SPEC.md");
+    if spec.exists() {
+        let text = read_text_lossy(&spec)?;
+        if !text
+            .lines()
+            .any(|line| line.starts_with("Spec: RIPR-SPEC-0216"))
+        {
+            violations.push(format!(
+                "{} is missing `Spec: RIPR-SPEC-0216`",
+                normalize_path(&spec)
+            ));
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !has_markdown_heading(&text, heading) {
+                violations.push(format!("{} is missing `{heading}`", normalize_path(&spec)));
+            }
+        }
+    }
+    let valid_path = root.join("valid.json");
+    if valid_path.exists() {
+        match read_json_value(&valid_path) {
+            Ok(value) => {
+                if json_string_field(&value, "schema_version").as_deref()
+                    != Some("ripr_intervention_study.v1")
+                {
+                    violations.push(format!(
+                        "{} schema_version must be ripr_intervention_study.v1",
+                        normalize_path(&valid_path)
+                    ));
+                }
+                if json_string_field(&value, "kind").as_deref() != Some("ripr_intervention_study") {
+                    violations.push(format!(
+                        "{} kind must be ripr_intervention_study",
+                        normalize_path(&valid_path)
+                    ));
+                }
+                if json_string_field(&value, "implementation_state").as_deref()
+                    != Some("preregistration_only")
+                {
+                    violations.push(format!(
+                        "{} implementation_state must be preregistration_only",
+                        normalize_path(&valid_path)
+                    ));
+                }
+            }
+            Err(err) => violations.push(err),
+        }
+    }
+    let corpus_path = root.join("corpus.json");
+    if corpus_path.exists() {
+        match read_json_value(&corpus_path) {
+            Ok(value) => {
+                let Some(falsifiers) = value.get("falsifiers").and_then(Value::as_array) else {
+                    violations.push(format!(
+                        "{} is missing falsifiers array",
+                        normalize_path(&corpus_path)
+                    ));
+                    return Ok(());
+                };
+                if falsifiers.len() != 10 {
+                    violations.push(format!(
+                        "{} must contain 10 falsifiers, found {}",
+                        normalize_path(&corpus_path),
+                        falsifiers.len()
+                    ));
+                }
+                let mut seen = BTreeSet::new();
+                for case in falsifiers {
+                    if let Some(id) = json_string_field(case, "id") {
+                        seen.insert(id);
+                    }
+                }
+                for required in [
+                    "assignment_after_outcome",
+                    "unequal_condition_budgets",
+                    "control_can_read_ripr_outputs",
+                    "assisted_undeclared_extra_context",
+                    "task_replacement_after_failure",
+                    "retry_only_in_weaker_condition",
+                    "drop_timeouts_or_invalid_from_denominator",
+                    "stopping_on_favorable_interim",
+                    "grader_or_rubric_absent",
+                    "protocol_mutation_after_first_attempt",
+                ] {
+                    if !seen.iter().any(|id| id == required) {
+                        violations.push(format!(
+                            "{} is missing falsifier {required}",
+                            normalize_path(&corpus_path)
+                        ));
+                    }
+                }
+            }
+            Err(err) => violations.push(err),
+        }
+    }
+    Ok(())
 }
 
 fn validate_release_control_fixture_corpus(violations: &mut Vec<String>) -> Result<(), String> {

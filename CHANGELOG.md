@@ -9,8 +9,37 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Fixed
+
+- `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
+  recovery messages bind a relative `--root` to the selected directory in the
+  commands they print, so `--root .` no longer yields a command that fails
+  when pasted from another directory. The card's `full packet:` line and the
+  identity refusal now carry `--root` at all; the card's typed command args and
+  detail routes stay portable (#3999).
+
+- GitHub: `ripr check --format github` omits `,line=` when a finding's probe
+  location is line 0, instead of emitting out-of-contract `line=0`. Findings
+  with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are
+  unchanged. GitHub documents omitted `line` as defaulting to 1; this does not
+  claim file-level UI placement (#5089).
+
+- LSP: `session_value_sources` reports `initialization` only for applied
+  initialization options. A malformed value such as `checkMode: "Deep"` keeps
+  the session up, discloses the `repo` or `default` fallback, and emits one
+  `window/logMessage` warning naming the rejected key (#5092).
+
+- Source-subject stamps keep whitespace-bearing path identity, so a check JSON
+  stamp for ` leading.py` does not collapse onto `leading.py`, omit a Git-quoted
+  tab path, or treat a correct whitespace stamp as malformed. Parent, root, and
+  prefix components stay rejected (#5128).
+
 ### Changed
 
+- LSP: the actionable-profile line-findings hover names the editor-neutral
+  `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
+  `ripr.toml`, and labels `ripr.diagnosticProfile` as the VS Code setting,
+  instead of telling every client to set the VS Code-only name (#5094).
 - Rust finding output preserves the matched related-test/oracle count before
   bounded packing. JSON, SARIF, and human totals agree while retained rows and
   exposure classification remain unchanged. (#5146)
@@ -128,6 +157,12 @@ are scoped or reviewed.
   auto-retry, so the primary first-run command no longer sits silent for
   minutes. Stdout and every pilot packet byte stay unchanged; `--quiet`
   suppresses the stream (RIPR-SPEC-0185, #5019).
+- Matched RIPR intervention-study preregistration (`ripr_intervention_study.v1`):
+  a frozen protocol names study identity, assignment, equal budgets, the named
+  RIPR evidence surface, leakage controls, retries, stopping, non-compensating
+  outcome axes, and claim ceiling before any attempt. JSON and Markdown project
+  one sealed object. This does not execute agents, grade repairs, or claim
+  intervention value (#4649).
 - Python same-class method owners that tests reach only through construction
   or another method on that class now keep `no_static_path` but name
   `static_limit_kind: python_transitive_reach_unresolved` (RIPR-SPEC-0201,
@@ -534,6 +569,15 @@ are scoped or reviewed.
   JavaScript too. `PreviewLanguageAdvisory` gains the public field
   `javascript_file_count`; code that builds the struct with a literal must
   set it (#4555).
+- `ripr check --worktree` now prints executable drill-in commands, and
+  `ripr explain` and `ripr context` accept `--worktree`. Before, a worktree
+  run without `--write-artifact` printed only a note pointing at the artifact
+  route, `explain --worktree` was an unknown argument, and `explain
+  file:line` analyzed committed history, where a finding from uncommitted
+  edits does not exist. A selector miss, or a missing selector under
+  `--worktree`, now names a `ripr check ... --json` listing with the same
+  root, base and `--worktree`, and a `--worktree` drill-in without `--root`
+  resolves the project root from a subdirectory the way `ripr check` does.
 - Python: a changed dunder method now relates to the tests that use its class.
   `LowerBound.__init__` relates to tests that construct `LowerBound(...)`,
   instead of tests that define their own helper class with `def __init__`.
@@ -2034,6 +2078,27 @@ are scoped or reviewed.
   `run ripr check` recovery that could not help. One trailing redirect into
   the workspace's `target/ripr/` is accepted; every other redirect is still
   refused.
+- Rust: a test that asserts through a helper in its own file no longer reads
+  as "no assertion". With `fn check(x, want) { assert!(gate(x) == want) }`
+  in a `#[cfg(test)]` module and a test that only calls `check(10, false)`,
+  a changed `gate` was `reachable_unrevealed`; it now reads
+  `weakly_exposed`. The test carries the helper's owner call and assertion,
+  one hop, only for a uniquely named helper in the test's own
+  `#[cfg(test)]` module that the test calls directly, outside any closure,
+  and that is not shadowed, `async`, or cfg-gated. The caller's arguments
+  are not credited as the owner's inputs, and the helper's assertion is
+  admitted by the same rules as one written in the test. (#4574)
+- Rust: rstest `#[case(..)]` rows now count as inputs to the owner. The
+  parameter parser read `#[case] x: u32` as a malformed name and bound no
+  case values, so a test passing the boundary value through a case row was
+  reported as never reaching the boundary. Case columns map to the
+  `#[case]` parameters only; a `mut` parameter, one bound again anywhere
+  in the parsed test, a test that does not parse, or any test with a
+  nested `fn` binds nothing. (#4601)
+- Rust: a changed line with no resolved owner, such as a line inside a
+  `macro_rules!` template, is no longer `no_static_path` just because the
+  only related tests are same-file neighbours. With no owner name, nothing
+  can rule reach out, so it stays weak. (#4613)
 - Upgrading from 0.10: a `.ripr/suppressions.toml` `finding_id` written
   under 0.10 no longer matches, because Rust finding ids now hash the parsed
   expression (`amount >= threshold`) instead of the whole changed line
