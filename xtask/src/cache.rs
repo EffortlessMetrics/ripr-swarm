@@ -427,7 +427,7 @@ fn build_shard_summary(files: &[CacheFile]) -> CacheShardSummary {
 }
 
 /// The shard set a cache file belongs to. A manifest names its own
-/// directory. A shard sits either beside the manifest (pre-RIPR-SPEC-0218
+/// directory. A shard sits either beside the manifest (pre-RIPR-SPEC-0220
 /// layout, `<entry>/shard-NNNNN.json`) or in a publication generation
 /// directory (`<entry>/g<publication-id>/shard-NNNNN.json`); both belong to
 /// `<entry>`, so the report compares them with the manifest's `file` entries.

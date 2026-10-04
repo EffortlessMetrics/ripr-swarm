@@ -1,4 +1,4 @@
-# RIPR-SPEC-0218: Byte-bounded classified-cache store publication
+# RIPR-SPEC-0220: Byte-bounded classified-cache store publication
 
 Status: proposed
 
@@ -7,6 +7,9 @@ Owner: product-analysis
 Created: 2026-10-03
 
 Linked issues: #4999 (write-side store amplification; sibling load bound is #5124)
+
+Renumbered from RIPR-SPEC-0218 after #5370 landed the issue-lifecycle
+attempt extension under that number on main.
 
 Support-tier impact:
 

@@ -1184,10 +1184,10 @@ standalone_reason = "Issue #4798 records the R2 repair-attempt discovery/resume 
 [[artifact]]
 id = "RIPR-SPEC-0218"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0218-byte-bounded-classified-cache-store.md"
+path = "docs/specs/RIPR-SPEC-0218-issue-lifecycle-attempt-extension.md"
 status = "proposed"
-owner = "product-analysis"
-standalone_reason = "Issue #4999 records the write-side classified-cache publication bound: borrowed ClassifiedSeam serialization through a bounded atomic writer, an encoded-byte ceiling on both the single-entry and sharded paths with record count only as a secondary cap, an explicit skip when one record cannot fit, and generation-atomic replacement that leaves the previous valid cache or a miss. This is a store-path bound, not a process-RSS guarantee and not the load/decode sibling (#5124)."
+owner = "test-infra"
+standalone_reason = "Issue #4929 freezes the governed issue-lifecycle extension contract (ISSUE-D1) before any real issue is counted: one versioned agent-neutral DTO family (IssueLifecycleAttemptV1, IssueLifecycleCorpusV1, IssueLifecycleScorecardV1, IssueLifecycleDispositionV1) binds the GitHub issue snapshot with comments/labels/assignees/milestone identities, current main, relevant PRs, portfolio, selected-work and claim identities, initial information completeness and issue family, intake evidence and missing-evidence questions, the spec-required decision with rationale and root disposition, proposal/spec/ADR draft, challenge, amendment and acceptance identities, plan, work-item, dependency and acceptance-coverage identities, claim/collision/expiry/takeover events, PR/review/check and verification identities with the bound current main, progress mutation plan with before/after digests and unchanged suppression, burn-down state with uncovered/contradicted/deferred rows, closeout state, reason, remaining limitations and current-head verification, plus base #4925 orchestration attempt references with the closed shared-fact families (context, execution, verification, cleanup) instead of copied facts; a fail-closed counting law downgrades (never upgrades) claimed dispositions on open intake questions, spec-required one-PR qualification conflicts, unsuppressed unchanged progress updates, missing closeout state, missing current-head proof (merge becomes merged_pending_closeout, never completed closeout), uncovered or contradicted burn-down rows (partially_landed), stale current-main receipts and missing acceptance evidence across fifteen closed dispositions from needs_evidence to not_run; synthetic mechanics rows never enter real denominators, duplicate observations deduplicate by observation_key, and one deterministic JSON/Markdown scorecard reports an honest not_measured implementation success rate with zero real lifecycles; the contract makes the intake/reconciliation, decision-boundary and burn-down pilots (#4930-#4932) countable without implementing them."
 
 [[artifact]]
 id = "RIPR-SPEC-0219"
@@ -1196,3 +1196,11 @@ path = "docs/specs/RIPR-SPEC-0219-labeled-rust-verdict-corpus.md"
 status = "proposed"
 owner = "product-eval"
 standalone_reason = "Records the labeled Rust verdict corpus: one-line edits in pinned real crates labeled by running mutants against each crate's own tests, a fixed truth-to-verdict table, and cargo xtask verdict-corpus, which scores ripr's anchored verdicts and reports false-verdict and contradiction rates without running mutation testing or network access."
+
+[[artifact]]
+id = "RIPR-SPEC-0220"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0220-byte-bounded-classified-cache-store.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #4999 records the write-side classified-cache publication bound: borrowed ClassifiedSeam serialization through a bounded atomic writer, an encoded-byte ceiling on both the single-entry and sharded paths with record count only as a secondary cap, an explicit skip when one record cannot fit, and generation-atomic replacement that leaves the previous valid cache or a miss. This is a store-path bound, not a process-RSS guarantee and not the load/decode sibling (#5124). Renumbered from RIPR-SPEC-0218 after #5370 landed that id for the issue-lifecycle attempt extension."
