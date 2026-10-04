@@ -1,22 +1,22 @@
 # Rust verdict corpus report
 
-Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.7. Cases: 147.
+Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.8. Cases: 175.
 
 | Rate | Count | Rate |
 | --- | --- | --- |
-| False verdicts (all cases) | 48/147 | 0.3265 |
-| False actionable (of discriminated) | 42/72 | 0.5833 |
-| False exposed (of not fully discriminated) | 6/75 | 0.0800 |
-| False silent (of not fully discriminated) | 0/75 | 0.0000 |
-| Ideal verdict | 55/147 | 0.3741 |
-| Abstained (limited or silent where acceptable) | 44/147 | 0.2993 |
-| Findings with a contradiction | 2/198 | 0.0101 |
+| False verdicts (all cases) | 53/175 | 0.3029 |
+| False actionable (of discriminated) | 46/77 | 0.5974 |
+| False exposed (of not fully discriminated) | 7/98 | 0.0714 |
+| False silent (of not fully discriminated) | 0/98 | 0.0000 |
+| Ideal verdict | 77/175 | 0.4400 |
+| Abstained (limited or silent where acceptable) | 45/175 | 0.2571 |
+| Findings with a contradiction | 2/238 | 0.0084 |
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
 | Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| authored | 113 | 38/113 | 32/52 | 6/61 | 0/61 | 50/113 | 25/113 |
+| authored | 141 | 43/141 | 36/57 | 7/84 | 0/84 | 72/141 | 26/141 |
 | upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
@@ -168,6 +168,34 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `spec0228-field-write-reset-between` | authored | not_discriminated | gap | limited | static_unknown | abstained | no | none |
 | `spec0227-total-question-mark-ok-input` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `spec0227-total-question-mark-earlier-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-assert-ne-scalar` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-assert-ne-ok-value` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-matches-err-binding-guard` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-matches-err-wildcard` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-assert-eq-err-bound-value` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0231-oracle-matches-ok-literal` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0231-oracle-matches-ok-wildcard` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-observer-substring-present` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-events-sent-len-eq` | authored | partially_discriminated | gap | credited | exposed | false_exposed | no | none |
+| `spec0231-oracle-events-sent-contains` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-helper-assert-not-equal` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-helper-assert-json-eq` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0231-oracle-ensure-not-equal` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-assert-ne-struct-literal` | authored | partially_discriminated | gap | gap | exposed, weakly_exposed | ideal | no | none |
+| `spec0231-oracle-is-some-and-threshold` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-events-not-empty` | authored | partially_discriminated | gap | limited | propagation_unknown | abstained | no | none |
+| `spec0231-oracle-err-underscore-binding` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-ensure-matches-ok-wildcard` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-negated-matches-err-variant` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | no | none |
+| `spec0231-oracle-assert-ne-err-variant` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-err-ref-binding-guard` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-err-at-wildcard-binding` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-err-at-variant-binding` | authored | discriminated | credited | credited | exposed | ideal | no | none |
+| `spec0231-oracle-some-ref-binding` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-some-at-literal` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | no | none |
+| `spec0231-oracle-some-or-none-pattern` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-some-range-pattern` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
+| `spec0231-oracle-is-ok-or-is-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
 Non-claims:
 

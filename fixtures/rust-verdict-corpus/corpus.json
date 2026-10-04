@@ -2,7 +2,7 @@
   "schema_version": "ripr_verdict_corpus.v1",
   "kind": "ripr_verdict_corpus",
   "spec": "RIPR-SPEC-0219",
-  "corpus_version": "2026-10-04.7",
+  "corpus_version": "2026-10-04.8",
   "description": "Hand-labeled Rust verdict corpus: one-line edits in pinned real crates, plus small authored crates that fill cells the real crates leave empty, each labeled with what the crate's own tests actually discriminate, so ripr's verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal.",
   "label_method": "For each case the edit was applied to the full pinned checkout (for an authored subject, the whole crate is retained), the crate's own test command was run to confirm the edit keeps tests green (behavior_preserving_rewrite) or to record whether it breaks them (behavior_change, where the edit is its own single mutant), and each listed mutant of the edited expression was applied on top and the same test command run. A mutant counts as detected (`tests_failed`) when the test command fails after compiling. Each mutant was reviewed by hand for equivalence before its outcome counted. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated.",
   "verdict_projection": "Only candidate_current findings on the anchor file and line count, plus, when the anchor is a plain `let name = init;` or `let mut name = init;`, candidate_current findings in the anchor file whose binding_predicate_relation evidence names that binding with init as its new initializer (the RIPR-SPEC-0157 retarget). exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. The per-finding reading mirrors crates/ripr/src/output/human/triage.rs; the line-level precedence is this corpus's own policy.",
@@ -1392,6 +1392,482 @@
         {
           "path": "src/lib.rs",
           "sha256": "9de9776303d3c4e7876c7c911fe038881200b2146e2b88240f331e0f8b4900a3"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-1",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "55ddb9c8cb4490a7d0d12d13f4353e5ec00681c9ccfc065715744251faad72e3"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "cc2e91b3783c80ac86a8a31a546bebef99f41f1ea3b6c94aa390d8c97e985dcf"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-2",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "148302e123bb2ab169463c20f477aaf398d9909da8e824cc7472801066f30ab2"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "ef65ce64a1669f9d84eda97db2acfcb6cbb141d222e5b54f51a7ca230081bd36"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-3",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "4fc056f5de08238f8495c1848be67ad3d16a7f03edfa475bc3ee5f9b49a1e02b"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "37c680671f26057b04b661b20e2292d05c0db9a8e0366e7a3d312c239e41a115"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-4",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "e3cc5855f0b22ed482d184237d6c532570f96525245bbd6c7583a4e934e13ca4"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "72619593528f52c0a4a7ba021e13ec7636d9a1e177ac6ce47a14568aa4b3391b"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-5",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "52aaef2fd2e920fc9e0ad8cf86d73adb1518605979d7afc7b65f28855c3cba71"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "f5b88d9c263da23c30d0f690c539448703113f814d12be68d18a8d890a6a4bd7"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-6",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "b88b96598911724496fb581c097f26d05f8f3893c5cfbdf01a9ac30f4e123e66"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "5e82b336b5b3f46378f13332d4bd7a9b5ec3b0615d30fdbbea0531074afd9e83"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-7",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "94ce8402f09658ae836da43355fa23b170e0b91f4dd95e548c24971c87498090"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "6993de90ee7df177c5e0f9aa785bc26aea893a33cefcc3fc7a1fc3a1c42b1bff"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-8",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "f615057a565894abf50d589294217449aa5cd1dfa4e3457f6e728def06bb2c05"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "f21d692d3b60509b5ee96545b83f9c2b3f0e719e2cd9dd6dd81e1abbb90b375e"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-9",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "68b7da0d58a9660b1eeb8690343cb4ce890b71ba3251e6ed35cc153e19946628"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "77ab7b685b6e06e1f3971a4e1c73e353c3b0836046bc3801ea072ca313e1b34d"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-10",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "a6bbaae48bd3f27fb531b9f472f25cc901b9a506ae1d57d1047679365afdb7af"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "14a44e0685c6a6f1a78c9ad2324db521432c7c1b957777ee222deec97d15ab52"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-11",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "8a743dd2c778f3c9c09cbfd80a94dc31701aa15ceb26a1b3c67b06ed286d835d"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "7238071f07ad252cfc6a62cbf969c4e2bb02e56eef056a63387b93502832cfec"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-12",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "25ab8a065190167f6a4f38dd47019614f1c77547ec11a97be52fe646a48de660"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "830de64e2407b0a754dbe3078bdd281c047584a72d4369d252a2ba5d56a86c69"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-13",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "57efbbe88d0e6ffbdcd865d566606c458db875ad1ae5791e3c4d3fcab0982c45"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "9fe8a07c83fa0397a5ea7c23f596e1d788cabb851613ee51cefe34f2ebd07d24"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-14",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "64b5b0e5cdb879de1c2c9823bf8e3777f41a2cb50d9adce36f37ae741fa91163"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "1f4852bfc47363dbe1ed024d7bbaeefd76d5cdb44b83fc84820585171c346e86"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-15",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "73edb351c6912613b4d4677c3dbdcff412f24730126167cf8ee6a7cee5707011"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "01a2026bd36a49624ad6c1eccc5c4f12c7ac0c77e21233ebb9af7d7487ac7f46"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-16",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "371e0e5b50524400661d3001318830b21dcbfcb5e99ecdff3658e97d43ed723b"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "7c6c579be9ca51705e017c76ae85366739ee3a17a680dab440ab695d865195bf"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-17",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "dcfeab29d8211637a2ec60bef992cd16f2370e9c5913a0614e29a77f7b74eb6d"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "9fd1f6efa82cff7d0ddc10f47dc71140b3ca28e1781a6ca1868371dad010318f"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-18",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "4ae200fc6dce451828f2334895ca6c862c43c23783f105847de4129923973a30"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "50fded2fe124f427c7e9a44557449d69207d6a2f4583152e80224c204fa5045b"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-19",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "16779262e27af010790eb646c8c751ff75f58957bbf9f7f75e31d53b9a88a213"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "be7925934cbee7aeb7c535a0c25108137d9c8ca170f64c7332132c1c2882ab74"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-20",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "1bebdc1271710d208d6df4fec9b50dec2dd72cb25663b9c79d0704ed8bc9447c"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "91d55dbbbb49a14a1271ebe8c2184741d5fea6d90ac8a5f116ecf0f2dddb0275"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-21a",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "1799c2d911f626b274b47a432bbc5cb288b1689134c73c2dc72e07b78fc93225"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "1436c98ce499fadeb37b69b93e212862aa3b08747406105523d1a54650be15aa"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-21b",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "a8b93ad6c244ae17b0c750112478b017f351ce0301290efea7383c35d900d4ea"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "f99456bbaba57299e6e82af77b17ff1ce7188bd3fd11950229b19f3c644ccfd8"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-22",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "cbd78b5a721a93038bfcfa0e8ef3f5b5af2157af507a50b66b711ec87568e318"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "fe8c161cae37135e2c3e904e28ff4b8150496e3af2e9978a566d519adacdbd65"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-23a",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "58c179abb0815e04d4a3ba99fb1ad23b5e45c070a99ee03671ada54688e1ee78"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "8328343ae7ae8621b15084d8e379f5957958afbe4ac60f34fa87e1e213b34c80"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-23b",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "a82c2072e647567352365a5b0b73e3f98a940147f6a63dcab66d90daa95842b6"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "c02761d2cc364857742705952a0aebe90a92b3e1366e9cd579e06bab125695eb"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-24",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "ae5fb1ff511383c1ecd3a7ca4d816257014884df00b5446ca3320b15a9ef36cc"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "5ef621f33bba59457c398e32b0746a70533eb09d66a9ef7f7ecb453e8b665e15"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-25",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "1eb40d336f13f1c5ea027b254cfd1be073e47f1ac86cd9faad2ccfdb06e97835"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "209098a5de56831369e736e0b2d79b54841b64dd9c670c1dea6d5ddd4c8ce333"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-spec0231-26",
+      "origin": "authored",
+      "version_label": "authored 2026-10-04 for RIPR-SPEC-0231 acceptance examples",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "84f94502288fe7d2806018da8b0fdebf53f14c99ca3329166ebc1da17f5be7e6"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "8c76d137d45b4d927ea7821b80475140e6bd9b98bd189148372ad78cd1479410"
         }
       ]
     }
@@ -4279,7 +4755,7 @@
           "limited"
         ]
       },
-      "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107.",
+      "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107; RIPR-SPEC-0227 example 11.",
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "gap",
@@ -4674,7 +5150,7 @@
           "limited"
         ]
       },
-      "reasoning": "No test freezes a wallet; the guarded match pins Insufficient, a sibling variant, so the Frozen return is never observed. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0106.",
+      "reasoning": "No test freezes a wallet; the guarded match pins Insufficient, a sibling variant, so the Frozen return is never observed. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0106; RIPR-SPEC-0227 example 10.",
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "gap",
@@ -8568,6 +9044,1405 @@
       "reasoning": "letter_is_refused asserts total(\"x\").is_err(), but no_letters(s)? already returns Err(Bad) for \"x\" before the digit loop, so the unwrap_or mutants never run on that input and the test passes. Spec cells: RIPR-SPEC-0227 example 13 (rule 3b negative control: condition 2 fails, an earlier ? already returns Err).",
       "labeling_observation": {
         "ripr_commit": "a9d36dc71",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-assert-ne-scalar",
+      "subject_id": "authored-spec0231-1",
+      "diff": "cases/spec0231-oracle-assert-ne-scalar.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "assert_ne_scalar",
+      "hard_case": "ripr reports exact_value / strong for the related test; the spec adopts relational_check / weak (measured defect). The return_value finding stays weakly_exposed, so ripr's class agrees with the partial truth.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x * 3",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+          },
+          {
+            "replacement": "x * 0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_is_not_zero",
+            "equivalence_review": "not equivalent: score(2) becomes 0"
+          },
+          {
+            "replacement": "x - 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_is_not_zero",
+            "equivalence_review": "not equivalent: score(2) becomes 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_ne!(score(2), 0) only rejects 0: x * 0 and x - 2 fail it, x * 3 (6) passes. Spec cells: RIPR-SPEC-0231 example 1; spec-adopted oracle relational_check / weak.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-assert-ne-ok-value",
+      "subject_id": "authored-spec0231-2",
+      "diff": "cases/spec0231-oracle-assert-ne-ok-value.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "result_threshold_predicate",
+      "test_shape": "assert_ne_result_ok_value",
+      "hard_case": "ripr reports exact_value / strong; the spec adopts relational_check / weak (measured defect).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "if x > 30 {",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_twenty_is_not_ok",
+            "equivalence_review": "not equivalent: check(20) becomes Ok(20)"
+          },
+          {
+            "replacement": "if x > 5 {",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: check(6..=10) become Err"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_ne!(check(20), Ok(20)) only rejects Ok(20): raising the threshold to 30 fails it, lowering it to 5 passes. Spec cells: RIPR-SPEC-0231 example 2; spec-adopted oracle relational_check / weak.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-matches-err-binding-guard",
+      "subject_id": "authored-spec0231-3",
+      "diff": "cases/spec0231-oracle-matches-err-binding-guard.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_message_value",
+      "test_shape": "matches_err_binding_guard",
+      "hard_case": "ripr reports exact_error_variant / strong; the spec adopts broad_error / weak (measured defect, admission rule 2).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(String::from(\"small\"));",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the error text becomes \"small\""
+          },
+          {
+            "replacement": "return Err(String::new());",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_twenty_has_an_error_message",
+            "equivalence_review": "not equivalent: the error text becomes empty"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The guard only requires a non-empty error: an empty message fails it, a different message passes. Spec cells: RIPR-SPEC-0231 example 3; spec-adopted oracle broad_error / weak.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-matches-err-wildcard",
+      "subject_id": "authored-spec0231-4",
+      "diff": "cases/spec0231-oracle-matches-err-wildcard.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "result_threshold_predicate",
+      "test_shape": "matches_err_wildcard",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "if x > 30 {",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_twenty_is_an_error",
+            "equivalence_review": "not equivalent: check(20) becomes Ok(20)"
+          },
+          {
+            "replacement": "if x > 5 {",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: check(6..=10) become Err"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "matches!(check(20), Err(_)) only checks the side: threshold 30 makes check(20) Ok and fails it, threshold 5 passes. Spec cells: RIPR-SPEC-0231 example 4 (control: spec marks it unchanged); spec-adopted oracle broad_error / weak.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-assert-eq-err-bound-value",
+      "subject_id": "authored-spec0231-5",
+      "diff": "cases/spec0231-oracle-assert-eq-err-bound-value.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_message_value",
+      "test_shape": "assert_eq_err_bound_value",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(String::from(\"small\"));",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_twenty_is_big",
+            "equivalence_review": "not equivalent: the error text becomes \"small\""
+          },
+          {
+            "replacement": "return Err(String::new());",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_twenty_is_big",
+            "equivalence_review": "not equivalent: the error text becomes empty"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "assert_eq! against Err(String::from(\"big\")) pins the message, so both message mutants fail it. Spec cells: RIPR-SPEC-0231 example 5 (control: spec marks it unchanged); spec-adopted oracle exact_error_variant / strong.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-matches-ok-literal",
+      "subject_id": "authored-spec0231-6",
+      "diff": "cases/spec0231-oracle-matches-ok-literal.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 5
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "ok_payload_value",
+      "test_shape": "matches_ok_literal",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "Ok(x + 1)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_five_is_ok_five",
+            "equivalence_review": "not equivalent: check(5) becomes Ok(6)"
+          },
+          {
+            "replacement": "Ok(0)",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_five_is_ok_five",
+            "equivalence_review": "not equivalent: check(5) becomes Ok(0)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "matches!(check(5), Ok(5)) pins the payload, so both payload mutants fail it. Spec cells: RIPR-SPEC-0231 example 6 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-matches-ok-wildcard",
+      "subject_id": "authored-spec0231-7",
+      "diff": "cases/spec0231-oracle-matches-ok-wildcard.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 5
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "ok_payload_value",
+      "test_shape": "matches_ok_wildcard",
+      "hard_case": "ripr reports exact_value / strong; the spec adopts smoke_only / smoke (measured defect, admission rule 3).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "Ok(x + 1)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: check(5) becomes Ok(6)"
+          },
+          {
+            "replacement": "Ok(0)",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: check(5) becomes Ok(0)"
+          },
+          {
+            "replacement": "Err(String::new())",
+            "outcome": "tests_failed",
+            "failing_test": "tests::check_five_is_ok",
+            "equivalence_review": "not equivalent: check(5) becomes Err(\"\")"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "matches!(check(5), Ok(_)) only checks the side: payload changes pass, turning the Ok into an Err fails it. Spec cells: RIPR-SPEC-0231 example 7; spec-adopted oracle smoke_only / smoke.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-observer-substring-present",
+      "subject_id": "authored-spec0231-8",
+      "diff": "cases/spec0231-oracle-observer-substring-present.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "observer_substring_unrelated_call",
+      "hard_case": "ripr reports mock_expectation / medium because \"sent\" occurs inside is_present; the spec says not mock_expectation (measured defect, admission rule 5). The return_value finding reads weakly_exposed while truth is not_discriminated.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x * 3",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+          },
+          {
+            "replacement": "x * 50",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: score(2) becomes 100"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The || is_present() arm (always true) makes the assertion vacuous, so no mutant fails it. Spec cells: RIPR-SPEC-0231 example 8; spec-adopted oracle not mock_expectation.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-events-sent-len-eq",
+      "subject_id": "authored-spec0231-9",
+      "diff": "cases/spec0231-oracle-events-sent-len-eq.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "side_effect_push",
+      "test_shape": "assert_eq_collection_len",
+      "hard_case": "Kind/strength match the spec, but both anchor findings read exposed while a mutant (push(id + 1)) survives: ripr credits the length pin as discriminating the pushed value.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "events_sent.push(id + 1);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the recorded id becomes id + 1"
+          },
+          {
+            "replacement": "events_sent.push(id); events_sent.push(id);",
+            "outcome": "tests_failed",
+            "failing_test": "tests::send_records_one_event",
+            "equivalence_review": "not equivalent: the event is recorded twice"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_eq!(events_sent.len(), 1) pins the count, not the id: pushing twice fails it, pushing id + 1 passes. Spec cells: RIPR-SPEC-0231 example 9 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-events-sent-contains",
+      "subject_id": "authored-spec0231-10",
+      "diff": "cases/spec0231-oracle-events-sent-contains.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "side_effect_push",
+      "test_shape": "contains_on_observer_name",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "events_sent.push(id + 1);",
+            "outcome": "tests_failed",
+            "failing_test": "tests::send_records_the_id",
+            "equivalence_review": "not equivalent: the recorded id becomes id + 1"
+          },
+          {
+            "replacement": "events_sent.push(id); events_sent.push(id);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the event is recorded twice"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "contains(&id) pins membership, not count: pushing id + 1 fails it, pushing twice passes. Spec cells: RIPR-SPEC-0231 example 10 (control: spec marks it unchanged); spec-adopted oracle mock_expectation / medium.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-helper-assert-not-equal",
+      "subject_id": "authored-spec0231-11",
+      "diff": "cases/spec0231-oracle-helper-assert-not-equal.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "custom_helper_inequality",
+      "hard_case": "ripr reports exact_value / strong for the helper call (name ends in 'equal'); the spec adopts relational_check / weak (measured defect, rules 1 and 6). ripr also attributes the helper body's assert!(a != b) to the test as a second related_tests entry (relational_check / weak), so related_tests_total is 2 for one test.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x * 3",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+          },
+          {
+            "replacement": "x * 0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_is_not_zero",
+            "equivalence_review": "not equivalent: score(2) becomes 0"
+          },
+          {
+            "replacement": "x - 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_is_not_zero",
+            "equivalence_review": "not equivalent: score(2) becomes 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The helper only rejects equality with 0: x * 0 and x - 2 fail it, x * 3 passes. Spec cells: RIPR-SPEC-0231 example 11; spec-adopted oracle relational_check / weak.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-helper-assert-json-eq",
+      "subject_id": "authored-spec0231-12",
+      "diff": "cases/spec0231-oracle-helper-assert-json-eq.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "custom_helper_equality",
+      "hard_case": "Kind/strength match the spec. ripr also attributes the helper body's assert!(actual == expected) to the test as a second related_tests entry (relational_check / weak).",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x * 3",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_renders_as_json",
+            "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+          },
+          {
+            "replacement": "x * 0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_renders_as_json",
+            "equivalence_review": "not equivalent: score(2) becomes 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The helper compares the rendered JSON with {\"score\":4}, so both mutants fail it. Spec cells: RIPR-SPEC-0231 example 12 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-ensure-not-equal",
+      "subject_id": "authored-spec0231-13",
+      "diff": "cases/spec0231-oracle-ensure-not-equal.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 2
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "ensure_not_equal",
+      "hard_case": "ripr reports exact_value / strong (the spec's 'today' value); the spec adopts relational_check / weak (measured defect, rule 1 at step 0).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "x * 3",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+          },
+          {
+            "replacement": "x * 0",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_is_not_zero",
+            "equivalence_review": "not equivalent: score(2) becomes 0"
+          },
+          {
+            "replacement": "x - 2",
+            "outcome": "tests_failed",
+            "failing_test": "tests::score_is_not_zero",
+            "equivalence_review": "not equivalent: score(2) becomes 0"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "ensure!(score(2) != 0) (a local macro_rules! that returns Err) only rejects 0: x * 0 and x - 2 fail it, x * 3 passes. Spec cells: RIPR-SPEC-0231 example 13; spec-adopted oracle relational_check / weak.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-assert-ne-struct-literal",
+      "subject_id": "authored-spec0231-14",
+      "diff": "cases/spec0231-oracle-assert-ne-struct-literal.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 7
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "struct_literal_return",
+      "test_shape": "assert_ne_struct_literal",
+      "hard_case": "Measured defect: ripr reports whole_object_equality / strong; the spec adopts whole_object_equality / weak (rule 1). The return_value finding reads exposed although truth is partial, and the field_construction finding reads weakly_exposed.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "Config { retries: n * 3 }",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: build(3) becomes Config { retries: 9 }, the excluded value",
+            "failing_test": "tests::build_is_not_nine_retries"
+          },
+          {
+            "replacement": "Config { retries: n * 4 }",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: build(3) becomes 12, which assert_ne! still accepts"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_ne! only excludes retries == 9, so only the mutant hitting 9 fails. Spec cells: RIPR-SPEC-0231 example 14, RIPR-SPEC-0225.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "exposed",
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-is-some-and-threshold",
+      "subject_id": "authored-spec0231-15",
+      "diff": "cases/spec0231-oracle-is-some-and-threshold.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "option_return",
+      "test_shape": "is_some_and_threshold",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Some(1);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: 1 fails v > 1",
+            "failing_test": "tests::lookup_one_exceeds_one"
+          },
+          {
+            "replacement": "return Some(5);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: lookup(1) returns 5, not 4; the test only checks > 1"
+          },
+          {
+            "replacement": "return None;",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: is_some_and is false on None",
+            "failing_test": "tests::lookup_one_exceeds_one"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "is_some_and(|v| v > 1) catches None and values <= 1 but not other values above 1. Spec cells: RIPR-SPEC-0231 example 15 (unchanged; control).",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-events-not-empty",
+      "subject_id": "authored-spec0231-16",
+      "diff": "cases/spec0231-oracle-events-not-empty.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "side_effect_push",
+      "test_shape": "negated_is_empty_on_events",
+      "hard_case": "Control matches (mock_expectation / medium). ripr reads propagation_unknown for both call_deletion and side_effect, although the deleted-push mutant is caught.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "events.push(n * 3);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: the pushed event is 9, not 6; the test only checks non-empty"
+          },
+          {
+            "replacement": "let _ = n;",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: no event is pushed, so events is empty",
+            "failing_test": "tests::emit_records_an_event"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "!events.is_empty() catches the deleted push but not a wrong pushed value. Spec cells: RIPR-SPEC-0231 example 16 (unchanged; control).",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "propagation_unknown"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-err-underscore-binding",
+      "subject_id": "authored-spec0231-17",
+      "diff": "cases/spec0231-oracle-err-underscore-binding.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_return",
+      "test_shape": "matches_err_underscore_binding",
+      "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts broad_error / weak (rule 2).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(E::Bad);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: the error variant changes from Big to Bad; Err(_e) accepts any error"
+          },
+          {
+            "replacement": "return Ok(x);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: check(20) succeeds",
+            "failing_test": "tests::check_rejects_twenty"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Err(_e) only checks the error side. Spec cells: RIPR-SPEC-0231 example 17.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-ensure-matches-ok-wildcard",
+      "subject_id": "authored-spec0231-18",
+      "diff": "cases/spec0231-oracle-ensure-matches-ok-wildcard.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 20
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "ok_return",
+      "test_shape": "ensure_matches_ok_wildcard",
+      "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts smoke_only / smoke (rules 3, step 0).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "Ok(x + 1)",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: check(5) returns Ok(6); Ok(_) accepts it"
+          },
+          {
+            "replacement": "Err(E::Bad)",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: check(5) errs",
+            "failing_test": "tests::check_accepts_five"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "ensure!(matches!(check(5), Ok(_))) via a local macro_rules! ensure only checks the Ok side. Spec cells: RIPR-SPEC-0231 example 18.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-negated-matches-err-variant",
+      "subject_id": "authored-spec0231-19",
+      "diff": "cases/spec0231-oracle-negated-matches-err-variant.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_return",
+      "test_shape": "negated_matches_err_variant",
+      "hard_case": "Measured defect: ripr relates no test at all (reachable_unrevealed, related_tests empty), so no oracle kind is reported; the spec says today exact_error_variant / strong and adopts relational_check / weak (rule 1). The negated matches! apparently breaks test relation.",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(E::Bad);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: check(20) returns the excluded Err(E::Bad)",
+            "failing_test": "tests::check_twenty_is_not_bad"
+          },
+          {
+            "replacement": "return Ok(0);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: check(20) succeeds; !matches! still holds"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "!matches!(.., Err(E::Bad)) excludes only one value. Spec cells: RIPR-SPEC-0231 example 19.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-assert-ne-err-variant",
+      "subject_id": "authored-spec0231-20",
+      "diff": "cases/spec0231-oracle-assert-ne-err-variant.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_return",
+      "test_shape": "assert_ne_err_variant",
+      "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts relational_check / weak (rule 1).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(E::Bad);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: check(20) equals the excluded Err(E::Bad)",
+            "failing_test": "tests::check_twenty_is_not_bad"
+          },
+          {
+            "replacement": "return Ok(0);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: check(20) succeeds; assert_ne! still holds"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "assert_ne! excludes only Err(E::Bad). Spec cells: RIPR-SPEC-0231 example 20.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-err-ref-binding-guard",
+      "subject_id": "authored-spec0231-21a",
+      "diff": "cases/spec0231-oracle-err-ref-binding-guard.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_return",
+      "test_shape": "matches_err_ref_binding_guard",
+      "hard_case": "Measured defect: ripr reports exact_error_variant / strong; the spec adopts broad_error / weak (rule 2).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(String::from(\"x\"));",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: the message has length 1, which the guard rejects",
+            "failing_test": "tests::check_twenty_has_message"
+          },
+          {
+            "replacement": "return Err(String::from(\"huge\"));",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: the message changes; the guard only checks length > 1"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Err(ref e) if e.len() > 1 checks the side and a length, not the value. Spec cells: RIPR-SPEC-0231 example 21 (form Err(ref e) with guard).",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-err-at-wildcard-binding",
+      "subject_id": "authored-spec0231-21b",
+      "diff": "cases/spec0231-oracle-err-at-wildcard-binding.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_return",
+      "test_shape": "matches_err_at_wildcard_binding",
+      "hard_case": "Measured defect: ripr reports exact_error_variant / strong; the spec adopts broad_error / weak (rule 2).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(String::from(\"huge\"));",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: the message changes; Err(e @ _) accepts any error"
+          },
+          {
+            "replacement": "return Ok(x);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: check(20) succeeds",
+            "failing_test": "tests::check_twenty_errs"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Err(e @ _) only checks the error side. Spec cells: RIPR-SPEC-0231 example 21 (form Err(e @ _)).",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-err-at-variant-binding",
+      "subject_id": "authored-spec0231-22",
+      "diff": "cases/spec0231-oracle-err-at-variant-binding.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 9
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_return",
+      "test_shape": "matches_err_at_variant",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Err(E::Big);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: the variant changes to Big",
+            "failing_test": "tests::check_twenty_is_bad"
+          },
+          {
+            "replacement": "return Ok(x);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: check(20) succeeds",
+            "failing_test": "tests::check_twenty_is_bad"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Err(e @ E::Bad) pins the variant of a two-variant enum. Spec cells: RIPR-SPEC-0231 example 22 (unchanged; control).",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-some-ref-binding",
+      "subject_id": "authored-spec0231-23a",
+      "diff": "cases/spec0231-oracle-some-ref-binding.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "option_return",
+      "test_shape": "matches_some_ref_binding",
+      "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts smoke_only / smoke (rule 3).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Some(5);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: lookup(1) returns 5; Some(ref x) accepts it"
+          },
+          {
+            "replacement": "return None;",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: lookup(1) returns None",
+            "failing_test": "tests::lookup_one_is_some"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Some(ref x) only checks the side. Spec cells: RIPR-SPEC-0231 example 23 (form Some(ref x)).",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-some-at-literal",
+      "subject_id": "authored-spec0231-23b",
+      "diff": "cases/spec0231-oracle-some-at-literal.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "option_return",
+      "test_shape": "matches_some_at_literal",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Some(4);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: 4 does not match the pinned 3",
+            "failing_test": "tests::lookup_one_is_three"
+          },
+          {
+            "replacement": "return None;",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: lookup(1) returns None",
+            "failing_test": "tests::lookup_one_is_three"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Some(x @ 3) pins the value 3. Spec cells: RIPR-SPEC-0231 example 23 (unchanged; control) (form Some(x @ 3)).",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-some-or-none-pattern",
+      "subject_id": "authored-spec0231-24",
+      "diff": "cases/spec0231-oracle-some-or-none-pattern.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "option_return",
+      "test_shape": "matches_some_or_none",
+      "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts relational_check / weak (rule 3). Truth is not_discriminated, yet ripr reads weakly_exposed.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Some(5);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: lookup(1) returns 5 instead of 4"
+          },
+          {
+            "replacement": "return None;",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: lookup(1) returns None instead of Some(4)"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Some(_) | None is irrefutable, so no mutant can fail it. Spec cells: RIPR-SPEC-0231 example 24.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-some-range-pattern",
+      "subject_id": "authored-spec0231-25",
+      "diff": "cases/spec0231-oracle-some-range-pattern.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 3
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "option_return",
+      "test_shape": "matches_some_range",
+      "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts relational_check / weak (rule 3).",
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "return Some(5);",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: 5 is still inside 1..=5"
+          },
+          {
+            "replacement": "return Some(6);",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: 6 falls outside 1..=5",
+            "failing_test": "tests::lookup_one_in_range"
+          },
+          {
+            "replacement": "return None;",
+            "outcome": "tests_failed",
+            "equivalence_review": "not equivalent: lookup(1) returns None",
+            "failing_test": "tests::lookup_one_in_range"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Some(1..=5) checks a range, not the value. Spec cells: RIPR-SPEC-0231 example 25.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      }
+    },
+    {
+      "case_id": "spec0231-oracle-is-ok-or-is-err",
+      "subject_id": "authored-spec0231-26",
+      "diff": "cases/spec0231-oracle-is-ok-or-is-err.diff",
+      "anchor": {
+        "file": "src/lib.rs",
+        "line": 11
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "ok_return",
+      "test_shape": "is_ok_or_is_err_tautology",
+      "hard_case": "Measured defect: ripr reports broad_error / weak (the spec's 'today'); the spec adopts relational_check / weak (rule 4). Truth is not_discriminated, yet ripr reads weakly_exposed.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "cargo test",
+        "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+        "mutants": [
+          {
+            "replacement": "Ok(x + 1)",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: check(5) returns Ok(6)"
+          },
+          {
+            "replacement": "Err(E::Bad)",
+            "outcome": "tests_passed",
+            "equivalence_review": "not equivalent: check(5) errs"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "r.is_ok() || r.is_err() accepts every Result, so no mutant can fail it. Spec cells: RIPR-SPEC-0231 example 26.",
+      "labeling_observation": {
+        "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
         "full_checkout_classifications": [
           "weakly_exposed"
