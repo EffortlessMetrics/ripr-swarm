@@ -625,7 +625,7 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
-            "a cancelled or superseded attempt is never committed as a completed snapshot",
+            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
         ],
     })
 }
@@ -1046,6 +1046,29 @@ mod tests {
                 != Some(CODE_ANALYSIS_FAILED)
         {
             return Err(format!("failure document lost its contract: {document}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_limitations_distinguish_cancel_commit_from_teardown_abandon() -> Result<(), String> {
+        // A cancel notification does not stop a running attempt: it still
+        // commits as completed. Only transport teardown abandons an attempt
+        // before commit (#5254 item 2).
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = refresh_document(&session);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "refresh document lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        if !text.contains("still commits as a completed snapshot")
+            || !text.contains("only transport teardown abandons an attempt before it commits")
+        {
+            return Err(format!("cancel/commit limitations drifted: {text}"));
+        }
+        if text.contains("is never committed as a completed snapshot") {
+            return Err(format!("false never-committed claim survived: {text}"));
         }
         Ok(())
     }

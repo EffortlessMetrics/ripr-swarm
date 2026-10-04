@@ -49,6 +49,12 @@ pub(crate) const CODE_ATTEMPT_INVALID: &str = "attempt_invalid";
 const ATTEMPT_ID_PREFIX: &str = "repair-attempt-";
 const ATTEMPT_ID_HEX_LEN: usize = 24;
 
+/// Cap on `superseded_attempts` tombstones (#5254 item 7). Attempt ids are
+/// unordered digest hex, so eviction is arbitrary order, not FIFO — but a
+/// miss only loses the typed `superseded` distinction and falls through to
+/// the durable store, never a read.
+const MAX_SUPERSEDED_TOMBSTONES: usize = 64;
+
 /// The product repair transaction's shared non-claims, verbatim from the
 /// durable manifest authority; MCP repeats them on every prepared packet so
 /// no surface can read preparation as completion.
@@ -776,9 +782,18 @@ impl WorkspaceSession {
         });
         self.repairs.insert(attempt_id, transaction);
         for (id, old_snapshot) in evicted {
-            self.superseded_attempts.insert(id, old_snapshot);
+            self.insert_superseded_tombstone(id, old_snapshot);
         }
         Ok(packet)
+    }
+
+    /// Records one evicted transaction's tombstone, keeping the map bounded
+    /// so long sessions cannot grow it without limit (#5254 item 7).
+    fn insert_superseded_tombstone(&mut self, attempt_id: String, snapshot_id: String) {
+        self.superseded_attempts.insert(attempt_id, snapshot_id);
+        while self.superseded_attempts.len() > MAX_SUPERSEDED_TOMBSTONES {
+            self.superseded_attempts.pop_first();
+        }
     }
 
     /// `ripr_get_repair_attempt` / `ripr://repair-attempt/{attempt_id}`:
@@ -960,6 +975,32 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
         })
+    }
+
+    #[test]
+    fn superseded_tombstones_stay_capped_for_long_sessions() -> Result<(), String> {
+        // Tombstone eviction needs no snapshot: build the session shell
+        // directly instead of a findings-bearing fixture.
+        let mut session = WorkspaceSession {
+            in_flight: false,
+            last_good: None,
+            last_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+        };
+        for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
+            session.insert_superseded_tombstone(
+                format!("repair-attempt-{index:04}"),
+                "snapshot-old".to_string(),
+            );
+        }
+        if session.superseded_attempts.len() != MAX_SUPERSEDED_TOMBSTONES {
+            return Err(format!(
+                "tombstone map grew past its cap: {}",
+                session.superseded_attempts.len()
+            ));
+        }
+        Ok(())
     }
 
     fn unique_test_dir(name: &str) -> Result<PathBuf, String> {

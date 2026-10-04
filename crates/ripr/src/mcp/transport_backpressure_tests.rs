@@ -1,4 +1,5 @@
 use super::*;
+use rmcp::model::ErrorData;
 use serde_json::{Value, json};
 use std::{
     pin::Pin,
