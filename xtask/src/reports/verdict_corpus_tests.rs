@@ -88,7 +88,7 @@ fn anchored_findings_keep_only_candidate_current_findings_on_the_anchor() {
         finding("reachable_unrevealed", 10, "base_deleted"),
         finding("reachable_unrevealed", 11, "candidate_current"),
     ]});
-    let anchored = anchored_findings(&check, &anchor());
+    let anchored = anchored_findings(&check, &anchor(), None);
     assert_eq!(anchored.len(), 1);
     assert_eq!(case_verdict(&anchored), Verdict::Credited);
     let other = Anchor {
@@ -96,9 +96,48 @@ fn anchored_findings_keep_only_candidate_current_findings_on_the_anchor() {
         line: 10,
     };
     assert_eq!(
-        case_verdict(&anchored_findings(&check, &other)),
+        case_verdict(&anchored_findings(&check, &other, None)),
         Verdict::Silent
     );
+}
+
+#[test]
+fn declared_binding_reads_only_a_let_declaration() {
+    assert_eq!(
+        declared_binding("    let end = input.rfind(delim).map_or(0, |i| i);"),
+        Some("end".to_string())
+    );
+    assert_eq!(
+        declared_binding("let mut total_cents: u64 = 0;"),
+        Some("total_cents".to_string())
+    );
+    assert_eq!(declared_binding("    end == 0"), None);
+    assert_eq!(declared_binding("    letter = 1;"), None);
+    assert_eq!(declared_binding("let (a, b) = pair;"), None);
+}
+
+#[test]
+fn anchored_findings_follow_a_retarget_only_for_the_anchor_binding() {
+    let relation = "binding_predicate_relation: changed binding `end` initializer `a` -> `b` flows into predicate operand at line 13";
+    let mut retargeted = finding("weakly_exposed", 13, "candidate_current");
+    retargeted["evidence"] = json!([relation]);
+    let mut other_binding = finding("exposed", 14, "candidate_current");
+    other_binding["evidence"] = json!([
+        "binding_predicate_relation: changed binding `start` initializer `a` -> `b` flows into predicate operand at line 14"
+    ]);
+    let mut other_file = finding("exposed", 13, "candidate_current");
+    other_file["evidence"] = json!([relation]);
+    other_file["probe"]["file"] = json!("src/other.rs");
+    let check = json!({"findings": [retargeted, other_binding, other_file]});
+    // Without a binding the anchor line alone counts, and nothing sits there.
+    assert!(anchored_findings(&check, &anchor(), None).is_empty());
+    let followed = anchored_findings(&check, &anchor(), Some("end"));
+    assert_eq!(followed.len(), 1, "{followed:#?}");
+    assert_eq!(
+        followed[0].pointer("/probe/line").and_then(Value::as_u64),
+        Some(13)
+    );
+    assert_eq!(case_verdict(&followed), Verdict::Gap);
 }
 
 #[test]
@@ -495,7 +534,7 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks)?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
     let discriminated = corpus
         .cases
         .iter()
@@ -509,7 +548,7 @@ fn build_report_counts_rates_over_the_right_denominators() -> Result<(), String>
         report.ideal_rate.numerator,
         corpus.cases.len() - discriminated
     );
-    let missing = build_report(&corpus, &checks[1..])
+    let missing = build_report(&corpus, &checks[1..], &BTreeMap::new())
         .err()
         .unwrap_or_default();
     assert!(missing.contains("no ripr result for case"), "{missing}");
@@ -569,6 +608,15 @@ fn validator_holds_each_subject_origin_to_its_own_provenance() -> Result<(), Str
 fn report_keeps_authored_rates_apart_from_upstream_rates() -> Result<(), String> {
     let dir = repo_corpus_dir();
     let mut corpus = load_corpus(&dir)?;
+    // Start from the upstream cases only, so the authored side holds exactly
+    // the one case this test moves there.
+    let upstream: BTreeSet<String> = corpus
+        .subjects
+        .iter()
+        .filter(|s| s.origin == SubjectOrigin::Upstream)
+        .map(|s| s.subject_id.clone())
+        .collect();
+    corpus.cases.retain(|c| upstream.contains(&c.subject_id));
     let Some(first) = corpus.cases.first().cloned() else {
         return Err("committed corpus has no cases".to_string());
     };
@@ -598,7 +646,7 @@ fn report_keeps_authored_rates_apart_from_upstream_rates() -> Result<(), String>
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks)?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
     let authored = report
         .by_origin
         .get("authored")
@@ -644,7 +692,7 @@ fn relativize_probe_files_strips_only_the_run_root() {
         json!("/elsewhere/src/lib.rs")
     );
     // `./src/lib.rs` already reads as root-relative; the foreign root does not.
-    assert_eq!(anchored_findings(&check, &anchor()).len(), 2);
+    assert_eq!(anchored_findings(&check, &anchor(), None).len(), 2);
 }
 
 #[test]
@@ -669,7 +717,7 @@ fn contradiction_counts_use_one_per_finding_unit() -> Result<(), String> {
             (case.case_id.clone(), json!({"findings": findings}))
         })
         .collect();
-    let report = build_report(&corpus, &checks)?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
     // Two contradicted findings in one case: the rate and the per-code count
     // agree, while the row lists the code once.
     assert_eq!(report.contradiction_rate.numerator, 2);

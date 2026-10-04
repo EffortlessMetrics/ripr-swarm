@@ -313,9 +313,34 @@ fn is_candidate_current(finding: &Value) -> bool {
     finding.get("source_currentness").and_then(Value::as_str) == Some("candidate_current")
 }
 
+/// The binding a changed `let` line declares, when the anchor is one.
+/// RIPR-SPEC-0157 moves the probe for a changed single-line `let` to the
+/// predicate that uses the binding, so the verdict for that edit sits on the
+/// use line, not on the anchor.
+pub(crate) fn declared_binding(line: &str) -> Option<String> {
+    let rest = line.trim_start().strip_prefix("let ")?.trim_start();
+    let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty() && !name.starts_with(|c: char| c.is_ascii_digit())).then_some(name)
+}
+
 /// Findings that speak for the anchored line on the candidate side. Base-side
-/// evidence for a removed line is never a candidate verdict.
-pub(crate) fn anchored_findings<'a>(check: &'a Value, anchor: &Anchor) -> Vec<&'a Value> {
+/// evidence for a removed line is never a candidate verdict. For a `let`
+/// anchor this includes the findings ripr retargeted
+/// from it (RIPR-SPEC-0157): candidate-current findings in the anchor file
+/// whose evidence carries the spec's `binding_predicate_relation` line for
+/// this binding. Following ripr's own relation keeps a retargeted probe from
+/// scoring as silent on the anchor without hand-editing the anchor line.
+pub(crate) fn anchored_findings<'a>(
+    check: &'a Value,
+    anchor: &Anchor,
+    binding: Option<&str>,
+) -> Vec<&'a Value> {
+    let relation = binding
+        .map(|name| format!("binding_predicate_relation: changed binding `{name}` initializer"));
     check
         .get("findings")
         .and_then(Value::as_array)
@@ -323,14 +348,27 @@ pub(crate) fn anchored_findings<'a>(check: &'a Value, anchor: &Anchor) -> Vec<&'
             findings
                 .iter()
                 .filter(|finding| is_candidate_current(finding))
+                .filter(|finding| probe_file(finding) == anchor.file)
                 .filter(|finding| {
                     finding.pointer("/probe/line").and_then(Value::as_u64)
                         == Some(anchor.line as u64)
-                        && probe_file(finding) == anchor.file
+                        || relation
+                            .as_deref()
+                            .is_some_and(|prefix| carries_evidence(finding, prefix))
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn carries_evidence(finding: &Value, prefix: &str) -> bool {
+    finding
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|line| line.starts_with(prefix))
 }
 
 /// Line-level precedence is this corpus's own policy, not the triage
@@ -480,6 +518,9 @@ pub(crate) struct CaseRow {
     pub(crate) truth: TruthState,
     pub(crate) ideal_verdict: Verdict,
     pub(crate) observed_verdict: Verdict,
+    /// The verdict includes findings ripr retargeted from a changed `let`
+    /// anchor to the predicate that uses it (RIPR-SPEC-0157).
+    pub(crate) followed_retarget: bool,
     /// Differs from the verdict recorded at labeling: re-check excerpt parity
     /// against the full pinned checkout before accepting the new verdict.
     pub(crate) changed_since_labeling: bool,
@@ -560,8 +601,12 @@ pub(crate) fn case_row(
     case: &Case,
     origin: SubjectOrigin,
     check: &Value,
+    anchor_binding: Option<&str>,
 ) -> (CaseRow, usize, usize, BTreeMap<String, usize>) {
-    let anchored = anchored_findings(check, &case.anchor);
+    let anchored = anchored_findings(check, &case.anchor, anchor_binding);
+    let followed_retarget = anchored
+        .iter()
+        .any(|f| f.pointer("/probe/line").and_then(Value::as_u64) != Some(case.anchor.line as u64));
     let observed = case_verdict(&anchored);
     let mut classes: Vec<String> = anchored
         .iter()
@@ -606,6 +651,7 @@ pub(crate) fn case_row(
         truth: case.truth.state,
         ideal_verdict: case.truth.state.ideal(),
         observed_verdict: observed,
+        followed_retarget,
         changed_since_labeling: observed != case.labeling_observation.full_checkout_verdict
             || classes != case.labeling_observation.full_checkout_classifications,
         observed_classifications: classes,
@@ -615,7 +661,13 @@ pub(crate) fn case_row(
     (row, scored, contradicted, code_counts)
 }
 
-pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Result<Report, String> {
+/// `anchor_bindings` maps a case id to the binding its anchor line declares,
+/// read from the patched run copy.
+pub(crate) fn build_report(
+    corpus: &Corpus,
+    checks: &[(String, Value)],
+    anchor_bindings: &BTreeMap<String, String>,
+) -> Result<Report, String> {
     let by_id: BTreeMap<&str, &Value> = checks.iter().map(|(id, v)| (id.as_str(), v)).collect();
     let origins: BTreeMap<&str, SubjectOrigin> = corpus
         .subjects
@@ -639,7 +691,12 @@ pub(crate) fn build_report(corpus: &Corpus, checks: &[(String, Value)]) -> Resul
                     case.case_id, case.subject_id
                 )
             })?;
-        let (row, scored, contradicted, code_counts) = case_row(case, origin, check);
+        let (row, scored, contradicted, code_counts) = case_row(
+            case,
+            origin,
+            check,
+            anchor_bindings.get(&case.case_id).map(String::as_str),
+        );
         findings_scored += scored;
         findings_contradicted += contradicted;
         for (code, n) in code_counts {
@@ -1456,8 +1513,13 @@ fn materialize(dir: &Path, case: &Case, work_root: &Path) -> Result<(PathBuf, Pa
     Ok((absolute(&work)?, absolute(&diff_path)?))
 }
 
-fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<Value, String> {
+fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<String>), String> {
     let (work, diff) = materialize(dir, case, work_root)?;
+    let anchored_file = work.join(&case.anchor.file);
+    let binding = read(&anchored_file)?
+        .lines()
+        .nth(case.anchor.line.saturating_sub(1))
+        .and_then(declared_binding);
     let cache = std::path::absolute(work_root.join(".cache").join(&case.case_id))
         .map_err(|err| format!("resolve cache dir: {err}"))?;
     let binary = ripr_fixture_binary()?;
@@ -1483,7 +1545,7 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<Value, String> 
     if let Ok(canonical) = fs::canonicalize(&work) {
         relativize_probe_files(&mut check, &canonical);
     }
-    Ok(check)
+    Ok((check, binding))
 }
 
 /// ripr names probe files by joining them onto the absolute `--root`; the
@@ -1506,10 +1568,15 @@ pub(crate) fn relativize_probe_files(check: &mut Value, root: &Path) {
 
 fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, String> {
     let mut checks = Vec::new();
+    let mut bindings = BTreeMap::new();
     for case in &corpus.cases {
-        checks.push((case.case_id.clone(), run_case(dir, case, work_root)?));
+        let (check, binding) = run_case(dir, case, work_root)?;
+        if let Some(binding) = binding {
+            bindings.insert(case.case_id.clone(), binding);
+        }
+        checks.push((case.case_id.clone(), check));
     }
-    build_report(corpus, &checks)
+    build_report(corpus, &checks, &bindings)
 }
 
 fn validated_corpus(dir: &Path) -> Result<Corpus, String> {

@@ -7,8 +7,10 @@ Spec: RIPR-SPEC-0219
 Pinned excerpts of real Rust crates (serde, regex-syntax, semver, hex,
 itoa, bytesize, rusqlite, strsim, atuin; semver and bytesize at two pins) under
 `subjects/`, byte-identical to their upstream commits
-with license files (Rust sources stored as `.rs.txt`), and one-line edits
-under `cases/`. Each case is labeled
+with license files (Rust sources stored as `.rs.txt`), three small authored
+crates (`authored-pricing`, `authored-ledger`, `authored-config`) written to
+fill verdict and probe-family cells the real crates leave empty, and one-line
+edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
 checkout.
@@ -23,7 +25,8 @@ one verdict.
 
 Each case scores as ideal, abstained, false actionable, false exposed, or
 false silent against its label; contradictions inside ripr's own output are
-counted; and the report must equal `expected/report.json`.
+counted; authored rates are reported apart from upstream rates; and the
+report must equal `expected/report.json`.
 
 ## Must Not
 

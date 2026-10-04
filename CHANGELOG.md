@@ -220,6 +220,17 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: authored subjects. Three small crates written for the
+  corpus add 23 runtime-labeled cases covering the verdicts and probe
+  families the real crates left empty: field construction, call deletion,
+  side effect, error path, static unknown and non-arithmetic return values.
+  ripr now credits 6 authored lines, and 3 of those credits are false
+  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
+  cases are reported apart from upstream ones under `by_origin`, because
+  they were chosen to fill cells: the upstream rates stay 10 of 20 false
+  actionable and 0 of 14 false exposed. For a changed `let`, the verdict now
+  follows ripr's retarget to the predicate that uses it (RIPR-SPEC-0157), so
+  such a case no longer reads as silent (RIPR-SPEC-0219).
 - Verdict corpus: 2 atuin cases (90f590b9) that the mutation spot-check
   reported as strongly gripped with every mutant missed. Neither is credited
   in diff mode: `context.rs:40` reads a gap (ideal), and `otel/enabled.rs:62`
