@@ -427,10 +427,11 @@ fn ripr_command() -> Command {
 
 /// #5471: `ripr check` prints `Write a test for it:` only when the command
 /// it prints produces a stub. `src/lib.rs` holds seams that sort before the
-/// other files; `src/twin.rs` has two inline test modules, so its stub is
-/// refused; `src/zz.rs` is stubbable.
-const ROUTE_LIB: &str = "pub mod twin;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
-const ROUTE_TWIN: &str = "pub fn clamp(n: u32, max: u32) -> u32 {\n    if n > max { max } else { n }\n}\n\n#[cfg(test)]\nmod a {}\n\n#[cfg(test)]\nmod b {}\n";
+/// other files; `src/gated.rs` puts its owner behind a feature cfg a plain
+/// `cargo test` build may not enable, so its stub is refused; `src/zz.rs` is
+/// stubbable.
+const ROUTE_LIB: &str = "pub mod gated;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
+const ROUTE_GATED: &str = "#[cfg(feature = \"extra\")] pub fn clamp(n: u32, max: u32) -> u32 {\n    if n > max { max } else { n }\n}\n";
 const ROUTE_ZZ: &str =
     "pub fn fee(n: u32, cap: u32) -> u32 {\n    if n >= cap { cap } else { n }\n}\n";
 
@@ -443,7 +444,7 @@ fn route_crate(scratch: &Scratch) -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     for (file, text) in [
         ("src/lib.rs", ROUTE_LIB),
-        ("src/twin.rs", ROUTE_TWIN),
+        ("src/gated.rs", ROUTE_GATED),
         ("src/zz.rs", ROUTE_ZZ),
     ] {
         std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
@@ -501,23 +502,23 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
     let root = scratch.directory.clone();
 
     // A refused location prints the refusal, never the route.
-    let twin = one_line_diff(
+    let gated = one_line_diff(
         &scratch,
-        "src/twin.rs",
+        "src/gated.rs",
         "    if n >= max { max } else { n }",
         "    if n > max { max } else { n }",
     )?;
-    let stdout = check_human(&root, &twin)?;
+    let stdout = check_human(&root, &gated)?;
     assert!(
-        stdout.contains("src/twin.rs:2"),
-        "the selected finding is the twin.rs change: {stdout}"
+        stdout.contains("src/gated.rs:2"),
+        "the selected finding is the gated.rs change: {stdout}"
     );
     assert!(
         !stdout.contains("Write a test for it:"),
         "a refused stub must not be offered: {stdout}"
     );
     assert!(
-        stdout.contains("No test stub here: the owner file has more than one inline test module\n"),
+        stdout.contains("No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver\n"),
         "the refusal reason is printed instead: {stdout}"
     );
 
