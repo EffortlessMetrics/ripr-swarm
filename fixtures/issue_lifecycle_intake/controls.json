@@ -2,11 +2,11 @@
  "schema_version": "issue_lifecycle_intake_control_corpus.v1",
  "rows": [
   {
-   "id": "control-false-duplicate-corrected",
+   "id": "control_false_duplicate_corrected",
    "control": "false_duplicate_candidate_corrected_by_root_review",
    "scenario": "the triager flags a duplicate candidate that shares only a module name; root review corrects it and keeps the row qualified",
    "row": {
-    "id": "control-false-duplicate-corrected",
+    "id": "control_false_duplicate_corrected",
     "category": "control",
     "snapshot": {
      "issue_number": 0,
@@ -167,11 +167,11 @@
    }
   },
   {
-   "id": "control-open-pr-blocks-duplicate-pickup",
+   "id": "control_open_pr_blocks_duplicate_pickup",
    "control": "real_overlapping_pr_blocks_duplicate_pickup",
    "scenario": "a duplicate candidate exists but a real open PR overlaps the lane; pickup stays blocked with the collision retained",
    "row": {
-    "id": "control-open-pr-blocks-duplicate-pickup",
+    "id": "control_open_pr_blocks_duplicate_pickup",
     "category": "control",
     "snapshot": {
      "issue_number": 0,
@@ -335,11 +335,11 @@
    }
   },
   {
-   "id": "control-bytes-explicitly-not-measured",
+   "id": "control_bytes_explicitly_not_measured",
    "control": "packet_bytes_not_measured_is_explicit",
    "scenario": "a row that could not measure its packet bytes says not_measured explicitly instead of fabricating a number",
    "row": {
-    "id": "control-bytes-explicitly-not-measured",
+    "id": "control_bytes_explicitly_not_measured",
     "category": "needs_evidence",
     "snapshot": {
      "issue_number": 0,
