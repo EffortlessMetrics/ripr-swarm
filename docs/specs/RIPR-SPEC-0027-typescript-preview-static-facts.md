@@ -177,7 +177,8 @@ Assertions / oracles the adapter must recognise:
 - `expect(mockFn).toHaveBeenCalledWith(...)` and `toHaveBeenCalledTimes`
   → side-effect/call oracle
 - `expect(...).toMatchSnapshot()` and `.toMatchInlineSnapshot()` →
-  snapshot oracle (weak / static-limited)
+  snapshot oracle (medium; never `exposed` by itself; static-limited by
+  `typescript_snapshot_discriminator_unresolved`)
 - bare `expect(actual).toBeTruthy()` / `toBeFalsy()` /
   `toBeDefined()` → smoke oracle
 - assertion libraries reached through a binding the test file imports from
@@ -431,7 +432,8 @@ can show:
   oracle-credit tests for `.mts` and `.cts` only — not by golden fixtures
 - a fixture proving `async` `test`/`it` resolves and rejects classify
   correctly
-- a fixture proving snapshots are tagged as weak / static-limited
+- a fixture proving snapshots are tagged medium and static-limited and
+  never yield `exposed` by themselves
 - generated CI fixtures cover TypeScript preview output visible only
   when `[languages]` declares `typescript`
 - LSP protocol smoke covers a TypeScript seam diagnostic, hover, code
@@ -506,9 +508,9 @@ test('renders header', () => {
 
 Expected static evidence:
 
-- oracle: `snapshot` (weak)
-- finding records snapshot as a weak oracle with the existing snapshot
-  exposure class
+- oracle: `snapshot` (medium)
+- finding stays `weakly_exposed` and names
+  `typescript_snapshot_discriminator_unresolved`
 
 Dynamic dispatch limit:
 
@@ -575,6 +577,13 @@ contract explicitly changes that boundary. `cargo xtask bun-ub-calibration`
 is an xtask-only operator report over the existing Bun calibration corpus; it
 does not promote TypeScript/JavaScript preview evidence or run TypeScript,
 JavaScript, Bun, mutation, provider, generated-test, or source-edit workflows.
+
+## Later Amendment
+
+RIPR-SPEC-0234 (2026-10-04) states the whole TypeScript oracle, reach and
+verdict chain. It corrects the snapshot strength in place above: the code
+reads `snapshot` / medium, not weak, matching the Rust chain. A snapshot
+still never yields `exposed` by itself, because only a strong oracle does.
 
 ## Metrics
 

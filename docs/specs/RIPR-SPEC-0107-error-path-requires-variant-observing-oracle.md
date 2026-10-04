@@ -291,6 +291,7 @@ so `has_token_match=true` clears `observation_unverified`.
   error-path seam).
 - Does NOT bump crate version, publish, or touch release workflows.
 - Does NOT affect Python/TypeScript adapters (different code paths).
+  Python's error-path gate is RIPR-SPEC-0233 rule 6.
 - Static-language clean: output uses `exposed`, `weakly_exposed`,
   `observation_unverified` only — all allowed vocabulary.
 
@@ -365,6 +366,10 @@ or removed `?`: a result-side oracle (RIPR-SPEC-0227) confirms the
 `Err`, the original and changed code provably return different sides on that
 input, and the path conditions of RIPR-SPEC-0227 rule 3b hold. Every other
 `error_path` probe still needs a variant-observing oracle.
+
+RIPR-SPEC-0233 (2026-10-04) states the Python error-path gate as rule 6:
+`exposed` needs one `exact_error_variant` assertion that itself credits a
+sink-alignment branch. This spec's Rust rules do not apply to Python.
 
 ## Metrics
 

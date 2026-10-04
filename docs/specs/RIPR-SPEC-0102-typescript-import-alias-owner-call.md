@@ -228,6 +228,13 @@ Unit tests in
 | `find_related_tests_non_alias_import_still_direct_owner_call` | 4 — NON-ALIAS: non-renaming import remains DirectOwnerCall |
 | `find_related_tests_namespace_import_unchanged_imported_owner_call` | 5 — NAMESPACE: namespace import stays ImportedOwnerCall / import_path_affinity / Medium |
 
+## Later Amendment
+
+RIPR-SPEC-0234 rule 7 (2026-10-04) makes the TypeScript observation guard
+honor the `exposed` class this spec states: an observed expression naming
+the alias `local`, directly or through a one-hop local initializer,
+counts as referencing the owner. Default-import locals get no such credit.
+
 ## Metrics
 
 - `typescript_import_alias_owner_call_confidence_honesty`: presence of

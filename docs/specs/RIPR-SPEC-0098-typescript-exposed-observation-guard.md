@@ -62,17 +62,13 @@ the changed expression.
 
 ### Observation guard scope
 
-The guard is scoped to **SideEffect and CallDeletion families only**, where
-the false-exposed pattern is clearest and well-defined. For all other probe
-families (ReturnValue, FieldConstruction, Predicate, MatchArm, ErrorPath)
-the guard always confirms — the pre-existing behavior is preserved.
-
-The reason for the narrow scope: value families commonly use the
-"assign to variable then assert" pattern (`const result = fn(); expect(result).toBe(...)`)
-where `observed_expression = "result"` does not contain the owner name.
-Static analysis cannot reliably distinguish a variable assigned from a return
-value from one set by a side effect, so the guard conservatively confirms
-for these families.
+The guard applies to SideEffect and CallDeletion (effect branch) and to
+ReturnValue and FieldConstruction (value branch). Predicate, MatchArm,
+ErrorPath and StaticUnknown always pass. The value branch passes when a
+strong family-matching assertion's observed expression references the
+owner or a changed token as a whole identifier, or is a bare local whose
+first initializer does; RIPR-SPEC-0234 rules 6 and 7 state the matching.
+This paragraph was corrected on 2026-10-04 (see Later Amendment).
 
 ### Observation guard logic (SideEffect / CallDeletion only)
 
@@ -143,8 +139,8 @@ meaningful variable names.
 - Forbidden output vocabulary (`killed`, `survived`, `untested`, `proven`,
   `adequate`) is not used.
 - No new JSON fields; no schema version bump.
-- Value families (ReturnValue, FieldConstruction, Predicate, MatchArm, ErrorPath)
-  are NOT affected by this guard — their existing behavior is unchanged.
+- ReturnValue and FieldConstruction use the value branch
+  (RIPR-SPEC-0234); Predicate, MatchArm and ErrorPath always pass.
 
 ## Required Evidence
 
@@ -226,12 +222,12 @@ result:   class: weakly_exposed
           discriminate: weak
 ```
 
-### Control 1 (must not over-correct: ReturnValue family bypasses guard)
+### Control 1 (must not over-correct: ReturnValue owner observation)
 
 ```
-changed:  return amount - 12;   // ReturnValue — guard NOT applied
+changed:  return amount - 12;   // ReturnValue: value branch applies
 related:  expect(applyDiscount(100, 100)).toBe(90);  // observed_expression = "applyDiscount(100, 100)"
-result:   class: exposed  ← CORRECT (ReturnValue family not in guard scope)
+result:   class: exposed  ← CORRECT (observed expression names the owner)
           discriminate: yes
 ```
 
@@ -255,9 +251,21 @@ result:   class: exposed  ← CORRECT (conservative: sideEffectLog might be obse
 
 - `crates/ripr/src/analysis/language/typescript/classifier.rs` — `ts_changed_value_is_observed`, `ts_observation_guard_limitation`, updated class-decision arm, moved `flow_sink` computation, updated `discriminate_summary`
 
+## Later Amendment
+
+RIPR-SPEC-0234 (2026-10-04) corrects the guard scope in place above. The
+code also guards ReturnValue and FieldConstruction through a value branch,
+which credits an owner reference, a changed token, or a one-hop local
+initializer; the original text said value families were not guarded.
+RIPR-SPEC-0234 owns the value-branch matching rules. The two value-family
+metric names are kept for traceability; their descriptions now state the
+value-branch behavior.
+
 ## Metrics
 
 - `ts_exposed_observation_guard_downgrades_to_weakly_exposed` — console.log repro now weakly_exposed
-- `ts_returnvalue_non_effect_family_bypasses_guard` — ReturnValue (non-effect) family is not guarded
+- `ts_returnvalue_non_effect_family_bypasses_guard`: a ReturnValue owner
+  observation stays exposed under the value branch
 - `ts_non_owner_assertion_prevents_downgrade` — non-owner assertion in test body prevents downgrade
-- `ts_field_construction_non_effect_family_bypasses_guard` — FieldConstruction (non-effect) family is not guarded
+- `ts_field_construction_non_effect_family_bypasses_guard`: a
+  FieldConstruction owner observation stays exposed under the value branch

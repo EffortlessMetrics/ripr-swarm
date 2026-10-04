@@ -198,6 +198,14 @@ After spec:     weakly_exposed, BroadError / weak oracle (unchanged)
     all-literal object, then PascalCase class ref (in that priority order)
     for both sync `toThrow` and async `.rejects.toThrow`.
 
+## Later Amendment
+
+RIPR-SPEC-0234 rule 4 (2026-10-04) adds one exception to the PascalCase
+gate: a payload whose whole text is `Error` stays BroadError / Weak,
+because every thrown error is an `Error`. `globalThis.Error` already stays
+BroadError under the uppercase-first gate, and other PascalCase class
+paths keep this spec's reading.
+
 ## Metrics
 
 - `tothrow_exact_payload_upgrades_to_exact_error_variant`: fixture
