@@ -12121,8 +12121,6 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0221-agent-surface-benchmark.md",
-  "target/ripr/reports/bench-agent-surfaces.json",
-  "target/ripr/reports/bench-agent-surfaces.md",
 ]
 metrics = [
   "unit_test_pass_rate",
