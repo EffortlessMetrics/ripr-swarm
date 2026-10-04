@@ -134,8 +134,17 @@ pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>>
         let gated = item.syntax().ancestors().any(|node| {
             ast::AnyHasAttrs::cast(node).is_some_and(|owner| {
                 ast::HasAttrs::attrs(&owner).any(|attr| {
-                    let text = attr.syntax().text().to_string();
-                    let text = text.trim_start_matches("#[").trim_start();
+                    // Outer `#[cfg(..)]` or inner `#![cfg(..)]`, spaced or not.
+                    let text = attr
+                        .syntax()
+                        .text()
+                        .to_string()
+                        .split_whitespace()
+                        .collect::<String>();
+                    let text = text
+                        .strip_prefix("#![")
+                        .or_else(|| text.strip_prefix("#["))
+                        .unwrap_or(&text);
                     text.starts_with("cfg(") || text.starts_with("cfg_attr(")
                 })
             })
@@ -169,10 +178,9 @@ pub(crate) fn local_type_traits(source: &str, name: &str) -> Option<Vec<String>>
 /// Whether `source` binds the type name `name` outside test-only modules,
 /// which shadows any std type of that name: a struct, enum, union or type
 /// alias, a non-std `use` that ends in `name`, any `use` that renames to
-/// `name`, or a non-std glob import that may bring it in. Globs through
-/// `self::` or `super::` reach items of this file, which the other checks
-/// already see. An unparsed file counts as binding it, so callers fail
-/// closed.
+/// `name`, or a non-std glob import that may bring it in. That includes
+/// `self::`/`super::` globs, which can reach another file's module. An
+/// unparsed file counts as binding it, so callers fail closed.
 pub(crate) fn shadows_type_name(source: &str, name: &str) -> bool {
     let Some(parse) = parse_clean_source_file(source) else {
         return true;
@@ -217,7 +225,7 @@ fn use_tree_binds(tree: &ast::UseTree, name: &str) -> bool {
         .map(|segment| segment.trim_start_matches("::"));
     let from_std = matches!(root, Some("std" | "core" | "alloc"));
     if tree.star_token().is_some() {
-        return !from_std && !matches!(root, Some("self" | "super"));
+        return !from_std;
     }
     match tree.rename() {
         // `use std::sync::Mutex as Vec` shadows `Vec` as surely as a local
@@ -225,7 +233,15 @@ fn use_tree_binds(tree: &ast::UseTree, name: &str) -> bool {
         Some(rename) => rename.name().is_some_and(|ident| ident.text() == name),
         // A std path keeps its own name; the same-named std types ripr
         // assumes (`Result` aside, which needs both arguments) compare.
-        None => !from_std && segments.last().is_some_and(|last| last == name),
+        // `use a::Name::{self}` binds the segment before `self`.
+        None => {
+            let leaf = match segments.as_slice() {
+                [.., parent, last] if last == "self" => Some(parent),
+                [.., last] => Some(last),
+                [] => None,
+            };
+            !from_std && leaf.is_some_and(|leaf| leaf == name)
+        }
     }
 }
 
@@ -520,6 +536,18 @@ impl PartialEq for Out {
 ";
         let out = local_type_traits(gated, "Out").unwrap_or_default();
         assert!(!out.iter().any(|t| t == "PartialEq"), "{out:?}");
+        let inner_gated = "#[derive(Debug)]
+pub struct Out(u8);
+mod cmp {
+    #![cfg(feature = \"cmp\")]
+    use super::Out;
+    impl PartialEq for Out {
+        fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+    }
+}
+";
+        let out = local_type_traits(inner_gated, "Out").unwrap_or_default();
+        assert!(!out.iter().any(|t| t == "PartialEq"), "{out:?}");
     }
 
     #[test]
@@ -534,7 +562,9 @@ impl PartialEq for Out {
         assert!(!shadows("use std::time::Duration;", "Duration"));
         assert!(!shadows("use std::collections::*;", "HashMap"));
         assert!(!shadows("use core::{cmp::Ordering, fmt};", "Ordering"));
-        assert!(!shadows("use super::*;", "String"));
+        assert!(shadows("use super::*;", "String"));
+        assert!(shadows("use self::types::*;", "String"));
+        assert!(shadows("use crate::t::Duration::{self};", "Duration"));
         assert!(!shadows("use crate::Opaque as _;", "Opaque"));
         assert!(!shadows("use crate::time::Instant;", "Duration"));
         assert!(!shadows(
