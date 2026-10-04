@@ -514,12 +514,19 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         .map(Finding::related_tests_total)
         .max()
         .unwrap_or(0);
-    let related_tests_count = if packed_related_tests <= retained_related_tests {
+    let any_packed = output
+        .findings
+        .iter()
+        .any(|finding| finding.related_tests_total() > finding.related_tests.len());
+    let related_tests_count = if !any_packed {
         retained_related_tests.to_string()
     } else if output.findings.len() == 1 {
         packed_related_tests.to_string()
     } else {
-        format!("at least {packed_related_tests}")
+        format!(
+            "at least {}",
+            packed_related_tests.max(retained_related_tests)
+        )
     };
     let scope_summary = if s.changed_rust_files > 0 {
         format!(
@@ -5166,6 +5173,18 @@ mod tests {
         assert!(
             two.contains("and at least 81 statically linked related"),
             "packed totals across findings are a floor; got:\n{two}"
+        );
+
+        // Three findings retain 24 distinct rows while one hid 2 more: the
+        // 24 rows are a floor, not an exact count.
+        let floor = render(&output(vec![
+            packed(0..8, 10),
+            packed(100..108, 8),
+            packed(200..208, 8),
+        ]));
+        assert!(
+            floor.contains("and at least 24 statically linked related"),
+            "retained rows are a floor once any finding is packed; got:\n{floor}"
         );
 
         let unpacked = render(&output(vec![packed(0..8, 8), packed(100..108, 8)]));

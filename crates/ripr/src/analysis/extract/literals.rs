@@ -44,9 +44,17 @@ pub(crate) fn extract_literal_facts(body: &str, start_line: usize) -> Vec<Litera
 /// masking alone would hide it and leave infection unknown.
 fn char_literal_facts(body: &str, spans: &[(usize, usize)], start_line: usize) -> Vec<LiteralFact> {
     let bytes = body.as_bytes();
+    // Spans arrive in source order, so lines are counted once, forward.
+    let (mut counted, mut line) = (0, start_line);
     spans
         .iter()
         .filter_map(|&(quote, close)| {
+            line += bytes
+                .get(counted..quote)?
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count();
+            counted = quote;
             let literal = body.get(quote..=close)?;
             let byte_prefix = quote
                 .checked_sub(1)
@@ -54,7 +62,6 @@ fn char_literal_facts(body: &str, spans: &[(usize, usize)], start_line: usize) -
                 && quote.checked_sub(2).is_none_or(|before| {
                     !(bytes[before].is_ascii_alphanumeric() || bytes[before] == b'_')
                 });
-            let line = start_line + bytes[..quote].iter().filter(|byte| **byte == b'\n').count();
             Some(LiteralFact {
                 line,
                 value: if byte_prefix {
@@ -241,6 +248,10 @@ mod tests {
         );
         assert_eq!(extract_literals("c == 'x'"), vec!["'x'".to_string()]);
         assert_eq!(extract_literals("c == '\\n'"), vec!["'\\n'".to_string()]);
+        assert_eq!(
+            extract_literals("c == 'é' || c == '→'"),
+            vec!["'é'".to_string(), "'→'".to_string()]
+        );
         // A `b` that ends an identifier is not a byte prefix.
         assert_eq!(extract_literals("verb'x'"), vec!["'x'".to_string()]);
         for text in [

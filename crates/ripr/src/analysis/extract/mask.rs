@@ -71,10 +71,16 @@ fn char_literal_close(bytes: &[u8], quote_index: usize) -> Option<usize> {
         }
         return None;
     }
-    // Single-byte punctuation content (`'('`, `' '`, `'"'`): the literal
-    // closes immediately after the content byte.
-    let closing = *bytes.get(quote_index + 2)?;
-    (closing == b'\'').then_some(quote_index + 2)
+    // One non-ASCII character (`'é'`, `'→'`) spans its whole UTF-8 sequence.
+    let width = match content {
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        // Single-byte punctuation content (`'('`, `' '`, `'"'`).
+        _ => 1,
+    };
+    let closing = quote_index + 1 + width;
+    (bytes.get(closing) == Some(&b'\'')).then_some(closing)
 }
 
 /// Hash count of the raw-string prefix ending just before the quote at

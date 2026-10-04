@@ -425,7 +425,8 @@ fn owner_pin_matched_static_and_runtime_controls() -> Result<(), String> {
                 assert!(
                     finding["recommended_next_step"]
                         .as_str()
-                        .is_some_and(|text| text.contains("executed path")),
+                        .is_some_and(|text| text.contains("ripr did not credit the `assert_eq!`")
+                            && text.contains("\"not credited\" note says why")),
                     "{case}"
                 );
             }
