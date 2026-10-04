@@ -5,13 +5,15 @@
 //! `PILOT_MAX_SEAMS` recommendations against the same cargo-mutants outcomes
 //! the verdict scoring uses:
 //!
-//! - `line`: viable non-`FnValue` mutants that start on the recommended line.
-//!   Any missed mutant confirms the recommendation; all caught refutes it.
+//! - `seam`: on a predicate or return seam, viable operator mutants of the
+//!   seam's own expression on its line. Any missed mutant confirms the
+//!   recommendation; all caught refutes it.
+//! - `line`: with no such mutant, viable non-`FnValue` mutants that start on
+//!   the recommended line. Coarser: one can belong to another expression.
 //! - `owner`: when the line has none, the `FnValue` mutants of the innermost
-//!   function containing the line. A missed mutant confirms; all caught refutes.
-//!   Replacing the whole body is coarser than changing the seam, so the two
-//!   tiers are counted separately.
-//! - `unscored`: neither tier has a viable mutant.
+//!   function containing the line. Replacing the whole body is coarser than
+//!   changing the seam, so each tier is counted separately.
+//! - `unscored`: no tier has a viable mutant.
 //!
 //! Precision is confirmed over confirmed plus refuted. It speaks only for the
 //! recorded revisions, cargo-mutants version and this join rule.

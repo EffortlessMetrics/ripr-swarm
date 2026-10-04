@@ -652,6 +652,11 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         }));
     }
     // A present section with an unreadable count is a malformed receipt.
+    let mut malformed = receipt.clone();
+    malformed["pilot_top_recommendations"]["unavailable_repos"] = json!("1");
+    if mutation_spot_check_to_input(&malformed).is_ok() {
+        return Err("accepted a string unavailable_repos".to_string());
+    }
     for scored in [json!(null), json!("39"), json!(-1)] {
         let mut malformed = receipt.clone();
         malformed["pilot_top_recommendations"]["scored"] = scored.clone();
