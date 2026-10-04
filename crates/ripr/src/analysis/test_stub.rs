@@ -18,7 +18,7 @@
 use super::ClassifiedSeam;
 use super::new_test_target::{NewTestKind, NewTestTargetProposal};
 use super::repair_route::{
-    RepairTargetSelection, cross_language_test_target_unresolved, repair_route_readiness,
+    RepairTargetSelection, cross_language_test_target_unresolved, repair_packet_eligibility,
 };
 use super::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use super::syntax::fn_signature::{
@@ -170,7 +170,10 @@ pub(crate) fn rust_test_stub_for_classified_seam(
     if cross_language_test_target_unresolved(entry) {
         return Err(TestStubRefusal::CrossLanguage);
     }
-    let integration = match repair_route_readiness(entry).target_selection {
+    // Only the producer's target selection is read here. A stub is suggestion
+    // text, so it does not wait on the repair-packet flip; that stays with
+    // the packet surfaces.
+    let integration = match repair_packet_eligibility(entry).readiness.target_selection {
         RepairTargetSelection::Proposed(proposal) if proposal.kind == NewTestKind::Integration => {
             Some(proposal)
         }
