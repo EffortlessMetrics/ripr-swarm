@@ -447,24 +447,33 @@ pub(super) struct NarrowedScope {
 #[derive(Default)]
 struct WithheldTokens {
     postings: std::collections::HashMap<Box<[u8]>, Vec<u32>>,
+    /// Files with a non-ASCII identifier run. A non-ASCII name can sit
+    /// inside such a run at an ASCII word boundary the runs do not split
+    /// at, so every one of these files may spell it.
+    unicode: Vec<u32>,
     macros: Vec<Vec<String>>,
 }
 
 impl WithheldTokens {
     fn insert(&mut self, id: u32, bytes: &[u8]) {
         let unique = identifier_runs(bytes).collect::<HashSet<_>>();
+        if unique.iter().any(|token| !token.is_ascii()) {
+            self.unicode.push(id);
+        }
         for token in unique {
             self.postings.entry(token.into()).or_default().push(id);
         }
         self.macros.push(macro_rules_names(bytes));
     }
 
-    /// Ids of the files that spell one of `names`, ascending.
+    /// Ids of the files that may spell one of `names`, ascending.
     fn spelling(&self, names: &BTreeSet<String>) -> BTreeSet<u32> {
+        let unicode = names.iter().any(|name| !name.is_ascii());
         names
             .iter()
             .filter_map(|name| self.postings.get(name.as_bytes()))
             .flatten()
+            .chain(self.unicode.iter().filter(|_| unicode))
             .copied()
             .collect()
     }
@@ -481,6 +490,11 @@ impl WithheldTokens {
             });
         }
         self.postings.retain(|_, ids| !ids.is_empty());
+        self.unicode = self
+            .unicode
+            .iter()
+            .filter_map(|id| keep.get(*id as usize).copied().flatten())
+            .collect();
         let macros = std::mem::take(&mut self.macros);
         self.macros = macros
             .into_iter()
@@ -945,9 +959,30 @@ fn identifier_runs(bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 /// Whether `bytes` spell any of `names` as a whole identifier, comments and
-/// strings included (a superset of every parser fact).
+/// strings included (a superset of every parser fact). A non-ASCII name is
+/// also matched at ASCII word boundaries, which the runs do not split at.
 fn spells_any(bytes: &[u8], names: &HashSet<Vec<u8>>) -> bool {
-    !names.is_empty() && identifier_runs(bytes).any(|run| names.contains(run))
+    !names.is_empty()
+        && (identifier_runs(bytes).any(|run| names.contains(run))
+            || names
+                .iter()
+                .filter(|name| !name.is_ascii())
+                .any(|name| spells_at_ascii_boundary(bytes, name)))
+}
+
+fn spells_at_ascii_boundary(bytes: &[u8], name: &[u8]) -> bool {
+    let ascii_word = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_';
+    let mut rest = bytes;
+    while let Some(at) = find(rest, name) {
+        let end = at + name.len();
+        if !rest[..at].last().is_some_and(ascii_word)
+            && !rest[end..].first().is_some_and(ascii_word)
+        {
+            return true;
+        }
+        rest = &rest[at + 1..];
+    }
+    false
 }
 
 /// Whether some `impl ... {` header in `bytes` spells one of `types` as a
@@ -1046,6 +1081,22 @@ mod tests {
         ));
         assert!(spells_any("let s = \"→quarble_gauge\";".as_bytes(), &set));
         assert!(!spells_any("/// “quarble_gauges”".as_bytes(), &set));
+        let set = names(&["größe"]);
+        assert!(spells_any("/// “größe”".as_bytes(), &set));
+        assert!(spells_any("let s = \"→größe\";".as_bytes(), &set));
+        assert!(!spells_any("/// “größe_x”".as_bytes(), &set));
+    }
+
+    #[test]
+    fn withheld_tokens_offer_unicode_files_for_a_unicode_name() {
+        let mut tokens = WithheldTokens::default();
+        tokens.insert(0, "/// “größe”".as_bytes());
+        tokens.insert(1, b"fn plain() {}");
+        let wanted = |list: &[&str]| list.iter().map(|name| (*name).to_owned()).collect();
+        assert_eq!(tokens.spelling(&wanted(&["größe"])), BTreeSet::from([0]));
+        assert!(tokens.spelling(&wanted(&["plain_x"])).is_empty());
+        tokens.retain(&[None, Some(0)]);
+        assert!(tokens.spelling(&wanted(&["größe"])).is_empty());
     }
 
     #[test]

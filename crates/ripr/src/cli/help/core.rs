@@ -244,7 +244,7 @@ Environment variables:
                                     diff_scope_oversized. With --json, stdout
                                     carries a non-consumable limited artifact.
                                     Under RIPR_DIFF_DEPENDENT_SCOPE=auto a
-                                    Draft/Fast selection over it only through
+                                    Draft/Fast selection over it because of
                                     dependent packages narrows instead.
                                     Default: 1200.
   RIPR_DIFF_DEPENDENT_SCOPE         How Draft/Fast indexes packages that
