@@ -770,7 +770,12 @@ fn run_pipeline_for_diff_text(
                 // adapter ran above and is unaffected. An adapter that did
                 // produce findings consumed its workspace index (a Bun bridge
                 // profile reports Rust-line findings from TypeScript tests),
-                // so its limitations still qualify those findings.
+                // so its limitations still qualify those findings. The Perl
+                // adapter never scans the workspace: it only reads the fact
+                // packet the caller supplied, so a limitation it reports (a
+                // packet declared partial) concerns that explicit evidence
+                // and is always kept (#5421).
+                let reads_only_supplied_evidence = matches!(language, LanguageId::Perl);
                 let adapter_language = match language {
                     LanguageId::JavaScript => LanguageId::TypeScript,
                     other => *other,
@@ -778,7 +783,7 @@ fn run_pipeline_for_diff_text(
                 let diff_touches_language = preview_changed_files
                     .iter()
                     .any(|file| route(&file.path) == Some(adapter_language));
-                if diff_touches_language || produced_findings {
+                if diff_touches_language || produced_findings || reads_only_supplied_evidence {
                     limitations.extend(result.limitations);
                 }
                 if result.changed_files_by_language.is_empty() {
