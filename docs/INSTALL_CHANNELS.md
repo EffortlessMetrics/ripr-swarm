@@ -14,7 +14,7 @@ publishes, tags or submits anything; each outward step names who must act.
 | CI (`ripr init --ci github`) | Compiles ripr each run | Downloads the release archive and verifies its checksum (#5236) | Merge #5236. |
 | PyPI `ripr-rs` | Only `0.11.0a1`, Linux x86-64 wheel | Wheel qualification exists | Single platform; no macOS, Windows or ARM wheel is public. |
 | npm `@effortlessmetrics/ripr` | `0.11.0-alpha.2` on `next`, Linux x86-64 only, README says so | Multi-platform launcher is checked in, not published | Platform payload packages (`ripr-darwin-arm64` and the others) do not exist on npm. |
-| VS Code Marketplace / Open VSX | Not checkable from the audit environment | `publish-extension.yml` is source-owned | Confirm the live version by hand; the extension downloads the server archive, so it also depends on the 0.11.0 release assets. |
+| VS Code Marketplace / Open VSX | Marketplace lists 0.10.0 (read back in a browser 2026-10-04; Open VSX not checked) | `publish-extension.yml` is source-owned | The listing's two continuation links omit `/blob/main/` and render "Not Found" (`github.com/EffortlessMetrics/ripr/docs/EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md` and `.../EDITOR_FIRST_PR_BRIDGE_WORKFLOW.md`); its description still says 0.8.x. A source docs merge does not change a published listing; the next authorized extension publication does. Installed-snippet and continuation work is owned by #4629. |
 | Homebrew | None | Formula draft below | Needs a tap repository and Steven's go-ahead. |
 
 ## What blocks a developer who is not us

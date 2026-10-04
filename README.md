@@ -82,9 +82,9 @@ curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
 echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f   # puts ./ripr here; move it onto your PATH
 ```
 
-Once 0.11.0 is published the same URLs work with the new version, and
-`cargo binstall ripr` downloads the archive instead of compiling. Until then it
-compiles from source, like `cargo install`.
+Once the matching 0.11.0 release asset is published, the same URLs work with the
+new version and `cargo binstall ripr` downloads the archive. If the asset is not
+available, `cargo binstall` compiles from source, like `cargo install`.
 
 Read the changed behavior, the related tests, and the recommended next test.
 No configuration file is required. `ripr check` is advisory: it exits 0 whether
