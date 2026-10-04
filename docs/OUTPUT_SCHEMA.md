@@ -4274,8 +4274,9 @@ Field contract:
   `lane1_repo_exposure_large_cache_preflight_skip` with `run_status =
   "limited_large_cache_skip"`, `downstream_consumable = false`, and a repair
   route through `cargo xtask cache report` and `cargo xtask cache gc --dry-run`.
-  Current repo seam cache writes entries larger than
-  `RIPR_REPO_SEAM_CACHE_LIMIT` as bounded shard files under `target/ripr/cache`.
+  Current repo seam cache writes entries that exceed the encoded-byte ceiling
+  (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`) or the secondary record cap
+  (`RIPR_REPO_SEAM_CACHE_LIMIT`) as bounded shard files under `target/ripr/cache`.
   Older audit artifacts or older cache-store implementations may still report
   `lane1_repo_exposure_cache_store_skipped_large_entry` when the live
   repo-exposure run emitted complete evidence but skipped a full classified
@@ -7675,6 +7676,19 @@ Success payload (200-level result object, no `protocol_version`,
   root-relative; `finding_id` is a valid `ripr.collectContext` argument.
   Always empty under the `full` profile, which publishes these findings.
 - `hidden_gap_count` — the full number of such canonical gaps.
+- `withheld_unknown_count` — the number of live `*_unknown` findings
+  (`static_unknown`, `infection_unknown`, `propagation_unknown`) the
+  `actionable` profile withholds from diagnostics and from `hidden_gaps`
+  (RIPR-SPEC-0069, #5276). A finding counts only when its canonical group is
+  not published; a published group already represents its members. Always 0
+  under the `full` profile.
+- `withheld_unknown_findings` — `[{finding_id, file, line, class}]` for the
+  withheld findings, at most 50 entries; `finding_id` is a valid
+  `ripr.collectContext` argument.
+- `withheld_unknown_truncated` — `true` when `withheld_unknown_count`
+  exceeds the listed entries.
+- `suppression_disclosure` — a sentence naming the withholding and the
+  `diagnosticProfile: "full"` escape hatch; `null` when nothing is withheld.
 - `budget_identity` — the snapshot profile budget identity string.
 - `complete_evidence_identity` — the complete-evidence identity string.
 - `continuation_or_inspect_route` — the route string for continuing or
