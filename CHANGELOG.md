@@ -25,7 +25,8 @@ are scoped or reviewed.
   arguments mention `assert_eq!` (ripgrep's `rgtest!`) still does, now named
   in the refusal: its expansion can define a different `assert_eq!` from
   those tokens. `#[macro_use]` or `#[no_implicit_prelude]` inside a macro's
-  arguments now counts as written.
+  arguments now refuses every trusted assertion, as an unresolved
+  `#[macro_use]` does.
   `assert_eq!` inside a `loop` first iteration, and `#[macro_use]` on a
   resolved module, are admitted with compiled runtime controls.
   `pretty_assertions::assert_eq` imported under its own name counts as the

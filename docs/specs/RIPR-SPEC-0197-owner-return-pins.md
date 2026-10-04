@@ -251,8 +251,9 @@ rule only for an assertion whose context was admitted.
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
   together with the module whose tests then compile against it.
-  `macro_use` or `no_implicit_prelude` anywhere in a macro's arguments makes
-  every trusted name ambiguous. A
+  `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
+  arguments makes every trusted name ambiguous (stricter than the same
+  attribute written on an item, which a resolved module can admit). A
   `macro_rules!` confined to an inline module or function body (no
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
