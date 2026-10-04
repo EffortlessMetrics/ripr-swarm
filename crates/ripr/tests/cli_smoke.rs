@@ -1425,11 +1425,11 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
             }
         }
 
-        // Versioned-shape contract: schema_version 1, nonempty sections, and a
+        // Versioned-shape contract: schema_version 2, nonempty sections, and a
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(1) {
+        if value["schema_version"] != serde_json::json!(2) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -1449,6 +1449,20 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
             if row.get("relation").is_none() || row.get("discovery").is_none() {
                 return Err(format!(
                     "help --json command row {} lost its relation/discovery projection",
+                    row["id"]
+                )
+                .into());
+            }
+            let Some(exit) = row.get("exit") else {
+                return Err(format!(
+                    "help --json command row {} lost its typed exit contract",
+                    row["id"]
+                )
+                .into());
+            };
+            if exit.get("kind").is_none() || exit.get("completed") != Some(&serde_json::json!(0)) {
+                return Err(format!(
+                    "help --json command row {} exit object is not a typed 0/2/3 contract: {exit}",
                     row["id"]
                 )
                 .into());
@@ -2708,6 +2722,26 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
         "stderr should still report failed analysis: {stderr}"
     );
     Ok(())
+}
+
+/// #5448: an invalid `RIPR_DIFF_DEPENDENT_SCOPE` names itself even when the
+/// diff has no dependent packages to narrow.
+#[test]
+fn check_rejects_an_invalid_dependent_scope_without_dependents() {
+    let root = workspace_root().display().to_string();
+    let diff = sample_diff().display().to_string();
+    let output = run_ripr_with_env(
+        &["check", "--root", &root, "--diff", &diff, "--json"],
+        &[("RIPR_DIFF_DEPENDENT_SCOPE", "everything")],
+    );
+    assert_failure(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`"
+        ),
+        "stderr should name the invalid override: {stderr}"
+    );
 }
 
 #[test]
@@ -11389,14 +11423,11 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("target/ripr/workflow"));
     assert!(stdout.contains("target/ripr/review"));
     assert!(stdout.contains("RIPR advisory summary"));
-    assert!(stdout.contains("target/ripr/review/comments.json"));
-    assert!(stdout.contains("ripr agent start"));
+    assert!(stdout.contains("target/ripr/review/existing-comments.json"));
+    // #4696: the analysis steps run inside one packet command.
+    assert!(stdout.contains("run: ripr reports ci-packet --root ."));
     // #3906: CI writes only the before side of the repair loop.
     assert!(!stdout.contains("ripr agent receipt"));
-    assert!(stdout.contains("ripr agent status"));
-    assert!(stdout.contains("ripr agent review-summary"));
-    assert!(stdout.contains("target/ripr/workflow/agent-status.md"));
-    assert!(stdout.contains("target/ripr/workflow/agent-review-summary.md"));
     assert!(stdout.contains("ripr reports ci-summary --root ."));
     assert!(stdout.contains("github/codeql-action/upload-sarif@v4"));
     assert!(!workspace.join("ripr.toml").exists());
@@ -11464,43 +11495,48 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // The prebuilt install needs no third-party toolchain or cache action.
     assert!(!workflow.contains("dtolnay/rust-toolchain"));
     assert!(!workflow.contains("Swatinem/rust-cache"));
-    assert!(workflow.contains("ripr pilot"));
-    assert!(workflow.contains("--format sarif"));
-    assert!(workflow.contains("--format repo-sarif"));
-    assert!(workflow.contains("--format repo-badge-json"));
-    assert!(workflow.contains("ripr agent start"));
-    assert!(workflow.contains("ripr agent packet"));
+    assert!(workflow.contains("run: ripr reports ci-packet --root ."));
     // #3906 (F60-1): CI has no test edit between snapshots, so it runs no
     // verify, receipt, or outcome; the repair's after phase writes those.
     assert!(!workflow.contains("ripr agent receipt"));
     assert!(!workflow.contains("ripr outcome"));
-    assert!(!workflow.contains("> target/ripr/workflow/agent-verify.json"));
-    assert!(workflow.contains("ripr review-comments"));
     assert!(workflow.contains("RIPR_COMMENT_MODE"));
-    assert!(workflow.contains("pr-comments plan"));
     assert!(workflow.contains("target/ripr/review/comment-publish-plan.json"));
     assert!(workflow.contains("Capture existing RIPR inline comments"));
-    assert!(workflow.contains("Plan RIPR inline comments"));
     assert!(workflow.contains("Publish RIPR inline comments"));
-    assert!(workflow.contains("ripr agent status"));
-    assert!(workflow.contains("ripr agent review-summary"));
-    assert!(workflow.contains("target/ripr/workflow/agent-packet.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-brief.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-verify.json"));
-    assert!(workflow.contains("target/ripr/reports/agent-receipt.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-status.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-status.md"));
-    assert!(workflow.contains("target/ripr/workflow/agent-review-summary.json"));
-    assert!(workflow.contains("target/ripr/workflow/agent-review-summary.md"));
-    assert!(workflow.contains("target/ripr/agent/agent-packet.json"));
-    assert!(workflow.contains("target/ripr/agent/agent-brief.json"));
-    assert!(!workflow.contains("target/ripr/agent/agent-verify.json"));
-    assert!(!workflow.contains("target/ripr/agent/agent-receipt.json"));
-    assert!(!workflow.contains("target/ripr/reports/targeted-test-outcome.json"));
     assert!(workflow.contains("target/ripr/review"));
-    assert!(workflow.contains("target/ripr/review/comments.json"));
-    assert!(workflow.contains("Run RIPR PR guidance report"));
-    assert!(workflow.contains("Emit RIPR PR guidance annotations"));
+    // The packet the workflow runs declares the steps it replaced (#4696);
+    // an unknown --step runs nothing and names them all.
+    let packet = run_ripr(&[
+        "reports",
+        "ci-packet",
+        "--root",
+        &root,
+        "--step",
+        "no-such-step",
+    ]);
+    assert_eq!(packet.status.code(), Some(2));
+    let steps = String::from_utf8_lossy(&packet.stderr);
+    for step in [
+        "Generate RIPR pilot packet",
+        "Generate RIPR agent loop artifacts",
+        "Run RIPR PR guidance report",
+        "Plan RIPR inline comments",
+        "Render RIPR diff SARIF",
+        "Render RIPR repo seam SARIF",
+        "Render RIPR repo badge artifacts",
+        "Render RIPR LLM work-loop summaries",
+        "Emit RIPR PR guidance annotations",
+    ] {
+        assert!(
+            steps.contains(step),
+            "ci-packet does not name `{step}`:\n{steps}"
+        );
+    }
+    assert!(
+        !workspace.join("target/ripr").exists(),
+        "an unknown --step ran a step"
+    );
     assert!(workflow.contains("Add RIPR advisory summary"));
     assert!(workflow.contains("ripr reports ci-summary --root ."));
     assert!(!workflow.contains("cargo xtask"));
@@ -12190,6 +12226,98 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "a budget-truncated pilot snapshot must not carry the comparable identity"
     );
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// A mistyped `--root` must not read as a completed run: `first-pr` and
+/// `reports gap-ledger` exit 2, say what is wrong, and write nothing.
+#[test]
+fn first_pr_and_gap_ledger_refuse_a_root_that_does_not_exist() -> Result<(), String> {
+    let cwd = unique_temp_workspace("missing-root-refusal");
+    std::fs::create_dir_all(&cwd).map_err(|e| format!("create cwd: {e}"))?;
+    let missing = cwd.join("no-such-repo").display().to_string();
+    std::fs::write(cwd.join("readable.json"), "{}").map_err(|e| format!("write source: {e}"))?;
+    for args in [
+        vec!["first-pr", "--root", missing.as_str()],
+        vec!["first-pr", "--root", missing.as_str(), "--check"],
+        vec![
+            "reports",
+            "gap-ledger",
+            "--root",
+            missing.as_str(),
+            "--repo-exposure",
+            "no-such-exposure.json",
+        ],
+        vec![
+            "reports",
+            "gap-ledger",
+            "--root",
+            missing.as_str(),
+            "--repo-exposure",
+            "readable.json",
+        ],
+    ] {
+        let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&cwd), &args)
+            .map_err(|e| e.to_string())?;
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let code = output.status.code();
+        let wrote = cwd.join("target").exists();
+        if code != Some(2) || !stderr.contains("not a directory") || wrote {
+            let _ = std::fs::remove_dir_all(&cwd);
+            return Err(format!(
+                "{args:?}: expected exit 2, a `not a directory` message and no writes; got {code:?} wrote={wrote}\n{stderr}"
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&cwd);
+    Ok(())
+}
+
+/// A seam whose only test is an inline `#[cfg(test)]` module gets a focused-test
+/// suggestion but no repair target. The README sends readers to the
+/// `ripr agent repair` command pilot prints, so the terminal must say none is
+/// coming instead of going silent and offering the snapshot choreography as if
+/// it were the repair route.
+#[test]
+fn pilot_says_so_when_the_top_seam_has_no_repair_command() -> Result<(), String> {
+    let root = unique_temp_workspace("pilot-no-repair-command");
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).map_err(|e| format!("create src: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| format!("write manifest: {e}"))?;
+    std::fs::write(
+        src.join("lib.rs"),
+        "pub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n    #[test]\n    fn below() {\n        assert_eq!(price(1, 100), 1);\n    }\n}\n",
+    )
+    .map_err(|e| format!("write lib: {e}"))?;
+    let out_dir = unique_temp_workspace("pilot-no-repair-command-out");
+    let output = run_ripr(&[
+        "pilot",
+        "--root",
+        &root.display().to_string(),
+        "--out",
+        &out_dir.display().to_string(),
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert!(stdout.contains("focused test: add "), "{stdout}");
+    assert!(
+        stdout.contains("repair this seam: not available for this seam"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Next, by hand: add the focused test named above"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("agent repair --root"),
+        "no repair command may be printed for an ineligible seam:\n{stdout}"
+    );
     Ok(())
 }
 
@@ -13160,6 +13288,172 @@ fn pilot_projects_python_repair_card_for_git_diff() -> Result<(), String> {
 
     ignore_remove_dir_all(&root);
     ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// A Python preview gap reaches `agent packet` through a check-output gap
+/// ledger. That packet stays blocked (check output carries no snapshot
+/// identity), and its `refresh_commands` are the only next step it names.
+/// They used to rewrite `check.json` with the Rust-only repo-exposure route
+/// and rebuild the ledger from it, which dropped every Python record, so the
+/// same packet command then failed with "gap_id ... was not found". Pasting
+/// the printed refresh from another directory must keep the check-output
+/// route, the recorded base and the Python gap.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn python_check_output_packet_refresh_keeps_the_preview_gap() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-packet-refresh",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"python-packet-refresh\"\nversion = \"0.0.0\"\n",
+            ),
+            (
+                "src/pricing.py",
+                "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n",
+            ),
+        ],
+        (
+            "src/pricing.py",
+            "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let reports = root.join("target/ripr/reports");
+    std::fs::create_dir_all(&reports).map_err(|err| format!("create reports: {err}"))?;
+    let check_path = reports.join("check.json");
+    let ledger_path = reports.join("gap-decision-ledger.json");
+    let check_arg = check_path.display().to_string();
+    let ledger_arg = ledger_path.display().to_string();
+
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--base",
+        "origin/main",
+        "--json",
+    ]);
+    assert_success(&check);
+    std::fs::write(&check_path, &check.stdout).map_err(|err| format!("write check: {err}"))?;
+    assert_success(&run_ripr(&[
+        "reports",
+        "gap-ledger",
+        "--check-output",
+        &check_arg,
+        "--root",
+        &root_arg,
+        "--out",
+        &ledger_arg,
+    ]));
+
+    let python_gap_ids = |ledger: &std::path::Path| -> Result<Vec<String>, String> {
+        let text = std::fs::read_to_string(ledger).map_err(|err| format!("read ledger: {err}"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|err| format!("parse ledger: {err}"))?;
+        Ok(json["records"]
+            .as_array()
+            .map(|records| {
+                records
+                    .iter()
+                    .filter(|record| record["language"] == "python")
+                    .filter_map(|record| record["gap_id"].as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    };
+    let before_ids = python_gap_ids(&ledger_path)?;
+    let gap_id = before_ids
+        .first()
+        .cloned()
+        .ok_or_else(|| format!("the fixture must yield a Python gap record: {before_ids:?}"))?;
+
+    let packet_for = |gap_id: &str| -> Result<serde_json::Value, String> {
+        let packet = run_ripr(&[
+            "agent",
+            "packet",
+            "--root",
+            &root_arg,
+            "--gap-ledger",
+            &ledger_arg,
+            "--gap-id",
+            gap_id,
+            "--json",
+        ]);
+        if !packet.status.success() {
+            return Err(format!(
+                "agent packet failed for {gap_id}: {}",
+                String::from_utf8_lossy(&packet.stderr)
+            ));
+        }
+        serde_json::from_slice(&packet.stdout).map_err(|err| format!("parse packet: {err}"))
+    };
+    let packet = packet_for(&gap_id)?;
+    let currentness = &packet["source_currentness"];
+    assert_eq!(currentness["source_kind"], "check_output", "{packet}");
+    assert_eq!(currentness["status"], "not_evaluated", "{packet}");
+    let reason = currentness["reason"].as_str().unwrap_or_default();
+    assert!(
+        reason.contains("repair_route")
+            && reason.contains("--diff")
+            && !reason.contains("repo-exposure"),
+        "the blocked reason must name the usable route and the unreplayable --diff scope, not the Rust-only route: {reason}"
+    );
+    let refresh: Vec<String> = currentness["refresh_commands"]
+        .as_array()
+        .map(|commands| {
+            commands
+                .iter()
+                .filter_map(|command| command.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(refresh.len(), 2, "{refresh:?}");
+    assert!(
+        refresh[0].contains("--base origin/main")
+            && refresh[0].contains("--json >")
+            && refresh[1].contains("gap-ledger --check-output"),
+        "refresh must replay the check-output route with its recorded base: {refresh:?}"
+    );
+    assert!(
+        refresh
+            .iter()
+            .all(|command| !command.contains("repo-exposure")),
+        "refresh must not route a check-output ledger through repo-exposure: {refresh:?}"
+    );
+
+    // Paste the printed refresh from an unrelated directory, `ripr` resolving
+    // to the binary under test.
+    let elsewhere = unique_temp_workspace("python-packet-refresh-elsewhere");
+    std::fs::create_dir_all(&elsewhere).map_err(|err| format!("create elsewhere: {err}"))?;
+    for command in &refresh {
+        let script = format!("ripr() {{ \"$0\" \"$@\"; }}; {command}");
+        let run = run_command(
+            "bash",
+            Some(&elsewhere),
+            &["-c", &script, env!("CARGO_BIN_EXE_ripr")],
+        )
+        .map_err(|err| format!("run refresh `{command}`: {err}"))?;
+        assert_success(&run);
+    }
+    assert_eq!(
+        python_gap_ids(&ledger_path)?,
+        before_ids,
+        "the refreshed ledger must keep the Python records"
+    );
+    let refreshed = packet_for(&gap_id)?;
+    assert_eq!(
+        refreshed["source_currentness"]["source_kind"], "check_output",
+        "{refreshed}"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&elsewhere);
     Ok(())
 }
 
@@ -16897,10 +17191,12 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
         ));
     }
     // Clean-install walk (0.11): Start-here must name the flag that analyzes
-    // uncommitted edits, not only "make a change".
-    if !stdout.contains("add `--worktree` to include uncommitted edits") {
+    // uncommitted edits, not only "make a change". "tracked" per #5258: the
+    // runtime wording must match `check --help` and cannot promise that
+    // `--worktree` covers untracked files.
+    if !stdout.contains("add `--worktree` to include uncommitted tracked edits") {
         return Err(format!(
-            "empty-range Start-here must name `--worktree`; got:\n{stdout}"
+            "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
         ));
     }
     if !stdout.contains("compared base was `main`") || stdout.contains("--base origin/main") {
