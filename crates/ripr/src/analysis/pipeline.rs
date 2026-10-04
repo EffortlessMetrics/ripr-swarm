@@ -1117,6 +1117,18 @@ fn run_pipeline_for_diff_text(
         limitations,
     )?);
 
+    // #6340: the walk runs only when a changed Rust file has a no_static_path
+    // finding, so ordinary runs pay nothing.
+    let unlinked_python_tests = if rust_changed_files > 0
+        && findings
+            .iter()
+            .any(|finding| finding.class == crate::domain::ExposureClass::NoStaticPath)
+    {
+        super::workspace::discover_python_test_files(&options.root)
+    } else {
+        None
+    };
+
     Ok(AnalysisResult {
         harness_projections,
         analysis_outcome,
@@ -1130,6 +1142,7 @@ fn run_pipeline_for_diff_text(
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
         untracked_source_paths: Vec::new(),
+        unlinked_python_tests,
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
@@ -1326,6 +1339,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
         untracked_source_paths: Vec::new(),
+        unlinked_python_tests: None,
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
@@ -1960,6 +1974,55 @@ mod tests {
     }
 
     const SAMPLE_RUST_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n";
+
+    /// #6340: Python test files are recorded only for a Rust diff with a
+    /// `no_static_path` finding; a Rust-only repo records nothing.
+    #[test]
+    fn rust_no_static_path_records_python_tests_only_when_present() -> Result<(), String> {
+        let rust_only = temp_root("py-note-rust-only")?;
+        write(
+            &rust_only.join("src/lib.rs"),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
+        let mixed = temp_root("py-note-mixed")?;
+        write(
+            &mixed.join("src/lib.rs"),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
+        write(&mixed.join("tests/test_f.py"), "def test_f():\n    pass\n")?;
+        write(&mixed.join("tests/test_g.py"), "def test_g():\n    pass\n")?;
+        let languages = [LanguageId::Rust];
+        let run = |root: PathBuf| {
+            run_pipeline_for_diff_text(
+                &sample_rust_diff_options(root),
+                &OraclePolicy::default(),
+                &languages,
+                &crate::config::RustLanguageConfig::default(),
+                SAMPLE_RUST_DIFF,
+            )
+        };
+        let without = run(rust_only)?;
+        let with = run(mixed)?;
+        for result in [&without, &with] {
+            assert!(
+                result
+                    .findings
+                    .iter()
+                    .any(|finding| finding.class == crate::domain::ExposureClass::NoStaticPath),
+                "fixture precondition: a no_static_path finding; got {:?}",
+                result.findings.iter().map(|f| &f.class).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(without.unlinked_python_tests, None);
+        let python = with
+            .unlinked_python_tests
+            .ok_or_else(|| "python tests must be recorded".to_string())?;
+        assert_eq!(python.count, 2);
+        assert_eq!(python.example, "tests/test_f.py");
+        // The verdict does not depend on the Python tests.
+        assert_eq!(without.summary.no_static_path, with.summary.no_static_path);
+        Ok(())
+    }
 
     #[test]
     fn config_excluded_rust_projects_a_typed_language_limitation() -> Result<(), String> {

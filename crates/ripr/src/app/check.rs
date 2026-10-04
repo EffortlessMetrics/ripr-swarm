@@ -315,6 +315,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             effective_base: None,
             uncommitted_source_paths: Vec::new(),
             untracked_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         },
@@ -851,6 +852,7 @@ mod tests {
             effective_base,
             uncommitted_source_paths: Vec::new(),
             untracked_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         }

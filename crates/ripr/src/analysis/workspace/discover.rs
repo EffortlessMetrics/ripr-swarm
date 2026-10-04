@@ -182,6 +182,95 @@ pub(crate) fn discover_preview_language_files(root: &Path) -> Vec<(LanguageId, P
     out
 }
 
+/// Python test files a Rust diff cannot be linked to (#6340): the count and one
+/// repository-relative example. `at_least` is set when the bounded walk hit its
+/// entry cap, so the count is a lower bound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UnlinkedPythonTests {
+    pub(crate) count: usize,
+    pub(crate) example: String,
+    pub(crate) at_least: bool,
+}
+
+/// Upper bound on directory entries inspected by [`discover_python_test_files`].
+const PYTHON_TEST_WALK_ENTRY_CAP: usize = 50_000;
+
+/// Whether a repository-relative path is a Python test file: `test_*.py` or
+/// `*_test.py`, or any `.py` below a `tests/` or `test/` directory.
+pub(crate) fn is_python_test_path(relative: &Path) -> bool {
+    let Some(name) = relative.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let Some(stem) = name.strip_suffix(".py") else {
+        return false;
+    };
+    if stem.starts_with("test_") || stem.ends_with("_test") {
+        return true;
+    }
+    relative
+        .parent()
+        .into_iter()
+        .flat_map(|parent| parent.components())
+        .any(|component| {
+            matches!(component, std::path::Component::Normal(dir)
+                if dir == "tests" || dir == "test")
+        })
+}
+
+/// Count Python test files in the workspace with a bounded, no-follow walk that
+/// skips the same directories as the other discovery walks. `None` when none
+/// exist. Used only to name, in human output, that a Rust change may be covered
+/// by tests ripr does not link to Rust.
+pub(crate) fn discover_python_test_files(root: &Path) -> Option<UnlinkedPythonTests> {
+    let mut count = 0usize;
+    let mut example: Option<PathBuf> = None;
+    let mut visited = 0usize;
+    let mut stack = vec![root.to_path_buf()];
+    let mut capped = false;
+    'walk: while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if cancellation::checkpoint().is_err() {
+                break 'walk;
+            }
+            visited += 1;
+            if visited > PYTHON_TEST_WALK_ENTRY_CAP {
+                capped = true;
+                break 'walk;
+            }
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if !DEFAULT_IGNORED_DIRS.contains(&name) {
+                    stack.push(path);
+                }
+            } else if kind.is_file() {
+                let relative = path.strip_prefix(root).unwrap_or(&path);
+                if is_python_test_path(relative) {
+                    count += 1;
+                    let better = example
+                        .as_ref()
+                        .is_none_or(|current| relative < current.as_path());
+                    if better {
+                        example = Some(relative.to_path_buf());
+                    }
+                }
+            }
+        }
+    }
+    let example = example?;
+    Some(UnlinkedPythonTests {
+        count,
+        example: example.to_string_lossy().replace('\\', "/"),
+        at_least: capped,
+    })
+}
+
 /// Discover source files in languages no ripr adapter reads (Go, Java, C,
 /// shell, ...), with their language names, skipping the same directories as
 /// the other discovery walks. Pilot uses it so a repository written in such a
@@ -257,6 +346,61 @@ fn visit(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn python_test_path_predicate_is_discriminating() {
+        for yes in [
+            "tests/test_x.py",
+            "pkg/test_y.py",
+            "pkg/y_test.py",
+            "tests/helpers/conftest.py",
+            "test/util.py",
+        ] {
+            assert!(is_python_test_path(Path::new(yes)), "{yes}");
+        }
+        for no in [
+            "src/lib.rs",
+            "python/pkg/mod.py",
+            "tests/test_x.rs",
+            "contest/mod.py",
+            "tests.py",
+            "pkg/latest.py",
+        ] {
+            assert!(!is_python_test_path(Path::new(no)), "{no}");
+        }
+    }
+
+    #[test]
+    fn discover_python_test_files_counts_and_skips_ignored_dirs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-pytest-discover-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("tests"))?;
+        fs::create_dir_all(dir.join("src"))?;
+        fs::create_dir_all(dir.join("target"))?;
+        fs::write(dir.join("src/lib.rs"), "")?;
+        fs::write(dir.join("tests/test_b.py"), "")?;
+        fs::write(dir.join("tests/test_a.py"), "")?;
+        fs::write(dir.join("target/test_ignored.py"), "")?;
+        let found = discover_python_test_files(&dir);
+        assert_eq!(
+            found,
+            Some(UnlinkedPythonTests {
+                count: 2,
+                example: "tests/test_a.py".to_string(),
+                at_least: false,
+            })
+        );
+        fs::remove_file(dir.join("tests/test_a.py"))?;
+        fs::remove_file(dir.join("tests/test_b.py"))?;
+        assert_eq!(discover_python_test_files(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
 
     #[test]
     fn discover_rust_files_is_callable() -> Result<(), Box<dyn std::error::Error>> {
