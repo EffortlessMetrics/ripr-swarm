@@ -38,7 +38,12 @@ pub(crate) const INPUT_SCHEMA_VERSION: &str = "ripr-dx-scoreboard-input-v1";
 const FIRST_RUN_SCHEMA_VERSION: &str = "first_run.v1";
 /// Receipt written by the mutation spot-check (real cargo-mutants outcomes
 /// joined to ripr seams); converted on ingest.
-const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
+const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
+/// v1 spot-check receipts paired mutants with seams by operator text on a
+/// shared line. Their `seam_precise` counts and rates describe a different
+/// population from v2's canonical joins, so ingest refuses them rather than
+/// trending one against the other.
+const MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
 const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
@@ -468,6 +473,11 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
     if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_SCHEMA_VERSION) {
         let converted = mutation_spot_check_to_input(value)?;
         return parse_ingest(&converted, config);
+    }
+    if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION) {
+        return Err(format!(
+            "{MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION} receipts scored operator-text pairings, which {MUTATION_SPOT_CHECK_SCHEMA_VERSION} replaced with canonical seam_id and span-containment joins; re-run `cargo xtask mutation-spot-check` to produce a comparable receipt"
+        ));
     }
     if value["schema_version"].as_str() == Some(FIRST_RUN_ROW_SCHEMA_VERSION) {
         let converted = first_run_rows_to_input(value)?;
@@ -922,14 +932,29 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
     }))
 }
 
-/// Convert a `ripr-mutation-spot-check-v1` receipt into scoreboard rows:
+/// v1 spot-check rows measured operator-text pairings, a different population
+/// from v2's canonical joins, so a baseline row compares only when every one
+/// of its samples names the v2 receipt (each row's evidence does).
+fn from_spot_check_v2(base_row: &Value) -> bool {
+    base_row["samples"].as_array().is_some_and(|samples| {
+        !samples.is_empty()
+            && samples.iter().all(|sample| {
+                sample["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains(MUTATION_SPOT_CHECK_SCHEMA_VERSION))
+            })
+    })
+}
+
+/// Convert a `ripr-mutation-spot-check-v2` receipt into scoreboard rows:
 ///
 /// - discriminator claim agreement: when ripr says a test discriminates the
-///   seam, the share of seam-precise mutants a real run caught;
+///   seam, the share of canonical precise mutants a real run caught;
 /// - gap claim agreement: when ripr says no test discriminates, the share of
-///   seam-precise mutants a real run missed (the rest are false gaps);
-/// - join coverage: seam-precise joins over all mutants, because agreement
-///   rates only speak for the mutants that could be joined to a seam.
+///   canonical precise mutants a real run missed (the rest are false gaps);
+/// - join coverage: canonical precise records over every runtime record,
+///   because agreement rates only speak for the mutants that could be joined
+///   to a seam by `seam_id` or span containment.
 pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, String> {
     let families = value["scored_families"]
         .as_object()
@@ -960,7 +985,9 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         rows.push(json!({
             "id": metric,
             "value": rate,
-            "evidence": format!("{scored} seam-precise mutants scored"),
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {scored} canonical precise mutants scored"
+            ),
         }));
     }
     let repos = value["repos"]
@@ -969,14 +996,20 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         .ok_or("mutation spot-check receipt needs a non-empty repos array")?;
     let (mut joined, mut mutants) = (0_u64, 0_u64);
     for (index, repo) in repos.iter().enumerate() {
-        let precise = repo["pairings"]["seam_precise"].as_u64();
-        let total = repo["calibration_metrics"]["mutants_total"].as_u64();
+        let precise = repo["pairings"]["canonical_precise"].as_u64();
+        let total = repo["pairings"]["records_total"].as_u64();
         let (Some(precise), Some(total)) = (precise, total) else {
             return Err(format!(
-                "mutation spot-check repo {} needs pairings.seam_precise and calibration_metrics.mutants_total",
+                "mutation spot-check repo {} needs pairings.canonical_precise and pairings.records_total",
                 index + 1
             ));
         };
+        if repo["calibration_metrics"]["mutants_total"].as_u64() != Some(total) {
+            return Err(format!(
+                "mutation spot-check repo {} accounts for {total} records but calibration_metrics.mutants_total differs",
+                index + 1
+            ));
+        }
         if precise > total {
             return Err(format!(
                 "mutation spot-check repo {} joins {precise} of only {total} mutants",
@@ -990,7 +1023,9 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         rows.push(json!({
             "id": "trust.mutation_join_coverage",
             "value": joined as f64 / mutants as f64,
-            "evidence": format!("{joined} of {mutants} mutants joined seam-precise"),
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {joined} of {mutants} mutants joined canonically and scoreable"
+            ),
         }));
     }
     // Rates pool every repository, and a repository run with extra
@@ -1018,7 +1053,7 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         }
     }
     let evidence = format!(
-        "ripr-mutation-spot-check-v1 receipt, {} repositories{caveat}",
+        "{MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt, {} repositories{caveat}",
         repos.len()
     );
     Ok(json!({
@@ -1639,6 +1674,15 @@ pub(crate) fn compare_with_baseline(
     let Some(base_row) = base_row else {
         return json!({"comparable": false, "reason": "metric absent from baseline"});
     };
+    if def.source == "ingest:mutation-spot-check" && !from_spot_check_v2(base_row) {
+        return json!({
+            "comparable": false,
+            "value": base_row["value"],
+            "reason": format!(
+                "baseline was not ingested from a {MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt"
+            ),
+        });
+    }
     // Samples with a repository are judged per repository below.
     let incomplete = |r: &Value| {
         r["samples"].as_array().is_some_and(|samples| {

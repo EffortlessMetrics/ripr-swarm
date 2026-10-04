@@ -113,11 +113,18 @@ These native receipts are also accepted as-is:
   reject the file instead of counting as zero.
   `verdict` rows feed the `*_unknown` count, which is `review_on_change`: a
   changed verdict list is printed under "For review" and never fails the gate.
-- `ripr-mutation-spot-check-v1` from the mutation spot-check: the agreement
-  rate of the `claims_discriminator` and `claims_no_discriminator` families,
-  and join coverage as `seam_precise` pairings over all mutants. These compare
-  static claims with real mutation outcomes on a sample; they are evidence
-  about ripr's calibration, not a mutation result for the corpus.
+- `ripr-mutation-spot-check-v2` from the mutation spot-check: the agreement
+  rate of the `claims_discriminator` and `claims_no_discriminator` families
+  over `canonical_precise` records (operator mutants joined by `seam_id` or
+  span containment to a predicate or return seam), and join coverage as
+  `canonical_precise` over every runtime record. These compare static claims
+  with real mutation outcomes on a sample; they are evidence about ripr's
+  calibration, not a mutation result for the corpus. A
+  `ripr-mutation-spot-check-v1` receipt is refused: its `seam_precise`
+  operator-text pairings are a different population. For the same reason a
+  baseline row whose samples were not ingested from a v2 receipt (the
+  committed baseline's rows for these three metrics came from v1) is reported
+  as not comparable instead of gating a v2 value against it.
 - `ripr-rust-corpus-smoke-v1` from `cargo xtask rust-corpus smoke`: per
   repository, `corpus.not_analyzed` (0 when the run reached `analyzed`, 1 when
   it failed closed, timed out or broke) and `corpus.check_ms` (the time of an

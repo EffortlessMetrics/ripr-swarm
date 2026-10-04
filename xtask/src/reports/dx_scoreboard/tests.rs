@@ -551,14 +551,16 @@ fn shared_corpus_manifest_maps_fast_tier_to_default_runs() -> Result<(), String>
 #[test]
 fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), String> {
     let receipt = json!({
-        "schema_version": "ripr-mutation-spot-check-v1",
+        "schema_version": "ripr-mutation-spot-check-v2",
         "scored_families": {
             "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
             "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
         },
         "repos": [
-            {"pairings": {"seam_precise": 2}, "calibration_metrics": {"mutants_total": 86}},
-            {"pairings": {"seam_precise": 170}, "calibration_metrics": {"mutants_total": 1659}},
+            {"pairings": {"canonical_precise": 2, "records_total": 86, "seam_precise": 80},
+             "calibration_metrics": {"mutants_total": 86}},
+            {"pairings": {"canonical_precise": 170, "records_total": 1659},
+             "calibration_metrics": {"mutants_total": 1659}},
         ],
     });
     let input = mutation_spot_check_to_input(&receipt)?;
@@ -611,6 +613,54 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
         unsampled
             .iter()
             .all(|sample| !sample.detail.contains("cargo-mutants arguments"))
+    );
+
+    // A baseline row recorded from a v1 receipt is not a like-for-like
+    // trend, so it is not compared; one recorded from v2 is.
+    let current = build_report(
+        &config,
+        &["trust".to_string()],
+        &unsampled,
+        &context("r"),
+        None,
+        false,
+    );
+    let mut v1_baseline = current.clone();
+    for row in v1_baseline["metrics"].as_array_mut().into_iter().flatten() {
+        for sample in row["samples"].as_array_mut().into_iter().flatten() {
+            sample["detail"] =
+                json!("ingested from mutation-spot-check: 14 seam-precise mutants scored");
+        }
+    }
+    for (baseline, comparable) in [(&v1_baseline, false), (&current, true)] {
+        let report = build_report(
+            &config,
+            &["trust".to_string()],
+            &unsampled,
+            &context("r"),
+            Some(baseline),
+            true,
+        );
+        for id in [
+            "trust.discriminator_claim_agreement",
+            "trust.gap_claim_agreement",
+            "trust.mutation_join_coverage",
+        ] {
+            assert_eq!(
+                metric(&report, id)?["baseline"]["comparable"].as_bool(),
+                Some(comparable),
+                "{id}"
+            );
+        }
+    }
+
+    // v1 operator-text pairings measure a different population, so a v1
+    // receipt is refused rather than read through a key fallback.
+    let mut v1 = receipt.clone();
+    v1["schema_version"] = json!("ripr-mutation-spot-check-v1");
+    assert!(
+        parse_ingest(&v1, &config)
+            .is_err_and(|e| e.contains("re-run `cargo xtask mutation-spot-check`"))
     );
     Ok(())
 }
@@ -1030,9 +1080,25 @@ fn malformed_mutation_and_generic_receipts_are_rejected() {
             "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 1},
             "claims_no_discriminator": {"agreement_rate": 0.5, "mutants_scored": 1},
         },
-        "repos": [{"pairings": {"seam_precise": 5}}],
+        "repos": [{"pairings": {"seam_precise": 5}, "calibration_metrics": {"mutants_total": 9}}],
     });
-    assert!(mutation_spot_check_to_input(&receipt).is_err_and(|e| e.contains("mutants_total")));
+    // A v1-shaped repo row must not fall back to its `seam_precise` count.
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|e| e.contains("pairings.canonical_precise"))
+    );
+    let mut receipt = receipt;
+    receipt["repos"][0]["pairings"] = json!({"canonical_precise": 5, "records_total": 8});
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|e| e.contains("calibration_metrics.mutants_total differs"))
+    );
+    receipt["repos"][0]["pairings"]["records_total"] = json!(9);
+    assert!(mutation_spot_check_to_input(&receipt).is_ok_and(|input| {
+        input["metrics"]
+            .as_array()
+            .is_some_and(|rows| rows.len() == 3)
+    }));
     assert!(
         first_run_to_input(&json!({"schema_version": "first_run.v1", "cases": []}))
             .is_err_and(|e| e.contains("non-empty"))
