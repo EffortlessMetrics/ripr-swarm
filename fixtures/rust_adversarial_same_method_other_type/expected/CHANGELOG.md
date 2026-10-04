@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_adversarial_same_method_other_type (6)
+
+Reason:
+RIPR-SPEC-0122: #5471 check prints the agent stub route only when the stub resolver produces a stub; this route was refused or found no gap, so it is replaced by the refusal reason or removed
+
+Command:
+`cargo xtask goldens bless rust_adversarial_same_method_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

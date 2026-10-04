@@ -190,7 +190,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
         std::fs::write(root.join("src/lib.rs"), FIXTURE).map_err(|error| error.to_string())?;
 
-        let mut stub = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        let mut stub = ripr_command();
         stub.args(["agent", "stub", "--root"]).arg(&root).args([
             "--at",
             &format!("src/lib.rs:{line}"),
@@ -259,6 +259,143 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         scratch.cleanup()?;
     }
     Ok(())
+}
+
+/// The `ripr` binary under test.
+fn ripr_command() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+}
+
+/// #5471: `ripr check` prints `Write a test for it:` only when the command
+/// it prints produces a stub. `src/lib.rs` holds seams that sort before the
+/// other files; `src/twin.rs` has two inline test modules, so its stub is
+/// refused; `src/zz.rs` is stubbable.
+const ROUTE_LIB: &str = "pub mod twin;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
+const ROUTE_TWIN: &str = "pub fn clamp(n: u32, max: u32) -> u32 {\n    if n > max { max } else { n }\n}\n\n#[cfg(test)]\nmod a {}\n\n#[cfg(test)]\nmod b {}\n";
+const ROUTE_ZZ: &str =
+    "pub fn fee(n: u32, cap: u32) -> u32 {\n    if n >= cap { cap } else { n }\n}\n";
+
+fn route_crate(scratch: &Scratch) -> Result<(), String> {
+    let root = &scratch.directory;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_route\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    for (file, text) in [
+        ("src/lib.rs", ROUTE_LIB),
+        ("src/twin.rs", ROUTE_TWIN),
+        ("src/zz.rs", ROUTE_ZZ),
+    ] {
+        std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// A one-line diff that changes `old` into line 2 of `file`.
+fn one_line_diff(scratch: &Scratch, file: &str, old: &str, new: &str) -> Result<PathBuf, String> {
+    let path = scratch
+        .directory
+        .join(format!("{}.diff", file.replace(['/', '.'], "_")));
+    std::fs::write(
+        &path,
+        format!(
+            "diff --git a/{file} b/{file}\n--- a/{file}\n+++ b/{file}\n@@ -2 +2 @@\n-{old}\n+{new}\n"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn check_human(root: &Path, diff: &Path) -> Result<String, String> {
+    let mut check = ripr_command();
+    check
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(diff);
+    let output = run_bounded(check, root, "check", Duration::from_mins(2))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "check failed: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(stdout)
+}
+
+/// The command `check` printed under `Write a test for it:`, as arguments
+/// after `ripr`.
+fn printed_stub_args(stdout: &str) -> Option<Vec<String>> {
+    let mut lines = stdout.lines();
+    lines.find(|line| *line == "Write a test for it:")?;
+    let command = lines.next()?.trim();
+    let mut words = command.split_whitespace();
+    (words.next() == Some("ripr")).then(|| words.map(str::to_string).collect())
+}
+
+#[test]
+fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    route_crate(&scratch)?;
+    let root = scratch.directory.clone();
+
+    // A refused location prints the refusal, never the route.
+    let twin = one_line_diff(
+        &scratch,
+        "src/twin.rs",
+        "    if n >= max { max } else { n }",
+        "    if n > max { max } else { n }",
+    )?;
+    let stdout = check_human(&root, &twin)?;
+    assert!(
+        stdout.contains("src/twin.rs:2"),
+        "the selected finding is the twin.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:"),
+        "a refused stub must not be offered: {stdout}"
+    );
+    assert!(
+        stdout.contains("No test stub here: the owner file has more than one inline test module\n"),
+        "the refusal reason is printed instead: {stdout}"
+    );
+
+    // A stubbable location prints the route, and the printed command, run
+    // as printed, yields a stub through the same resolver.
+    let zz = one_line_diff(
+        &scratch,
+        "src/zz.rs",
+        "    if n > cap { cap } else { n }",
+        "    if n >= cap { cap } else { n }",
+    )?;
+    let stdout = check_human(&root, &zz)?;
+    assert!(!stdout.contains("No test stub here"), "{stdout}");
+    let args = printed_stub_args(&stdout)
+        .ok_or_else(|| format!("a stubbable gap prints the route: {stdout}"))?;
+    assert!(
+        args.iter().any(|arg| arg == "src/zz.rs:2"),
+        "the route names the finding location: {args:?}"
+    );
+    // The full inventory, capped to one seam, holds only a `src/lib.rs`
+    // seam; the location-scoped resolver must not depend on it.
+    let mut stub = ripr_command();
+    stub.args(&args)
+        .arg("--json")
+        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stub_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "the printed route must yield a stub: {stub_stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_str(&stub_stdout)
+        .map_err(|error| format!("stub JSON: {error}: {stub_stdout}"))?;
+    assert_eq!(document["owner"], "src/zz.rs::fee", "{stub_stdout}");
+    assert_eq!(document["written"], false, "{stub_stdout}");
+    scratch.cleanup()
 }
 
 struct Scratch {

@@ -213,3 +213,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (14)
+
+Reason:
+RIPR-SPEC-0122: #5471 check prints the agent stub route only when the stub resolver produces a stub; this route was refused or found no gap, so it is replaced by the refusal reason or removed
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

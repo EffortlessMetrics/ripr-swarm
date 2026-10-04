@@ -4,6 +4,11 @@
 //! The producer is `analysis::test_stub`; this use case owns seam selection
 //! (by seam id or by the `file:line` a `ripr check` finding prints), the
 //! source read the producer works from, and the guarded write.
+//!
+//! It also owns the decision `ripr check` prints under its selected finding
+//! (#5471): the route is printed only when this same resolver produces a
+//! stub for that location, so the printed command and its answer cannot
+//! disagree.
 
 use crate::analysis;
 use crate::analysis::ClassifiedSeam;
@@ -11,7 +16,9 @@ use crate::analysis::owner_fn_line_span;
 use crate::analysis::test_stub::{
     RustTestStub, TestStubPlacement, TestStubRefusal, rust_test_stub_for_classified_seam,
 };
+use crate::app::CheckOutput;
 use crate::config::RiprConfig;
+use crate::domain::{ExposureClass, Finding, ProbeFamily};
 use std::path::{Path, PathBuf};
 
 /// Which gap the caller means.
@@ -66,10 +73,11 @@ pub(crate) fn resolve_test_stub(
     config: &RiprConfig,
     selector: &TestStubSelector,
 ) -> Result<TestStubResolution, TestStubError> {
-    let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
-        .map_err(TestStubError::Operational)?;
     match selector {
+        // A seam id is repo-wide, so it is looked up in the full inventory.
         TestStubSelector::SeamId(id) => {
+            let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
+                .map_err(TestStubError::Operational)?;
             let entry = classified
                 .iter()
                 .find(|entry| entry.seam.id().as_str() == id)
@@ -77,8 +85,141 @@ pub(crate) fn resolve_test_stub(
             let source = read_owner_source(root, entry)?;
             Ok(resolution_for(entry, source))
         }
-        TestStubSelector::At { file, line } => resolve_at(root, &classified, file, *line),
+        TestStubSelector::At { file, line } => resolve_at_location(root, config, file, *line),
     }
+}
+
+/// The one `--at FILE:LINE` resolver, shared by `ripr agent stub --at` and
+/// the route `ripr check` prints (#5471).
+///
+/// When `file` names a file under `root`, the gaps come from the inventory
+/// scoped to that file: every seam in the file is classified against the
+/// whole workspace index, and no seam outside it is. That is the gap set of
+/// the location `check` reported, not the repo-wide inventory, which is
+/// capped and cached for a different question. `changed_owner_names` stays
+/// empty: it only widens the scope to callers' files, and every seam in the
+/// named file is in scope without it. A suffix that names no file under
+/// `root` (`src/lib.rs` for `crates/a/src/lib.rs`) keeps the repo-wide
+/// lookup so its more-than-one-file refusal still applies.
+fn resolve_at_location(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    line: usize,
+) -> Result<TestStubResolution, TestStubError> {
+    let classified = match scoped_file(root, file) {
+        Some(relative) => {
+            analysis::inventory_diff_scoped_classified_seams_at_with_config(
+                root,
+                config,
+                &[relative],
+                &[],
+            )
+            .map_err(TestStubError::Operational)?
+            .classified
+        }
+        None => {
+            analysis::inventory_classified_seams_at_with_config(root, config)
+                .map_err(TestStubError::Operational)?
+                .0
+        }
+    };
+    resolve_at(root, &classified, file, line)
+}
+
+/// `file` as a root-relative path when it names a regular file under
+/// `root`; `None` otherwise.
+fn scoped_file(root: &Path, file: &str) -> Option<PathBuf> {
+    let normalized = file.replace('\\', "/");
+    let path = Path::new(normalized.trim_start_matches("./"));
+    let relative = if path.is_absolute() {
+        path.strip_prefix(root).ok()?.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    (!relative.as_os_str().is_empty() && root.join(&relative).is_file()).then_some(relative)
+}
+
+/// What `ripr check` prints under its selected finding for the test-stub
+/// route (#5471).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StubRouteDecision {
+    /// The shared resolver produces a stub here: print
+    /// `ripr agent stub --at FILE:LINE`.
+    Stub { file: String, line: usize },
+    /// The shared resolver refuses: print its reason instead of a command
+    /// that would only refuse.
+    Refused { reason: &'static str },
+}
+
+/// A route decision bound to the finding it was computed for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StubRoute {
+    pub(crate) finding_id: String,
+    pub(crate) decision: StubRouteDecision,
+}
+
+/// The `FILE:LINE` a stub route names for `finding`, relative to `root`
+/// because `--at` resolves against `--root`. `None` when the finding is not
+/// a non-exposed Rust gap in a family the stub producer handles.
+pub(crate) fn stub_route_location(finding: &Finding, root: &Path) -> Option<(String, usize)> {
+    let location = &finding.probe.location.file;
+    let eligible = finding.class != ExposureClass::Exposed
+        && matches!(
+            finding.probe.family,
+            ProbeFamily::Predicate
+                | ProbeFamily::ReturnValue
+                | ProbeFamily::ErrorPath
+                | ProbeFamily::MatchArm
+        )
+        && location.extension().and_then(|ext| ext.to_str()) == Some("rs");
+    if !eligible {
+        return None;
+    }
+    let relative = location.strip_prefix(root).unwrap_or(location);
+    let file = crate::output::path::display_path(relative);
+    Some((
+        file.trim_start_matches("./").to_string(),
+        finding.probe.location.line,
+    ))
+}
+
+/// The route decision for one finding, from the resolver
+/// `ripr agent stub --at` runs. `None` when the finding gets no route or the
+/// resolver names no gap there; nothing is printed then.
+pub(crate) fn stub_route_for_finding(
+    root: &Path,
+    config: &RiprConfig,
+    finding: &Finding,
+) -> Option<StubRoute> {
+    let (file, line) = stub_route_location(finding, root)?;
+    let resolution = resolve_at_location(root, config, &file, line).ok()?;
+    let decision = match resolution.outcome {
+        Ok(_) => StubRouteDecision::Stub { file, line },
+        Err(refusal) => StubRouteDecision::Refused {
+            reason: refusal.reason(),
+        },
+    };
+    Some(StubRoute {
+        finding_id: finding.id.clone(),
+        decision,
+    })
+}
+
+/// The route decision for the one finding the default human `ripr check`
+/// selects. `check_config` drives that selection exactly as the renderer
+/// does. Resolution loads configuration the way `ripr agent stub` does for
+/// the same `root`, so the printed decision is that command's answer. One
+/// scoped inventory is built per run, for the selected finding's file.
+pub(crate) fn check_stub_route(
+    root: &Path,
+    check_config: &RiprConfig,
+    output: &CheckOutput,
+) -> Option<StubRoute> {
+    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
+    stub_route_location(finding, root)?;
+    let config = crate::config::load_for_root(root).ok()?;
+    stub_route_for_finding(root, &config, finding)
 }
 
 /// A `ripr check` finding line is the changed line, which is not always a
@@ -448,6 +589,37 @@ mod tests {
             run_command("crates/a/Cargo.toml", &integration),
             "cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_file_names_only_a_file_under_the_root() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-stub-scoped-file-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("crates/a/src")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("crates/a/src/lib.rs"), "").map_err(|error| error.to_string())?;
+        let exact = scoped_file(&root, "crates/a/src/lib.rs");
+        let dotted = scoped_file(&root, "./crates/a/src/lib.rs");
+        let windows = scoped_file(&root, "crates\\a\\src\\lib.rs");
+        let absolute = scoped_file(&root, &root.join("crates/a/src/lib.rs").to_string_lossy());
+        // A suffix is not a file under the root: it keeps the repo-wide
+        // lookup and its more-than-one-file refusal.
+        let suffix = scoped_file(&root, "src/lib.rs");
+        let directory = scoped_file(&root, "crates/a/src");
+        let _ = std::fs::remove_dir_all(&root);
+        let expected = Some(PathBuf::from("crates/a/src/lib.rs"));
+        assert_eq!(exact, expected);
+        assert_eq!(dotted, expected);
+        assert_eq!(windows, expected);
+        assert_eq!(absolute, expected);
+        assert_eq!(suffix, None);
+        assert_eq!(directory, None);
         Ok(())
     }
 

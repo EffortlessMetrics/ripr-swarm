@@ -58,6 +58,16 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     render_bounded_with_config(output, config)
 }
 
+/// The one finding the default human render selects as its top gap, so the
+/// check pipeline can decide that finding's stub route before rendering
+/// (#5471) without a second selection rule.
+pub(crate) fn selected_triage_finding<'a>(
+    output: &'a CheckOutput,
+    config: &RiprConfig,
+) -> Option<&'a Finding> {
+    triage::select_human_triage(output, config).selected
+}
+
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
     render_bounded_with_config_and_navigation(output, config, Some(&drill_in))

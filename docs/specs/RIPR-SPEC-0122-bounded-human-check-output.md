@@ -208,9 +208,18 @@ whose probe family is `predicate`, `return_value`, `error_path`, or
 `match_arm` gets one more block, `Write a test for it:`, naming
 `ripr agent stub --root <root> --at <file>:<line>` (#5355). That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. The line is a route, not a claim
-that a stub exists: side-effect, call-deletion, field-construction, and
-static-unknown families never get it, because the stub producer refuses them.
+compiling test stub, or a named refusal. Side-effect, call-deletion,
+field-construction, and static-unknown families never get the block, because
+the stub producer refuses them.
+
+The check pipeline runs that same `--at` resolver for the selected finding
+before rendering (#5471), with the configuration `ripr agent stub` loads for
+the same root, against the gaps of that one file (the file-scoped inventory,
+not the capped repo-wide one). The block is printed only when the resolver
+produces a stub. When it refuses, the block is replaced by one line,
+`No test stub here: <reason>`, naming the producer's refusal. When it finds
+no gap at that location, nothing is printed. Only the default human format
+runs the resolver; JSON and `human-full` output are unchanged.
 
 ### Triage states
 

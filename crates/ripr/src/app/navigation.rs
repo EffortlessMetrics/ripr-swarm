@@ -1,3 +1,4 @@
+use super::test_stub::{StubRoute, StubRouteDecision};
 use super::{CheckInput, Mode};
 use crate::agent::loop_commands::shell_arg;
 use std::path::Path;
@@ -9,6 +10,9 @@ pub(crate) struct FindingNavigation {
     context_prefix: String,
     list_prefix: String,
     stub_prefix: String,
+    /// The `ripr agent stub` decision the check pipeline computed for its
+    /// selected finding (#5471). Absent means no route is printed.
+    stub_route: Option<StubRoute>,
 }
 
 impl FindingNavigation {
@@ -18,7 +22,23 @@ impl FindingNavigation {
             context_prefix: "ripr context".to_string(),
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
+            stub_route: None,
         }
+    }
+
+    /// Carry the check pipeline's stub-route decision to the renderer.
+    pub(crate) fn with_stub_route(mut self, stub_route: Option<StubRoute>) -> Self {
+        self.stub_route = stub_route;
+        self
+    }
+
+    /// The stub-route decision for `finding_id`, when one was computed for
+    /// that finding.
+    pub(crate) fn stub_route_for(&self, finding_id: &str) -> Option<&StubRouteDecision> {
+        self.stub_route
+            .as_ref()
+            .filter(|route| route.finding_id == finding_id)
+            .map(|route| &route.decision)
     }
 
     pub(crate) fn explain_command(&self, selector: &str) -> String {
@@ -90,6 +110,7 @@ pub(crate) fn finding_navigation_with_worktree(
             "ripr agent stub --root {}",
             shell_arg(&input.root.display().to_string())
         ),
+        stub_route: None,
     }
 }
 

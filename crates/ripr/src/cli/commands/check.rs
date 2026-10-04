@@ -936,12 +936,24 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // A `--worktree` run carries `--worktree` into its drill-in commands, so
     // `explain` and `context` analyze the same uncommitted edits and the
     // block never needs an artifact to stay executable (#4321).
-    let drill_in = app::FindingDrillIn::Commands(app::finding_navigation_with_worktree(
+    let navigation = app::finding_navigation_with_worktree(
         &limited_check_input,
         write_artifact.as_deref(),
         explicit.mode,
         worktree_explicitly_provided,
-    ));
+    );
+    // #5471: only the default human render prints the `ripr agent stub`
+    // route, and only as the stub resolver decides it for that finding.
+    let navigation = if matches!(format, OutputFormat::Human) {
+        navigation.with_stub_route(app::test_stub::check_stub_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+        ))
+    } else {
+        navigation
+    };
+    let drill_in = app::FindingDrillIn::Commands(navigation);
     // #4945: repo seam-driven formats run their walks inside the render arms,
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.
