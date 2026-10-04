@@ -1,3 +1,4 @@
+use super::gate::GATE_STATUS_CONFIG_ERROR;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -251,10 +252,25 @@ pub(crate) fn build_policy_readiness_report(input: PolicyReadinessInput) -> Poli
     warnings.extend(suppression_health.warnings.clone());
     warnings.extend(preview_evidence_boundary.warnings.clone());
 
+    // A gate decision that failed evaluation is a config error for
+    // readiness, not a Loaded artifact (#5251 P1): its zeros are not
+    // evidence, so it must block every ready_for_* promotion.
+    let gate_failed = gate_facts.status.as_deref() == Some(GATE_STATUS_CONFIG_ERROR);
+    if gate_failed {
+        warnings.push(Notice {
+            kind: "gate_decision_config_error".to_string(),
+            message: format!(
+                "gate decision input {} reports status config_error; readiness is config_error until the gate evaluates cleanly",
+                gate.path.as_deref().unwrap_or("unknown")
+            ),
+            source_artifact: gate.path.clone(),
+        });
+    }
     let has_config_error = artifacts
         .iter()
         .any(|artifact| artifact.status == ArtifactStatus::Invalid)
-        || suppression_health.state == "config_error";
+        || suppression_health.state == "config_error"
+        || gate_failed;
     let preview_boundary_healthy = preview_evidence_boundary.missing_language_status == 0;
     let baseline_delta_healthy = baseline_facts.stale == 0
         && baseline_facts.invalid == 0
@@ -1142,6 +1158,37 @@ mod tests {
         let rendered = render_policy_readiness_markdown(&report);
         assert!(rendered.contains("Recommended mode: baseline-check"));
         assert!(rendered.contains("gate_eligible: 0"));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_gate_decision_blocks_every_readiness_promotion() -> Result<(), String> {
+        let mut input = input();
+        supply_gate(
+            &mut input,
+            r#"{
+              "schema_version": "0.1",
+              "kind": "gate_decision",
+              "status": "config_error",
+              "config_errors": ["gate evaluate requires --pr-guidance <path> or --gap-ledger <path>"],
+              "summary": {"blocking": 0, "acknowledged": 0, "advisory": 0, "suppressed": 0, "not_applicable": 0},
+              "decisions": []
+            }"#,
+        );
+        supply_baseline(&mut input, clean_baseline_body());
+
+        let report = build_policy_readiness_report(input);
+        assert_eq!(report.status, "config_error");
+        let rendered = render_policy_readiness_json(&report)?;
+        assert!(
+            rendered.contains("\"status\": \"config_error\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("reports status config_error"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("ready_for_"), "{rendered}");
         Ok(())
     }
 
