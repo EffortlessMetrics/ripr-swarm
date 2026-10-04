@@ -476,7 +476,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No new credit for a default-import local in the observation guard.
   RIPR-SPEC-0102 puts default imports out of scope, and RIPR-SPEC-0095
   does not follow default imports through re-export chains. A
-  default-import call keeps `import_path_affinity` and `weakly_exposed`.
+  default-import call whose local name differs from the owner's name
+  keeps `import_path_affinity` and `weakly_exposed`; a default import
+  bound under the owner's own name stays `exposed` (example 17).
 - No change to Rust or Python oracle classification.
 
 ## Acceptance Examples

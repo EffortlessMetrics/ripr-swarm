@@ -359,9 +359,13 @@ rule 4 and the rules below.
     letter, `_` or `.`; a string as a complete quoted literal with the
     same content. A changed key is observed by a literal subscript or
     `.get(` of that key, and a changed list index by a literal subscript
-    of that index (unchanged). A whole-collection comparison counts only
-    when a dict or list display is the other compared operand of the
-    assertion, not when `== {` or `== [` appears anywhere in its text.
+    of that index (unchanged). A changed value literal counts only when
+    the same assertion does not subscript, by literal or `.get(`, a key
+    or index of that collection other than a changed one; an equal value
+    held by an unchanged sibling is not the changed element. A
+    whole-collection comparison counts only when a dict or list display is
+    the other compared operand of the assertion, not when `== {` or `== [`
+    appears anywhere in its text.
 11. **The f-string length gate reads the crediting assertion.** For a
     changed f-string whose literal text changed and whose interpolations
     did not, an assertion that is a pure `len(...)` aggregate cannot
@@ -592,7 +596,10 @@ and the test is `tests/test_subject.py`, which imports each owner from
     from `'port': 8080`; test `assert build()['timeout'] == 8080`:
     `weakly_exposed`, `orthogonal` (today `exposed`). Test
     `assert build() == {'port': 80, 'timeout': 8080}`: `exposed`
-    (unchanged).
+    (unchanged). Owner `def build(): return {'port': 80, 'timeout': 80}`,
+    changed from `'port': 8080`; test `assert build()['timeout'] == 80`:
+    `weakly_exposed`, `orthogonal` (today `exposed`, because the `80`
+    literal matches the changed value whatever key holds it).
 23. Owner `def build(): return [80, 8080]`, changed from `[8080, 8080]`;
     test `assert build()[1] == 8080`: `weakly_exposed` (today `exposed`).
 24. Owner `class Cart:` / `def total(self): return 5 + 1`, changed from
