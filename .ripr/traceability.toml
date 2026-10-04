@@ -8286,6 +8286,8 @@ tests = [
   "crates/ripr/src/analysis/test_stub/tests.rs::impls_local_to_a_block_are_refused",
   "crates/ripr/src/analysis/test_stub/tests.rs::a_proptest_sibling_module_does_not_outrank_one_naming_the_owner",
   "crates/ripr/src/analysis/test_stub/tests.rs::refusals_name_the_blocker",
+  "crates/ripr/src/analysis/test_stub/tests.rs::owners_behind_a_non_test_cfg_are_refused",
+  "crates/ripr/src/analysis/test_stub/tests.rs::comments_and_strings_do_not_count_as_naming_the_owner",
 ]
 fixtures = []
 code = [
