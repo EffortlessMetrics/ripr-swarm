@@ -299,3 +299,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (12)
+
+Reason:
+RIPR-SPEC-0197: a refused assert_eq! discloses why it was not credited; a refused context no longer claims no assertion or oracle was detected
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

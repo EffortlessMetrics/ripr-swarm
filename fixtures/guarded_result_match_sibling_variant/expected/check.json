@@ -33,7 +33,7 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: pins_the_sibling_variant_of_the_changed_owner"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: pins_the_sibling_variant_of_the_changed_owner", "assertion not credited: `assert_eq!` in pins_the_sibling_variant_of_the_changed_owner at tests/protocol.rs:6: the assertion is inside a `match` arm"],
       "missing": ["Missing discriminator value: ParseError::InvalidData", "No exact error variant discriminator was detected"],
       "assertion_texts": {
         "5": "match expect_ready(..) { Ok(..) => .., Err(..) => Err(ParseError::UnexpectedEof) }",
@@ -148,7 +148,7 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":9}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: pins_the_sibling_variant_of_the_changed_owner"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::InvalidData)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach expect_ready: pins_the_sibling_variant_of_the_changed_owner", "assertion not credited: `assert_eq!` in pins_the_sibling_variant_of_the_changed_owner at tests/protocol.rs:6: the assertion is inside a `match` arm"],
       "missing": ["Missing discriminator value: ParseError::InvalidData", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "match expect_ready(..) { Ok(..) => .., Err(..) => Err(ParseError::UnexpectedEof) }",

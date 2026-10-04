@@ -33,8 +33,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"input * 3","line":2}
       ],
-      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: checks_weight"],
-      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches returned value: input * 3", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: checks_weight", "assertion not credited: `assert_eq!` in checks_weight at tests/weight_tests.rs:6: the assertion is inside a closure ripr cannot see invoked exactly once"],
+      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
         "6": "assert_eq!(weight(input), 12);"
       },
@@ -86,8 +86,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
-      "suggested_next_action": "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.",
+      "recommended_next_step": "ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:6; the \"assertion not credited\" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+      "suggested_next_action": "ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:6; the \"assertion not credited\" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

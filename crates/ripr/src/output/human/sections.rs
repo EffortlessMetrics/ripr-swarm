@@ -50,6 +50,18 @@ pub(crate) fn render_finding_digest_with_config(finding: &Finding, config: &Ripr
     if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
+    // The refusal names a file and a blocker; a cut would drop the blocker,
+    // so it wraps like the next step instead of truncating.
+    if let Some(refusal) = evidence_value(finding, crate::domain::ASSERTION_NOT_CREDITED_PREFIX) {
+        const NOT_CREDITED_PREFIX: &str = "  Not credited: ";
+        let collapsed = refusal.split_whitespace().collect::<Vec<_>>().join(" ");
+        if NOT_CREDITED_PREFIX.chars().count() + collapsed.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{NOT_CREDITED_PREFIX}{collapsed}\n"));
+        } else {
+            out.push_str(&wrap_human_prose(&collapsed, NOT_CREDITED_PREFIX, "    "));
+            out.push('\n');
+        }
+    }
     if let Some(gap) = &finding.canonical_gap {
         out.push_str(&format!("  Canonical gap: {}\n", gap.id));
     }
@@ -1035,7 +1047,12 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
             }
         }
         ExposureClass::ReachableUnrevealed => {
-            if reveal.observe.state == StageState::No {
+            if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
+                Some(
+                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
+                        .to_string(),
+                )
+            } else if reveal.observe.state == StageState::No {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),

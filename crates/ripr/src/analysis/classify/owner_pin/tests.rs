@@ -858,3 +858,220 @@ fn owner_pin_requires_test_item_ancestry_and_enabled_cfg() {
         assert_eq!(weight_admitted(&tests).len(), 1, "{attribute}");
     }
 }
+
+/// The first refusal for the one test's first assertion, with `others`
+/// indexed beside the weight library and the test file.
+fn weight_refusal(tests: &str, others: &[(&str, &str)]) -> Option<AssertionRefusal> {
+    let mut files = vec![(LIB, WEIGHT_LIB), (TESTS, tests)];
+    files.extend_from_slice(others);
+    let index = index(&files);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS));
+    assert!(test.is_some(), "the fixture test must be indexed");
+    let test = test?;
+    assert!(
+        !test.assertions.is_empty(),
+        "the test's assertions must parse"
+    );
+    OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+}
+
+#[test]
+fn a_foreign_macro_that_only_invokes_assert_eq_binds_nothing() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    // ripgrep's `rgtest!(name, |dir, cmd| { assert_eq!(..) })` and friends.
+    for other in [
+        "rgtest!(f, |dir, cmd| { assert_eq!(1, 1); });",
+        "wrap! { assert_eq![1, 1] }",
+        "wrap!(assert_eq!{1, 1});",
+    ] {
+        assert_eq!(
+            weight_refusal(tests, &[("src/other.rs", other)]),
+            None,
+            "{other}"
+        );
+    }
+    // A definition the expansion may create stays ambiguous.
+    for other in [
+        "make!(assert_eq);",
+        "make! { macro_rules! assert_eq { () => {} } }",
+        "make! { macro assert_eq() {} }",
+        "make!($assert_eq!(1, 1));",
+        "make!(assert_eq ! );",
+    ] {
+        assert!(
+            matches!(
+                weight_refusal(tests, &[("src/other.rs", other)]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{other}"
+        );
+    }
+}
+
+#[test]
+fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
+    let shadow = "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }";
+    let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    // regex-syntax's `mod tests { macro_rules! assert_eq { .. } }`.
+    for other in [
+        format!("mod tests {{ {shadow} }}"),
+        format!("fn helper() {{ {shadow} }}"),
+        format!("mod a {{ mod tests {{ {shadow} }} }}"),
+    ] {
+        assert_eq!(
+            weight_refusal(outside, &[("src/other.rs", &other)]),
+            None,
+            "{other}"
+        );
+    }
+    // The scope leaves its module through `#[macro_use]` or a child file,
+    // and a file-level definition reaches every file that file declares.
+    for other in [
+        shadow.to_string(),
+        format!("#[macro_use] mod tests {{ {shadow} }}"),
+        format!("#[macro_use] mod a {{ mod tests {{ {shadow} }} }}"),
+        format!("mod tests {{ {shadow} mod child; }}"),
+    ] {
+        assert!(
+            matches!(
+                weight_refusal(outside, &[("src/other.rs", &other)]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{other}"
+        );
+    }
+    // A test inside the confining module is refused; one after it is not.
+    let inside = format!(
+        "use demo::weight;\nmod tests {{\n    use super::*;\n    {shadow}\n    #[test]\n    fn weighs() {{ assert_eq!(weight(4), 12); }}\n}}\n"
+    );
+    assert!(matches!(
+        weight_refusal(&inside, &[]),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+    let after = format!(
+        "use demo::weight;\nmod tests {{\n    {shadow}\n}}\n#[test]\nfn weighs() {{ assert_eq!(weight(4), 12); }}\n"
+    );
+    assert_eq!(weight_refusal(&after, &[]), None);
+}
+
+#[test]
+fn each_refusal_names_the_gate_that_failed() {
+    let refusal = |body: &str, attrs: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n{attrs}\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let conditional = |construct: &'static str| {
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::ConditionalPath(construct),
+        ))
+    };
+    let pin = "assert_eq!(weight(4), 12);";
+    assert_eq!(refusal(pin, ""), None);
+    assert_eq!(
+        refusal(&format!("for _ in 0..2 {{ {pin} }}"), ""),
+        conditional("a `for` loop, which may run zero times")
+    );
+    assert_eq!(
+        refusal(&format!("while false {{ {pin} }}"), ""),
+        conditional("a `while` loop, which may run zero times")
+    );
+    assert_eq!(
+        refusal(&format!("if true {{ {pin} }}"), ""),
+        conditional("an `if` branch")
+    );
+    assert_eq!(
+        refusal(&format!("return; {pin}"), ""),
+        conditional("code after an earlier `return`")
+    );
+    assert_eq!(
+        refusal(&format!("t!(x); {pin}"), ""),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::OpaqueMacro("t".to_string())
+        ))
+    );
+    assert_eq!(
+        refusal(pin, "#[cfg(feature = \"std\")]"),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::TestAttribute("#[cfg(feature = \"std\")]".to_string())
+        ))
+    );
+    assert_eq!(
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nasync fn weighs() {{ {pin} }}\n"),
+            &[]
+        ),
+        Some(AssertionRefusal::Syntax(AssertionContextRefusal::AsyncTest))
+    );
+}
+
+#[test]
+fn a_macro_binding_refusal_points_at_its_site() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let index = index(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, tests),
+        (
+            "src/other.rs",
+            "fn a() {}\n#[macro_use]\nextern crate other;\n",
+        ),
+    ]);
+    let test = index.tests().at(0);
+    let probe = return_probe(owner(&index, "weight"), "x * 3");
+    let refusal = OwnerPinSyntax::default().equality_assertion_refusal(
+        &probe,
+        test,
+        &test.assertions[0],
+        &index,
+    );
+    let located = match &refusal {
+        Some(AssertionRefusal::MacroBinding {
+            name,
+            site: Some((path, site)),
+        }) => Some((name, path, site)),
+        _ => None,
+    };
+    assert!(located.is_some(), "expected a located refusal: {refusal:?}");
+    let Some((name, path, site)) = located else {
+        return;
+    };
+    assert_eq!(name, "assert_eq");
+    assert_eq!(path, Path::new("src/other.rs"));
+    assert_eq!(site.line, 3);
+    assert_eq!(
+        site.kind,
+        MacroBindingKind::MacroUse("extern crate other;".to_string())
+    );
+    assert_eq!(
+        refusal.as_ref().map(AssertionRefusal::describe).as_deref(),
+        Some(
+            "`#[macro_use] extern crate other;` at src/other.rs:3 imports macros from code ripr did not index, which may redefine `assert_eq!`"
+        )
+    );
+    // An admitted assertion has no refusal to disclose.
+    let index = index_without_other(tests);
+    let test = index.tests().at(0);
+    assert_eq!(
+        OwnerPinSyntax::default().equality_assertion_refusal(
+            &probe,
+            test,
+            &test.assertions[0],
+            &index
+        ),
+        None
+    );
+}
+
+fn index_without_other(tests: &str) -> RustIndex {
+    index(&[(LIB, WEIGHT_LIB), (TESTS, tests)])
+}

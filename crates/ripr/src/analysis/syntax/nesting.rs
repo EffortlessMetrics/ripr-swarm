@@ -40,8 +40,26 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     if rust_nesting_refusal(text).is_some() {
         return None;
     }
-    let parse = SourceFile::parse(text, Edition::CURRENT);
+    let parse = parse_source_file(text);
     parse.errors().is_empty().then_some(parse)
+}
+
+/// Parse with the current edition, retrying as Rust 2021 when that fails.
+/// ripr does not read each crate's edition, and 2024 reserves `gen`, so a
+/// 2021 crate's `fn arbitrary(gen: &mut Gen)` is a syntax error under the
+/// current edition alone and its whole file fell to lexical fallback. The
+/// 2021 parse is used only when it is error-free.
+pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
+    let parse = SourceFile::parse(text, Edition::CURRENT);
+    if parse.errors().is_empty() {
+        return parse;
+    }
+    let legacy = SourceFile::parse(text, Edition::Edition2021);
+    if legacy.errors().is_empty() {
+        legacy
+    } else {
+        parse
+    }
 }
 
 /// Typed `rust_nesting_budget` static-limit reason when `text` is over any
@@ -356,6 +374,24 @@ fn skip_char_or_lifetime(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rust_2021_gen_identifier_parses_clean_and_real_errors_do_not() {
+        // regex-automata: `fn arbitrary(gen: &mut quickcheck::Gen)`. `gen` is
+        // reserved in 2024, so the current edition alone rejected the file.
+        let legacy = "fn arbitrary(gen: &mut Gen) -> u8 { gen.next() }";
+        assert!(
+            !SourceFile::parse(legacy, Edition::CURRENT)
+                .errors()
+                .is_empty(),
+            "control: the current edition must reject `gen` as a binding"
+        );
+        assert!(parse_clean_source_file(legacy).is_some());
+        assert!(parse_clean_source_file("fn f() -> u8 { 1 }").is_some());
+        assert!(parse_clean_source_file("fn f( {").is_none());
+        // An error under both editions keeps the current edition's errors.
+        assert!(!parse_source_file("fn gen( {").errors().is_empty());
+    }
 
     fn nested(open: &str, close: &str, levels: usize) -> String {
         format!(

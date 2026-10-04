@@ -13,6 +13,7 @@ Start here:
   File: fixtures/source_role_harness_suppression/input/src/lib.rs:2
   Static exposure: unknown (propagation_unknown, note, confidence 0.66)
   Why unknown: the path from the changed behavior to an observable sink is not statically clear
+  Not credited: `assert_eq!` in contract_journey at tests/contract.rs:26: the assertion is inside code after an earlier `return`
   Changed behavior: amount >= threshold
   Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do…
   Related test (1 of 2): tests/contract.rs:19 contract_journey

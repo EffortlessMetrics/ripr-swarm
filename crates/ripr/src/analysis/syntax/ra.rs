@@ -1,6 +1,8 @@
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
+#[cfg(test)]
+use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
-    AstNode, Edition, SourceFile, TextSize,
+    AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericParams, HasName},
 };
 mod property_macros;
@@ -372,7 +374,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
     if let Some(reason) = rust_nesting_refusal(text) {
         return Err(reason);
     }
-    let parse = SourceFile::parse(text, Edition::CURRENT);
+    let parse = super::nesting::parse_source_file(text);
     let errors = parse.errors();
     if !errors.is_empty() {
         return Err(format!("parser reported {} syntax errors", errors.len()));

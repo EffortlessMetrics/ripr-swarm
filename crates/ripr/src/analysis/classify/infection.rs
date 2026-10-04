@@ -99,7 +99,10 @@ pub(in crate::analysis) fn infection_evidence(
                 StageEvidence::new(
                     StageState::Unknown,
                     Confidence::Low,
-                    "Related tests use opaque fixtures; activation/infection is unknown",
+                    format!(
+                        "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown",
+                        probe_literals.join(", ")
+                    ),
                 )
             }
         }
@@ -269,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn predicate_infection_reports_opaque_fixture_when_literals_are_missing() {
+    fn predicate_infection_names_the_boundary_when_tests_pass_no_literals() {
         let probe = probe(ProbeFamily::Predicate, "value > 10");
         let test = test_with_literals(&[]);
         let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
@@ -277,7 +280,7 @@ mod tests {
         assert_eq!(evidence.state, StageState::Unknown);
         assert_eq!(
             evidence.summary,
-            "Related tests use opaque fixtures; activation/infection is unknown"
+            "Related tests pass no literal ripr can compare with the changed boundary [10] (inputs are strings, computed values or fixtures); activation/infection is unknown"
         );
     }
 

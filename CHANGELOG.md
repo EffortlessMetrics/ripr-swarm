@@ -11,6 +11,26 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Verdicts: ripr credits more `assert_eq!` oracles that real tests run and
+  says why when it does not. A macro that only invokes `assert_eq!` in its
+  arguments (ripgrep's `rgtest!`), a `macro_rules! assert_eq` confined to one
+  inline test module (regex-syntax), a glob import from an indexed sibling
+  workspace crate, and a Rust 2021 file that uses `gen` as an identifier no
+  longer make every `assert_eq!` in the workspace unestablished. On ripgrep a
+  changed `escape` now reads `exposed` instead of `reachable_unrevealed`.
+  `assert_eq!` inside a `loop` first iteration, and `#[macro_use]` on a
+  resolved module, are admitted with compiled runtime controls.
+- Verdicts: a refused `assert_eq!` is named with its blocker, for example
+  "the test carries `#[cfg(feature = "std")]`" or "`#[macro_use] extern crate
+  other;` at src/other.rs:3", in a `Not credited:` line and an `assertion not
+  credited:` evidence entry. A refused context no longer reports "no detected
+  assertion observes the changed value" or "no relevant oracle was detected".
+- Char and byte literals (`b'9'`) are literal facts again, so a predicate
+  such as `digit > b'9'` has a visible boundary. Comment and string masking had
+  hidden them since 0.10.
+- The all-no-path note counts related tests before bounded packing, so it no
+  longer says "8 related tests" beside a finding that lists 81.
+
 - GitHub: `ripr check --format github` omits `,line=` when a finding's probe
   location is line 0, instead of emitting out-of-contract `line=0`. Findings
   with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are

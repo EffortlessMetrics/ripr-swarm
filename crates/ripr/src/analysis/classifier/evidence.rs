@@ -1,10 +1,10 @@
 use crate::analysis::classify::{
-    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
-    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
-    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
-    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
-    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
-    same_test_pairing_missing_summary,
+    ASSERTION_CONTEXT_UNESTABLISHED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    PropagationWitnessV1, ReturnOracleAdmission, activation_evidence_with_value_facts, classify,
+    confidence_score, contains_as_whole_word, current_path_witness,
+    has_same_test_boundary_oracle_pairing, infection_evidence, local_flow_sinks,
+    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
+    reveal_evidence_with_expression, same_test_pairing_missing_summary,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
@@ -34,6 +34,9 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// When Observe is `rust_assertion_context_unestablished`: where the
+    /// first refused related assertion is, and why it was refused.
+    pub(in crate::analysis) assertion_refusal: Option<(String, String)>,
 }
 
 impl ClassifiedProbeEvidence {
@@ -239,7 +242,39 @@ impl ClassifiedProbeEvidence {
                 discriminate: discriminate.clone(),
             },
         };
-        let evidence = evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        let mut evidence =
+            evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        // Disclose the first refused related `assert_eq!` whenever the
+        // refusal can matter: the reveal is not fully established.
+        let assertion_refusal = (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+            || discriminate.state != StageState::Yes)
+            .then(|| {
+                context.related_tests.iter().find_map(|(test, _)| {
+                    test.assertions.iter().find_map(|assertion| {
+                        let refusal = pin_syntax.equality_assertion_refusal(
+                            context.probe,
+                            test,
+                            assertion,
+                            context.index,
+                        )?;
+                        Some((
+                            format!(
+                                "`assert_eq!` in {} at {}:{}",
+                                test.name,
+                                test.file.display(),
+                                assertion.line
+                            ),
+                            refusal.describe(),
+                        ))
+                    })
+                })
+            })
+            .flatten();
+        if let Some((location, reason)) = &assertion_refusal {
+            evidence.push(format!(
+                "{ASSERTION_NOT_CREDITED_PREFIX}{location}: {reason}"
+            ));
+        }
 
         Self {
             ripr,
@@ -255,6 +290,7 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            assertion_refusal,
         }
     }
 

@@ -1,4 +1,4 @@
-use super::mask_comments_and_strings;
+use super::mask_with_char_literals;
 use crate::analysis::facts::LiteralFact;
 
 pub(crate) fn extract_literals(body: &str) -> Vec<String> {
@@ -16,8 +16,8 @@ pub(crate) fn extract_literal_facts(body: &str, start_line: usize) -> Vec<Litera
     // before scanning so commented-out numbers never become evidence.
     // Masking preserves newlines and byte layout, so line attribution
     // stays exact.
-    let masked = mask_comments_and_strings(body);
-    let mut literals = Vec::new();
+    let (masked, char_literals) = mask_with_char_literals(body);
+    let mut literals = char_literal_facts(body, &char_literals, start_line);
     for (offset, line) in masked.lines().enumerate() {
         let mut cursor = 0;
         while cursor < line.len() {
@@ -37,6 +37,34 @@ pub(crate) fn extract_literal_facts(body: &str, start_line: usize) -> Vec<Litera
     literals.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
     literals.dedup_by(|a, b| a.line == b.line && a.value == b.value);
     literals
+}
+
+/// Character and byte literals (`'9'`, `b'9'`) read back from the spans the
+/// mask erased. A boundary such as `digit > b'9'` is a literal boundary;
+/// masking alone would hide it and leave infection unknown.
+fn char_literal_facts(body: &str, spans: &[(usize, usize)], start_line: usize) -> Vec<LiteralFact> {
+    let bytes = body.as_bytes();
+    spans
+        .iter()
+        .filter_map(|&(quote, close)| {
+            let literal = body.get(quote..=close)?;
+            let byte_prefix = quote
+                .checked_sub(1)
+                .is_some_and(|prefix| bytes[prefix] == b'b')
+                && quote.checked_sub(2).is_none_or(|before| {
+                    !(bytes[before].is_ascii_alphanumeric() || bytes[before] == b'_')
+                });
+            let line = start_line + bytes[..quote].iter().filter(|byte| **byte == b'\n').count();
+            Some(LiteralFact {
+                line,
+                value: if byte_prefix {
+                    format!("b{literal}")
+                } else {
+                    literal.to_string()
+                },
+            })
+        })
+        .collect()
 }
 
 fn numeric_literal_at(line: &str, cursor: usize) -> Option<(String, usize)> {
@@ -202,6 +230,34 @@ fn is_identifier_tail_before(line: &str, cursor: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn char_and_byte_literals_are_boundaries_but_lifetimes_and_strings_are_not() {
+        // semver's `digit < b'0' || digit > b'9'`: the mask hides char
+        // literals, so without reading them back the boundary vanished.
+        assert_eq!(
+            extract_literals("digit < b'0' || digit > b'9'"),
+            vec!["b'0'".to_string(), "b'9'".to_string()]
+        );
+        assert_eq!(extract_literals("c == 'x'"), vec!["'x'".to_string()]);
+        assert_eq!(extract_literals("c == '\\n'"), vec!["'\\n'".to_string()]);
+        // A `b` that ends an identifier is not a byte prefix.
+        assert_eq!(extract_literals("verb'x'"), vec!["'x'".to_string()]);
+        for text in [
+            "fn f<'a>(x: &'a str) -> &'a str { x }",
+            "'outer: loop { break 'outer; }",
+            "let s = \"b'9'\"; // b'8'",
+        ] {
+            assert!(extract_literals(text).is_empty(), "{text}");
+        }
+        let facts = extract_literal_facts("let a = 1;\nlet c = b'z';", 10);
+        assert!(
+            facts
+                .iter()
+                .any(|fact| fact.line == 11 && fact.value == "b'z'"),
+            "{facts:?}"
+        );
+    }
 
     #[test]
     fn extract_literals_sorts_and_deduplicates_values() {

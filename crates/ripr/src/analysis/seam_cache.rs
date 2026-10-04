@@ -540,7 +540,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// fabricate property-body functions/tests. Published 1.16 facts must miss.
 /// `1.18`: parser raw oracle scans exclude opaque property bodies (#5131).
 /// Published `1.17` favorable discarded-oracle facts cannot replay.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.18";
+/// `1.19`: files that only parse as Rust 2021 (`gen` identifiers) are
+/// parser-backed, and literal facts include char and byte literals. Published
+/// `1.18` lexical-fallback and literal facts must miss.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.19";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3580,7 +3583,7 @@ mod tests {
         // 1.12 -> 1.13: impl_context records the function's impl self type (#4558).
         // 1.13 -> 1.14: `FunctionFact` gains the parser's item container
         // (#4478); a warm pre-bump hit would read every owner as `Unknown`.
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.18");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.19");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes

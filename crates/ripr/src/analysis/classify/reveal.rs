@@ -2013,7 +2013,8 @@ fn related_test_rank(test: &RelatedTest) -> u8 {
     }
 }
 
-pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)";
+pub(in crate::analysis) const ASSERTION_CONTEXT_UNESTABLISHED: &str =
+    crate::domain::ASSERTION_CONTEXT_UNESTABLISHED;
 
 fn build_observe_evidence(matched_any: bool, refused_context: bool) -> StageEvidence {
     if matched_any {

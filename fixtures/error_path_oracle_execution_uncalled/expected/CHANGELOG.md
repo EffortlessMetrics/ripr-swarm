@@ -37,3 +37,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_uncalled (4)
+
+Reason:
+RIPR-SPEC-0197: a refused assert_eq! discloses why it was not credited; a refused context no longer claims no assertion or oracle was detected
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_uncalled (5)
+
+Reason:
+RIPR-SPEC-0197: refusal guidance names the missing standard assert_eq! execution or binding
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

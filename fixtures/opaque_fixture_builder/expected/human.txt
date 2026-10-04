@@ -19,7 +19,7 @@ Start here:
   Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
     - reach yes: Related tests appear to reach discounted_total: fixture_builder_case_has_no_discount
-    - infection unknown: Related tests use opaque fixtures; activation/infection is unknown
+    - infection unknown: Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

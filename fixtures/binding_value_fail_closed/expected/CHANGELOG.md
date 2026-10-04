@@ -118,3 +118,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — binding_value_fail_closed (8)
+
+Reason:
+RIPR-SPEC-0158: char literal test inputs are literal facts; map_or_else probe moves from infection_unknown to propagation_unknown with no infection yes
+
+Command:
+`cargo xtask goldens bless binding_value_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

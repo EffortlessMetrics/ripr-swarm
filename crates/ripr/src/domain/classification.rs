@@ -47,6 +47,17 @@ negative-path case for the code this helper checks.";
 /// the analysis/output seam (reuse, don't fork).
 pub(crate) const TRANSITIVE_REACH_WITNESS_PREFIX: &str = "For example, the test ";
 
+/// Evidence prefix naming the first related `assert_eq!` ripr found but did
+/// not credit, and why (`rust_assertion_context_unestablished`). The
+/// classifier writes it; the human renderer quotes it so a refusal says what
+/// blocked it instead of reading as "no assertion".
+pub(crate) const ASSERTION_NOT_CREDITED_PREFIX: &str = "assertion not credited: ";
+
+/// Observe summary when a related `assert_eq!` exists but its execution or
+/// macro binding is not statically established (RIPR-SPEC-0197). Shared so
+/// the renderer can tell this refusal from "no assertion at all".
+pub(crate) const ASSERTION_CONTEXT_UNESTABLISHED: &str = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)";
+
 /// RIPR-SPEC-0114/0117: stable evidence prefixes for named static-limitation
 /// detail. Producers append these lines to `Finding.evidence`; renderers and
 /// corpus checks consume the same prefixes so the unresolved edge stays visible

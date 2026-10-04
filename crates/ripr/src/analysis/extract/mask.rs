@@ -113,6 +113,14 @@ fn raw_hashes_before_quote(bytes: &[u8], quote_index: usize) -> Option<usize> {
 /// length is preserved, so downstream line-based extraction keeps exact
 /// line attribution.
 pub(crate) fn mask_comments_and_strings(text: &str) -> String {
+    mask_with_char_literals(text).0
+}
+
+/// [`mask_comments_and_strings`], plus the byte range of every character
+/// literal it masked in code (quote to closing quote, inclusive), so a
+/// caller can read char and byte literals back from the original text.
+pub(crate) fn mask_with_char_literals(text: &str) -> (String, Vec<(usize, usize)>) {
+    let mut char_literals = Vec::new();
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len());
     let mut state = MaskState::Code;
@@ -152,6 +160,7 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
                 if byte == b'\''
                     && let Some(close) = char_literal_close(bytes, index)
                 {
+                    char_literals.push((index, close));
                     // Mask the whole character literal, delimiters
                     // included, so its contents never become evidence.
                     while index <= close {
@@ -254,7 +263,10 @@ pub(crate) fn mask_comments_and_strings(text: &str) -> String {
     // Masking only replaces whole characters with spaces (span edges are
     // character boundaries), so the output is always valid UTF-8; the
     // fallback keeps the input rather than panicking on a defect.
-    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+    (
+        String::from_utf8(out).unwrap_or_else(|_| text.to_string()),
+        char_literals,
+    )
 }
 
 #[cfg(test)]

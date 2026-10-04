@@ -35,7 +35,6 @@ Evidence
 
 Weakness
   - No clear propagation path from changed behavior to an observable sink
-  - No relevant oracle was detected
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - No strong discriminator was detected
   - missing discriminator capacity == threshold: No related test call uses capacity equal to threshold; observed capacity values: 100; observed threshold values: 50

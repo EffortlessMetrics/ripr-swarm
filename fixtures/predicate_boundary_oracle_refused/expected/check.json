@@ -33,7 +33,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"amount - 10","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: amount - 10", "Detected related test input at the changed boundary", "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "Related tests appear to reach discounted_total: boundary, far"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: amount - 10", "Detected related test input at the changed boundary", "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "Related tests appear to reach discounted_total: boundary, far", "assertion not credited: `assert_eq!` in boundary at src/lib.rs:13: the assertion is inside an `if` branch"],
       "missing": ["Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"],
       "assertion_texts": {
         "13": "assert_eq!(discounted_total(100, 100), 90);",

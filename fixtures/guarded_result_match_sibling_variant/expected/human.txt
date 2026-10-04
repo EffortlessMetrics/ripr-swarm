@@ -13,6 +13,7 @@ Start here:
   File: fixtures/guarded_result_match_sibling_variant/input/src/lib.rs:9
   Static exposure: weak (weakly_exposed, warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
+  Not credited: `assert_eq!` in pins_the_sibling_variant_of_the_changed_owner at tests/protocol.rs:6: the assertion is inside a `match` arm
   Changed behavior: return Err(ParseError::InvalidData)
   Missing discriminator (1 of 2): ParseError::InvalidData
   Related test: tests/protocol.rs:4 pins_the_sibling_variant_of_the_changed_owner

@@ -52,7 +52,12 @@ pub(in crate::analysis) fn build_finding(
         && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
         && !context.owner_assertion_shaped
     {
-        Some("Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string())
+        Some(match &evidence.assertion_refusal {
+            Some((location, _)) => format!(
+                "ripr did not credit the {location}; the \"assertion not credited\" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs."
+            ),
+            None => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
+        })
     } else {
         recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
     };
@@ -420,6 +425,7 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            assertion_refusal: None,
         }
     }
 

@@ -46,8 +46,9 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
-    OwnerPinAssertions, empty_macro_binding_ambiguities, local_empty_macro_names,
-    owner_pin_assertions, trusted_macro_binding_ambiguities,
+    AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
+    empty_macro_binding_ambiguities, local_empty_macro_names, owner_pin_assertions,
+    trusted_macro_binding_ambiguities, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use std::cell::{OnceCell, RefCell};
@@ -69,6 +70,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerPinSyntax {
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
+    /// Definitions confined to one inline module or function body, keyed by
+    /// file: they make a name ambiguous only for tests inside that scope.
+    scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
@@ -92,6 +96,39 @@ impl OwnerPinSyntax {
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::Predicate
         ) || !is_bare_assert_eq_invocation(&assertion.text)
             || self.admits(test, assertion, index)
+    }
+
+    /// Why [`Self::admits_equality_assertion`] refused this assertion, for
+    /// disclosure only. `None` when it is admitted. Computed after the
+    /// decision, so it never changes what is credited.
+    pub(in crate::analysis) fn equality_assertion_refusal(
+        &self,
+        probe: &Probe,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        if self.admits_equality_assertion(probe, test, assertion, index) {
+            return None;
+        }
+        let refusal = self
+            .refusal(test, assertion, index)
+            .unwrap_or(AssertionRefusal::Syntax(
+                AssertionContextRefusal::UnidentifiedTest,
+            ));
+        Some(match refusal {
+            AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
+                let site = macro_binding_site(&name, test, index, &|path, line, declaration| {
+                    self.resolved_module_declarations(index).contains(&(
+                        path.to_path_buf(),
+                        line,
+                        declaration.to_string(),
+                    ))
+                });
+                AssertionRefusal::MacroBinding { name, site }
+            }
+            refusal => refusal,
+        })
     }
 
     /// Every out-of-line `mod name;` the module composition resolved to an
@@ -118,6 +155,15 @@ impl OwnerPinSyntax {
     }
 
     fn admits(&self, test: &TestSummary, assertion: &OracleFact, index: &RustIndex) -> bool {
+        self.refusal(test, assertion, index).is_none()
+    }
+
+    fn refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -130,7 +176,7 @@ impl OwnerPinSyntax {
                 .flat_map(|(path, facts)| {
                     trusted_macro_binding_ambiguities(
                         &facts.source,
-                        &index.package_names,
+                        index.macro_scope_crates(),
                         NON_RETURNING_MACROS,
                         &|line, declaration| module_resolved(path, line, declaration),
                     )
@@ -142,10 +188,10 @@ impl OwnerPinSyntax {
             .get(&test.file)
             .filter(|facts| !facts.used_lexical_fallback)
         else {
-            return false;
+            return Some(AssertionRefusal::LexicalFallback);
         };
-        if facts.role_provenance.earliest_unresolved_reason.is_some() {
-            return false;
+        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
+            return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
         }
         let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
         let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
@@ -159,7 +205,7 @@ impl OwnerPinSyntax {
                 .flat_map(|(path, file)| {
                     empty_macro_binding_ambiguities(
                         &file.source,
-                        &index.package_names,
+                        index.macro_scope_crates(),
                         &names,
                         path == &test.file,
                         &|line, declaration| module_resolved(path, line, declaration),
@@ -167,39 +213,257 @@ impl OwnerPinSyntax {
                 })
                 .collect()
         });
-        let ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
+        let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
+        ambiguous.extend(self.scoped_names_for(test, index, &module_resolved));
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
             if edge.kind != SourceRoleProvenanceEdgeKind::Module {
-                return false;
+                return Some(AssertionRefusal::IncludedFile {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                });
             }
             let Some(parent) = index
                 .files()
                 .get(&edge.parent)
                 .filter(|facts| !facts.used_lexical_fallback)
             else {
-                return false;
+                return Some(AssertionRefusal::LexicalFallback);
             };
             if !by_file
                 .entry(edge.parent.clone())
                 .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
                 .admits_module_declaration(edge.line, &edge.declaration)
             {
-                return false;
+                return Some(AssertionRefusal::ModuleDeclaration {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                    declaration: edge.declaration.clone(),
+                });
             }
         }
         by_file
             .entry(test.file.clone())
             .or_insert_with(|| owner_pin_assertions(&facts.source, NON_RETURNING_MACROS))
-            .admits(
+            .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
                 (assertion.line, &assertion.text),
                 &ambiguous,
             )
+            .map(AssertionRefusal::Syntax)
     }
+}
+
+type ScopedMacroBindings = BTreeMap<PathBuf, Vec<(String, MacroBindingSite)>>;
+
+impl OwnerPinSyntax {
+    /// Trusted names that a scoped definition makes ambiguous for `test`.
+    fn scoped_names_for(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+        module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    ) -> Vec<String> {
+        let mut scoped = self.scoped_macro_bindings.borrow_mut();
+        let scoped = scoped.get_or_insert_with(|| {
+            index
+                .files()
+                .iter()
+                .filter(|(_, facts)| facts.source.contains("macro_rules"))
+                .filter_map(|(path, facts)| {
+                    let sites: Vec<_> = trusted_macro_binding_sites(
+                        &facts.source,
+                        index.macro_scope_crates(),
+                        NON_RETURNING_MACROS,
+                        &|line, declaration| module_resolved(path, line, declaration),
+                    )
+                    .into_iter()
+                    .filter(|(_, site)| site.scope.is_some())
+                    .collect();
+                    (!sites.is_empty()).then(|| (path.clone(), sites))
+                })
+                .collect()
+        });
+        scoped
+            .get(&test.file)
+            .into_iter()
+            .flatten()
+            .filter(|(_, site)| site_covers(site, test))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+}
+
+fn site_covers(site: &MacroBindingSite, test: &TestSummary) -> bool {
+    site.scope
+        .is_some_and(|(start, end)| start <= test.start_line && test.end_line <= end)
+}
+
+/// Why an `assert_eq!` was not credited as executing the standard macro.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum AssertionRefusal {
+    /// The test file was indexed by the lexical fallback, not the parser.
+    LexicalFallback,
+    /// Module composition could not place the test file; the reason code.
+    UnresolvedModule(String),
+    /// The test file is composed through `include!`, so its declaration
+    /// context is not exact.
+    IncludedFile { parent: PathBuf, line: usize },
+    /// The `mod` declaration that brings the test file in is gated or nested.
+    ModuleDeclaration {
+        parent: PathBuf,
+        line: usize,
+        declaration: String,
+    },
+    /// A test-local reason from the parser-backed scan.
+    Syntax(AssertionContextRefusal),
+    /// `name!` may be rebound somewhere in the workspace; the first site
+    /// that does so, when ripr could find it.
+    MacroBinding {
+        name: String,
+        site: Option<(PathBuf, MacroBindingSite)>,
+    },
+}
+
+impl AssertionRefusal {
+    /// One reader-facing clause: what blocked crediting the assertion.
+    pub(in crate::analysis) fn describe(&self) -> String {
+        let at = |path: &Path, line: usize| {
+            if line == 0 {
+                path.display().to_string()
+            } else {
+                format!("{}:{line}", path.display())
+            }
+        };
+        match self {
+            Self::LexicalFallback => {
+                "its file did not parse cleanly, so ripr read it with a lexical fallback".into()
+            }
+            Self::UnresolvedModule(reason) => {
+                format!("ripr could not place its file in the crate's module tree ({reason})")
+            }
+            Self::IncludedFile { parent, line } => {
+                format!(
+                    "its file is pulled in by `include!` at {}",
+                    at(parent, *line)
+                )
+            }
+            Self::ModuleDeclaration {
+                parent,
+                line,
+                declaration,
+            } => format!(
+                "`{declaration}` at {} is gated by a `cfg` ripr cannot evaluate, or nested",
+                at(parent, *line)
+            ),
+            Self::Syntax(refusal) => match refusal {
+                AssertionContextRefusal::UnparsedFile => "its file did not parse cleanly".into(),
+                AssertionContextRefusal::UnidentifiedTest => {
+                    "ripr could not identify the test function uniquely".into()
+                }
+                AssertionContextRefusal::AsyncTest => {
+                    "the test is `async`, and ripr does not model its executor".into()
+                }
+                AssertionContextRefusal::TestAttribute(attribute) => {
+                    format!(
+                        "the test carries `{attribute}`, which may change whether or how it runs"
+                    )
+                }
+                AssertionContextRefusal::UnsupportedItemContext => {
+                    "the test or an enclosing module is gated by a `cfg` ripr cannot evaluate"
+                        .into()
+                }
+                AssertionContextRefusal::OpaqueMacro(name) => format!(
+                    "the test calls `{name}!`, whose expansion ripr cannot see, so a hidden `return` or `?` could skip the assertion"
+                ),
+                AssertionContextRefusal::ClosureExit => {
+                    "a closure in the test can return early, or the test yields".into()
+                }
+                AssertionContextRefusal::DuplicateSpelling => {
+                    "the same assertion text appears twice on one line".into()
+                }
+                AssertionContextRefusal::ConditionalPath(construct) => {
+                    format!("the assertion is inside {construct}")
+                }
+                AssertionContextRefusal::MacroBinding(name) => {
+                    format!("`{name}!` may be redefined somewhere in the workspace")
+                }
+                AssertionContextRefusal::StaleSource => {
+                    "the test's source changed while ripr was reading it".into()
+                }
+            },
+            Self::MacroBinding { name, site } => match site {
+                None => format!("`{name}!` may be redefined somewhere in the workspace"),
+                Some((path, site)) => {
+                    let place = at(path, site.line);
+                    match &site.kind {
+                        MacroBindingKind::Unparsed => format!(
+                            "{} did not parse cleanly, so it may redefine `{name}!`",
+                            path.display()
+                        ),
+                        MacroBindingKind::NoImplicitPrelude => format!(
+                            "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
+                        ),
+                        MacroBindingKind::MacroUse(item) => format!(
+                            "`#[macro_use] {item}` at {place} imports macros from code ripr did not index, which may redefine `{name}!`"
+                        ),
+                        MacroBindingKind::ForeignGlob(import) => format!(
+                            "`{import}` at {place} glob-imports from outside the workspace, which may bring in a different `{name}!`"
+                        ),
+                        MacroBindingKind::Definition => {
+                            format!("{place} defines a macro named `{name}`")
+                        }
+                        MacroBindingKind::Import => {
+                            format!("{place} imports a different `{name}` by name")
+                        }
+                        MacroBindingKind::MacroArgument(macro_name) => format!(
+                            "`{macro_name}!` at {place} mentions `{name}` in its arguments, so its expansion may define it"
+                        ),
+                    }
+                }
+            },
+        }
+    }
+}
+
+/// The first workspace file, in path order, whose scan makes `name`
+/// ambiguous. Disclosure only: the admission decision uses the set.
+fn macro_binding_site(
+    name: &str,
+    test: &TestSummary,
+    index: &RustIndex,
+    module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+) -> Option<(PathBuf, MacroBindingSite)> {
+    if !NON_RETURNING_MACROS.contains(&name) {
+        return None;
+    }
+    let sites = |path: &PathBuf, source: &str| {
+        trusted_macro_binding_sites(
+            source,
+            index.macro_scope_crates(),
+            &[name],
+            &|line, declaration| module_resolved(path, line, declaration),
+        )
+    };
+    index
+        .files()
+        .iter()
+        .find_map(|(path, facts)| {
+            sites(path, &facts.source)
+                .into_iter()
+                .find(|(_, site)| site.scope.is_none())
+                .map(|(_, site)| (path.clone(), site))
+        })
+        .or_else(|| {
+            let facts = index.files().get(&test.file)?;
+            sites(&test.file, &facts.source)
+                .into_iter()
+                .find(|(_, site)| site_covers(site, test))
+                .map(|(_, site)| (test.file.clone(), site))
+        })
 }
 
 /// Whether a test file imports a name from outside the workspace; the

@@ -239,6 +239,20 @@ rule only for an assertion whose context was admitted.
   field; its gap witness carries `confidence.value: 0.79` with
   `confidence.basis: static_only`, alongside the same No/No stages,
   zero-oracle relation and guidance. Exposed controls have no gap witness.
+- Each refusal is disclosed with the first gate that failed: an `assertion
+  not credited:` evidence entry and a human `Not credited:` line name the
+  test, the assertion's file and line, and the blocker (a `for`/`while`/`if`
+  construct, a test attribute such as `#[cfg(..)]`, an opaque `name!` call,
+  an `async` test, or the file and line of the macro binding). A refused
+  context does not also claim that no assertion or oracle was detected. The
+  disclosure is computed after admission and never changes what is credited.
+- Macro-binding ambiguity is scoped to what can bind the name: a foreign
+  macro whose arguments only invoke `assert_eq!(..)` binds nothing; a
+  `macro_rules!` confined to an inline module or function body (no
+  `#[macro_use]` on any enclosing module, no out-of-line child module)
+  refuses only tests inside that item; a glob import from a workspace member
+  crate with indexed files is workspace-owned. A name after `macro_rules!`,
+  `macro` or `$` stays ambiguous.
 
 ### Matched before/after observations
 

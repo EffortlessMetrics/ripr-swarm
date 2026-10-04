@@ -34,13 +34,11 @@ Evidence
   - source function argument value input = 4 at line 6
 
 Weakness
-  - No detected assertion observes the changed value, error, field, or effect
-  - No relevant oracle was detected
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - No strong discriminator was detected
 
 Next step
-  Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.
+  ripr did not credit the `assert_eq!` in checks_weight at tests/weight_tests.rs:6; the "assertion not credited" evidence says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.
 Drill in:
   ripr explain --root fixtures/owner_return_pin_deferred_closure_binding/input --diff fixtures/owner_return_pin_deferred_closure_binding/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root fixtures/owner_return_pin_deferred_closure_binding/input --diff fixtures/owner_return_pin_deferred_closure_binding/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb

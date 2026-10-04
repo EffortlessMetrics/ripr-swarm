@@ -192,6 +192,7 @@ fn build_index_with_file_fact_cache(
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
     cancellation::checkpoint()?;
     Ok(CachedRustIndex {
         index,
@@ -274,6 +275,7 @@ fn build_index_with_adapters(
     ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, &index);
     cancellation::checkpoint()?;
     Ok(index)
 }
@@ -318,6 +320,68 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
         .and_then(toml::Value::as_str)
     {
         insert(name);
+    }
+    names
+}
+
+/// `index.package_names` plus every `[workspace] members` crate (literal
+/// paths and trailing `/*` globs, minus `exclude`) that has an indexed file.
+/// A member whose files are not indexed stays foreign: its macro
+/// definitions were not scanned.
+fn macro_owned_crates(root: &Path, index: &RustIndex) -> std::collections::BTreeSet<String> {
+    let mut names = index.package_names.clone();
+    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return names;
+    };
+    let Ok(value) = text.parse::<toml::Table>() else {
+        return names;
+    };
+    let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
+        return names;
+    };
+    let patterns = |key: &str| {
+        workspace
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(|item| item.trim_end_matches('/').to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let excluded = patterns("exclude");
+    let mut members = Vec::new();
+    for pattern in patterns("members") {
+        if let Some(parent) = pattern.strip_suffix("/*") {
+            let Ok(entries) = std::fs::read_dir(root.join(parent)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    members.push(format!("{parent}/{name}"));
+                }
+            }
+        } else if !pattern.contains(['*', '?', '[']) {
+            members.push(pattern);
+        }
+    }
+    for member in members {
+        if excluded.contains(&member) {
+            continue;
+        }
+        let directory = Path::new(&member);
+        if !index.files().iter().any(|(path, _)| {
+            let path = path.strip_prefix(root).unwrap_or(path);
+            path.strip_prefix("./")
+                .unwrap_or(path)
+                .starts_with(directory)
+        }) {
+            continue;
+        }
+        names.extend(manifest_package_names(&root.join(directory)));
     }
     names
 }
@@ -427,6 +491,46 @@ mod tests {
             root.join("Cargo.toml"),
             "[package]\nname='test'\nversion='0.1.0'\nedition='2024'\n",
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn macro_owned_crates_add_indexed_workspace_members_only() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("macro_owned_crates")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = ['regex-syntax', 'crates/*']\nexclude = ['crates/skip']\n",
+        )?;
+        for (dir, manifest) in [
+            ("regex-syntax", "[package]\nname = 'regex-syntax'\n"),
+            (
+                "crates/cli",
+                "[package]\nname = 'grep-cli'\n[lib]\nname = 'grep_cli_lib'\n",
+            ),
+            ("crates/unindexed", "[package]\nname = 'unindexed'\n"),
+            ("crates/skip", "[package]\nname = 'skip'\n"),
+        ] {
+            fs::create_dir_all(root.join(dir).join("src"))?;
+            fs::write(root.join(dir).join("Cargo.toml"), manifest)?;
+            fs::write(root.join(dir).join("src/lib.rs"), "pub fn f() {}\n")?;
+        }
+        let files = vec![
+            PathBuf::from("regex-syntax/src/lib.rs"),
+            PathBuf::from("crates/cli/src/lib.rs"),
+            PathBuf::from("crates/skip/src/lib.rs"),
+        ];
+        let index = build_index(&root, &files)?;
+        // The root is a virtual manifest: no package names of its own.
+        assert!(index.package_names.is_empty());
+        let owned = index.macro_scope_crates();
+        for name in ["regex_syntax", "regex-syntax", "grep_cli", "grep_cli_lib"] {
+            assert!(owned.contains(name), "{name}: {owned:?}");
+        }
+        // Not indexed, or excluded: its macros were not scanned.
+        for name in ["unindexed", "skip"] {
+            assert!(!owned.contains(name), "{name}: {owned:?}");
+        }
+        fs::remove_dir_all(&root)?;
         Ok(())
     }
 

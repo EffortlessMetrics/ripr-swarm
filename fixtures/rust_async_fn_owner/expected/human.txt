@@ -13,8 +13,9 @@ Start here:
   File: fixtures/rust_async_fn_owner/input/src/lib.rs:2
   Static exposure: unknown (propagation_unknown, note, confidence 0.43)
   Why unknown: the path from the changed behavior to an observable sink is not statically clear
+  Not credited: `assert_eq!` in above_threshold_gets_reduced at src/lib.rs:12: the test is `async`, and ripr does not model its executor
   Changed behavior: capacity > threshold
-  Missing discriminator (1 of 5): capacity == threshold
+  Missing discriminator (1 of 4): capacity == threshold
   Related test: src/lib.rs:10 above_threshold_gets_reduced
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
   Evidence: reach yes · infection weak · propagation unknown · observation no · discriminator no

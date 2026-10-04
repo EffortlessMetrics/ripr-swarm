@@ -18,6 +18,7 @@ type FunctionKey = (usize, usize, String);
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct OwnerPinAssertions {
+    parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
     module_declarations: BTreeMap<(usize, String), bool>,
 }
@@ -25,8 +26,43 @@ pub(crate) struct OwnerPinAssertions {
 #[derive(Clone, Debug, Default)]
 struct FunctionAssertions {
     body: String,
-    assertions: BTreeSet<AssertionKey>,
+    /// Why every assertion in this test is refused, when the refusal is a
+    /// property of the whole test rather than of one invocation.
+    refusal: Option<AssertionContextRefusal>,
+    assertions: BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>>,
     macros: BTreeSet<String>,
+}
+
+/// Why one `assert_eq!` invocation is not on an established execution path.
+/// Each variant is the first gate that failed; a later gate may also fail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AssertionContextRefusal {
+    /// The file holding the test is not parser-clean.
+    UnparsedFile,
+    /// No unique test function with this name and line span was found.
+    UnidentifiedTest,
+    /// `async fn` tests run under an executor ripr does not model.
+    AsyncTest,
+    /// An attribute other than `#[test]` (for example `#[should_panic]`,
+    /// `#[ignore]` or a `#[cfg(..)]`) may change whether or how it runs.
+    TestAttribute(String),
+    /// The test is nested in an executable body, or an enclosing module is
+    /// gated by a `cfg` ripr cannot evaluate for test builds.
+    UnsupportedItemContext,
+    /// The body invokes a macro whose expansion ripr cannot see, so a hidden
+    /// `return` or `?` could skip the assertion.
+    OpaqueMacro(String),
+    /// A closure in the body can exit early (`return`, `?`) or the body
+    /// yields.
+    ClosureExit,
+    /// The same assertion text appears twice on one line.
+    DuplicateSpelling,
+    /// The invocation sits where it may not run: names the construct.
+    ConditionalPath(&'static str),
+    /// The test uses a macro name some workspace file may rebind.
+    MacroBinding(String),
+    /// The indexed body no longer matches the parsed source.
+    StaleSource,
 }
 
 impl OwnerPinAssertions {
@@ -37,22 +73,42 @@ impl OwnerPinAssertions {
             .unwrap_or(false)
     }
 
-    pub(crate) fn admits(
+    /// The first gate that refuses this assertion, or `None` when it is
+    /// admitted on an established execution path.
+    pub(crate) fn refusal(
         &self,
         function: (usize, usize, &str),
         body: &str,
         assertion: (usize, &str),
         ambiguous_macros: &BTreeSet<String>,
-    ) -> bool {
-        self.functions
+    ) -> Option<AssertionContextRefusal> {
+        let Some(facts) = self
+            .functions
             .get(&(function.0, function.1, function.2.to_string()))
-            .is_some_and(|facts| {
-                facts.body == body
-                    && facts.macros.is_disjoint(ambiguous_macros)
-                    && facts
-                        .assertions
-                        .contains(&(assertion.0, assertion.1.to_string()))
-            })
+        else {
+            return Some(if self.parsed {
+                AssertionContextRefusal::UnidentifiedTest
+            } else {
+                AssertionContextRefusal::UnparsedFile
+            });
+        };
+        if let Some(refusal) = &facts.refusal {
+            return Some(refusal.clone());
+        }
+        if facts.body != body {
+            return Some(AssertionContextRefusal::StaleSource);
+        }
+        if let Some(name) = facts.macros.intersection(ambiguous_macros).next() {
+            return Some(AssertionContextRefusal::MacroBinding(name.clone()));
+        }
+        match facts
+            .assertions
+            .get(&(assertion.0, assertion.1.to_string()))
+        {
+            Some(Ok(())) => None,
+            Some(Err(refusal)) => Some(refusal.clone()),
+            None => Some(AssertionContextRefusal::UnidentifiedTest),
+        }
     }
 }
 
@@ -73,6 +129,22 @@ pub(crate) fn trusted_macro_binding_ambiguities(
     module_resolved: &dyn Fn(usize, &str) -> bool,
 ) -> BTreeSet<String> {
     macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), module_resolved)
+        .into_iter()
+        .filter(|(_, site)| site.scope.is_none())
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Every binding site the scan finds, in source order, including
+/// definitions whose textual scope is one inline module or function
+/// ([`MacroBindingSite::scope`]); callers apply those only to tests inside it.
+pub(crate) fn trusted_macro_binding_sites(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+) -> Vec<(String, MacroBindingSite)> {
+    macro_binding_ambiguities(source, packages, trusted, &BTreeSet::new(), module_resolved)
 }
 
 /// Apply the same binding/import/opaque-expansion authority to candidate empty
@@ -91,6 +163,41 @@ pub(crate) fn empty_macro_binding_ambiguities(
         BTreeSet::new()
     };
     macro_binding_ambiguities(source, packages, &trusted, &allowed, module_resolved)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Where a file may rebind a trusted macro name, and how.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MacroBindingSite {
+    /// 1-based line of the binding item; 0 when the file did not parse.
+    pub(crate) line: usize,
+    pub(crate) kind: MacroBindingKind,
+    /// For a `macro_rules!` definition whose textual scope cannot leave an
+    /// inline module or function body: that item's first and last line.
+    /// `None` means the binding may reach any file in the workspace.
+    pub(crate) scope: Option<(usize, usize)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MacroBindingKind {
+    /// The file is not parser-clean, so any binding may hide in it.
+    Unparsed,
+    /// `#![no_implicit_prelude]` removes the standard macros.
+    NoImplicitPrelude,
+    /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
+    /// to an indexed file; the text is the item it is attached to.
+    MacroUse(String),
+    /// A glob import from outside the workspace; the text is its path.
+    ForeignGlob(String),
+    /// A `macro_rules!` or `macro` definition with the trusted name.
+    Definition,
+    /// A `use` that brings the trusted name into scope.
+    Import,
+    /// Another macro's arguments mention the name, so its expansion may
+    /// define it.
+    MacroArgument(String),
 }
 
 fn macro_binding_ambiguities(
@@ -99,8 +206,8 @@ fn macro_binding_ambiguities(
     trusted: &[&str],
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
-) -> BTreeSet<String> {
-    let mut ambiguous = BTreeSet::new();
+) -> Vec<(String, MacroBindingSite)> {
+    let mut ambiguous = Vec::new();
     if !source.contains("macro")
         && !source.contains("use")
         && !source.contains("no_implicit_prelude")
@@ -108,12 +215,31 @@ fn macro_binding_ambiguities(
     {
         return ambiguous;
     }
-    let all = || trusted.iter().map(|name| (*name).to_string()).collect();
-    let Some(parse) = parse_clean_source_file(source) else {
-        return all();
+    let all = |line: usize, kind: MacroBindingKind| {
+        trusted
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_string(),
+                    MacroBindingSite {
+                        line,
+                        kind: kind.clone(),
+                        scope: None,
+                    },
+                )
+            })
+            .collect()
     };
-    // Built only for a `#[macro_use]` module, which most files lack.
-    let mut lines = None;
+    let Some(parse) = parse_clean_source_file(source) else {
+        return all(0, MacroBindingKind::Unparsed);
+    };
+    // Built only when a binding site is found, which most files lack.
+    let lines = std::cell::OnceCell::new();
+    let line_of = |node: &SyntaxNode| {
+        lines
+            .get_or_init(|| LineIndex::new(source))
+            .line(node.text_range().start())
+    };
     for node in parse.tree().syntax().descendants() {
         let definition = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
@@ -124,7 +250,23 @@ fn macro_binding_ambiguities(
             let admitted_declaration = allowed_empty.contains(name)
                 && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
             if trusted.contains(&name) && !admitted_declaration {
-                ambiguous.insert(name.to_string());
+                let line = line_of(&node);
+                let scope = textual_scope(&node).map(|item| {
+                    let range = item.text_range();
+                    let lines = lines.get_or_init(|| LineIndex::new(source));
+                    (
+                        lines.line(range.start()),
+                        lines.line_for_range_end(range.end()),
+                    )
+                });
+                ambiguous.push((
+                    name.to_string(),
+                    MacroBindingSite {
+                        line,
+                        kind: MacroBindingKind::Definition,
+                        scope,
+                    },
+                ));
             }
         }
         if let Some(attr) = ast::Attr::cast(node.clone()) {
@@ -137,49 +279,65 @@ fn macro_binding_ambiguities(
                 .iter()
                 .any(|token| token.text() == "no_implicit_prelude")
             {
-                return all();
+                return all(line_of(&node), MacroBindingKind::NoImplicitPrelude);
             }
-            if words.iter().any(|token| token.text() == "macro_use")
-                && !attr
-                    .syntax()
-                    .parent()
-                    .and_then(ast::Module::cast)
-                    .is_some_and(|module| {
-                        module.item_list().is_some()
-                            || module
-                                .mod_token()
-                                .zip(module.name())
-                                .is_some_and(|(token, name)| {
-                                    let line = lines
-                                        .get_or_insert_with(|| LineIndex::new(source))
-                                        .line(token.text_range().start());
-                                    module_resolved(line, &format!("mod {};", name.text()))
-                                })
-                    })
-            {
-                return all();
-            }
-        }
-        if let Some(call) = ast::MacroCall::cast(node.clone())
-            && call
-                .path()
-                .is_some_and(|path| !is_trusted_macro(&path.syntax().text().to_string(), trusted))
-            && let Some(tree) = call.token_tree()
-        {
-            for token in tree
-                .syntax()
-                .descendants_with_tokens()
-                .filter_map(|element| element.into_token())
-            {
-                let name = token.text().trim_start_matches("r#");
-                if trusted.contains(&name) {
-                    ambiguous.insert(name.to_string());
+            if words.iter().any(|token| token.text() == "macro_use") {
+                let module = attr.syntax().parent().and_then(ast::Module::cast);
+                let resolved = module.as_ref().is_some_and(|module| {
+                    module.item_list().is_some()
+                        || module
+                            .mod_token()
+                            .zip(module.name())
+                            .is_some_and(|(token, name)| {
+                                let line = lines
+                                    .get_or_init(|| LineIndex::new(source))
+                                    .line(token.text_range().start());
+                                module_resolved(line, &format!("mod {};", name.text()))
+                            })
+                });
+                if !resolved {
+                    let item = attr
+                        .syntax()
+                        .parent()
+                        .map(|parent| item_head(&parent))
+                        .unwrap_or_default();
+                    let line = attr
+                        .syntax()
+                        .parent()
+                        .map_or_else(|| line_of(&node), |parent| item_line(&parent, source));
+                    return all(line, MacroBindingKind::MacroUse(item));
                 }
             }
         }
-        if let Some(import) = ast::Use::cast(node) {
+        if let Some(call) = ast::MacroCall::cast(node.clone())
+            && let Some(path) = call.path()
+            && !is_trusted_macro(&path.syntax().text().to_string(), trusted)
+            && let Some(tree) = call.token_tree()
+        {
+            let tokens: Vec<_> = tree
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .collect();
+            for (position, token) in tokens.iter().enumerate() {
+                let name = token.text().trim_start_matches("r#");
+                if trusted.contains(&name) && !is_plain_invocation(&tokens, position) {
+                    let line = line_of(&node);
+                    ambiguous.push((
+                        name.to_string(),
+                        MacroBindingSite {
+                            line,
+                            kind: MacroBindingKind::MacroArgument(path.syntax().text().to_string()),
+                            scope: None,
+                        },
+                    ));
+                }
+            }
+        }
+        if let Some(import) = ast::Use::cast(node.clone()) {
             let Some(tree) = import.use_tree() else {
-                return all();
+                return all(line_of(&node), MacroBindingKind::Unparsed);
             };
             let root = tree
                 .path()
@@ -197,7 +355,13 @@ fn macro_binding_ambiguities(
                     .any(|package| package.replace('-', "_") == root);
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
                 if item.star_token().is_some() && !own {
-                    return all();
+                    let path = item
+                        .syntax()
+                        .ancestors()
+                        .find(|node| ast::Use::can_cast(node.kind()))
+                        .map(|node| node.text().to_string())
+                        .unwrap_or_default();
+                    return all(line_of(&node), MacroBindingKind::ForeignGlob(path));
                 }
                 let name = if let Some(rename) = item.rename() {
                     rename.name().map(|name| name.text().to_string())
@@ -212,13 +376,110 @@ fn macro_binding_ambiguities(
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
                     if trusted.contains(&name) {
-                        ambiguous.insert(name.to_string());
+                        let line = line_of(&node);
+                        ambiguous.push((
+                            name.to_string(),
+                            MacroBindingSite {
+                                line,
+                                kind: MacroBindingKind::Import,
+                                scope: None,
+                            },
+                        ));
                     }
                 }
             }
         }
     }
     ambiguous
+}
+
+/// The inline module or function body that bounds a `macro_rules!`
+/// definition's textual scope, when nothing can carry it further: no
+/// `#[macro_use]` on that module or any enclosing one in the file, and no
+/// out-of-line `mod name;` inside it (whose file would inherit the scope).
+/// `None` for a file-level definition or a `macro` 2.0 item.
+fn textual_scope(definition: &SyntaxNode) -> Option<SyntaxNode> {
+    ast::MacroRules::cast(definition.clone())?;
+    let scope = definition.ancestors().skip(1).find(|node| {
+        ast::Fn::can_cast(node.kind())
+            || ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_some())
+    })?;
+    let carries_out = |module: &ast::Module| {
+        module.attrs().any(|attr| {
+            attr.syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| token.text() == "macro_use")
+        })
+    };
+    if definition
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .any(|module| carries_out(&module))
+    {
+        return None;
+    }
+    if scope
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| module.item_list().is_none())
+    {
+        return None;
+    }
+    Some(scope)
+}
+
+/// Whether the trusted name at `position` in a foreign macro's arguments is
+/// only invoked there (`assert_eq!(..)`), as in a test-wrapping macro such as
+/// `rgtest!(name, |dir, cmd| { assert_eq!(..) })`. An invocation binds
+/// nothing. A name after `macro_rules!`/`macro`, or a `$` metavariable,
+/// can name a definition the expansion creates, so it stays ambiguous.
+fn is_plain_invocation(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
+    let text = |offset: usize| tokens.get(offset).map(|token| token.text());
+    let defines = position
+        .checked_sub(1)
+        .is_some_and(|before| matches!(text(before), Some("macro" | "$")))
+        || position.checked_sub(2).is_some_and(|before| {
+            text(before) == Some("macro_rules") && text(before + 1) == Some("!")
+        });
+    !defines
+        && text(position + 1) == Some("!")
+        && matches!(text(position + 2), Some("(" | "[" | "{"))
+}
+
+/// The item's text without attributes, doc comments or body: `mod name;` or
+/// `extern crate name;` for the `#[macro_use]` sites this names.
+fn item_head(item: &SyntaxNode) -> String {
+    let text: String = item
+        .children_with_tokens()
+        .filter(|element| {
+            !matches!(
+                element.kind(),
+                ra_ap_syntax::SyntaxKind::ATTR | ra_ap_syntax::SyntaxKind::COMMENT
+            )
+        })
+        .map(|element| element.to_string())
+        .collect();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    text.split('{').next().unwrap_or(&text).trim().to_string()
+}
+
+/// Line of the item's first non-attribute token (the `mod`/`extern`
+/// keyword), so a multi-attribute item points at the declaration.
+fn item_line(item: &SyntaxNode, source: &str) -> usize {
+    let offset = item
+        .children_with_tokens()
+        .find(|element| {
+            !matches!(
+                element.kind(),
+                ra_ap_syntax::SyntaxKind::ATTR | ra_ap_syntax::SyntaxKind::COMMENT
+            ) && !element.kind().is_trivia()
+        })
+        .map_or_else(
+            || item.text_range().start(),
+            |element| element.text_range().start(),
+        );
+    LineIndex::new(source).line(offset)
 }
 
 /// This recognizes one bounded syntax form, not a macro evaluator: a sole
@@ -328,6 +589,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
     let Some(parse) = parse_clean_source_file(source) else {
         return result;
     };
+    result.parsed = true;
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
     for module in parse
@@ -371,13 +633,40 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             name.text().to_string(),
         );
         *identities.entry(key.clone()).or_default() += 1;
-        if function.async_token().is_some()
-            || has_escape(body.syntax(), trusted, &empty_macros)
-            || !supported_item_context(function.syntax())
-            || function
-                .attrs()
-                .any(|attr| attr.simple_name().as_deref() != Some("test"))
+        let refusal = if function.async_token().is_some() {
+            Some(AssertionContextRefusal::AsyncTest)
+        } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros) {
+            Some(refusal)
+        } else if let Some(attr) = function
+            .attrs()
+            .find(|attr| attr.simple_name().as_deref() != Some("test"))
         {
+            Some(AssertionContextRefusal::TestAttribute(
+                attr.syntax().text().to_string(),
+            ))
+        } else if !supported_item_context(function.syntax()) {
+            Some(AssertionContextRefusal::UnsupportedItemContext)
+        } else {
+            None
+        };
+        if let Some(refusal) = refusal {
+            // Only test functions are queried (`#[test]`, `#[tokio::test]`);
+            // a refused helper still counts toward duplicate detection.
+            if function.attrs().any(|attr| {
+                attr.path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text() == "test")
+            }) {
+                insert_function(
+                    &mut result.functions,
+                    key,
+                    FunctionAssertions {
+                        refusal: Some(refusal),
+                        ..FunctionAssertions::default()
+                    },
+                );
+            }
             continue;
         }
         let body_source = slice_text(
@@ -434,31 +723,53 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .min();
         let assertions = candidates
             .into_iter()
-            .filter_map(|(key, calls)| {
+            .map(|(key, calls)| {
                 // OracleFact has line/text, not an offset. No identical spelling
                 // on the same line may borrow another invocation's context.
-                (calls.len() == 1
-                    && eager_path(calls[0].syntax().clone(), &function, false, first_return))
-                .then_some(key)
+                let admitted = if calls.len() == 1 {
+                    eager_path(calls[0].syntax().clone(), &function, false, first_return)
+                        .map_err(AssertionContextRefusal::ConditionalPath)
+                } else {
+                    Err(AssertionContextRefusal::DuplicateSpelling)
+                };
+                (key, admitted)
             })
             .collect();
-        // Duplicate function identities are ambiguous too.
-        if let std::collections::btree_map::Entry::Vacant(entry) =
-            result.functions.entry(key.clone())
-        {
-            entry.insert(FunctionAssertions {
+        insert_function(
+            &mut result.functions,
+            key,
+            FunctionAssertions {
                 body: body_source,
+                refusal: None,
                 assertions,
                 macros,
-            });
-        } else {
-            result.functions.insert(key, FunctionAssertions::default());
-        }
+            },
+        );
     }
     result
         .functions
         .retain(|key, _| identities.get(key) == Some(&1));
     result
+}
+
+/// Duplicate function identities are ambiguous: the second insert refuses
+/// both, and the identity count later drops the key entirely.
+fn insert_function(
+    functions: &mut BTreeMap<FunctionKey, FunctionAssertions>,
+    key: FunctionKey,
+    facts: FunctionAssertions,
+) {
+    if let std::collections::btree_map::Entry::Vacant(entry) = functions.entry(key.clone()) {
+        entry.insert(facts);
+    } else {
+        functions.insert(
+            key,
+            FunctionAssertions {
+                refusal: Some(AssertionContextRefusal::UnidentifiedTest),
+                ..FunctionAssertions::default()
+            },
+        );
+    }
 }
 
 /// A libtest item cannot be nested in an executable body. Module/source
@@ -487,19 +798,20 @@ fn has_escape(
     body: &SyntaxNode,
     trusted: &[&str],
     empty: &BTreeMap<String, ast::MacroRules>,
-) -> bool {
-    body.descendants().any(|node| {
+) -> Option<AssertionContextRefusal> {
+    body.descendants().find_map(|node| {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             // Discarded arguments are not executed. Cross-file/import/shadow
             // ambiguity is checked by the shared binding authority at admission.
             if resolves_empty_local(&call, empty) {
-                return false;
+                return None;
             }
-            if call
+            let path = call
                 .path()
-                .is_none_or(|path| !is_trusted_macro(&path.syntax().text().to_string(), trusted))
-            {
-                return true;
+                .map(|path| path.syntax().text().to_string())
+                .unwrap_or_default();
+            if !is_trusted_macro(&path, trusted) {
+                return Some(AssertionContextRefusal::OpaqueMacro(path));
             }
             // Macro operands are opaque to AST descendant walks. Refuse
             // hidden exits and nested expansion, but not boolean negation.
@@ -507,7 +819,7 @@ fn has_escape(
                 .token_tree()
                 .is_some_and(|tree| opaque_macro_operand(&tree))
             {
-                return true;
+                return Some(AssertionContextRefusal::OpaqueMacro(path));
             }
         }
 
@@ -518,7 +830,7 @@ fn has_escape(
         // only leave a loop or labeled block the assertion is not inside.
         // Closure returns retain the existing conservative refusal, including
         // returns in closures other than the selected one.
-        (ast::ReturnExpr::can_cast(node.kind())
+        ((ast::ReturnExpr::can_cast(node.kind())
             && node
                 .ancestors()
                 .any(|parent| ast::ClosureExpr::can_cast(parent.kind())))
@@ -526,7 +838,8 @@ fn has_escape(
                 && node
                     .ancestors()
                     .any(|parent| ast::ClosureExpr::can_cast(parent.kind())))
-            || ast::YieldExpr::can_cast(node.kind())
+            || ast::YieldExpr::can_cast(node.kind()))
+        .then_some(AssertionContextRefusal::ClosureExit)
     })
 }
 
@@ -555,12 +868,14 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     trusted.contains(&path)
 }
 
+/// `Ok` when the invocation runs on every execution of the test body;
+/// otherwise the construct that may skip it, phrased for a reader.
 fn eager_path(
     mut node: SyntaxNode,
     function: &ast::Fn,
     through_closure: bool,
     first_return: Option<TextSize>,
-) -> bool {
+) -> Result<(), &'static str> {
     // When this query follows a bound closure, recursion below resets this
     // coordinate to the real invocation, not the earlier closure definition.
     let execution_start = node.text_range().start();
@@ -569,34 +884,39 @@ fn eager_path(
             .children()
             .any(|child| ast::Attr::can_cast(child.kind()))
         {
-            return false;
+            return Err("an attribute on an enclosing statement or expression");
         }
         let Some(parent) = node.parent() else {
-            return false;
+            return Err("a context outside the test body");
         };
         if parent == *function.syntax() {
-            return function.body().is_some_and(|body| {
-                body.syntax() == &node
-                    && first_return.is_none_or(|position| position >= execution_start)
-            });
+            if function.body().is_none_or(|body| body.syntax() != &node) {
+                return Err("a context outside the test body");
+            }
+            if first_return.is_some_and(|position| position < execution_start) {
+                return Err("code after an earlier `return`");
+            }
+            return Ok(());
         }
         if let Some(closure) = ast::ClosureExpr::cast(parent.clone()) {
             if through_closure {
-                return false;
+                return Err("a nested closure");
             }
             let Some(call) = closure_invocation(&closure, function, first_return) else {
-                return false;
+                return Err("a closure ripr cannot see invoked exactly once");
             };
             return eager_path(call.syntax().clone(), function, true, first_return);
         }
         if let Some(block) = ast::BlockExpr::cast(parent.clone()) {
-            if block.async_token().is_some()
-                || block.const_token().is_some()
+            if block.async_token().is_some() {
+                return Err("an `async` block");
+            }
+            if block.const_token().is_some()
                 || block.gen_token().is_some()
                 || block.try_block_modifier().is_some()
                 || block.label().is_some()
             {
-                return false;
+                return Err("a labeled, `const`, `gen` or `try` block");
             }
         } else if let Some(body) = ast::LoopExpr::cast(parent.clone()) {
             // `loop` runs its body at least once, so the first iteration
@@ -607,7 +927,7 @@ fn eager_path(
                 (ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind()))
                     && node.text_range().start() < execution_start
             }) {
-                return false;
+                return Err("a `loop` after a `break` or `continue` that can skip it");
             }
         } else if let Some(binding) = ast::LetStmt::cast(parent.clone()) {
             if binding.let_else().is_some()
@@ -615,16 +935,41 @@ fn eager_path(
                     .initializer()
                     .is_none_or(|expr| expr.syntax() != &node)
             {
-                return false;
+                return Err("a `let ... else` or pattern binding");
             }
         } else if !(ast::MacroExpr::can_cast(parent.kind())
             || ast::ExprStmt::can_cast(parent.kind())
             || ast::StmtList::can_cast(parent.kind())
             || ast::ParenExpr::can_cast(parent.kind()))
         {
-            return false;
+            return Err(conditional_construct(&parent));
         }
         node = parent;
+    }
+}
+
+/// Reader-facing name for a construct that may skip the code inside it.
+fn conditional_construct(node: &SyntaxNode) -> &'static str {
+    if ast::ForExpr::can_cast(node.kind()) {
+        "a `for` loop, which may run zero times"
+    } else if ast::WhileExpr::can_cast(node.kind()) {
+        "a `while` loop, which may run zero times"
+    } else if ast::IfExpr::can_cast(node.kind()) {
+        "an `if` branch"
+    } else if ast::MatchArm::can_cast(node.kind())
+        || ast::MatchArmList::can_cast(node.kind())
+        || ast::MatchExpr::can_cast(node.kind())
+    {
+        "a `match` arm"
+    } else if ast::BinExpr::can_cast(node.kind()) {
+        "an operand of `&&` or `||`"
+    } else if ast::CallExpr::can_cast(node.kind())
+        || ast::MethodCallExpr::can_cast(node.kind())
+        || ast::ArgList::can_cast(node.kind())
+    {
+        "an argument of a call"
+    } else {
+        "an expression ripr cannot see evaluated on every run"
     }
 }
 
@@ -670,7 +1015,7 @@ fn closure_invocation(
     {
         return None;
     }
-    if !eager_path(binding.syntax().clone(), function, true, first_return) {
+    if eager_path(binding.syntax().clone(), function, true, first_return).is_err() {
         return None;
     }
     let scope = binding.syntax().parent()?;

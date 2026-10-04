@@ -369,3 +369,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — opaque_fixture_builder (8)
+
+Reason:
+RIPR-SPEC-0009: literal-free related tests name the changed boundary instead of claiming opaque fixtures
+
+Command:
+`cargo xtask goldens bless opaque_fixture_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

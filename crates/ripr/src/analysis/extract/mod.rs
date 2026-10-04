@@ -10,7 +10,7 @@ mod text;
 
 pub(crate) use calls::extract_call_facts;
 pub(crate) use literals::{extract_literal_facts, extract_literals};
-pub(crate) use mask::mask_comments_and_strings;
+pub(crate) use mask::{mask_comments_and_strings, mask_with_char_literals};
 #[cfg(test)]
 pub(crate) use oracles::contains_macro_invocation;
 pub(crate) use oracles::{
