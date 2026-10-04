@@ -1373,16 +1373,17 @@ mod install_version_tests {
     /// constant ahead of the package would self-pin unreleased generators
     /// and silently defeat #5208. Bump it on every release.
     #[test]
-    fn latest_released_constant_is_ordered_behind_the_package() {
+    fn latest_released_constant_is_ordered_behind_the_package() -> Result<(), String> {
         let latest = parse_release_version(LATEST_RELEASED_VERSION)
-            .expect("LATEST_RELEASED_VERSION must parse");
-        let package =
-            parse_release_version(env!("CARGO_PKG_VERSION")).expect("CARGO_PKG_VERSION must parse");
+            .ok_or_else(|| "LATEST_RELEASED_VERSION must parse".to_string())?;
+        let package = parse_release_version(env!("CARGO_PKG_VERSION"))
+            .ok_or_else(|| "CARGO_PKG_VERSION must parse".to_string())?;
         assert!(
             latest <= package,
             "LATEST_RELEASED_VERSION ({LATEST_RELEASED_VERSION}) leads the package ({})",
             env!("CARGO_PKG_VERSION")
         );
+        Ok(())
     }
 
     /// Released rendering keeps the historical pin comment and self-pin
