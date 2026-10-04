@@ -13,9 +13,12 @@
 //! base, and user git configuration that changes `git diff` output.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[path = "common/mod.rs"]
 mod common;
@@ -63,23 +66,61 @@ struct Ran {
     stderr: String,
 }
 
+/// Upper bound for one CLI invocation. A hang on a hostile fixture must fail the
+/// test with the child reaped, not stall the suite until the job times out.
+const RIPR_DEADLINE: Duration = Duration::from_mins(2);
+
+fn drain<R: Read + Send + 'static>(stream: Option<R>) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut stream) = stream {
+            let _ = stream.read_to_end(&mut bytes);
+        }
+        bytes
+    })
+}
+
 fn ripr(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<Ran, String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-    command.current_dir(dir).args(args);
+    command
+        .current_dir(dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     for (key, value) in envs {
         command.env(key, value);
     }
-    let Output {
-        status,
-        stdout,
-        stderr,
-    } = command
-        .output()
+    let mut child = command
+        .spawn()
         .map_err(|e| format!("spawn ripr failed: {e}"))?;
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= RIPR_DEADLINE => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "ripr {args:?} exceeded {RIPR_DEADLINE:?} and was terminated"
+                ));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(format!("wait for ripr failed: {e}")),
+        }
+    };
+    let collect = |handle: thread::JoinHandle<Vec<u8>>| {
+        handle
+            .join()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map_err(|_panic| "output reader panicked".to_string())
+    };
     Ok(Ran {
         code: status.code(),
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        stdout: collect(stdout)?,
+        stderr: collect(stderr)?,
     })
 }
 
@@ -253,16 +294,40 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
 
     let ran = ripr(&root, &["check", "--format", "json"], &[])?;
     assert_sane(&ran, "awkward names")?;
-    let want = format!("\"changed_rust_files\":{}", names.len());
-    let probes = format!("\"probes\":{}", names.len());
-    if ran.code != Some(0) || !ran.stdout.contains(&want) || !ran.stdout.contains(&probes) {
+    let report: serde_json::Value = serde_json::from_str(&ran.stdout)
+        .map_err(|e| format!("invalid JSON from check: {e}\n{}", ran.stderr))?;
+    let summary = &report["summary"];
+    let expected = u64::try_from(names.len()).map_err(|e| e.to_string())?;
+    if ran.code != Some(0)
+        || summary["changed_rust_files"].as_u64() != Some(expected)
+        || summary["probes"].as_u64() != Some(expected)
+    {
         return Err(format!(
-            "expected {} changed files and probes, got:\n{}\n{}",
-            names.len(),
-            ran.stdout
-                .lines()
-                .find(|l| l.contains("changed_rust_files"))
-                .unwrap_or(""),
+            "expected {expected} changed files and probes, got {summary}\n{}",
+            ran.stderr
+        ));
+    }
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check JSON is missing findings".to_string())?;
+    let mut reported_paths = Vec::with_capacity(findings.len());
+    for finding in findings {
+        let path = finding["probe"]["file"]
+            .as_str()
+            .ok_or_else(|| "check JSON finding is missing probe.file".to_string())?;
+        reported_paths.push(path.strip_prefix("./").unwrap_or(path).to_owned());
+    }
+    // The renderer writes every path with forward slashes (and a leading
+    // `./`), so a literal backslash in a file name is reported as a separator.
+    let mut expected_paths: Vec<String> = names
+        .iter()
+        .map(|name| format!("src/{}", name.replace('\\', "/")))
+        .collect();
+    expected_paths.sort();
+    reported_paths.sort();
+    if reported_paths != expected_paths {
+        return Err(format!(
+            "expected check finding paths {expected_paths:?}, got {reported_paths:?}\n{}",
             ran.stderr
         ));
     }
