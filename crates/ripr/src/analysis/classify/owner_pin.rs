@@ -294,9 +294,12 @@ impl OwnerPinSyntax {
     }
 }
 
+/// Whether a scoped site may reach `test`: any overlap of their line spans.
+/// A `use` in the test's own body is scoped to the body block, which starts
+/// after the `fn` line when the signature wraps, so containment would miss it.
 fn site_covers(site: &MacroBindingSite, test: &TestSummary) -> bool {
     site.scope
-        .is_some_and(|(start, end)| start <= test.start_line && test.end_line <= end)
+        .is_some_and(|(start, end)| start <= test.end_line && test.start_line <= end)
 }
 
 /// Why an `assert_eq!` was not credited as executing the standard macro.

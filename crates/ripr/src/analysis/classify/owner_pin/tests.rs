@@ -1014,6 +1014,21 @@ fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() 
             AssertionContextRefusal::MacroBinding(_)
         ))
     ));
+    // An import in the test's own body applies however the signature wraps.
+    for own_body in [
+        "use demo::weight;\n#[test]\nfn weighs(\n) -> Result<(), String> {\n    use other::assert_eq;\n    assert_eq!(weight(4), 12);\n    Ok(())\n}\n",
+        "use demo::weight;\n#[test]\nfn weighs()\n{\n    use other::assert_eq;\n    assert_eq!(weight(4), 12);\n}\n",
+    ] {
+        assert!(
+            matches!(
+                weight_refusal(own_body, &[]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{own_body}"
+        );
+    }
     let after = "use demo::weight;\nmod tests {\n    use similar::assert_eq;\n}\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     assert_eq!(weight_refusal(after, &[]), None);
 }
@@ -1038,6 +1053,9 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() {
         "use pretty_assertions::inner::assert_eq;",
         "use other::pretty_assertions::assert_eq;",
         "use similar::assert_eq;",
+        // A local module named after the crate owns that path instead.
+        "mod pretty_assertions;\nuse pretty_assertions::assert_eq;",
+        "mod pretty_assertions {}\nuse pretty_assertions::assert_eq;",
     ] {
         assert!(
             matches!(

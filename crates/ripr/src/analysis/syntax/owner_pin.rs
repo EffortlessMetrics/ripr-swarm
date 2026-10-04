@@ -244,6 +244,19 @@ fn macro_binding_ambiguities(
             )
         })
     };
+    // A workspace package or a module of this file that takes a drop-in
+    // crate's name can export a different `assert_eq!` under that path.
+    let drop_in_shadowed = |root: &str| {
+        packages
+            .iter()
+            .any(|package| package.replace('-', "_") == root)
+            || parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Module::cast)
+                .any(|module| module.name().is_some_and(|name| name.text() == root))
+    };
     for node in parse.tree().syntax().descendants() {
         let definition = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
@@ -384,7 +397,9 @@ fn macro_binding_ambiguities(
                 };
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
-                    if trusted.contains(&name) && !is_drop_in_assertion(&item, name) {
+                    if trusted.contains(&name)
+                        && !(is_drop_in_assertion(&item, name) && !drop_in_shadowed(root))
+                    {
                         let line = line_of(&node);
                         ambiguous.push((
                             name.to_string(),
