@@ -101,9 +101,10 @@ to the family, which may differ.
      receiver's pre-call state is provably known in that test (bound from a
      literal, `new()` or `default()` with no earlier write) and the asserted
      post-call state differs from it, so deleting the call fails the
-     assertion; and no write between the call and the assertion (another
-     mutating call on, assignment to, or `&mut` borrow of the receiver) can
-     produce the asserted state on its own; an idempotent write (`insert` of a present key, `clear` of an
+     assertion; and nothing between the call and the assertion can write
+     the receiver (no mutating call on, assignment to, or `&mut` borrow of
+     it, and no alias of it such as an `Rc` clone or a shared reference with
+     interior mutability); an idempotent write (`insert` of a present key, `clear` of an
      empty collection) or an unknown pre-call state does not carry;
    - for a mock expectation, it carries an exact call count (`times(n)` with
      `n` at least 1); an expectation that allows zero calls does not carry.

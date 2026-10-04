@@ -107,7 +107,8 @@ or `Err` (or `Some` or `None`):
 - `#[should_panic]` without `expected`, only when unwrapping the owner result
   with `unwrap()` or `expect()` is the sole possible panic source on the
   test's execution path (no other `panic!`, assertion, indexing, unwrap or
-  call that may panic).
+  call that may panic, and no panic source inside the owner itself on that
+  input).
 
 `#[should_panic(expected = "..")]` with a message is not a result-side oracle;
 it belongs to message-bound authorities.

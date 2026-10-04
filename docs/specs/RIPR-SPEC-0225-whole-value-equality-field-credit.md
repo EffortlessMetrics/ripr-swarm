@@ -105,9 +105,12 @@ hold:
    above, matching any wrapper on the owner's return; a wrapper other than
    `Ok`, `Some` or `Err` must itself be a workspace enum that meets rule 3)
    that names `f`
-   explicitly with an independent expected value: a literal, a constant, or
-   an expression that mentions neither the owner call nor the binding.
-   `Config { retries: c.retries, .. }` names `f` but pins nothing.
+   explicitly with an independent expected value: an expression built only
+   from literals, constants and constructor or conversion calls on them
+   (`4`, `MAX`, `"x".into()`). An expected value that names any local
+   binding or calls any function of the workspace gives no credit, because
+   it can carry the owner's result (`retries: c.retries`, `let r =
+   c.retries; .. retries: r`, `retries: build(3).retries`).
 3. `T` is a workspace type with a visible `#[derive(PartialEq)]` and no
    manual `impl PartialEq for T` in the workspace.
 4. The type of `f` compares by value: a primitive, `String`, `&str`, or a
@@ -197,9 +200,12 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
     not `exposed`.
 13. `let mut c = build(3); c.retries = 4; assert_eq!(c, Config { retries: 4, name: "x".into() })`:
     not `exposed`.
-14. `wrap(3)` returns `Wrapped::One(build(3))`, where `Wrapped` has
-    `impl PartialEq for Wrapped { fn eq(&self, _: &Self) -> bool { true } }`;
+14. The changed literal is in `wrap(n)`, the owner, which returns
+    `Wrapped::One(Config { retries: n + 1, name: "x".into() })`; `Wrapped`
+    has `impl PartialEq for Wrapped { fn eq(&self, _: &Self) -> bool { true } }`;
     test `assert_eq!(wrap(3), Wrapped::One(Config { retries: 4, name: "x".into() }))`:
+    not `exposed`.
+15. `let c = build(3); let r = c.retries; assert_eq!(c, Config { retries: r, name: "x".into() })`:
     not `exposed`.
 
 ## Test Mapping
