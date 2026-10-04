@@ -31,7 +31,9 @@ Support-tier impact:
 
 - No tier change. The `oracle_kind` and `oracle_strength` that ripr reports
   for a Rust related test stop overstating what the assertion pins. No
-  finding gains a class from this spec. Claim boundaries remain governed by
+  finding moves to a stronger class (gains credit) from this spec. Under the
+  #5416 unknown-not-a-gap rule 3, a finding whose only strong oracle this
+  spec weakens may move from `static_unknown` back to its named gap. Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
@@ -137,9 +139,11 @@ strength.
 
 ### Admission rules
 
-1. **Inequality is never exact.** At steps 0, 5 and 10, an inequality
+1. **Inequality is never exact.** At steps 0, 1, 5 and 10, an inequality
    assigns `relational_check` / weak, whatever its operands: `assert_ne!`,
-   `!=` in an `ensure!` condition, and a custom helper whose name has a
+   `!=` in an `ensure!` condition, a negated `!matches!(..)` (which today
+   reads `exact_error_variant` / strong at step 1 when its pattern is
+   `Err(E::X)`), and a custom helper whose name has a
    `ne`, `not` or `neq` segment that step 10 admits today. At step 4, every
    `assert_ne!` assigns weak strength: a struct-literal operand keeps the
    `whole_object_equality` kind, as RIPR-SPEC-0225 says, with no field
@@ -207,8 +211,9 @@ rejected alternative. Any can be reversed later without touching the rest.
   `exact_error_variant` / strong.
 - Whole-segment observer names (example 10) still earn `mock_expectation`,
   and `is_present()` (example 8) does not.
-- No finding gains a class. Golden drift lists every related test whose kind
-  or strength moved.
+- No finding moves to a stronger class. Golden drift lists every related
+  test whose kind or strength moved, and every finding that moved from
+  `static_unknown` back to a named gap.
 - Under #5416, a test whose only assertion is `assert_ne!` no longer
   withholds a gap as `static_unknown`.
 
@@ -248,6 +253,10 @@ rejected alternative. Any can be reversed later without touching the rest.
     `exact_value` / strong).
 18. `ensure!(matches!(check(5), Ok(_)))`: `smoke_only` / smoke (today
     `exact_value` / strong).
+19. `assert!(!matches!(check(20), Err(E::Bad)))`: `relational_check` / weak
+    (today `exact_error_variant` / strong).
+20. `assert_ne!(check(20), Err(E::Bad))`: `relational_check` / weak (today
+    `exact_value` / strong at step 5).
 
 ## Test Mapping
 
