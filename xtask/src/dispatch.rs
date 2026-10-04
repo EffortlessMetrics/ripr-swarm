@@ -137,7 +137,14 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::recommendation_calibration(&args)
         }
         XtaskCommand::SarifPolicy(args) => super::reports::sarif_policy(&args),
-        XtaskCommand::ImpactedEvidence(args) => ripr::app::run_impacted_evidence(&args),
+        XtaskCommand::ImpactedEvidence(args) => {
+            // Rooted at the xtask workspace, not the cwd, so the command works
+            // from any subdirectory like the rest of the xtask reports.
+            let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .ok_or_else(|| "xtask manifest must have a repository parent".to_string())?;
+            ripr::app::run_impacted_evidence_at(repo_root, &args)
+        }
         XtaskCommand::RiprPr(args) => super::reports::ripr_pr(&args),
         XtaskCommand::FirstPr(args) => super::reports::first_pr(&args),
         XtaskCommand::RiprReviewComments(args) => super::reports::ripr_review_comments(&args),

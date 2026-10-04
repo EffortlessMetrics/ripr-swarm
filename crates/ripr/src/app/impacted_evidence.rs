@@ -35,26 +35,29 @@ impl Default for ImpactedEvidenceOptions {
     }
 }
 
-/// Shared entry point for `ripr impacted-evidence` and the compatibility
-/// `cargo xtask impacted-evidence` route, so the refusal and routing logic has
-/// one owner.
-pub fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
+pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
+    run_impacted_evidence_at(&repo_root()?, args)
+}
+
+/// Shared entry point for `ripr impacted-evidence` (rooted at the working
+/// directory) and the compatibility `cargo xtask impacted-evidence` route
+/// (rooted at the xtask workspace), so refusal and routing logic has one owner.
+pub fn run_impacted_evidence_at(repo: &Path, args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(());
     }
     let options = parse_options(args)?;
-    let repo = repo_root()?;
-    let input = require_pr_evidence(&repo, &options.pr_evidence)
-        .map_err(|err| refuse_with_stale_cleanup(&repo, err, options.check))?;
+    let input = require_pr_evidence(repo, &options.pr_evidence)
+        .map_err(|err| refuse_with_stale_cleanup(repo, err, options.check))?;
     let packet = packet_from_input(&options, &input);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize impacted evidence: {err}"))?;
     let markdown = render_impacted_evidence_markdown(&packet);
     if options.check {
-        check_outputs(&repo, &json_text, &markdown)
+        check_outputs(repo, &json_text, &markdown)
     } else {
-        write_outputs(&repo, &json_text, &markdown)
+        write_outputs(repo, &json_text, &markdown)
     }
 }
 
@@ -851,6 +854,32 @@ mod tests {
             "{message}"
         );
         assert!(message.contains(IMPACTED_JSON), "{message}");
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_root_owns_evidence_and_outputs() -> Result<(), String> {
+        let repo = env::temp_dir().join(format!(
+            "ripr-impacted-evidence-root-{}",
+            std::process::id()
+        ));
+        if repo.exists() {
+            fs::remove_dir_all(&repo).map_err(|err| format!("remove {}: {err}", repo.display()))?;
+        }
+        fs::create_dir_all(repo.join("target/ripr/pr"))
+            .map_err(|err| format!("create {}: {err}", repo.display()))?;
+        fs::write(
+            repo.join(DEFAULT_PR_EVIDENCE_JSON),
+            r#"{"summary":{"ripr_severe_gap":false,"requires_targeted_mutation":false}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        run_impacted_evidence_at(&repo, &[])?;
+        assert!(
+            repo.join(IMPACTED_JSON).exists(),
+            "outputs land under the given root"
+        );
+        assert!(repo.join(IMPACTED_MD).exists());
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
