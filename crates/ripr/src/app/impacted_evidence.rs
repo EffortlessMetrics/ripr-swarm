@@ -42,8 +42,8 @@ pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
     }
     let options = parse_options(args)?;
     let repo = repo_root()?;
-    require_pr_evidence(&repo, &options.pr_evidence)?;
-    let packet = impacted_evidence_packet(&repo, &options);
+    let input = require_pr_evidence(&repo, &options.pr_evidence)?;
+    let packet = packet_from_input(&options, &input);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize impacted evidence: {err}"))?;
     let markdown = render_impacted_evidence_markdown(&packet);
@@ -118,8 +118,12 @@ Outputs:
   target/xtask/impacted-evidence/latest.md
 ";
 
+#[cfg(test)]
 fn impacted_evidence_packet(repo: &Path, options: &ImpactedEvidenceOptions) -> Value {
-    let input = load_pr_evidence(repo, &options.pr_evidence);
+    packet_from_input(options, &load_pr_evidence(repo, &options.pr_evidence))
+}
+
+fn packet_from_input(options: &ImpactedEvidenceOptions, input: &PrEvidenceInput) -> Value {
     let ripr_severe_gap = input
         .value
         .as_ref()
@@ -284,9 +288,12 @@ impl PrEvidenceInput {
 /// evidence file would otherwise yield `fast_only`, which reads as "no mutation
 /// needed" when the real state is "evidence not seen". Fails before any output
 /// is written so a stale `latest.*` cannot be mistaken for this run.
-fn require_pr_evidence(repo: &Path, relative: &str) -> Result<(), String> {
-    match load_pr_evidence(repo, relative).state {
-        InputState::Present => Ok(()),
+/// Returns the loaded input so the packet is built from the exact bytes that
+/// were validated.
+fn require_pr_evidence(repo: &Path, relative: &str) -> Result<PrEvidenceInput, String> {
+    let input = load_pr_evidence(repo, relative);
+    match &input.state {
+        InputState::Present => Ok(input),
         InputState::Missing => Err(format!(
             "impacted-evidence: PR evidence {relative} is missing or unreadable; refusing to route mutation from labels alone. \
              Run `ripr pr-evidence` first or pass --pr-evidence <path>."

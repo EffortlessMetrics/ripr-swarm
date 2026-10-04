@@ -5674,7 +5674,7 @@ language = "rust"
         .err()
         .ok_or_else(|| "missing --root must fail".to_string())?;
 
-        assert!(err.contains("is not a directory"), "{err}");
+        assert!(err.contains("cannot be read"), "{err}");
         assert!(err.contains("does-not-exist"), "{err}");
         assert!(
             !out.exists() && !out_md.exists(),
