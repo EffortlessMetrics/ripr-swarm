@@ -127,8 +127,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // nothing the restart can reuse, so restarting redid the first 30s of
     // work (serde cold: 75s with the restart, 44s without, identical
     // output).
-    let extension_ms =
-        (options.timeout_ms == DEFAULT_PILOT_TIMEOUT_MS).then_some(PILOT_RETRY_TIMEOUT_MS);
+    let extension_ms = pilot_deadline_extension_ms(&options);
     let progress = pilot_progress_sink(options.quiet);
     let analysis_result = run_pilot_analysis_with_timeout(
         options.timeout_ms,
@@ -334,6 +333,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         explicit: CheckInputExplicit::default(),
         max_seams: 5,
         timeout_ms: DEFAULT_PILOT_TIMEOUT_MS,
+        timeout_explicit: false,
         quiet: false,
     };
     let mut i = 0usize;
@@ -361,6 +361,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
                 i += 1;
                 options.timeout_ms =
                     parse_positive_u64(expect_value(args, i, "--timeout-ms")?, "--timeout-ms")?;
+                options.timeout_explicit = true;
             }
             "--quiet" => {
                 options.quiet = true;
@@ -370,6 +371,12 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         i += 1;
     }
     Ok(options)
+}
+
+/// The deadline extension applies only to the default budget. A typed
+/// `--timeout-ms`, even one equal to the default, is a hard limit.
+fn pilot_deadline_extension_ms(options: &PilotOptions) -> Option<u64> {
+    (!options.timeout_explicit).then_some(PILOT_RETRY_TIMEOUT_MS)
 }
 
 enum PilotAnalysisResult {
@@ -525,9 +532,25 @@ mod tests {
                 },
                 max_seams: 3,
                 timeout_ms: 120_000,
+                timeout_explicit: true,
                 quiet: true,
             })
         );
+    }
+
+    #[test]
+    fn explicit_default_timeout_is_a_hard_limit() -> Result<(), String> {
+        // Only an omitted --timeout-ms earns the cold-run extension; typing
+        // the default value must not turn a 30s limit into 270s.
+        let omitted = parse_pilot_options(&args(&["--quiet"]))?;
+        assert_eq!(
+            pilot_deadline_extension_ms(&omitted),
+            Some(PILOT_RETRY_TIMEOUT_MS)
+        );
+        let explicit = parse_pilot_options(&args(&["--timeout-ms", "30000"]))?;
+        assert_eq!(explicit.timeout_ms, DEFAULT_PILOT_TIMEOUT_MS);
+        assert_eq!(pilot_deadline_extension_ms(&explicit), None);
+        Ok(())
     }
 
     #[test]
