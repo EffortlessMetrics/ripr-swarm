@@ -22,21 +22,22 @@ const EXPECTED_CANCEL_IN_PROGRESS: &str =
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
 
 /// Read the candidate workflow from the repository root above the xtask package.
-fn workflow_source() -> String {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workflow_source() -> Result<String, String> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest
         .parent()
-        .expect("xtask package has a repository parent");
-    fs::read_to_string(root.join(WORKFLOW)).expect("read routed Rust workflow")
+        .ok_or_else(|| "xtask package has a repository parent".to_string())?;
+    fs::read_to_string(root.join(WORKFLOW)).map_err(|error| error.to_string())
 }
 
 /// Return the exact event declaration lines, excluding comments and blank lines.
-fn event_declarations(source: &str) -> Vec<&str> {
+fn event_declarations(source: &str) -> Result<Vec<&str>, String> {
     let events = source
         .split_once("\npermissions:\n")
         .map(|(events, _)| events)
-        .expect("workflow keeps permissions after event declarations");
+        .ok_or_else(|| "workflow keeps permissions after event declarations".to_string())?;
 
-    events
+    Ok(events
         .lines()
         .skip_while(|line| *line != "on:")
         .filter_map(|line| {
@@ -47,7 +48,7 @@ fn event_declarations(source: &str) -> Vec<&str> {
                 Some(line)
             }
         })
-        .collect()
+        .collect())
 }
 
 /// Read a direct static job name from the `jobs` mapping.
@@ -99,11 +100,11 @@ fn terminal_context(source: &str) -> Option<&str> {
 }
 
 #[test]
-fn required_pr_context_is_withheld_until_ready() {
-    let source = workflow_source();
+fn required_pr_context_is_withheld_until_ready() -> Result<(), String> {
+    let source = workflow_source()?;
 
     assert_eq!(
-        event_declarations(&source),
+        event_declarations(&source)?,
         EXPECTED_EVENT_DECLARATIONS,
         "protected workflow must expose only Ready PR, main push, and manual authorities",
     );
@@ -112,26 +113,28 @@ fn required_pr_context_is_withheld_until_ready() {
     assert_eq!(terminal_context(&source), Some(REQUIRED_CONTEXT));
     assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
     assert!(!source.contains("github.event.pull_request.draft"));
+    Ok(())
 }
 
 #[test]
-fn contract_rejects_draft_or_mutation_triggers() {
-    let source = workflow_source();
+fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
+    let source = workflow_source()?;
     let changed = source.replace(
         "types: [ready_for_review]",
         "types: [ready_for_review, synchronize]",
     );
     assert_ne!(changed, source, "trigger mutation must engage");
     assert_ne!(
-        event_declarations(&changed),
+        event_declarations(&changed)?,
         EXPECTED_EVENT_DECLARATIONS,
         "synchronize must violate the protected event law",
     );
+    Ok(())
 }
 
 #[test]
-fn contract_rejects_disabled_ready_cancellation() {
-    let source = workflow_source();
+fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
+    let source = workflow_source()?;
     let changed = source.replace(
         "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "  cancel-in-progress: false",
@@ -141,11 +144,12 @@ fn contract_rejects_disabled_ready_cancellation() {
         !changed.contains(EXPECTED_CANCEL_IN_PROGRESS),
         "mutation must remove the pinned Ready-run cancellation expression"
     );
+    Ok(())
 }
 
 #[test]
-fn contract_rejects_a_noncanonical_terminal_context() {
-    let source = workflow_source();
+fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
+    let source = workflow_source()?;
     let changed = source.replace(
         "  result:\n    name: Ripr Rust Small Result",
         "  result:\n    name: Ripr Rust Small Draft Result",
@@ -156,6 +160,7 @@ fn contract_rejects_a_noncanonical_terminal_context() {
         Some(REQUIRED_CONTEXT),
         "a renamed result must violate the required-context contract",
     );
+    Ok(())
 }
 
 #[test]
