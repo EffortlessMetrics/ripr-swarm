@@ -363,11 +363,11 @@ open.
 
 Outcomes did not change: every agent closed the gap, and ripr again reported
 no `exposed` probe whose mutants survived. Commands per fix went up. The new
-stub route accounts for part of it: agents ran the suggested `ripr agent stub`
-five times and got no stub (#5471). The refusals were
-`ambiguous_test_module`, `owner_unsupported`, `owner_trait_method` or
-`observer_required`, `field_type_unresolved`, and, after `check --worktree`,
-`no reported gap is in the function`. Humantime's count also includes eight
+stub route accounts for part of it: agents ran `ripr agent stub` five times,
+four of them as suggested by `check`, and got no stub (#5471). The refusals
+were `ambiguous_test_module`, `owner_unsupported`, `observer_required`,
+`field_type_unresolved`, and, after `check --worktree`, `no reported gap is in
+the function`. Humantime's count also includes eight
 scripted `--json` re-checks while the agent bisected which test shape moved a
 verdict.
 
