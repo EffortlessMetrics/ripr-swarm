@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "kind": "ripr_rust_corpus_manifest",
-  "corpus_version": "2026-10-04.5",
+  "corpus_version": "2026-10-04.6",
   "description": "Pinned real-world Rust repositories shared by ripr evaluation work (scoreboards, verdict checks, CPU/memory/size measurements, mutation spot-checks, first-run tests). Each entry pins one upstream commit and its first parent so every subject has both a whole-repo state and a real upstream diff.",
   "selection_rule": "For each repository, the pinned commit is the most recent first-parent commit on the default branch (fetched 2026-10-04; archived repositories therefore pin their last qualifying change) whose diff against its first parent changes 1 to 12 non-test .rs files and 6 to 400 Rust lines, preferring behavior fixes over chores. Each repo also records a profile class (good, legacy or common) and the style it represents; the class is a maintainer judgment backed by the probe counts, not a measurement. base_sha is that commit's first parent, so `git diff base_sha sha` is the change a reviewer actually saw.",
   "limits": [
@@ -181,7 +181,9 @@
     "legacy": "Long-lived code with older idioms, large modules, or thin tests; ripr should stay honest and fail closed rather than guess.",
     "common": "Ordinary team or community code of the kind most users have; ripr should be useful here without tuning."
   },
-  "known_gaps": [],
+  "known_gaps": [
+    "no crate whose tests live exclusively in a separate test crate of another repository (html5ever covers only test data from submodules, not test code elsewhere)"
+  ],
   "repos": [
     {
       "id": "serde",
