@@ -104,6 +104,10 @@ hold:
    explicitly with a value.
 3. `T` is a workspace type with a visible `#[derive(PartialEq)]` and no
    manual `impl PartialEq for T` in the workspace.
+4. The type of `f` compares by value: a primitive, `String`, `&str`, or a
+   standard collection or `Option`/`Result` of such types, or a workspace type
+   that itself meets rule 3. No attribute on `f` or `T` changes equality
+   (for example `educe` or `derivative` ignore attributes).
 
 Then activation clears the `FieldValue` missing discriminator for `f` and the
 finding may read `exposed`, subject to every other stage.
@@ -117,9 +121,12 @@ The finding does not read `exposed` from whole-value equality when:
   (`let e = Config { .. }; assert_eq!(c, e)`, `assert_eq!(build(3), expected())`);
   it stays `observation_unverified`;
 - the compared call is not the owner;
-- the assertion is `assert_ne!`, which reads weak;
-- `T` has a manual `PartialEq`, comes from outside the workspace, or the
-  derive cannot be seen (aliases, generics, macro-generated types).
+- the assertion is `assert_ne!`: it keeps the `whole_object_equality` kind
+  but gives no field credit, because inequality with one wrong value does
+  not pin the right one;
+- `T` or the type of `f` has a manual `PartialEq`, comes from outside the
+  workspace, or its equality cannot be seen (aliases, generics,
+  macro-generated types, equality-changing attributes).
 
 A single-field read of the changed field (`assert_eq!(c.retries, 4)`) keeps
 crediting as today. A read of a sibling field (`assert_eq!(c.name, "x")`)
@@ -131,10 +138,13 @@ keeps the `FieldValue` missing discriminator.
    what RIPR-SPEC-0005's "record field/pattern" wording implies.
 2. **Wrapper depth.** Recommended: one level (`Ok(T { .. })`). Alternative:
    none, which keeps `parse()`-style tests as gaps.
-3. **Equality gate.** Recommended: derived `PartialEq` only, fail closed
-   otherwise. When the gate refuses and the oracle is otherwise strong, the
-   finding reads `static_unknown` under RIPR-SPEC-0221 rule 3 rather than a
-   gap, because the refusal is an analyzer limit. Alternative: keep it a gap.
+3. **Equality gate.** Recommended: derived `PartialEq` on `T` and on the
+   field's type, fail closed otherwise. When the gate refuses, the finding
+   keeps its `FieldValue` missing discriminator and stays a gap
+   (`weakly_exposed`); the #5416 unknown-not-a-gap rule 3 does not withhold
+   it, because a missing discriminator is named. Alternative: a new
+   withholding route with its own `static_limit_kind`, so a refused equality
+   gate reads as an analyzer limit instead of a gap.
 
 ## Required Evidence
 
@@ -174,7 +184,9 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
 8. `assert_eq!(other(), Config { retries: 4, name: "x".into() })`, `other` not the owner: not `exposed`.
 9. `let c = build(3); assert_eq!(c.name, "x")`: `weakly_exposed`, `FieldValue`
    missing discriminator kept.
-10. `assert_ne!(build(3), Config { retries: 9, name: "x".into() })`: `weakly_exposed`.
+10. `assert_ne!(build(3), Config { retries: 9, name: "x".into() })`: `weakly_exposed`, no field credit.
+11. `retries` of type `Retries` with `impl PartialEq for Retries { fn eq(&self, _: &Self) -> bool { true } }`,
+    test as in example 1: not `exposed`.
 
 ## Test Mapping
 

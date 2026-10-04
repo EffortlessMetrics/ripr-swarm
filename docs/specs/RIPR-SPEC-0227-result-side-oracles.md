@@ -62,7 +62,9 @@ inconsistently today (origin/main, measured with `ripr check --diff`):
 - A bare `let e = f().unwrap_err();` is not an assertion line
   (`analysis/extract/oracles/scan.rs`), so it is no oracle at all and the
   finding reads `reachable_unrevealed`.
-- `#[should_panic]` is never read.
+- A `#[should_panic]` attribute line is scanned but classified `unknown`;
+  only owner-pin admission consults it, to refuse credit
+  (`analysis/classify/owner_pin.rs`).
 
 RIPR-SPEC-0107 covers one shape: a changed error variant with an `is_err()`
 test reads `weakly_exposed`. No spec covers `Err(_)`, `unwrap_err()`,
@@ -117,8 +119,8 @@ A bare `unwrap_err()` and `should_panic` produce the oracle instead of nothing.
 A result-side oracle never confirms a changed error variant
 (`Err(E::A)` to `Err(E::B)`), a changed `Ok` or `Some` value, or a changed
 payload. The finding reads at most `weakly_exposed`, and the gap is kept:
-RIPR-SPEC-0221 does not withhold a gap whose only oracle is result-side,
-because ripr read the oracle and it is weak. An `exposed` reading in these
+the #5416 unknown-not-a-gap rules do not withhold a gap whose only oracle is
+result-side, because ripr read the oracle and it is weak. An `exposed` reading in these
 shapes is a defect.
 
 ### Rule 2: far inputs
@@ -130,18 +132,40 @@ A result-side oracle on an input that does not sit where the side flips
 
 A result-side oracle confirms a change when all of these hold:
 
-1. the changed expression decides the side: a predicate guarding a
-   `return Err(..)` / `return Ok(..)` (or `None` / `Some`), or an added or
-   removed `?`;
-2. the same test calls the owner with a resolved input on which the side
-   differs between the original and the changed code: the boundary inputs of
-   RIPR-SPEC-0186 for a predicate, or an input reaching the `?` call's error
-   for `?`;
-3. the oracle on that call observes the side.
+1. the changed expression is a `predicate` guard whose taken branch returns
+   one side (`return Err(..)`, `return Ok(..)`, or `None` / `Some`);
+2. the same test calls the owner with a resolved input that reaches the
+   guard with no earlier `return`, `?` or panic on that path, and for which
+   the guard's outcome differs between the original and the changed
+   predicate (the boundary inputs of RIPR-SPEC-0186);
+3. on that input the code after the untaken guard returns the other side,
+   with no later `return`, `?` or panic that could return the same side
+   either way;
+4. the oracle on that call observes the side.
 
 Then discrimination is confirmed and the finding may read `exposed`. When
 the input is unresolved or the side flip cannot be established, rule 2
 applies.
+
+### Rule 4: variant oracles bind to the owner and the variant
+
+An exact-variant oracle (`assert_eq!(call, Err(E::X))`,
+`assert!(matches!(call, Err(E::X)))`, an `unwrap_err()` binding compared to
+`E::X` under RIPR-SPEC-0106, or a guarded `Result` match that pins `E::X`
+under RIPR-SPEC-0175) confirms an `error_path` or `return_value` probe that
+returns `Err(E::X)` only when:
+
+- its call is to the changed owner, admitted by RIPR-SPEC-0197 call
+  identity; and
+- `X` is the variant the changed expression returns.
+
+A test of another function in the same file that pins the same variant, or a
+test of the owner that pins a sibling variant, does not confirm, whatever
+other related-test evidence exists. This combines RIPR-SPEC-0107 (variant
+token) with RIPR-SPEC-0197 (owner identity); the verdict corpus shows three
+`exposed` readings on main that break it, each credited from another
+function's `matches!(refund(..), Err(PayError::Limit))` or a sibling-variant
+`assert_eq!`.
 
 ### Decisions for the owner
 
@@ -152,6 +176,13 @@ applies.
    result-side oracles (weak), moving their findings from
    `reachable_unrevealed` to `weakly_exposed` and letting rule 3 apply.
    Alternative: keep them unread.
+3. **The `?` operator.** An added or removed `?` swaps `Err` for `Ok` the
+   same way a guard does, but a `?` line is an `error_path` probe, and
+   RIPR-SPEC-0107 says a broad oracle never confirms `error_path`.
+   Recommended: amend RIPR-SPEC-0107 so rule 3 applies to `?` when the test
+   input provably reaches the `?` call's `Err` and the original code returned
+   `Ok` on that input. Alternative: leave `?` under RIPR-SPEC-0107 (always
+   weak with a broad oracle).
 
 ## Required Evidence
 
@@ -168,7 +199,8 @@ applies.
 ## Non-Goals
 
 - No credit for message text in `should_panic(expected = ..)`.
-- No change to exact-variant authorities (RIPR-SPEC-0106, 0107, 0175, 0197).
+- No change to exact-variant authorities (RIPR-SPEC-0106, 0107, 0175, 0197)
+  beyond rule 4's binding, unless decision 3 is adopted.
 - No change to how a `?` probe is confirmed by an exact `Err(E::X)`
   assertion; that under-credit is tracked separately.
 
@@ -191,8 +223,16 @@ Source: `check` as in Problem.
 7. Same change, `let _e = check(300).unwrap_err();`: `weakly_exposed`.
 8. `Ok(len)` changed to `Ok(len + 1)`, test `assert!(check(3).is_ok())`:
    `weakly_exposed`.
-9. `let d = digit(c)?;` added in `total`, test `assert!(total("x").is_err())`
-   where `digit('x')` errors: `exposed` (rule 3).
+9. `let d = digit(c)?;` changed from `let d = digit(c).unwrap_or(0);` in
+   `total`, where `digit('x')` returns `Err` and the original `total("x")`
+   returned `Ok`, test `assert!(total("x").is_err())`: `exposed` if decision 3
+   is adopted, otherwise `weakly_exposed` under RIPR-SPEC-0107.
+10. `withdraw` changed to return `Err(PayError::Frozen)`; the only related
+    test pinning a variant is `assert!(matches!(refund(20_000), Err(PayError::Limit)))`
+    for another function: not `exposed` (rule 4).
+11. `parse_amount` changed to return `Err(ParseError::TooLong)`; related tests
+    pin `Err(ParseError::Empty)` and `Err(ParseError::BadDigit('x'))` and one
+    asserts `is_err()` on a too-long input: `weakly_exposed` (rules 1 and 4).
 
 ## Test Mapping
 

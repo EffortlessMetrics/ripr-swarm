@@ -89,12 +89,22 @@ to the family, which may differ.
    the `wrapper_seam_callee` limit, which applies only to `error_path` and
    `return_value`). The reason appears in that finding's text.
 4. **Call observation agrees.** For a `call_deletion` finding and a
-   `side_effect` finding on the same call expression: when the side effect is
-   confirmed by an exact oracle on the state the call writes (sink
-   `state_write` or an admitted mock expectation on the call), deleting the
-   call is observed by the same oracle, and the `call_deletion` finding is
-   confirmed too. The reverse does not hold: observing the call happened does
-   not observe its argument.
+   `side_effect` finding on the same call expression, the side effect's
+   confirmation carries to the deletion only when deleting the call provably
+   changes what the oracle sees:
+   - for an exact oracle on the written state (sink `state_write`), the
+     receiver is provably fresh or empty before the call in that test (bound
+     from a literal, `new()` or `default()` with no earlier write) and the
+     assertion expects it to hold the written value; an idempotent write
+     (`insert` of a present key, `clear` of an empty collection) or an
+     unknown pre-call state does not carry;
+   - for a mock expectation, it carries an exact call count (`times(n)` with
+     `n` at least 1); an expectation that allows zero calls does not carry.
+
+   Otherwise the `call_deletion` finding keeps its own evidence, and its text
+   says the deletion is not established by the side-effect oracle. The
+   reverse never carries: observing that the call happened does not observe
+   its argument.
 5. **Family evidence may differ.** Classes may differ across families when
    each finding's discriminate or infect evidence says why (pairing, missing
    discriminator, oracle kind). Every finding stays in every per-finding
@@ -142,6 +152,11 @@ to the family, which may differ.
 2. `fn record(&mut self, amount: u64) { self.history.push(amount); }`, the
    argument changed, test `l.record(5); assert_eq!(l.history, vec![5])`:
    `side_effect` and `call_deletion` both confirmed.
+   Here `l` is built by `Ledger::default()` with nothing pushed before. A
+   control that pushes `5` before calling `record(5)` and then asserts only
+   `assert!(l.history.contains(&5))` does not carry: the `side_effect`
+   finding may stand on its own evidence, but the `call_deletion` finding is
+   not confirmed by it.
 3. `try_parse_summary(raw).map_err(Into::into)` in `parse_summary`, test
    `try_parse_summary_pins_malformed_source` matching
    `Err(ParseSummaryError::MalformedSource)`: no finding names that test in

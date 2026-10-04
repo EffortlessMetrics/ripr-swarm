@@ -45,8 +45,8 @@ Policy impact:
 ## Problem
 
 ripr never decides which arm a test input selects. For a changed `match_arm`
-probe, reveal confirms only when an identifier after `::` in the arm pattern
-appears somewhere in an assertion, or when a string-literal arm equals a
+probe, reveal confirms only when an identifier after `::` in the probe text
+(the arm pattern, plus the body on the lexical path) appears somewhere in an assertion, or when a string-literal arm equals a
 direct owner-call argument (`analysis/classify/reveal.rs`,
 `match_arm_variant_tokens` and `owner_call_literals`). Activation produces no
 missing discriminator for the `match_arm` family
@@ -57,7 +57,7 @@ lose their wrapper, so `reason(Some(5))` is recorded as `x = 5`.
 Three wrong outcomes follow:
 
 1. **Correct gaps abstain.** `fixtures/match_arm_blind` has one test,
-   `assert_eq!(reason(Some(5)), 6)`, and a changed `None => 0` arm. No test
+   `assert_eq!(reason(Some(5)), 6)`, and an added `None => 0` arm. No test
    selects `None`. Under #5416 rule 3 a strong nearest oracle with no named
    missing discriminator is withheld as `static_unknown`
    (`rust_oracle_target_unresolved`), so a real gap reads as an analyzer limit.
@@ -80,8 +80,8 @@ Three wrong outcomes follow:
 ### Selection facts
 
 For a changed `match_arm` probe, activation evaluates each related test's
-owner calls whose scrutinee is a parameter of the owner and whose argument is
-statically resolved. A call **provably selects** an arm when, in source order,
+owner calls whose scrutinee is a parameter of the owner, not shadowed or
+reassigned before the `match`, and whose argument is statically resolved. A call **provably selects** an arm when, in source order,
 every earlier arm provably does not match the argument and that arm provably
 does.
 
@@ -120,7 +120,12 @@ Observed values keep their constructor (`Some(5)`, not `5`).
 
 The finding keeps its gap (`weakly_exposed` when a related test holds an
 oracle on the result, `reachable_unrevealed` when none does). Because a
-missing discriminator is named, RIPR-SPEC-0221 rule 3 does not withhold it.
+missing discriminator is named, the #5416 unknown-not-a-gap rule 3 does not
+withhold it.
+
+When the change is to the arm's pattern rather than its body, the arm is
+named only when no resolved call selects it under either the original or
+the changed pattern: an input that moved between arms is a discriminator.
 
 When any related call is unresolved, or a guard blocks the decision, no
 missing discriminator is named. Rule 3 then applies unchanged.
@@ -133,6 +138,13 @@ holds an admitted exact oracle on that call's result (the call itself as an
 assertion observes, as in RIPR-SPEC-0186 pairing), discrimination is
 confirmed and the finding may read `exposed`. Selection replaces token
 matching as the confirmation for that test.
+
+This holds for a change to the arm's body. For a change to the arm's
+pattern, selecting the changed arm is not enough, because an input inside
+both the original and the changed pattern runs the same arm either way.
+Credit then needs a resolved call whose selected arm differs between the
+original and the changed `match`, with a same-test exact oracle on its
+result.
 
 ### Selection outranks tokens
 
@@ -151,7 +163,7 @@ rest.
    enum paths only.
 2. **`_` and binding arms by first-match.** Recommended: a trailing `_` is
    selected when every earlier arm provably does not match, so a change to
-   `_ => 0` with only `f(Kind::A)` (selecting `Kind::A =>`) names `_` as
+   `_ => 2` with only `f(Kind::A)` (selecting `Kind::A =>`) names `_` as
    missing. Alternative: never name `_`.
 3. **Mixed resolved and unresolved calls.** Recommended: any unresolved call
    blocks the "no call selects" claim (fail closed), because the unresolved
@@ -164,11 +176,11 @@ rest.
 ## Required Evidence
 
 - `fixtures/match_arm_blind` reads `weakly_exposed` with a missing
-  discriminator whose `value` is `None`, on main and with RIPR-SPEC-0221
-  applied.
+  discriminator whose `value` is `None`, on main and with the #5416
+  unknown-not-a-gap rules applied.
 - A selected-arm control (`assert_eq!(reason(None), 0)`) reads `exposed`.
 - An unresolved-input control reads no named missing discriminator; with
-  RIPR-SPEC-0221 applied it reads `static_unknown` with
+  the #5416 unknown-not-a-gap rules applied it reads `static_unknown` with
   `rust_oracle_target_unresolved`.
 - A guarded-arm control reads no named missing discriminator.
 - The expected-side trap reads below `exposed`.
@@ -197,22 +209,28 @@ the diff changes `None => 1` to `None => 0`.
 2. Test `assert_eq!(reason(None), 0)`: `exposed`.
 3. Test `let x = make(); assert_eq!(reason(x), 6)`: no named missing
    discriminator; `static_unknown` / `rust_oracle_target_unresolved` under
-   RIPR-SPEC-0221.
-4. `match k { Kind::A => 1, _ => 0 }`, change `_ => 0` to `_ => 2`, test
+   the #5416 unknown-not-a-gap rule 3.
+4. `match k { Kind::A => 1, _ => 2 }`, the diff changes `_ => 0` to `_ => 2`, test
    `assert_eq!(f(Kind::A), 1)`: `weakly_exposed`; missing discriminator
    `value` `_`.
-5. `match x { Some(v) if v > 3 => 1, _ => 0 }`, guard changed to `v > 4`,
-   test `assert_eq!(f(Some(5)), 1)`: no named missing discriminator.
+5. `match x { Some(v) if v > 4 => 1, _ => 0 }`, the diff changes the guard
+   from `v > 3`, test `assert_eq!(f(Some(5)), 1)`: no named missing discriminator.
 6. `match k { Kind::A => Kind::B, Kind::B => Kind::A }`, arm `Kind::B =>`
    changed, test `assert_eq!(f(Kind::A), Kind::B)`: `weakly_exposed`; missing
    discriminator `value` `Kind::B`.
 7. `match n { 0 => "zero", 1..=9 => "digit", _ => "many" }`, arm
    `1..=9 =>` changed, tests `f(0)` and `f(42)` with exact assertions:
    `weakly_exposed`; missing discriminator `value` `1..=9`.
+8. Same `match`, the diff changes the pattern `1..=8` to `1..=9`. Test
+   `assert_eq!(f(5), "digit")`: not `exposed` (5 selects the arm under both
+   patterns) and no missing discriminator is named for selection alone.
+   Test `assert_eq!(f(9), "digit")`: `exposed` (9 moved from `_` to the
+   changed arm).
 
 ## Test Mapping
 
-- `fixtures/match_arm_blind` (example 1)
+- `fixtures/match_arm_blind` (example 1, with the arm added rather than
+  changed; the expected result is the same)
 - Planned: one fixture or verdict-corpus case per acceptance example 2 to 7.
 - Planned: `crates/ripr/src/analysis/classify/activation.rs` unit tests for
   each grammar element, guard blocking, first-match order and unresolved

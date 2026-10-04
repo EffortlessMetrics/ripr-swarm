@@ -99,7 +99,11 @@ The probe is confirmed by a related test that:
 1. calls the owner method on a local binding `r` (the receiver), and
 2. after that call, holds an admitted exact oracle that reads `r.f`
    (`assert_eq!(r.f, v)`, or a whole-value comparison of `r` that names `f`
-   under RIPR-SPEC-0225).
+   under RIPR-SPEC-0225); and
+3. between the owner call and that read, nothing else can write `r.f`: no
+   method call on `r` taking `&mut self`, no assignment to `r` or `r.f`, and
+   no `&mut r` passed to a call. Otherwise the read does not confirm
+   (`c.bump(); c.reset(); assert_eq!(c.count, 0)` hides the mutant).
 
 A read of a sibling field keeps a `FieldValue` missing discriminator for `f`,
 as for constructed fields (RIPR-SPEC-0005). A test that reaches the owner and
@@ -109,15 +113,18 @@ on the receiver reads `reachable_unrevealed`, a weak or sibling read reads
 RIPR-SPEC-0094 Part B variant scoping to the read.
 
 Collection writes on a field path (`self.items.push(x)`,
-`self.map.insert(k, v)`) apply the RIPR-SPEC-0094 direct-collection rule with
-the receiver taken as the field path, so `c.items` in the test is the
-observed subject for `self.items` in the owner.
+`self.map.insert(k, v)`) extend the direct-collection observer (#4575, today
+limited to `push` on a bare identifier in
+`analysis/classify/propagation_witness.rs`) to field-path receivers and to
+`insert`, so `c.items` in the test is the observed subject for `self.items`
+in the owner. This is new behavior, not reuse.
 
 ### Limits
 
-- A read through a method (`r.count()`) confirms only when that method's
-  body, resolved in the workspace, returns `self.f` directly (or a reference,
-  copy or clone of it). Otherwise, when the test holds a strong oracle on the
+- A read through a method (`r.count()`) confirms only when the method
+  resolves to an inherent method of the receiver's own type (not a trait
+  method, a `Deref` target or a same-name method on another type) whose body
+  returns `self.f` directly (or a reference, copy or clone of it). Otherwise, when the test holds a strong oracle on the
   method result, the finding reads `static_unknown` with the proposed
   `static_limit_kind` `rust_state_read_path_unresolved`.
 - A write through a dereferenced `&mut` parameter (`*p = v`) or through a
@@ -179,7 +186,10 @@ changes `self.count += 2` to `self.count += 1`.
    `set(&mut x, 5); assert_eq!(x, 5)`: `static_unknown`,
    `rust_mut_reference_alias_unresolved`.
 8. `self.items.push(x)` with argument changed, test
-   `c.add(4); assert_eq!(c.items, vec![4])`: `exposed` (already today).
+   `c.add(4); assert_eq!(c.items, vec![4])`: `exposed` (measured on main with
+   `ripr check --diff`, sink `state_write`).
+9. `c.bump(); c.reset(); assert_eq!(c.count, 0)` with `reset` taking
+   `&mut self`: not `exposed`.
 
 ## Test Mapping
 
