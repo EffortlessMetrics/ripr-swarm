@@ -2062,6 +2062,11 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root_arg = root.display().to_string();
     let diff_arg = diff.display().to_string();
+    let expected_listing = format!(
+        "ripr check --root {} --diff {} --json",
+        renderer_shell_arg(&root_arg),
+        renderer_shell_arg(&diff_arg)
+    );
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let listed = run_command(
             bin,
@@ -2133,9 +2138,13 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         )
                         .into());
                     }
-                    if !stderr.contains("list available finding ids")
-                        || !stderr.contains(&root_arg)
-                        || !stderr.contains(&diff_arg)
+                    let listing = stderr
+                        .split('`')
+                        .find(|part| part.starts_with("ripr check "))
+                        .ok_or_else(|| {
+                            format!("selector miss omitted its retry command: {stderr}")
+                        })?;
+                    if listing != expected_listing || !stderr.contains("list available finding ids")
                     {
                         return Err(
                             format!("selector retry lost the requested scope: {stderr}").into()
