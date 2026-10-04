@@ -572,7 +572,7 @@ fn finish(
         "ripr": version,
         "binary": if options.install_published { "cargo install ripr --locked".to_string() } else { options.ripr.clone() },
         "setup": setup.iter().map(|s| {
-            let mut entry = step_json(s, &[]);
+            let mut entry = step_json(s, &setup_friction(s));
             if s.name == "install_published" && s.exit != Some(0) {
                 entry["stderr_log"] = json!(INSTALL_STDERR_LOG);
             }
@@ -598,9 +598,21 @@ fn finish(
     Ok(())
 }
 
+/// Setup steps carry no time or size budget (an install legitimately takes
+/// minutes); only a failure is friction.
+fn setup_friction(step: &StepResult) -> Vec<String> {
+    if step.exit == Some(0) {
+        Vec::new()
+    } else {
+        vec![format!("exit {:?}, expected 0", step.exit)]
+    }
+}
+
 fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) -> String {
     let mut text = format!("# ripr first-run walk\n\nripr: `{version}`\n\n## Setup\n\n");
+    let mut friction_total = 0usize;
     for step in setup {
+        friction_total += setup_friction(step).len();
         text.push_str(&format!(
             "- `{}`: {:.1}s, exit {:?}\n",
             step.name, step.secs, step.exit
@@ -609,7 +621,6 @@ fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
             text.push_str(&format!("  stderr: `{INSTALL_STDERR_LOG}`\n"));
         }
     }
-    let mut friction_total = 0usize;
     for case in cases {
         text.push_str(&format!(
             "\n## {}\n\nverdict: `{}`; generated workflow: {} lines, installs with cargo: {}\n\n| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
@@ -742,6 +753,16 @@ mod tests {
         assert!(owned.join(OUT_MARKER).is_file());
         let _ = fs::remove_dir_all(&base);
         Ok(())
+    }
+
+    #[test]
+    fn only_a_failed_setup_step_is_friction_however_long_it_ran() {
+        let slow_install = step("install_published", 0, "", "", 600.0);
+        assert!(setup_friction(&slow_install).is_empty());
+        let failed = step("install_published", 101, "", "error\n", 3.0);
+        assert_eq!(setup_friction(&failed), vec!["exit Some(101), expected 0"]);
+        let report = render_markdown("v", &[failed], &[]);
+        assert!(report.contains("Friction flags: 1"), "{report}");
     }
 
     #[test]
