@@ -75,10 +75,13 @@ developer who disagreed had to re-derive the analysis.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
-  `misses: <why>; checked <assertion>` (`unconfirmed: <why>` for
-  `observation_unconfirmed`, through `related_test_miss_label`); JSON, the context packet and MCP gap
+  `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
   documents carry `miss` and `why`; LSP hover prints it, and diagnostics add up
   to three related-information rows that open the examined test.
+- `output::related_test_miss::related_test_miss_label` owns the word before
+  the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
+  Human-full, `ripr explain`, LSP hover and LSP related information use it;
+  JSON, MCP and the context packet carry no label.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
@@ -124,7 +127,11 @@ developer who disagreed had to re-derive the analysis.
   listed and rank after matched tests.
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose.
 - `crates/ripr/src/analysis/language/perl/tests.rs` — the Perl v1 rule: only
-  a direct, reachable, strong row without sink alignment is unconfirmed.
+  a direct, reachable, strong row without sink alignment is unconfirmed. These
+  controls consume frozen packets (#5510); whether the live perl-lsp emitter
+  produces complete, unblocked packets is tracked by #3216 and #3223.
+- `crates/ripr/src/output/human/explain.rs::tests` — an unconfirmed row is not
+  labelled a miss.
 - Golden fixtures under `fixtures/*/expected/` — rendered parity.
 
 ## Implementation Mapping
@@ -135,7 +142,7 @@ developer who disagreed had to re-derive the analysis.
 | `crates/ripr/src/analysis/classify/reveal.rs` | retain examined tests; set assertion-level misses; ranking |
 | `crates/ripr/src/analysis/classifier/finding.rs` | class-level misses |
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |
-| `crates/ripr/src/output/related_test_miss.rs` | the one prose owner |
+| `crates/ripr/src/output/related_test_miss.rs` | the one prose and label owner |
 | `crates/ripr/src/output/human/{sections,evidence_lines,explain}.rs`, `output/json/report.rs`, `lsp/{hover,diagnostics}.rs`, `mcp/gaps.rs` | projections |
 
 ## Metrics
