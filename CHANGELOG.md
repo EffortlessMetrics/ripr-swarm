@@ -16,7 +16,7 @@ are scoped or reviewed.
   `ripr_get_repair_card` take `canonical_id` instead of `gap_id`, and the
   resource templates are `ripr://gap/{canonical_id}` and
   `ripr://repair-card/{canonical_id}`. Clients re-reading `tools/list` and
-  `resources/list` adapt automatically; in-flight callers passing `gap_id`
+  `resources/templates/list` adapt automatically; in-flight callers passing `gap_id`
   get `invalid params` (#5209).
 
 ### Fixed
