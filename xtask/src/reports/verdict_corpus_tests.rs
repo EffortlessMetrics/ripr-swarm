@@ -838,3 +838,95 @@ fn stored_paths_keep_vendored_rust_out_of_the_workspace() {
     // A bare `.rs` file under subjects is refused, not silently copied.
     assert_eq!(logical_path("src/lib.rs"), None);
 }
+
+#[test]
+fn a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    assert_eq!(corpus.language, "rust");
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    let json = render_report_json(&report)?;
+    assert!(!json.contains("\"language\""), "{json}");
+    assert!(render_report_markdown(&report).starts_with("# Rust verdict corpus report\n"));
+    Ok(())
+}
+
+#[test]
+fn a_non_rust_corpus_names_its_language_in_both_reports() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let mut raw: Value =
+        serde_json::from_str(&read(&dir.join("corpus.json"))?).map_err(|err| err.to_string())?;
+    raw["language"] = json!("typescript");
+    let corpus: Corpus = serde_json::from_value(raw).map_err(|err| err.to_string())?;
+    assert!(validate(&corpus, &dir).is_empty());
+    let report = build_report(&corpus, &gap_checks(&corpus), &BTreeMap::new())?;
+    assert!(render_report_json(&report)?.contains("\"language\": \"typescript\""));
+    assert!(render_report_markdown(&report).starts_with("# TypeScript verdict corpus report\n"));
+    Ok(())
+}
+
+#[test]
+fn validator_rejects_an_undeclared_language() -> Result<(), String> {
+    let violations = tampered(|raw| raw["language"] = json!("cobol"))?;
+    assert!(
+        violations
+            .iter()
+            .any(|v: &String| v.contains("language `cobol`")),
+        "{violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn each_language_owns_its_corpus_directory_and_run_paths() {
+    assert_eq!(
+        corpus_dir("rust").ok(),
+        Some(PathBuf::from(CORPUS_DIR)),
+        "the Rust corpus keeps its directory"
+    );
+    assert_eq!(
+        corpus_dir("typescript").ok(),
+        Some(PathBuf::from("fixtures/typescript-verdict-corpus"))
+    );
+    let refused = corpus_dir("../rust").err().unwrap_or_default();
+    assert!(refused.contains("is not one of"), "{refused}");
+    assert_eq!(
+        language_path(DEFAULT_OUT, "rust"),
+        PathBuf::from(DEFAULT_OUT)
+    );
+    assert_eq!(
+        language_path(DEFAULT_OUT, "perl"),
+        Path::new(DEFAULT_OUT).join("perl")
+    );
+    assert_eq!(language_flag("rust"), "");
+    assert_eq!(language_flag("python"), " --language python");
+}
+
+#[test]
+fn a_language_directory_must_declare_that_language() -> Result<(), String> {
+    let refused = corpus_for_language(&repo_corpus_dir(), "typescript")
+        .err()
+        .unwrap_or_default();
+    assert!(
+        refused.contains("declares language `rust`, not `typescript`"),
+        "{refused}"
+    );
+    corpus_for_language(&repo_corpus_dir(), "rust")?;
+    Ok(())
+}
+
+fn gap_checks(corpus: &Corpus) -> Vec<(String, Value)> {
+    corpus
+        .cases
+        .iter()
+        .map(|case| {
+            let mut f = finding(
+                "weakly_exposed",
+                case.anchor.line as u64,
+                "candidate_current",
+            );
+            f["probe"]["file"] = json!(case.anchor.file);
+            (case.case_id.clone(), json!({"findings": [f]}))
+        })
+        .collect()
+}
