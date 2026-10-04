@@ -245,17 +245,19 @@ fn macro_binding_ambiguities(
         })
     };
     // A workspace package or a module of this file that takes a drop-in
-    // crate's name can export a different `assert_eq!` under that path.
-    let drop_in_shadowed = |root: &str| {
+    // crate's name can export a different `assert_eq!` under that path. A
+    // leading `::` names an external crate, which no module can shadow.
+    let drop_in_shadowed = |root: &str, external: bool| {
         packages
             .iter()
             .any(|package| package.replace('-', "_") == root)
-            || parse
-                .tree()
-                .syntax()
-                .descendants()
-                .filter_map(ast::Module::cast)
-                .any(|module| module.name().is_some_and(|name| name.text() == root))
+            || !external
+                && parse
+                    .tree()
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::Module::cast)
+                    .any(|module| module.name().is_some_and(|name| name.text() == root))
     };
     for node in parse.tree().syntax().descendants() {
         let definition = ast::MacroRules::cast(node.clone())
@@ -356,6 +358,7 @@ fn macro_binding_ambiguities(
                 .path()
                 .map(|path| path.syntax().text().to_string())
                 .unwrap_or_default();
+            let external = root.trim_start().starts_with("::");
             let root = root
                 .trim_start_matches("::")
                 .split("::")
@@ -398,7 +401,7 @@ fn macro_binding_ambiguities(
                 if let Some(name) = name {
                     let name = name.trim_start_matches("r#");
                     if trusted.contains(&name)
-                        && !(is_drop_in_assertion(&item, name) && !drop_in_shadowed(root))
+                        && (!is_drop_in_assertion(&item, name) || drop_in_shadowed(root, external))
                     {
                         let line = line_of(&node);
                         ambiguous.push((

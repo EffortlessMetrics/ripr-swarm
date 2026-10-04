@@ -1041,6 +1041,7 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() {
         "use ::pretty_assertions::assert_eq;",
         "use pretty_assertions::{assert_eq, assert_ne};",
         "use pretty_assertions::assert_eq as assert_eq;",
+        "mod pretty_assertions {}\nuse ::pretty_assertions::assert_eq;",
     ] {
         assert_eq!(
             weight_refusal(outside, &[("src/other.rs", other)]),
