@@ -564,6 +564,11 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
                     "unchanged since {baseline_rev} ({})",
                     fmt_value(before, &unit)
                 )
+            } else if unit == "flag" {
+                format!(
+                    "changed since {baseline_rev} (was {})",
+                    fmt_value(before, &unit)
+                )
             } else {
                 format!(
                     "{} since {baseline_rev} (was {})",

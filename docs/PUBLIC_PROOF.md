@@ -30,7 +30,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | Speed and memory | Warm `ripr check` on the last commit | **11.5 s** | <= 2.0 s | below the bar | +0.8 s since a7a089e (was 10.7 s) |
 | Speed and memory | Warm `ripr check` peak memory | **1187 MB** | <= 512 MB | below the bar | +13 MB since a7a089e (was 1174 MB) |
 | CI adoption | Lines in the workflow `ripr init --ci github` writes | **1154 lines** | <= 150 lines | below the bar | -1220 lines since a7a089e (was 2374 lines) |
-| CI adoption | Generated workflow can only get ripr by compiling it (1 = yes) | no | <= no | meets the bar | -yes since a7a089e (was yes) |
+| CI adoption | Generated workflow can only get ripr by compiling it (1 = yes) | no | <= no | meets the bar | changed since a7a089e (was yes) |
 | CI adoption | Time for the generated workflow to have ripr on PATH | 0.97 s | <= 30 s | meets the bar | first receipt |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 findings** | <= 0 findings | below the bar | unchanged since a7a089e (1 findings) |

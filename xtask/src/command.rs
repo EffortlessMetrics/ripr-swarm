@@ -1713,7 +1713,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         ),
         command_entry(
             "public-proof [--check] [--refresh-receipts]",
-            "non_mutating_check",
+            "argument_dependent",
             "docs/PUBLIC_PROOF.md (written without --check); --refresh-receipts also rewrites metrics/public-proof/dx-scoreboard.json and verdict-corpus.json from their canonical sources",
             false,
             false,
