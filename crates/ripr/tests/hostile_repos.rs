@@ -68,7 +68,7 @@ struct Ran {
 
 /// Upper bound for one CLI invocation. A hang on a hostile fixture must fail the
 /// test with the child reaped, not stall the suite until the job times out.
-const RIPR_DEADLINE: Duration = Duration::from_secs(120);
+const RIPR_DEADLINE: Duration = Duration::from_mins(2);
 
 fn drain<R: Read + Send + 'static>(stream: Option<R>) -> thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || {
@@ -115,7 +115,7 @@ fn ripr(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<Ran, String>
         handle
             .join()
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            .map_err(|_| "output reader panicked".to_string())
+            .map_err(|_panic| "output reader panicked".to_string())
     };
     Ok(Ran {
         code: status.code(),
