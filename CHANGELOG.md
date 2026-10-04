@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
+  recovery messages bind a relative `--root` to the selected directory in the
+  commands they print, so `--root .` no longer yields a command that fails
+  when pasted from another directory. The card's `full packet:` line and the
+  identity refusal now carry `--root` at all; the card's typed command args and
+  detail routes stay portable (#3999).
+
 - GitHub: `ripr check --format github` omits `,line=` when a finding's probe
   location is line 0, instead of emitting out-of-contract `line=0`. Findings
   with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are
@@ -33,12 +40,19 @@ are scoped or reviewed.
   new-test placement instead of twice per seam, and a run that passes the
   default 30s deadline keeps going instead of restarting. On a 4-core Linux
   host, cold pilot time fell from 78s to 2.4s on serde, 93s to 19s on
-  ripgrep and 114s to 27s on regex, with byte-identical pilot artifacts. An
-  explicit `--timeout-ms` remains a hard limit. A warm `ripr check` scans
-  workspace files for shadowed assertion macros on all cores and stops once
-  one file already leaves every trusted macro unestablished, cutting a
-  one-line check of ripr-swarm from 7.5s to 4.2s (8.0s to 4.4s on two
-  cores) with identical output.
+  ripgrep and 114s to 27s on regex, with pilot artifacts byte-identical after
+  normalizing the output path. An explicit `--timeout-ms`, including
+  `--timeout-ms 30000`, remains a hard limit and gets no extension. When the
+  extended run also times out, the pilot summary reports the 270000 ms budget
+  actually spent and suggests a retry budget scaled from it. Seam inventory
+  resolves owning functions with one sorted pass per file instead of a scan
+  of every function per seam, so a generated 200k-function file that
+  previously exhausted the 270s budget completes in 112s, and a hard deadline
+  now cancels within about a second instead of waiting out the scan. A warm
+  `ripr check` scans workspace files for shadowed assertion macros on all
+  cores and stops once one file already leaves every trusted macro
+  unestablished, cutting a one-line check of ripr-swarm from 7.5s to 4.2s
+  (8.0s to 4.4s on two cores) with identical output.
 
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in
