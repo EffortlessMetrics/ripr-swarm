@@ -122,6 +122,25 @@ fn missing_config_uses_behavior_preserving_defaults() -> Result<(), String> {
     Ok(())
 }
 
+/// A `ripr.toml` that is a dangling or self-referencing symlink is an
+/// unreadable config, not an absent one: the run must fail naming the file
+/// instead of silently analyzing with defaults.
+#[cfg(unix)]
+#[test]
+fn unresolvable_config_symlink_is_a_loud_error_not_defaults() -> Result<(), String> {
+    for (label, target) in [("dangling", "no-such-target.toml"), ("loop", "ripr.toml")] {
+        let root = temp_root(label)?;
+        std::os::unix::fs::symlink(target, root.join("ripr.toml"))
+            .map_err(|err| format!("symlink failed: {err}"))?;
+        let error = match load_for_root(&root) {
+            Ok(_) => return Err(format!("{label}: expected an error, got a config")),
+            Err(error) => error,
+        };
+        assert!(error.contains("ripr.toml"), "{label}: {error}");
+    }
+    Ok(())
+}
+
 #[cfg(feature = "lang-python")]
 #[test]
 fn missing_config_detects_root_python_project_markers() -> Result<(), String> {

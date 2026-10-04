@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Config: a `ripr.toml` that is a dangling or self-referencing symlink is
+  reported as an unreadable config naming the file. It was treated as absent,
+  so the run silently used built-in defaults while a directory or non-UTF-8
+  `ripr.toml` already failed loudly.
+
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
   commands they print, so `--root .` no longer yields a command that fails
