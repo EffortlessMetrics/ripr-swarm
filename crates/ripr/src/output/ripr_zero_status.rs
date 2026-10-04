@@ -581,6 +581,33 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             ..DeltaParse::default()
         };
     }
+    // Present-but-malformed counts fail closed too (#6095 review): a null,
+    // string, or negative count must never read as zero debt.
+    let mut malformed_counts = Vec::new();
+    for key in [
+        "still_present",
+        "resolved",
+        "new_policy_eligible",
+        "acknowledged",
+        "suppressed",
+        "stale_baseline_entry",
+        "invalid_baseline_entry",
+        "missing_current_input",
+    ] {
+        if validated_count(delta_section, key).is_none() {
+            malformed_counts.push(key);
+        }
+    }
+    if !malformed_counts.is_empty() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has malformed counts ({}); counts must be valid nonnegative integers, and malformed counts are not evidence of zero debt",
+                malformed_counts.join(", ")
+            )],
+            ..DeltaParse::default()
+        };
+    }
     let counts = DebtDeltaSummary {
         still_present: usize_path(&value, &["delta", "still_present"]),
         resolved: usize_path(&value, &["delta", "resolved"]),
@@ -630,13 +657,15 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
     }
     // Counts and items must reconcile (#5251 Z3): items in a bucket whose
     // count reads zero contradict the counts, so the document cannot yield a
-    // verdict. Unclassifiable items only contradict an otherwise all-zero
-    // document; against nonzero counts they are noise, not a contradiction.
-    let all_counts_zero = counts.still_present == 0
-        && counts.resolved == 0
+    // verdict. Unclassifiable items contradict an otherwise clear document:
+    // their debt classification is unknown, so they block `achieved` exactly
+    // when the counts would otherwise clear it. Historical `resolved` and
+    // accepted `suppressed` counts never mask them (#6095 review); against
+    // visible unresolved, stale, invalid, or missing-input counts the
+    // document is already `not_yet`, so they add no new contradiction.
+    let clear_counts_zero = counts.still_present == 0
         && counts.new_policy_eligible == 0
         && counts.acknowledged == 0
-        && counts.suppressed == 0
         && counts.stale == 0
         && counts.invalid == 0
         && counts.missing_input == 0;
@@ -659,7 +688,7 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             }
             Some(_) => {}
             None => {
-                if all_counts_zero {
+                if clear_counts_zero {
                     counts_items_mismatch = true;
                     break;
                 }
@@ -1476,6 +1505,16 @@ fn usize_path(value: &Value, path: &[&str]) -> usize {
         .unwrap_or(0)
 }
 
+/// A delta count that must be a valid nonnegative integer: `None` when the
+/// key is missing or present-but-malformed (null, string, float, negative,
+/// or overflowing). Used where a silent zero would fabricate zero debt.
+fn validated_count(delta_section: &serde_json::Map<String, Value>, key: &str) -> Option<usize> {
+    delta_section
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+}
+
 fn string_path(value: &Value, path: &[&str]) -> Option<String> {
     path_value(value, path).and_then(string_value)
 }
@@ -2178,6 +2217,93 @@ mod tests {
         let rendered = render_ripr_zero_status_json(&report)?;
         assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
         assert!(rendered.contains("partial delta section"), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_delta_count() -> Result<(), String> {
+        // Present-but-malformed counts must never read as zero debt (#6095
+        // review): null, string, and negative counts are all Invalid.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": null,
+            "resolved": 0,
+            "new_policy_eligible": "0",
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": -1,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": []
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("malformed counts"), "{rendered}");
+        assert!(rendered.contains("still_present"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_unclassified_items_under_resolved_counts()
+    -> Result<(), String> {
+        // An unclassifiable item blocks achieved even when historical
+        // resolved counts are positive: resolved is not current-debt
+        // evidence for an item of unknown classification (#6095 review).
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 1,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [{"bucket": "unrecognized", "path": "src/mystery.rs"}]
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(rendered.contains("contradictory"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
         Ok(())
     }
 

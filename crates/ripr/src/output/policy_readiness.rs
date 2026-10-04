@@ -276,7 +276,12 @@ pub(crate) fn build_policy_readiness_report(input: PolicyReadinessInput) -> Poli
         && baseline_facts.invalid == 0
         && baseline_facts.missing_input == 0;
     let suppression_health_ready = suppression_health.state == "healthy";
-    let visible_only_ready = gate.status == ArtifactStatus::Loaded && preview_boundary_healthy;
+    // A failed gate blocks the ready booleans as well as the top-level
+    // status: every downstream ready derives from `visible_only_ready`, so
+    // gating it here keeps the summary consistent with `config_error`
+    // (#6095 review).
+    let visible_only_ready =
+        !gate_failed && gate.status == ArtifactStatus::Loaded && preview_boundary_healthy;
     let acknowledgeable_ready = visible_only_ready
         && waiver.status == ArtifactStatus::Loaded
         && suppression.status == ArtifactStatus::Loaded
@@ -1179,6 +1184,14 @@ mod tests {
 
         let report = build_policy_readiness_report(input);
         assert_eq!(report.status, "config_error");
+        // The summary booleans must agree with the top-level status: a
+        // failed gate blocks every ready flag, not just the status string
+        // (#6095 review).
+        assert!(!report.summary.visible_only_ready);
+        assert!(!report.summary.acknowledgeable_ready);
+        assert!(!report.summary.baseline_check_ready);
+        assert!(!report.summary.calibrated_gate_ready);
+        assert!(!report.summary.blocking_ready);
         let rendered = render_policy_readiness_json(&report)?;
         assert!(
             rendered.contains("\"status\": \"config_error\""),
@@ -1189,6 +1202,11 @@ mod tests {
             "{rendered}"
         );
         assert!(!rendered.contains("ready_for_"), "{rendered}");
+        assert!(
+            rendered.contains("\"visible_only_ready\": false"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\"blocking_ready\": false"), "{rendered}");
         Ok(())
     }
 

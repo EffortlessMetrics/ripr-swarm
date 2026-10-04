@@ -371,6 +371,13 @@ Given a baseline debt delta with zero visible unresolved gaps, no
 new policy-eligible gaps, no stale metadata, and no missing inputs, the report
 sets `ripr_zero.state = "achieved"`.
 
+Given a baseline debt delta with a missing delta section, missing counts,
+malformed (non-integer) counts, items that contradict zero counts, or a
+disclosed partial-scope, findings-bounded, or otherwise incomplete producer
+run, the report sets `ripr_zero.state = "unknown"` with the reason in
+warnings; it must not report `achieved` from a denominator it cannot
+validate. Visible debt under such a delta keeps `not_yet` (#5251).
+
 Given a baseline debt delta with existing baseline gaps still present, the
 report sets `ripr_zero.state = "not_yet"` and counts them as visible unresolved
 baseline debt.
