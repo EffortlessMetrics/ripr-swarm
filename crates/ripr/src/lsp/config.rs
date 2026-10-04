@@ -236,9 +236,7 @@ impl LspAnalysisConfig {
                 .get(payload_key)
                 .and_then(Value::as_str)
                 .unwrap_or("default");
-            warnings.push(ignored_initialization_option_warning(
-                option_key, value, fallback,
-            ));
+            warnings.push(ignored_initialization_option_warning(option_key, fallback));
         }
         warnings
     }
@@ -440,9 +438,9 @@ fn session_option_value_is_valid(key: &str, value: &Value) -> bool {
     }
 }
 
-fn ignored_initialization_option_warning(key: &str, value: &Value, source: &str) -> String {
+fn ignored_initialization_option_warning(key: &str, source: &str) -> String {
     format!(
-        "ripr: ignoring malformed initializationOption '{key}' (invalid type or literal: {value}); using {source} value instead"
+        "ripr: ignoring malformed initializationOption '{key}' (invalid type or literal); using {source} value instead"
     )
 }
 
@@ -1050,12 +1048,17 @@ diagnostic_profile = "full"
             }
         }
         let warnings = config.ignored_initialization_option_warnings();
-        let expected =
-            ignored_initialization_option_warning("checkMode", &json!("Deep"), "default");
+        let expected = ignored_initialization_option_warning("checkMode", "default");
         if warnings != [expected.clone()] {
             return Err(format!(
                 "expected one bounded warning {expected:?}, got {warnings:?}"
             ));
+        }
+        if warnings.iter().any(|warning| warning.contains("Deep")) {
+            return Err(
+                "the bounded warning must name the key and reason without echoing the rejected value"
+                    .to_string(),
+            );
         }
         Ok(())
     }
@@ -1114,7 +1117,7 @@ mode = "fast"
             ));
         }
         let warnings = config.ignored_initialization_option_warnings();
-        let expected = ignored_initialization_option_warning("checkMode", &json!("Deep"), "repo");
+        let expected = ignored_initialization_option_warning("checkMode", "repo");
         if warnings != [expected.clone()] {
             return Err(format!(
                 "expected repo-fallback warning {expected:?}, got {warnings:?}"

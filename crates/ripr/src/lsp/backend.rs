@@ -4508,6 +4508,11 @@ impl LanguageServer for Backend {
         }
         self.diagnostics_input_watch.lock().await.armed = true;
         self.sync_diagnostics_input_watch().await;
+        // Emit ignored-initialization warnings before the first
+        // `workspace/configuration` pull (#5092). The pull awaits the client
+        // with no timeout; a pull-mode client that never answers must not
+        // suppress the bounded disclosure that a default is in effect.
+        self.disclose_ignored_initialization_options().await;
         // First configuration pull (#2031). This runs in `initialized`, not
         // `initialize`: tower-lsp-server rejects client requests with -32002
         // before the session is initialized.
@@ -4522,7 +4527,6 @@ impl LanguageServer for Backend {
         // editor opened on two folders or on no folder sees nothing at all.
         self.publish_analysis_status().await;
         self.disclose_blocked_startup_root().await;
-        self.disclose_ignored_initialization_options().await;
     }
 
     async fn initialize(&self, params: InitializeParams) -> LspResult<InitializeResult> {
