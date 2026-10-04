@@ -246,13 +246,18 @@ rule only for an assertion whose context was admitted.
   an `async` test, or the file and line of the macro binding). A refused
   context does not also claim that no assertion or oracle was detected. The
   disclosure is computed after admission and never changes what is credited.
-- Macro-binding ambiguity is scoped to what can bind the name: a foreign
-  macro whose arguments only invoke `assert_eq!(..)` binds nothing for tests
-  outside its expansion (its expansion could build `macro_rules! assert_eq`
-  or `use .. as assert_eq` from those tokens, but every trusted name is a
-  standard-prelude macro and rustc rejects a bare use that such a
-  macro-expanded binding would shadow, E0659; `owner_pin_execution`
-  pins this with compiled controls); a
+- Macro-binding ambiguity is scoped to what can bind the name: a macro
+  whose arguments only invoke `assert_eq!(..)` binds nothing when it is named
+  by a single segment and every workspace definition of it passes its input
+  through (only re-emits it and invokes standard macros: no `macro_rules`,
+  `macro`, `use`, `extern`, `mod` or `include` token, no `$name!` or other
+  macro invocation, no attribute outside an inert set), and no foreign
+  import, rename, foreign glob or unresolved `#[macro_use]` can put another
+  macro behind that name. Otherwise the expansion may turn the tokens into a
+  definition: `define!(assert_eq!(mod tests;))` emits `macro_rules!
+  assert_eq` and the test module together, and rustc compiles that module's
+  tests against the shadow. `macro_use` or `no_implicit_prelude` anywhere in
+  a macro's arguments makes every trusted name ambiguous; a
   `macro_rules!` confined to an inline module or function body (no
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member

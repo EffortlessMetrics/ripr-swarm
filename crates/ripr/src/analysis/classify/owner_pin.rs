@@ -46,9 +46,9 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::{FunctionContainer, SourceRoleProvenanceEdgeKind};
 use crate::analysis::syntax::{
-    AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
+    AssertionContextRefusal, MacroBindingKind, MacroBindingSite, OwnerPinAssertions, WrapperFacts,
     empty_macro_binding_ambiguities, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, trusted_macro_binding_sites,
+    owner_pin_assertions, trusted_macro_binding_sites, trusted_macro_binding_sites_with_wrappers,
 };
 use crate::domain::{Probe, ProbeFamily};
 use rayon::prelude::*;
@@ -80,6 +80,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
+    /// Workspace-wide wrapper facts, withheld files included. Filled by the
+    /// workspace scan in `refusal`.
+    wrappers: RefCell<WrapperFacts>,
     withheld: WithheldMacroBindings,
 }
 
@@ -97,6 +100,11 @@ pub(in crate::analysis) struct WithheldMacroBindings {
     /// The first withheld site per trusted name, so a refusal can still
     /// name where the binding is.
     sites: BTreeMap<String, (PathBuf, MacroBindingSite)>,
+    /// Wrapper facts of withheld files, and the trusted names they invoke
+    /// through each wrapper: ambiguous unless the workspace-wide facts say
+    /// the wrapper passes its input through.
+    wrappers: WrapperFacts,
+    wrapped: BTreeMap<String, BTreeMap<String, (PathBuf, MacroBindingSite)>>,
 }
 
 impl WithheldMacroBindings {
@@ -111,7 +119,18 @@ impl WithheldMacroBindings {
         if self.any_name {
             return true;
         }
-        for (name, site) in macro_binding_scan(source, packages, NON_RETURNING_MACROS) {
+        let mut wrappers = WrapperFacts::default();
+        let sites = macro_binding_scan(source, packages, NON_RETURNING_MACROS, &mut wrappers);
+        self.wrappers.extend(&wrappers);
+        for (name, site) in sites {
+            if let MacroBindingKind::WrapperArgument(wrapper) = &site.kind {
+                self.wrapped
+                    .entry(wrapper.clone())
+                    .or_default()
+                    .entry(name)
+                    .or_insert_with(|| (path.to_path_buf(), site));
+                continue;
+            }
             self.any_name |= site.kind.binds_any_name();
             self.trusted.insert(name.clone());
             self.sites
@@ -180,8 +199,16 @@ impl OwnerPinSyntax {
                     .borrow_mut()
                     .entry(name.clone())
                     .or_insert_with(|| {
-                        workspace_macro_binding_site(&name, index, &resolved)
+                        let wrappers = self.wrappers.borrow();
+                        workspace_macro_binding_site(&name, index, &resolved, &wrappers)
                             .or_else(|| self.withheld.sites.get(&name).cloned())
+                            .or_else(|| {
+                                self.withheld.wrapped.iter().find_map(|(wrapper, names)| {
+                                    (!wrappers.passes_through(wrapper))
+                                        .then(|| names.get(&name).cloned())
+                                        .flatten()
+                                })
+                            })
                     })
                     .clone();
                 let site =
@@ -231,9 +258,16 @@ impl OwnerPinSyntax {
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         let ambiguous = ambiguous.get_or_insert_with(|| {
-            let (mut global, scoped) = trusted_macro_sites_in(index, &module_resolved);
+            let (mut global, scoped, wrappers) =
+                trusted_macro_sites_in(index, &module_resolved, &self.withheld.wrappers);
             *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
             global.extend(self.withheld.trusted.iter().cloned());
+            for (wrapper, names) in &self.withheld.wrapped {
+                if !wrappers.passes_through(wrapper) {
+                    global.extend(names.keys().cloned());
+                }
+            }
+            *self.wrappers.borrow_mut() = wrappers;
             global
         });
         let Some(facts) = index
@@ -262,6 +296,7 @@ impl OwnerPinSyntax {
                         &names,
                         path == &test.file,
                         &|line, declaration| module_resolved(path, line, declaration),
+                        &|wrapper| self.wrappers.borrow().passes_through(wrapper),
                     )
                 })
                 .chain(
@@ -468,6 +503,12 @@ impl AssertionRefusal {
                         MacroBindingKind::MacroArgument(macro_name) => format!(
                             "`{macro_name}!` at {place} mentions `{name}` in its arguments, so its expansion may define it"
                         ),
+                        MacroBindingKind::WrapperArgument(macro_name) => format!(
+                            "`{macro_name}!` at {place} receives `{name}!(..)` as tokens, and ripr could not establish that every `{macro_name}!` only passes its input through"
+                        ),
+                        MacroBindingKind::ArgumentAttribute { wrapper, attribute } => format!(
+                            "`{wrapper}!` at {place} carries `{attribute}` in its arguments, which its expansion may apply, bringing in a different `{name}!`"
+                        ),
                     }
                 }
             },
@@ -481,6 +522,7 @@ fn workspace_macro_binding_site(
     name: &str,
     index: &RustIndex,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
+    wrappers: &WrapperFacts,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !NON_RETURNING_MACROS.contains(&name) {
         return None;
@@ -488,7 +530,7 @@ fn workspace_macro_binding_site(
     index.files().iter().find_map(|(path, facts)| {
         macro_binding_sites(name, path, &facts.source, index, module_resolved)
             .into_iter()
-            .find(|(_, site)| site.scope.is_none())
+            .find(|(_, site)| site.scope.is_none() && !binds_nothing(site, wrappers))
             .map(|(_, site)| (path.clone(), site))
     })
 }
@@ -535,28 +577,44 @@ fn macro_binding_sites(
 fn trusted_macro_sites_in(
     index: &RustIndex,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
-) -> (BTreeSet<String>, ScopedMacroBindings) {
-    let scan = |files: &[(&PathBuf, &str)]| -> Vec<(PathBuf, String, MacroBindingSite)> {
-        files
+    withheld_wrappers: &WrapperFacts,
+) -> (BTreeSet<String>, ScopedMacroBindings, WrapperFacts) {
+    type Sites = Vec<(PathBuf, String, MacroBindingSite)>;
+    let scan = |files: &[(&PathBuf, &str)]| -> (Sites, WrapperFacts) {
+        let per_file: Vec<_> = files
             .par_iter()
-            .flat_map_iter(|(path, source)| {
-                trusted_macro_binding_sites(
+            .map(|(path, source)| {
+                let (sites, facts) = trusted_macro_binding_sites_with_wrappers(
                     source,
                     index.macro_scope_crates(),
                     NON_RETURNING_MACROS,
                     &|line, declaration| module_resolved(path, line, declaration),
-                )
-                .into_iter()
-                .map(|(name, site)| ((*path).clone(), name, site))
+                );
+                let sites: Sites = sites
+                    .into_iter()
+                    .map(|(name, site)| ((*path).clone(), name, site))
+                    .collect();
+                (sites, facts)
             })
-            .collect()
+            .collect();
+        let mut wrappers = WrapperFacts::default();
+        let mut sites = Sites::new();
+        for (file_sites, facts) in per_file {
+            wrappers.extend(&facts);
+            sites.extend(file_sites);
+        }
+        (sites, wrappers)
     };
     let mut global = BTreeSet::new();
     let mut scoped = ScopedMacroBindings::new();
-    let mut absorb = |sites: Vec<(PathBuf, String, MacroBindingSite)>,
-                      global: &mut BTreeSet<String>| {
+    // A trusted name a wrapper's arguments invoke waits for the whole
+    // workspace's wrapper facts before it counts.
+    let mut wrapped = Sites::new();
+    let mut absorb = |sites: Sites, global: &mut BTreeSet<String>| {
         for (path, name, site) in sites {
-            if site.scope.is_some() {
+            if matches!(site.kind, MacroBindingKind::WrapperArgument(_)) {
+                wrapped.push((path, name, site));
+            } else if site.scope.is_some() {
                 scoped.entry(path).or_default().push((name, site));
             } else {
                 global.insert(name);
@@ -573,11 +631,28 @@ fn trusted_macro_sites_in(
         .iter()
         .map(|(path, facts)| (path, facts.data().source.as_str()))
         .partition(|(_, source)| may_saturate_macro_ambiguity(source));
-    absorb(scan(&likely), &mut global);
+    let mut wrappers = withheld_wrappers.clone();
+    let (sites, facts) = scan(&likely);
+    wrappers.extend(&facts);
+    absorb(sites, &mut global);
     if global.len() < NON_RETURNING_MACROS.len() {
-        absorb(scan(&rest), &mut global);
+        let (sites, facts) = scan(&rest);
+        wrappers.extend(&facts);
+        absorb(sites, &mut global);
     }
-    (global, scoped)
+    // Skipping `rest` leaves its wrapper facts unread, but only once every
+    // name is already ambiguous, so no wrapped site can change an answer.
+    for (_, name, site) in wrapped {
+        if !binds_nothing(&site, &wrappers) {
+            global.insert(name);
+        }
+    }
+    (global, scoped, wrappers)
+}
+
+/// A trusted name invoked in a pass-through wrapper's arguments binds nothing.
+fn binds_nothing(site: &MacroBindingSite, wrappers: &WrapperFacts) -> bool {
+    matches!(&site.kind, MacroBindingKind::WrapperArgument(wrapper) if wrappers.passes_through(wrapper))
 }
 
 /// Scan-order hint for the trusted-macro ambiguity scan, never its answer:
