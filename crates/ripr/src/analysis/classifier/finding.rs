@@ -85,10 +85,16 @@ pub(in crate::analysis) fn build_finding(
     let discriminate_summary = &evidence.ripr.reveal.discriminate.summary;
     let unconfirmed = if discriminate_summary.contains("(observation_unverified)") {
         Unconfirmed::AllRows
-    } else if discriminate_summary.contains("(oracle_confirmation_mixed)") {
+    } else if discriminate_summary.contains("(oracle_confirmation_mixed)")
+        && evidence.related_tests.len() >= evidence.related_tests_matched_total
+    {
+        // The strongest rank is read from the listed rows, so it is only
+        // reveal's strongest rank when the window dropped nothing; a
+        // truncated window could promote a confirming weaker row. Leave the
+        // rows unannotated rather than claim an unestablished miss.
         Unconfirmed::StrongestRows
     } else {
-        Unconfirmed::None
+        Unconfirmed::NoRows
     };
     let mut related_tests = evidence.related_tests;
     if !exact_oracle_covers_direct_sink {
@@ -138,7 +144,7 @@ pub(in crate::analysis) fn build_finding(
 /// changed expression.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Unconfirmed {
-    None,
+    NoRows,
     /// `observation_unverified`: no assertion names the changed expression.
     AllRows,
     /// `oracle_confirmation_mixed`: a weaker assertion names it, but none at
@@ -177,7 +183,7 @@ fn annotate_related_test_misses(
         .min();
     for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
         let row_unconfirmed = match unconfirmed {
-            Unconfirmed::None => false,
+            Unconfirmed::NoRows => false,
             Unconfirmed::AllRows => true,
             Unconfirmed::StrongestRows => {
                 Some(strength_rank(&test.oracle_strength)) == strongest_rank
