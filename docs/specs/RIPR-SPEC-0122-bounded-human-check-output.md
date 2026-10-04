@@ -71,13 +71,25 @@ view:
 Header
 Summary counts
 Start here:
-  State: top_gap | no_actionable_gap | preview_limited | static_limited | missing_scope
+  State: <plain words> (top_gap | no_actionable_gap | preview_limited | static_limited | missing_scope)
   One selected finding or safe next action
 Hidden:                                    (only when N > 0)
   N lower-priority finding(s) omitted from default human output [(language identity)].
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 ```
+
+The Summary denominator counts unsuppressed findings against the total
+(`N of M finding(s) unsuppressed`), disclosing the suppressed remainder; the
+word is never "shown", because the bounded digest renders exactly one finding
+and the `Hidden:` block below names the rest.
+
+Human lines lead with plain words and keep the stable id in parentheses, so a
+reader does not need the internal vocabulary and a script can still match the
+id: `State: a test gap to inspect or repair (top_gap)`, `Analysis outcome:
+findings below (analysis complete; complete_with_findings).` and `Static exposure: weak
+(weakly_exposed, warning, confidence 0.92)`. The ids and their meanings are
+unchanged.
 
 The trailing block is state-dependent, because a `Hidden:` heading over a
 literal `0 lower-priority finding(s) omitted` line claims a suppressed
@@ -91,6 +103,17 @@ remainder that does not exist:
   a language name. Rust-only remainder stays the count line with no breakdown.
   This reads finding identity already on the omitted records; it is not the
   language-availability projection owned by #2615.
+- The omitted set's currentness mix is named wherever it is not purely
+  lower-priority candidates, whether or not a top gap was selected (#5021).
+  Base-side evidence (`base_deleted`, `moved_or_renamed`) and
+  `unresolved_subject` findings are not candidate edit targets, so when they
+  share the omitted set with lower-ranked candidates the count line names the
+  mix — `L lower-priority finding(s) omitted; B base-side evidence, not
+  candidate edit targets` (an `U unresolved currentness, not candidate edit
+  targets` clause joins when present) — and an omitted set that is entirely
+  base-side or entirely unresolved currentness says so (`All N omitted
+  finding(s) are base-side evidence, not candidate edit targets.`). Pure
+  lower-priority omitted sets keep the single count clause.
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -102,6 +125,28 @@ When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
 related test when known, suggested repair or verify command when known, and a
 short evidence summary.
+
+The evidence summary leads with one compact line naming all five stage states,
+because evidence ordering is pipeline-ordered (reach, infection, propagation,
+observation, discriminator) and a purely positional detail window hides the
+decisive stages behind a remainder count (#4324):
+
+```text
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+```
+
+Every stage always carries an evidence line, so the compact line names all
+five stages for every finding and never silently drops one. The discriminator
+token keeps the full evidence line's semantic: the `discriminate` stage grades
+the strongest related oracle, so on a non-`exposed` finding a `yes` grade
+renders as `missing` (a named missing discriminating input exists) or
+`not established` rather than claiming a discriminator the digest
+simultaneously reports missing. The per-stage prose detail stays in the
+bounded window beneath it: the first two detail lines render verbatim, and
+when detail remains the line
+`- N more detail line(s) in --format human-full` discloses the count and names
+the recovery format. `--format human-full` still renders every evidence line,
+and no machine format reads the compact line.
 
 Start here ranks a finding with a repair route ahead of one without. For a
 stable finding the route is a recommended next step or suggested verify
@@ -165,7 +210,7 @@ line; longer guidance wraps onto four-space continuation lines.
 | `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. |
 | `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
-| `static_limited` | The selected finding is no-path or unknown; inspect the named static limitation before treating it as repair-ready. |
+| `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
 | `missing_scope` | The run produced no findings because no analysis scope was provided. This empty output is not an all-clear. |
 
 The `preview_limited` safe next action distinguishes repair-packet
@@ -320,6 +365,16 @@ suggested write cannot fail on the same missing base.
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_suggests_rooted_out_dir`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_discloses_related_tests_cap`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_discloses_observed_values_cap`
+- `crates/ripr/src/output/human.rs::tests::evidence_window_observed_values_pointer_names_json_cap_beyond_it`
+- `crates/ripr/src/output/human.rs::tests::digest_related_test_line_carries_the_total`
+- `crates/ripr/src/output/human.rs::tests::digest_missing_discriminator_discloses_one_of_n_window`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_lists_omitted_findings_by_file_line_and_class`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_all_base_side_run_names_base_side_evidence`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_unresolved_subject_run_names_the_unknown_not_base_side`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_mixed_currentness_run_names_base_side_and_unresolved_counts`
+- `crates/ripr/src/output/human.rs::tests::hidden_block_list_discloses_remainder_beyond_its_window`
 - `cargo xtask goldens check`
 
 ## Implementation Mapping

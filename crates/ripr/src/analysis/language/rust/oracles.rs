@@ -14,24 +14,111 @@ use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind};
 /// attribute that indicates its surface may be exercised by an external-language
 /// test oracle rather than a Rust test.
 ///
-/// The markers checked are the standard attribute substrings used by the major
+/// The markers checked are the attribute path segments used by the major
 /// Rust FFI and binding crates. `extern "C"` is intentionally excluded: it is
 /// an ABI qualifier on the `fn` keyword and is not captured in
 /// `FunctionFact.attrs`.
 pub(super) fn owner_has_ffi_attr(owner_fn: &FunctionSummary) -> bool {
-    const FFI_MARKERS: &[&str] = &[
-        "no_mangle",
-        "export_name",
-        "wasm_bindgen",
-        "napi",
-        "pyo3",
-        "uniffi",
-        "cxx",
-    ];
-    owner_fn.attrs.iter().any(|attr| {
-        let lowered = attr.to_lowercase();
-        FFI_MARKERS.iter().any(|marker| lowered.contains(marker))
-    })
+    owner_fn
+        .attrs
+        .iter()
+        .chain(&owner_fn.impl_attrs)
+        .any(|attr| attr_is_ffi_binding(attr))
+}
+
+/// PyO3's own attributes (`#[pyfunction]`, `#[pymethods]`, `#[pyclass]`,
+/// `#[pymodule]`) do not contain the crate name `pyo3` unless written
+/// path-qualified, so each is listed. A method is exposed through the
+/// attribute on its `impl` block (`#[pymethods] impl Ledger`,
+/// `#[wasm_bindgen] impl Counter`, `#[napi] impl Store`).
+const FFI_ATTR_MARKERS: &[&str] = &[
+    "no_mangle",
+    "export_name",
+    "wasm_bindgen",
+    "napi",
+    "pyo3",
+    "pyfunction",
+    "pymethods",
+    "pyclass",
+    "pymodule",
+    "uniffi",
+    "cxx",
+];
+
+/// Match the attribute's parsed path, not its text: `#[doc = "pyfunction
+/// helper"]` or `#[my_pyfunction_like]` must not credit a binding. Only the
+/// wrappers that carry another attribute as an argument are opened:
+/// `#[unsafe(no_mangle)]` (Rust 2024) and `#[cfg_attr(pred, attr, ...)]`,
+/// whose predicate is skipped.
+pub(super) fn attr_is_ffi_binding(attr: &str) -> bool {
+    let body = attr.trim();
+    let body = body
+        .strip_prefix("#![")
+        .or_else(|| body.strip_prefix("#["))
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(body);
+    attr_body_is_ffi_binding(body)
+}
+
+fn attr_body_is_ffi_binding(body: &str) -> bool {
+    let body = body.trim();
+    let path_end = body.find(['(', '=', '[', '{']).unwrap_or(body.len());
+    let path = body[..path_end].trim();
+    let segments: Vec<&str> = path.split("::").map(str::trim).collect();
+    if segments
+        .iter()
+        .any(|segment| FFI_ATTR_MARKERS.contains(&segment.to_lowercase().as_str()))
+    {
+        return true;
+    }
+    let args = body[path_end..]
+        .trim()
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'));
+    let Some(args) = args else {
+        return false;
+    };
+    match path {
+        "unsafe" => attr_body_is_ffi_binding(args),
+        "cfg_attr" => split_top_level_args(args)
+            .into_iter()
+            .skip(1)
+            .any(attr_body_is_ffi_binding),
+        _ => false,
+    }
+}
+
+/// Split attribute arguments on commas outside nested delimiters and string
+/// literals.
+fn split_top_level_args(args: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, ch) in args.char_indices() {
+        if in_string {
+            match ch {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&args[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&args[start..]);
+    parts
 }
 
 /// Resolve the probe's owner function from the index and check for FFI attrs.
@@ -44,18 +131,22 @@ pub(super) fn cross_language_limit_kind(
     index: &RustIndex,
     class: &ExposureClass,
 ) -> Option<StaticLimitKind> {
+    // `NoStaticPath` is included: an FFI owner tested only from the other
+    // language has no Rust test path by construction, and RIPR-SPEC-0062
+    // forbids flattening that to a bare `no_static_path`.
     let is_gap_class = matches!(
         class,
         ExposureClass::WeaklyExposed
             | ExposureClass::ReachableUnrevealed
             | ExposureClass::InfectionUnknown
+            | ExposureClass::NoStaticPath
     );
     if !is_gap_class {
         return None;
     }
     let owner_id = probe.owner.as_ref()?;
     let owner_fn = index
-        .functions
+        .functions()
         .iter()
         .find(|function| &function.id == owner_id)?;
     if owner_has_ffi_attr(owner_fn) {
@@ -63,6 +154,151 @@ pub(super) fn cross_language_limit_kind(
     } else {
         None
     }
+}
+
+/// Attach the cross-language limitation to an FFI-exposed owner's gap finding.
+/// A `no_static_path` finding's generic next step tells the reader to add a
+/// co-located Rust test, which is the wrong repair when the tests live in
+/// the other language, so it takes the limitation's own guidance instead.
+/// A `no_static_path` finding that already names a limitation keeps it: that
+/// limitation (a transitive or macro reach witness, for example) points at a
+/// Rust test the finding's evidence lines already describe.
+pub(super) fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
+    let Some(limit) = cross_language_limit_kind(probe, index, &finding.class) else {
+        return;
+    };
+    if finding.class == ExposureClass::NoStaticPath {
+        if finding.static_limit_kind.is_some() {
+            return;
+        }
+        finding.recommended_next_step = Some(limit.describe().to_string());
+    }
+    finding.static_limit_kind = Some(limit);
+}
+
+/// Borrowed, pass-local lookup. Each source identifier is indexed once, never
+/// by copying a function/body. Empty inputs make every later lookup constant
+/// time; no-path findings do not rescan all files or macro token trees.
+pub(super) struct PropertyMacroMentionIndex<'a> {
+    captured_root: Option<&'a std::path::Path>,
+    selected_root: &'a std::path::Path,
+    by_identifier: std::collections::BTreeMap<&'a str, Vec<PropertyMacroLocation<'a>>>,
+    package_authority: Option<
+        &'a std::collections::BTreeMap<
+            std::path::PathBuf,
+            crate::analysis::facts::WorkspaceFileAuthority,
+        >,
+    >,
+}
+
+struct PropertyMacroLocation<'a> {
+    file: &'a std::path::Path,
+    witness: &'a crate::analysis::facts::UnresolvedPropertyMacroFact,
+}
+
+impl<'a> PropertyMacroMentionIndex<'a> {
+    pub(super) fn new(index: &'a RustIndex, selected_root: &'a std::path::Path) -> Self {
+        let mut by_identifier = std::collections::BTreeMap::new();
+        for (file, facts) in index.files().iter() {
+            for witness in &facts.data().unresolved_property_macros {
+                for identifier in &witness.mentioned_identifiers {
+                    by_identifier
+                        .entry(identifier.as_str())
+                        .or_insert_with(Vec::new)
+                        .push(PropertyMacroLocation {
+                            file: file.as_path(),
+                            witness,
+                        });
+                }
+            }
+        }
+        Self {
+            by_identifier,
+            selected_root,
+            captured_root: index
+                .workspace_authority
+                .as_ref()
+                .map(|authority| authority.root.as_path()),
+            package_authority: index
+                .workspace_authority
+                .as_ref()
+                .map(|authority| &authority.files),
+        }
+    }
+
+    fn known_package(&self, indexed_file: &std::path::Path) -> Option<&str> {
+        self.package_authority?
+            .get(indexed_file)
+            .filter(|authority| authority.valid)
+            .map(|authority| authority.package_identity.as_str())
+    }
+
+    fn owner_package(&self, probe_file: &std::path::Path) -> Option<&str> {
+        // Probe paths are constructed from the selected analysis root, unlike
+        // the root-relative witness keys. Strip that exact prefix first so a
+        // decoy indexed path beginning with the same root text cannot win.
+        let relative = probe_file
+            .strip_prefix(self.selected_root)
+            .ok()
+            .or_else(|| probe_file.strip_prefix(self.captured_root?).ok())?;
+        self.known_package(relative)
+    }
+}
+
+/// A suffix/name match is a possible lexical mention, never resolved reach.
+/// A property block may generate tests, or may discard all its tokens.
+pub(super) fn apply_unresolved_property_macro_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    owner_file: &std::path::Path,
+    mentions: &PropertyMacroMentionIndex<'_>,
+) -> bool {
+    let Some(locations) = mentions.by_identifier.get(owner_name) else {
+        return false;
+    };
+    // This is retained manifest/source authority, not a path-layout guess.
+    // No per-finding filesystem reads or manifest resolution are performed.
+    let owner_package = mentions.owner_package(owner_file);
+    let Some(PropertyMacroLocation { file, witness }) = locations.iter().find(|location| {
+        match (owner_package, mentions.known_package(location.file)) {
+            (Some(owner), Some(mentioned)) => owner == mentioned,
+            // An unresolved package identity cannot prove unrelatedness.
+            _ => true,
+        }
+    }) else {
+        return false;
+    };
+    // A lexical mention supplies no runtime edge. Keep all affected stages
+    // explicitly unresolved instead of inheriting discarded argument values.
+    for stage in [
+        &mut finding.ripr.reach,
+        &mut finding.ripr.infect,
+        &mut finding.ripr.propagate,
+    ] {
+        let old_summary = stage.summary.clone();
+        stage.state = crate::domain::StageState::Unknown;
+        stage.confidence = crate::domain::Confidence::Low;
+        stage.summary = "Property macro expansion and owner execution are unresolved".to_string();
+        finding.evidence.retain(|evidence| evidence != &old_summary);
+    }
+    finding.static_limit_kind = Some(StaticLimitKind::RustMacroReachUnresolved);
+    finding
+        .stop_reasons
+        .push(crate::domain::StopReason::MacroReachUnresolved);
+    finding.evidence.push(format!(
+        "Opaque property macro `{}!` at {}:{} lexically mentions `{owner_name}`; macro provenance, test collection and execution are unresolved.",
+        witness.name, file.display().to_string().replace('\\', "/"), witness.line,
+    ));
+    finding.evidence.extend([
+        format!("limitation_last_established_edge: source invocation `{}!` at {}:{}", witness.name, file.display().to_string().replace('\\', "/"), witness.line),
+        "limitation_first_unresolved_edge: property macro expansion, executable-test collection and owner reach".to_string(),
+        "limitation_analyzer_route: analysis/rust-property-macro-provenance".to_string(),
+        "limitation_non_claim: lexical mention only; no test existence, absence, execution, reach or assertion discrimination is established".to_string(),
+    ]);
+    finding.recommended_next_step = Some(
+        "Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.".to_string(),
+    );
+    true
 }
 
 pub(super) fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, index: &RustIndex) {
@@ -83,6 +319,14 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, in
     };
 
     finding.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    if matches!(
+        witness.macro_name.rsplit("::").next(),
+        Some("prop_assert" | "prop_assert_eq" | "prop_assert_ne")
+    ) {
+        finding.recommended_next_step = Some(
+            "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string(),
+        );
+    }
     finding.evidence.push(
         "A related Rust test uses an assertion-like macro that ripr does not classify as an oracle."
             .to_string(),
@@ -149,9 +393,9 @@ fn find_unresolved_assertion_macro_witness(
 ) -> Option<RustMacroAssertionWitness> {
     let mut candidates = Vec::new();
     for test in index
-        .tests
+        .tests()
         .iter()
-        .chain(index.files.values().flat_map(|file| file.tests.iter()))
+        .chain(index.files().values().flat_map(|file| file.tests.iter()))
     {
         if !finding
             .related_tests
@@ -237,7 +481,9 @@ fn is_unresolved_assertion_like_macro(macro_name: &str) -> bool {
         return false;
     }
     let base = macro_name.rsplit("::").next().unwrap_or(macro_name);
-    base == "assert" || base.starts_with("assert_")
+    base == "assert"
+        || base.starts_with("assert_")
+        || matches!(base, "prop_assert" | "prop_assert_eq" | "prop_assert_ne")
 }
 
 fn is_known_rust_assertion_macro(macro_name: &str) -> bool {
@@ -299,10 +545,103 @@ fn rust_macro_assertion_limitation_detail_lines(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn property_scope_uses_only_valid_retained_package_authority() {
+        use crate::analysis::facts::{UnresolvedPropertyMacroFact, WorkspaceFileAuthority};
+        use std::collections::BTreeMap;
+        use std::path::{Path, PathBuf};
+        let owner = Path::new("crates/owner/src/lib.rs");
+        let witness_file = Path::new("custom/nested/src/property.rs");
+        let absolute_owner = Path::new("/captured").join(owner);
+        let selected_owner = Path::new("selected/root").join(owner);
+        let witness = UnresolvedPropertyMacroFact {
+            name: "proptest".into(),
+            line: 1,
+            mentioned_identifiers: vec!["gate".into()],
+        };
+        for (package, valid, limited) in [
+            ("owner-manifest", true, true),
+            ("other-manifest", true, false),
+            ("other-manifest", false, true),
+        ] {
+            let authorities = BTreeMap::from([
+                (
+                    owner.to_path_buf(),
+                    WorkspaceFileAuthority {
+                        source_digest: String::new(),
+                        package_identity: "owner-manifest".into(),
+                        valid: true,
+                    },
+                ),
+                (
+                    selected_owner.clone(),
+                    WorkspaceFileAuthority {
+                        source_digest: String::new(),
+                        package_identity: "decoy".into(),
+                        valid: true,
+                    },
+                ),
+                (
+                    witness_file.to_path_buf(),
+                    WorkspaceFileAuthority {
+                        source_digest: String::new(),
+                        package_identity: package.into(),
+                        valid,
+                    },
+                ),
+            ]);
+            let mentions = super::PropertyMacroMentionIndex {
+                captured_root: Some(Path::new("/captured")),
+                selected_root: Path::new("selected/root"),
+                by_identifier: BTreeMap::from([(
+                    "gate",
+                    vec![super::PropertyMacroLocation {
+                        file: witness_file,
+                        witness: &witness,
+                    }],
+                )]),
+                package_authority: Some(&authorities),
+            };
+            for owner_path in [&absolute_owner, &selected_owner] {
+                let mut finding = no_static_path_finding();
+                assert_eq!(
+                    super::apply_unresolved_property_macro_limit(
+                        &mut finding,
+                        "gate",
+                        owner_path,
+                        &mentions
+                    ),
+                    limited
+                );
+            }
+        }
+        let absent = BTreeMap::<PathBuf, WorkspaceFileAuthority>::new();
+        for package_authority in [None, Some(&absent)] {
+            let mentions = super::PropertyMacroMentionIndex {
+                captured_root: Some(Path::new("/captured")),
+                selected_root: Path::new("selected/root"),
+                by_identifier: BTreeMap::from([(
+                    "gate",
+                    vec![super::PropertyMacroLocation {
+                        file: witness_file,
+                        witness: &witness,
+                    }],
+                )]),
+                package_authority,
+            };
+            assert!(super::apply_unresolved_property_macro_limit(
+                &mut no_static_path_finding(),
+                "gate",
+                &absolute_owner,
+                &mentions
+            ));
+        }
+    }
+
     use super::{
-        apply_rust_macro_wrapped_assertion_limit, apply_wrapper_error_binding_limit,
-        cross_language_limit_kind, is_known_rust_assertion_macro,
-        is_unresolved_assertion_like_macro, owner_has_ffi_attr,
+        apply_cross_language_limit, apply_rust_macro_wrapped_assertion_limit,
+        apply_wrapper_error_binding_limit, attr_is_ffi_binding, cross_language_limit_kind,
+        is_known_rust_assertion_macro, is_unresolved_assertion_like_macro, owner_has_ffi_attr,
         unresolved_assertion_macro_invocations,
     };
     use crate::analysis::facts::{
@@ -328,8 +667,11 @@ mod tests {
             literals: vec![],
             source_role: FunctionSourceRole::Production,
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            impl_context: Default::default(),
+            item: Default::default(),
         }
     }
 
@@ -388,6 +730,7 @@ mod tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: test_name.to_string(),
                 file: PathBuf::from(test_file),
@@ -498,15 +841,15 @@ mod tests {
             "tests/it.rs",
             4,
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test_summary(
                 "test_inner_with_custom_assertion_macro",
                 "tests/it.rs",
                 4,
                 "let result = inner(10, 3);\nassert_result!(result, 7);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
 
@@ -538,15 +881,15 @@ mod tests {
             "tests/it.rs",
             4,
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test_summary(
                 "test_inner_with_known_assertion_macro",
                 "tests/it.rs",
                 4,
                 "let result = inner(10, 3);\nassert_eq!(result, 7);",
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
 
@@ -561,7 +904,7 @@ mod tests {
             "tests/it.rs",
             4,
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![test_summary(
                 "test_inner_with_commented_assertion_macro",
                 "tests/it.rs",
@@ -573,8 +916,8 @@ let note = "assert_string_result!(result, 7)";
 let raw = r#"assert_raw_result!(result, 7)"#;
 let _ = (result, note, raw);"##,
             )],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
 
@@ -665,10 +1008,10 @@ let _ = (result, note, raw);"##,
     fn cross_language_guard_fires_for_weakly_exposed_with_ffi_attr() {
         let owner = ffi_function("src/lib.rs", "exported_fn", vec!["#[no_mangle]"]);
         let probe = probe_for_owner("src/lib.rs", "exported_fn", ProbeFamily::Predicate);
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let result = cross_language_limit_kind(&probe, &index, &ExposureClass::WeaklyExposed);
         assert_eq!(
             result,
@@ -680,10 +1023,10 @@ let _ = (result, note, raw);"##,
     fn cross_language_guard_fires_for_reachable_unrevealed_with_wasm_bindgen() {
         let owner = ffi_function("src/lib.rs", "wasm_fn", vec!["#[wasm_bindgen]"]);
         let probe = probe_for_owner("src/lib.rs", "wasm_fn", ProbeFamily::ReturnValue);
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let result = cross_language_limit_kind(&probe, &index, &ExposureClass::ReachableUnrevealed);
         assert_eq!(
             result,
@@ -695,10 +1038,10 @@ let _ = (result, note, raw);"##,
     fn cross_language_guard_fires_for_infection_unknown_with_ffi_attr() {
         let owner = ffi_function("src/lib.rs", "exported_fn", vec!["#[no_mangle]"]);
         let probe = probe_for_owner("src/lib.rs", "exported_fn", ProbeFamily::Predicate);
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let result = cross_language_limit_kind(&probe, &index, &ExposureClass::InfectionUnknown);
         assert_eq!(
             result,
@@ -710,30 +1053,32 @@ let _ = (result, note, raw);"##,
     fn cross_language_guard_does_not_fire_for_pure_rust_owner_weakly_exposed() {
         let owner = ffi_function("src/lib.rs", "pure_fn", vec![]);
         let probe = probe_for_owner("src/lib.rs", "pure_fn", ProbeFamily::Predicate);
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let result = cross_language_limit_kind(&probe, &index, &ExposureClass::WeaklyExposed);
         assert_eq!(result, None);
     }
 
     #[test]
-    fn cross_language_guard_does_not_fire_for_exposed_or_no_static_path_even_with_ffi() {
+    fn cross_language_guard_skips_exposed_and_names_no_static_path_with_ffi() {
         let owner = ffi_function("src/lib.rs", "exported_fn", vec!["#[no_mangle]"]);
         let probe = probe_for_owner("src/lib.rs", "exported_fn", ProbeFamily::ReturnValue);
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         assert_eq!(
             cross_language_limit_kind(&probe, &index, &ExposureClass::Exposed),
             None
         );
+        // RIPR-SPEC-0062: a binding owner tested only from the other language
+        // has no Rust test path by construction, so no_static_path names the
+        // cross-language limitation instead of flattening to a bare gap.
         assert_eq!(
             cross_language_limit_kind(&probe, &index, &ExposureClass::NoStaticPath),
-            None,
-            "no_static_path is a reach gap, not an oracle-visibility gap"
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
         );
     }
 
@@ -742,13 +1087,132 @@ let _ = (result, note, raw);"##,
         let owner = ffi_function("src/lib.rs", "exported_fn", vec!["#[no_mangle]"]);
         let mut probe = probe_for_owner("src/lib.rs", "exported_fn", ProbeFamily::Predicate);
         probe.owner = None;
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         assert_eq!(
             cross_language_limit_kind(&probe, &index, &ExposureClass::WeaklyExposed),
             None
+        );
+    }
+
+    fn no_static_path_finding() -> Finding {
+        let mut finding = reachable_unrevealed_finding_with_related_test("t", "tests/it.rs", 1);
+        finding.class = ExposureClass::NoStaticPath;
+        finding.related_tests.clear();
+        finding.probe = probe_for_owner("src/lib.rs", "inner", ProbeFamily::Predicate);
+        finding
+    }
+
+    #[test]
+    fn ffi_attr_matches_the_parsed_path_not_the_attribute_text() {
+        for attr in [
+            "#[unsafe(no_mangle)]",
+            "#[export_name = \"fee\"]",
+            "#[wasm_bindgen::prelude::wasm_bindgen(js_name = fee)]",
+            "#[pyo3::pyfunction]",
+            "#[cfg_attr(feature = \"python\", pyfunction)]",
+            "#[cfg_attr(feature = \"python\", pyo3::pymethods)]",
+            "#[uniffi::export]",
+        ] {
+            assert!(attr_is_ffi_binding(attr), "{attr} must mark an FFI owner");
+        }
+        for attr in [
+            "#[doc = \"pyfunction helper\"]",
+            "/// exported with no_mangle",
+            "#[my_pyfunction_like]",
+            "#[cfg_attr(feature = \"pyfunction\", derive(Debug))]",
+            "#[cfg(feature = \"napi\")]",
+            "#[allow(clippy::pyfunction)]",
+            "#[unsafe(link_section = \".napi\")]",
+        ] {
+            assert!(
+                !attr_is_ffi_binding(attr),
+                "{attr} must not mark an FFI owner"
+            );
+        }
+    }
+
+    #[test]
+    fn pyo3_binding_attrs_are_ffi_on_the_function_or_its_impl() {
+        // PyO3's attributes do not contain the string `pyo3`.
+        for attr in ["#[pyfunction]", "#[pyclass]", "#[pymodule]"] {
+            let owner = ffi_function("src/lib.rs", "fee", vec![attr]);
+            assert!(owner_has_ffi_attr(&owner), "{attr} must mark an FFI owner");
+        }
+        let mut method = ffi_function("src/lib.rs", "charge", vec![]);
+        assert!(!owner_has_ffi_attr(&method));
+        method.impl_attrs = vec!["#[pymethods]".to_string()];
+        assert!(
+            owner_has_ffi_attr(&method),
+            "a method is exposed through its impl block's binding attribute"
+        );
+        let mut plain_method = ffi_function("src/lib.rs", "charge", vec![]);
+        plain_method.impl_attrs = vec!["#[derive(Debug)]".to_string()];
+        assert!(!owner_has_ffi_attr(&plain_method));
+    }
+
+    #[test]
+    fn cross_language_limit_replaces_the_co_located_test_step_on_no_static_path() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![ffi_function("src/lib.rs", "inner", vec!["#[pyfunction]"])],
+            ..Default::default()
+        });
+        let mut finding = no_static_path_finding();
+        finding.recommended_next_step = Some("add a co-located test".to_string());
+        let probe = finding.probe.clone();
+        apply_cross_language_limit(&mut finding, &probe, &index);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+        );
+        assert_eq!(
+            finding.recommended_next_step.as_deref(),
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved.describe())
+        );
+
+        // A gap class that already has reach keeps its own next step.
+        let mut weak = no_static_path_finding();
+        weak.class = ExposureClass::WeaklyExposed;
+        weak.recommended_next_step = Some("strengthen the assertion".to_string());
+        apply_cross_language_limit(&mut weak, &probe, &index);
+        assert_eq!(
+            weak.static_limit_kind,
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+        );
+        assert_eq!(
+            weak.recommended_next_step.as_deref(),
+            Some("strengthen the assertion")
+        );
+
+        // A no_static_path finding that already names a Rust reach
+        // limitation keeps it and its next step.
+        let mut witnessed = no_static_path_finding();
+        witnessed.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+        witnessed.recommended_next_step = Some("open the witnessing test".to_string());
+        apply_cross_language_limit(&mut witnessed, &probe, &index);
+        assert_eq!(
+            witnessed.static_limit_kind,
+            Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        );
+        assert_eq!(
+            witnessed.recommended_next_step.as_deref(),
+            Some("open the witnessing test")
+        );
+
+        // A pure-Rust owner is untouched.
+        let pure = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![ffi_function("src/lib.rs", "inner", vec![])],
+            ..Default::default()
+        });
+        let mut plain = no_static_path_finding();
+        plain.recommended_next_step = Some("add a co-located test".to_string());
+        apply_cross_language_limit(&mut plain, &probe, &pure);
+        assert_eq!(plain.static_limit_kind, None);
+        assert_eq!(
+            plain.recommended_next_step.as_deref(),
+            Some("add a co-located test")
         );
     }
 }

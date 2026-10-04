@@ -21,6 +21,7 @@ use super::payload_bounds::{
     check_list_actionable_items_params, check_previous_result_ids,
 };
 use super::progress::{AnalysisProgressEnd, AnalysisProgressPhase, AnalysisProgressTracker};
+use super::progress_stages::{STAGE_DRAIN_BUDGET, StageReportBridge, drain_stage_reports};
 use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScheduler,
     RefreshScope,
@@ -94,11 +95,11 @@ use tower_lsp_server::ls_types::{
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentDiagnosticParams,
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent,
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
-    LogTraceParams, MessageType, Registration, RelatedFullDocumentDiagnosticReport,
-    RelatedUnchangedDocumentDiagnosticReport, TraceValue, UnchangedDocumentDiagnosticReport, Uri,
-    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
-    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
-    WorkspaceUnchangedDocumentDiagnosticReport,
+    LogTraceParams, MessageType, PositionEncodingKind, Registration,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport, TraceValue,
+    UnchangedDocumentDiagnosticReport, Unregistration, Uri, WorkspaceDiagnosticParams,
+    WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -158,6 +159,12 @@ pub(super) struct Backend {
     /// the visible lens view changed. `None` until the first commit.
     last_lens_view_identity: Mutex<Option<LensViewIdentity>>,
     dynamic_file_watch_registration: Mutex<bool>,
+    watched_files_relative_pattern_support: AtomicBool,
+    /// The diagnostics-input watcher registration (#4896). Those watchers
+    /// are anchored at one root, so they are re-registered on every root
+    /// transition; the async lock serializes concurrent transitions across
+    /// the client round trips.
+    diagnostics_input_watch: AsyncMutex<DiagnosticsInputWatch>,
     /// The degradation signature covered by the last `window/logMessage`
     /// component warning (#1997, RIPR-SPEC-0141). Compared per committed
     /// snapshot: a byte-identical repeated degradation warns once, a new
@@ -172,7 +179,35 @@ pub(super) struct Backend {
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
+    #[cfg(test)]
+    consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
     pub(super) progress: Arc<AnalysisProgressTracker>,
+}
+
+#[cfg(test)]
+type ConsumedSourceBarrierChannels = (
+    tokio::sync::oneshot::Receiver<(u64, AnalysisSnapshot)>,
+    tokio::sync::oneshot::Sender<()>,
+);
+
+#[cfg(test)]
+struct ConsumedSourceBarrier {
+    reached: tokio::sync::oneshot::Sender<(u64, AnalysisSnapshot)>,
+    release: tokio::sync::oneshot::Receiver<()>,
+}
+
+/// Registration id of the root-anchored diagnostics-input watchers (#4896).
+const DIAGNOSTICS_INPUT_WATCH_ID: &str = "ripr-diagnostics-input-watch";
+
+#[derive(Default)]
+struct DiagnosticsInputWatch {
+    /// Set by `initialized`: the client rejects server->client requests
+    /// before it, so initialize-time root transitions must not register.
+    armed: bool,
+    /// The effective root the registration was last synchronized with.
+    synced_root: Option<PathBuf>,
+    /// Whether the client currently holds the registration.
+    registered: bool,
 }
 
 #[derive(Default)]
@@ -241,11 +276,15 @@ impl Backend {
             code_lens_refresh_support: Mutex::new(false),
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
+            watched_files_relative_pattern_support: AtomicBool::new(false),
+            diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            consumed_source_barrier: Mutex::new(None),
             progress: Arc::new(AnalysisProgressTracker::new(client.clone())),
             client,
         }
@@ -378,6 +417,7 @@ impl Backend {
             self.refresh_scheduler
                 .record_attempt_outcome(outcome, attempt_duration);
             self.record_health_outcome(&request, outcome);
+            self.disclose_deadline_exceeded(&request, outcome).await;
             self.publish_analysis_status().await;
             self.end_progress_for_attempt(&request, outcome).await;
             self.log_refresh_attempt_outcome(outcome, attempt_duration)
@@ -413,6 +453,10 @@ impl Backend {
         self.log_refresh_started(request).await;
         let root = request.root.clone();
         let config = request.config.clone();
+        // Snapshot only admitted open paths before the blocking analysis.
+        // The Rust adapter still discovers and reads the saved bytes itself;
+        // a later document change cannot add paths to this invocation.
+        let open_rust_index_paths = self.open_rust_index_paths_for_root(&root);
         let defer_seam_inventory = request.scope.defer_seam_inventory();
         let cancellation = request.cancellation.clone();
         let execution_gate = self.refresh_scheduler.execution_gate();
@@ -429,6 +473,19 @@ impl Backend {
             tokio::time::sleep(deadline).await;
             deadline_token.cancel(AnalysisAbortKind::DeadlineExceeded);
         }));
+        // #4811: bridge the producer-owned stage boundaries onto this
+        // attempt's work-done token while the blocking analysis runs. The
+        // sink side only queues events; a drain task on the async runtime
+        // forwards them as bounded `$/progress` reports. Best-effort: the
+        // bridge can never change the analysis result, and the drain budget
+        // bounds how long a stalled client may delay result handling.
+        let stage_bridge = Arc::new(StageReportBridge::new());
+        let stage_drain = {
+            let bridge = Arc::clone(&stage_bridge);
+            let tracker = Arc::clone(&self.progress);
+            tokio::spawn(async move { drain_stage_reports(&bridge, &tracker, generation).await })
+        };
+        let bridge_for_blocking = Arc::clone(&stage_bridge);
         let diagnostics_result = tokio::task::spawn_blocking(move || {
             let _execution = match execution_gate.lock() {
                 Ok(guard) => guard,
@@ -442,10 +499,29 @@ impl Backend {
                 &config,
                 defer_seam_inventory,
                 &cancellation,
+                &open_rust_index_paths,
+                Some(bridge_for_blocking.as_ref() as &dyn crate::app::AnalysisProgressSink),
             )
         })
         .await;
         drop(deadline_timer);
+        // The producer has returned: finish the bridge and let the drain
+        // task forward everything queued. The drain is bounded: a stalled
+        // client may delay, never block, diagnostics handling or the next
+        // refresh. Stage reports always precede the outcome-derived end
+        // emitted by the refresh loop after this request resolves.
+        stage_bridge.finish();
+        let _ = stage_drain.await;
+        // Defensive final forward under the same budget (the tracker
+        // suppresses consecutive duplicates, so a double forward is a
+        // no-op). Only runs when the drain task could not cover the queue.
+        let progress = &self.progress;
+        let _ = tokio::time::timeout(STAGE_DRAIN_BUDGET, async {
+            while let Some(event) = stage_bridge.pop() {
+                progress.report_stage(generation, event.stage).await;
+            }
+        })
+        .await;
         let diagnostics = match diagnostics_result {
             Ok(Ok(mut diagnostics)) => {
                 diagnostics.snapshot.input_identity = Some(request.input_identity.clone());
@@ -515,6 +591,9 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         }
+        #[cfg(test)]
+        self.wait_consumed_source_barrier(generation, &diagnostics.snapshot)
+            .await;
         let summary = RefreshLogSummary::from_snapshot(generation, &diagnostics.snapshot)
             .with_enabled_languages(&enabled_languages);
         let Some(transaction) = self.prepare_refresh_transaction(diagnostics) else {
@@ -631,6 +710,7 @@ impl Backend {
                 }
             }
 
+            let document_omissions = selection.document_omissions();
             for batch in &plan.publish_batches {
                 if !self.refresh_request_is_current(request) {
                     self.rollback_refresh_transaction_if_authority_is_current(
@@ -649,8 +729,11 @@ impl Backend {
                 // analyzed identity is withdrawn instead (#1970): its
                 // saved-state line identity no longer matches the client's
                 // buffer.
-                let diagnostics_to_publish =
+                let mut diagnostics_to_publish =
                     selection.diagnostics_for_document(batch.uri.as_str(), &batch.diagnostics);
+                if let Some(omission) = document_omissions.get(batch.uri.as_str()) {
+                    diagnostics_to_publish.push(delivery_omission_diagnostic(omission));
+                }
                 self.publish_served_diagnostics_for_transaction(
                     &batch.uri,
                     diagnostics_to_publish,
@@ -777,6 +860,18 @@ impl Backend {
         RefreshAttemptOutcome::Published
     }
 
+    fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
+        let Ok(documents) = self.documents.lock() else {
+            return Default::default();
+        };
+        documents
+            .documents
+            .keys()
+            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
     pub(super) async fn report_refresh_failure_after(
         &self,
         request: &RefreshRequest,
@@ -831,6 +926,41 @@ impl Backend {
         self.set_workspace_root_authority(WorkspaceRootAuthority::selected(root));
     }
 
+    #[cfg(test)]
+    pub(super) fn install_consumed_source_barrier_for_test(
+        &self,
+        config: LspAnalysisConfig,
+    ) -> Result<ConsumedSourceBarrierChannels, String> {
+        self.set_analysis_config(config);
+        let (reached, witness) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut slot = self
+            .consumed_source_barrier
+            .lock()
+            .map_err(|_poisoned_barrier| "consumed-source barrier lock poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("consumed-source barrier already installed".to_string());
+        }
+        *slot = Some(ConsumedSourceBarrier {
+            reached,
+            release: released,
+        });
+        Ok((witness, release))
+    }
+
+    #[cfg(test)]
+    async fn wait_consumed_source_barrier(&self, generation: u64, snapshot: &AnalysisSnapshot) {
+        let barrier = self
+            .consumed_source_barrier
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(barrier) = barrier {
+            let _ = barrier.reached.send((generation, snapshot.clone()));
+            let _ = barrier.release.await;
+        }
+    }
+
     pub(super) fn prepare_refresh_transaction(
         &self,
         diagnostics: WorkspaceDiagnostics,
@@ -843,6 +973,7 @@ impl Backend {
             snapshot.refresh.snapshot_id = Some("snapshot:legacy".to_string());
         }
         bind_seam_evidence_identity(&mut snapshot, &mut batches);
+        snapshot.prepare_diagnostic_uri_index();
         let Ok(last_diagnostics) = self.last_diagnostics.lock() else {
             return None;
         };
@@ -856,17 +987,14 @@ impl Backend {
             snapshot.delivery_selection = Some(compute_delivery_selection(&snapshot));
         }
         let plan = diagnostic_refresh_plan(&last_diagnostics, batches);
-        // Saved-workspace authority (#1970): compute the analyzed
-        // saved-content identity this transaction will record — from the
-        // persisted bytes the analysis read, not the didSave-tracked digest —
-        // without mutating the document store. The store only advances when
-        // the snapshot commits; publication filters against this pending
-        // identity so a just-saved document is re-served and a document whose
-        // buffer diverges from the freshly analyzed bytes is withdrawn.
+        // Rust uses the raw-byte commitments carried by the completed producer,
+        // never a reread after analysis. Other languages retain their existing
+        // saved-content identity behavior. State advances only at commit.
         let Ok(documents) = self.documents.lock() else {
             return None;
         };
-        let (pending_analyzed, pending_entered) = documents.pending_analyzed_digests();
+        let (pending_analyzed, pending_entered) =
+            documents.pending_analyzed_digests(&snapshot.root, &snapshot.rust_consumed_sources);
         drop(documents);
         debug_assert!(snapshot.is_consistent());
         Some(RefreshTransaction {
@@ -894,6 +1022,9 @@ impl Backend {
         pending_entered: &[Uri],
     ) -> Option<super::state::QuarantineEdges> {
         snapshot.input_identity.as_ref()?;
+        if !snapshot.diagnostic_uri_index_is_current() {
+            snapshot.prepare_diagnostic_uri_index();
+        }
         // Final authority guard: a committed snapshot always carries its
         // delivery selection (#1973). The refresh-transaction prepare step
         // already computed it on the real path; this fills snapshots that
@@ -960,8 +1091,26 @@ impl Backend {
             .cloned()
             .collect::<BTreeSet<_>>();
         uris.extend(plan.current_uris.iter().cloned());
+        let previous_selection = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|snapshot| snapshot.as_ref()?.delivery_selection.clone());
+        let previous_omissions = previous_selection
+            .as_ref()
+            .map(|selection| selection.document_omissions())
+            .unwrap_or_default();
         for uri in uris {
-            let diagnostics = previous_diagnostics.get(&uri).cloned().unwrap_or_default();
+            let diagnostics = rollback_push_diagnostics(
+                &uri,
+                previous_diagnostics
+                    .get(&uri)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                previous_selection.as_deref(),
+                previous_omissions.get(uri.as_str()),
+                self.document_quarantine(&uri).is_some(),
+            );
             self.client
                 .publish_diagnostics(uri, diagnostics, None)
                 .await;
@@ -1036,6 +1185,84 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|authority| authority.effective_root.clone())
+    }
+
+    /// Re-anchor the diagnostics-input watchers (#4896) at the current
+    /// effective root: a registration left on a previous root would miss
+    /// the new root's ledger and branch changes. Callers must not hold the
+    /// root transition guard.
+    async fn sync_diagnostics_input_watch(&self) {
+        let supports_dynamic_registration = self
+            .dynamic_file_watch_registration
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(false);
+        if !supports_dynamic_registration {
+            return;
+        }
+        let mut watch = self.diagnostics_input_watch.lock().await;
+        let root = self.effective_root();
+        if !watch.armed || watch.synced_root == root {
+            return;
+        }
+        if watch.registered {
+            watch.registered = false;
+            let unregistration = Unregistration {
+                id: DIAGNOSTICS_INPUT_WATCH_ID.to_string(),
+                method: "workspace/didChangeWatchedFiles".to_string(),
+            };
+            if let Err(error) = self
+                .client
+                .unregister_capability(vec![unregistration])
+                .await
+            {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!(
+                            "ripr could not release previous-root diagnostics watchers: {error}"
+                        ),
+                    )
+                    .await;
+            }
+        }
+        watch.synced_root = root.clone();
+        let Some(root) = root else {
+            return;
+        };
+        let relative_pattern_support = self
+            .watched_files_relative_pattern_support
+            .load(Ordering::SeqCst);
+        let watchers = match diagnostics_input_watchers(&root, relative_pattern_support) {
+            Ok(watchers) => watchers,
+            Err(reason) => {
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!(
+                            "ripr does not watch the gap ledger or .git/HEAD: {reason}; refresh manually after those change"
+                        ),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let registration = Registration {
+            id: DIAGNOSTICS_INPUT_WATCH_ID.to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: Some(serde_json::json!({ "watchers": watchers })),
+        };
+        match self.client.register_capability(vec![registration]).await {
+            Ok(()) => watch.registered = true,
+            Err(error) => {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!("ripr diagnostics input watching unavailable: {error}"),
+                    )
+                    .await;
+            }
+        }
     }
 
     fn refresh_request_is_current(&self, request: &RefreshRequest) -> bool {
@@ -1221,6 +1448,11 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn mark_attempt_running_for_test(&self, request: &RefreshRequest) {
+        self.mark_attempt_running(request);
+    }
+
+    #[cfg(test)]
     pub(super) fn reset_analysis_health_for_test(&self) {
         self.reset_health_for_input_change();
     }
@@ -1305,7 +1537,9 @@ impl Backend {
                 if health_is_for_request && health.run_status() == "full" {
                     AnalysisProgressEnd::Complete
                 } else {
-                    AnalysisProgressEnd::Limited(health.run_status().to_string())
+                    // #5003: the disclosed run status stays machine-only on
+                    // `ripr/analysisStatus`; the progress end carries no tag.
+                    AnalysisProgressEnd::Limited
                 }
             }
             RefreshAttemptOutcome::Failed => {
@@ -1344,6 +1578,10 @@ impl Backend {
         health.reason = Some(request.reason.as_str().to_string());
         health.requested_scope = Some(request.scope.as_str().to_string());
         health.current_input_identity = Some(request.input_identity_id());
+        // A prior attempt's failure (including `deadline_exceeded`) is not
+        // this attempt's outcome. `mark_attempt_queued` already clears it;
+        // the in-loop pending promotion path only calls this method.
+        health.failure = None;
         if health.pending_attempt_id == Some(request.generation) {
             health.pending_attempt_id = None;
             health.pending_reason = None;
@@ -1438,14 +1676,44 @@ impl Backend {
             }
             RefreshAttemptOutcome::Cancelled => health.state = AnalysisAttemptState::Cancelled,
             // A deadline-expired attempt is a fail-closed dropped refresh
-            // (#1972); reuse the existing cancelled health state — no new
-            // run-status or attempt-state string.
+            // (#1972, #5093). Keep `state` on the existing `cancelled`
+            // allowlist so fail-closed clients (including VS Code) still parse
+            // the payload, and distinguish it from a user or superseded cancel
+            // with `failure.kind = deadline_exceeded`.
             RefreshAttemptOutcome::DeadlineExceeded => {
                 health.state = AnalysisAttemptState::Cancelled;
+                health.failure = Some(AnalysisFailure {
+                    kind: AnalysisFailureKind::DeadlineExceeded,
+                    message: bounded_failure_message(&deadline_exceeded_log_message(
+                        refresh_deadline_ms(request.config.refresh_deadline),
+                    )),
+                });
             }
             RefreshAttemptOutcome::Superseded => health.state = AnalysisAttemptState::Superseded,
             RefreshAttemptOutcome::NotStarted => health.state = AnalysisAttemptState::Stopped,
         }
+    }
+
+    /// One bounded `window/logMessage` WARNING on `DeadlineExceeded` (#5093).
+    /// Clients without `window.workDoneProgress` never see the progress-end
+    /// "analysis deadline exceeded" string; this log names the configured
+    /// deadline and the `refreshDeadlineMs` knob. User/superseded cancels
+    /// do not emit it.
+    pub(super) async fn disclose_deadline_exceeded(
+        &self,
+        request: &RefreshRequest,
+        outcome: RefreshAttemptOutcome,
+    ) {
+        if outcome != RefreshAttemptOutcome::DeadlineExceeded {
+            return;
+        }
+        let deadline_ms = refresh_deadline_ms(request.config.refresh_deadline);
+        self.client
+            .log_message(
+                MessageType::WARNING,
+                deadline_exceeded_log_message(deadline_ms),
+            )
+            .await;
     }
 
     async fn publish_analysis_status(&self) {
@@ -1524,6 +1792,18 @@ impl Backend {
         self.disclose_blocked_root(&root).await;
     }
 
+    /// Emit one bounded `window/logMessage` per recognized initialization
+    /// option that was present but ignored (#5092). The session stays up;
+    /// `session_value_sources` already attributes the effective fallback.
+    async fn disclose_ignored_initialization_options(&self) {
+        let Some(config) = self.analysis_config() else {
+            return;
+        };
+        for warning in config.ignored_initialization_option_warnings() {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
+    }
+
     /// The warning always goes to the log; clients without the `riprEditor`
     /// integration also get `window/showMessage`, because `ripr/analysisStatus`
     /// is the only other place the blocked state appears and generic editors
@@ -1557,11 +1837,20 @@ impl Backend {
     /// window is recorded on the backend instead of being dropped silently,
     /// and the committed failure is re-disclosed by the next status
     /// publication.
-    async fn deliver_initialize_failure_disclosures(&self, warning: String) {
+    ///
+    /// `shown` is the `window/showMessage` warning for clients without the
+    /// `riprEditor` integration (#4532): they render neither the log nor
+    /// `ripr/analysisStatus`, so without it analysis stops with nothing on
+    /// screen saying why. The client profile is not stored yet at
+    /// initialize, so the caller decides from the negotiated profile.
+    async fn deliver_initialize_failure_disclosures(&self, warning: String, shown: Option<String>) {
         self.initialize_failure_disclosure_omitted
             .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
             self.client.log_message(MessageType::WARNING, warning).await;
+            if let Some(shown) = shown {
+                self.client.show_message(MessageType::WARNING, shown).await;
+            }
             self.publish_analysis_status().await;
         })
         .await;
@@ -1571,7 +1860,7 @@ impl Backend {
         }
     }
 
-    fn analysis_status_payload(&self) -> LSPAny {
+    pub(super) fn analysis_status_payload(&self) -> LSPAny {
         let health = self.analysis_health_snapshot();
         self.analysis_status_payload_for_health(&health)
     }
@@ -1816,6 +2105,10 @@ impl Backend {
         let (schedule_deferred_pull, lens_view_cleared) = self
             .apply_workspace_root_authority_locked(authority, expected_folder_set_epoch)
             .await;
+        // After the transition guard is released, like the requests below:
+        // the client round trip must not hold the guard. It reads the
+        // effective root afresh, so a newer transition is never undone.
+        self.sync_diagnostics_input_watch().await;
         if lens_view_cleared {
             // Sent after the transition guard is released, same discipline as
             // the deferred configuration pull: a cleared analysis state means
@@ -2115,9 +2408,36 @@ impl Backend {
                     RefreshReason::ConfigReload.as_str(),
                 )
                 .await;
+                // #4532: a reload that breaks ripr.toml pauses analysis; say
+                // so where the user looks, once per distinct error, not on
+                // every save that leaves the same error in place.
+                let repeated = self
+                    .configuration_failure()
+                    .is_some_and(|failure| failure.message == bounded_failure_message(&error));
+                let warning = format!("ripr config load failed; analysis is paused: {error}");
+                let shown = config_failure_notice(&error);
                 self.set_configuration_failure(error);
                 self.publish_analysis_status().await;
+                if !repeated {
+                    self.disclose_configuration_reload_failure(warning, shown)
+                        .await;
+                }
             }
+        }
+    }
+
+    /// Log a config reload failure and, for clients without the `riprEditor`
+    /// integration, show it (#4532). The VS Code extension renders the
+    /// failure from `ripr/analysisStatus`.
+    async fn disclose_configuration_reload_failure(&self, warning: String, shown: String) {
+        self.client.log_message(MessageType::WARNING, warning).await;
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if generic_client {
+            self.client.show_message(MessageType::WARNING, shown).await;
         }
     }
 
@@ -2134,7 +2454,16 @@ impl Backend {
         if next == current {
             return;
         }
+        let previous_warnings = current.ignored_initialization_option_warnings();
+        let new_warnings: Vec<String> = next
+            .ignored_initialization_option_warnings()
+            .into_iter()
+            .filter(|warning| !previous_warnings.contains(warning))
+            .collect();
         self.set_analysis_config(next);
+        for warning in new_warnings {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
             // configuration remains broken. The stored session override is
@@ -2168,6 +2497,22 @@ impl Backend {
             .lock()
             .map(|features| features.status_projection())
             .unwrap_or(serde_json::Value::Null)
+    }
+
+    /// Position encoding negotiated once at initialize. If the immutable
+    /// profile store is unavailable, return no encoding: after negotiation,
+    /// guessing UTF-16 could reinterpret UTF-8/UTF-32 incremental ranges and
+    /// corrupt retained buffer identity.
+    fn selected_position_encoding(&self) -> Option<PositionEncodingKind> {
+        self.client_features
+            .lock()
+            .ok()
+            .map(|features| features.selected_position_encoding.clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn selected_position_encoding_for_test(&self) -> Option<PositionEncodingKind> {
+        self.selected_position_encoding()
     }
 
     /// Poison the profile store so tests can exercise the fail-closed
@@ -2367,19 +2712,22 @@ impl Backend {
         workspace_input_kind(&root, &path)
     }
 
-    pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> (bool, bool) {
-        let mut config_changed = changes
-            .iter()
-            .any(|event| self.file_event_is_repository_config(event));
-        let mut workspace_graph_changed = false;
+    pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> WatchedFileChanges {
+        let mut kinds = WatchedFileChanges {
+            config_changed: changes
+                .iter()
+                .any(|event| self.file_event_is_repository_config(event)),
+            ..WatchedFileChanges::default()
+        };
         for event in changes {
             let Some(kind) = self.file_event_workspace_input_kind(event) else {
                 continue;
             };
-            config_changed |= kind.reloads_repository_config();
-            workspace_graph_changed |= kind.invalidates_workspace_graph();
+            kinds.config_changed |= kind.reloads_repository_config();
+            kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
+            kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
-        (config_changed, workspace_graph_changed)
+        kinds
     }
 
     fn set_analysis_config(&self, config: LspAnalysisConfig) {
@@ -2405,10 +2753,14 @@ impl Backend {
         params: DidChangeTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
-        self.documents
-            .lock()
-            .ok()
-            .map(|mut documents| (uri, documents.change(params)))
+        let version = params.text_document.version;
+        let position_encoding = self.selected_position_encoding();
+        let mut documents = self.documents.lock().ok()?;
+        let transition = match position_encoding {
+            Some(position_encoding) => documents.change(params, &position_encoding),
+            None => documents.invalidate_change(&uri, version),
+        };
+        Some((uri, transition))
     }
 
     fn save_document(
@@ -2439,6 +2791,21 @@ impl Backend {
             .map(|state| state.text.clone())
     }
 
+    /// Whether the document's retained buffer lost synchronization authority
+    /// (#1746): after a rejected incremental change the retained text is not
+    /// the client's document and must never supply a save identity.
+    fn document_buffer_authority_unknown(&self, uri: &tower_lsp_server::ls_types::Uri) -> bool {
+        self.documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .state_for_uri(uri)
+                    .map(|state| state.buffer_authority_unknown)
+            })
+            .unwrap_or(false)
+    }
+
     /// The hover for a position with no evidence to show. A generic editor
     /// has no other place that says why ripr is quiet, so name a blocked
     /// root or an unsaved buffer before falling back to the CLI pointer.
@@ -2461,6 +2828,9 @@ impl Backend {
             let route = match reason {
                 DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent => {
                     "ripr analyzes saved files; save the file to refresh its evidence."
+                }
+                DocumentStalenessReason::InvalidIncrementalChange => {
+                    "ripr could not apply one incremental edit and stopped trusting the retained text; saving cannot fix this. Undo the edit or revert the file so ripr receives the full document again."
                 }
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     "ripr has not analyzed this file's saved content yet; its evidence appears after the next refresh (`ripr.refresh`) completes. A new file must be saved first."
@@ -2551,7 +2921,15 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone())
-            .map(|snapshot| snapshot.served_diagnostics_for_uri(uri))
+            .map(|snapshot| {
+                let mut diagnostics = snapshot.served_diagnostics_for_uri(uri);
+                if let Some(selection) = &snapshot.delivery_selection
+                    && let Some(omission) = selection.document_omissions().get(uri.as_str())
+                {
+                    diagnostics.push(delivery_omission_diagnostic(omission));
+                }
+                diagnostics
+            })
             .unwrap_or_default()
     }
 
@@ -2696,8 +3074,17 @@ impl Backend {
         if self.document_quarantine(uri).is_some() {
             return None;
         }
-        if let Ok(snapshot) = self.latest_analysis.lock()
-            && let Some(snapshot) = snapshot.as_ref()
+        // Clone the snapshot Arc and release the lock before rendering: the
+        // seam hover assembles the repair card (#4668), which resolves the
+        // live repository head and the attempt inventory — blocking I/O
+        // that must not hold the snapshot mutex against refresh commits
+        // and concurrent hovers.
+        let snapshot = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(Arc::clone));
+        if let Some(snapshot) = snapshot
             && let Some(diagnostics) = snapshot.diagnostics_for_uri(uri)
         {
             // Walk every diagnostic that covers the cursor, not just
@@ -2715,8 +3102,8 @@ impl Backend {
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
-                        classified_seam_hover_response(seam, diagnostic, Some(snapshot)),
-                        snapshot,
+                        classified_seam_hover_response(seam, diagnostic, Some(&snapshot)),
+                        &snapshot,
                     ));
                 }
             }
@@ -2729,7 +3116,7 @@ impl Backend {
                 if is_gap_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
                         diagnostic_hover_response(diagnostic),
-                        snapshot,
+                        &snapshot,
                     ));
                 }
             }
@@ -2737,14 +3124,14 @@ impl Backend {
                 if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
                         finding_hover_response(finding, diagnostic),
-                        snapshot,
+                        &snapshot,
                     ));
                 }
             }
             if let Some(diagnostic) = overlapping.first() {
                 return Some(hover_with_snapshot_status(
                     diagnostic_hover_response(diagnostic),
-                    snapshot,
+                    &snapshot,
                 ));
             }
         }
@@ -2787,6 +3174,27 @@ impl Backend {
     }
 }
 
+/// Which invalidation paths one `workspace/didChangeWatchedFiles` batch
+/// drives.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct WatchedFileChanges {
+    pub(super) config_changed: bool,
+    pub(super) workspace_graph_changed: bool,
+    /// A non-buffer diagnostics input changed without changing configuration
+    /// or the Cargo graph: only a diagnostics refresh is needed (#4896).
+    pub(super) diagnostics_input_changed: bool,
+}
+
+/// Root `.git/HEAD`: a branch checkout moves it without touching any open
+/// buffer, and the current checkout is a diagnostics input.
+const GIT_HEAD_WATCH_PATH: &str = ".git/HEAD";
+
+/// Root-relative non-buffer inputs that change published diagnostics
+/// without reloading configuration or invalidating the workspace graph
+/// (#4896). Only these exact root paths qualify: a nested ledger or
+/// `.git/HEAD` belongs to another checkout, not this workspace's inputs.
+const DIAGNOSTICS_INPUT_PATHS: [&str; 2] = [DEFAULT_GAP_DECISION_LEDGER_OUT, GIT_HEAD_WATCH_PATH];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WorkspaceInputKind {
     CargoGraph,
@@ -2798,6 +3206,10 @@ enum WorkspaceInputKind {
     /// detectable-file events because watched-file globs cannot express
     /// directory presence.
     PythonSourcePresence,
+    /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
+    /// read both on every refresh, but neither is a configuration or
+    /// workspace-graph input.
+    DiagnosticsInput,
 }
 
 impl WorkspaceInputKind {
@@ -2810,8 +3222,16 @@ impl WorkspaceInputKind {
     }
 }
 
-fn path_matches_root_file(root: &Path, path: &Path, file_name: &str) -> bool {
-    let Ok(expected) = file_uri_for_path(&root.join(file_name)) else {
+/// Whether `path` is the root file at `relative`, a `/`-separated
+/// root-relative path. Components are joined one at a time so multi-segment
+/// paths use the platform separator.
+fn path_matches_root_file(root: &Path, path: &Path, relative: &str) -> bool {
+    let expected = relative
+        .split('/')
+        .fold(root.to_path_buf(), |expected, component| {
+            expected.join(component)
+        });
+    let Ok(expected) = file_uri_for_path(&expected) else {
         return false;
     };
     let Ok(actual) = file_uri_for_path(path) else {
@@ -2823,6 +3243,12 @@ fn path_matches_root_file(root: &Path, path: &Path, file_name: &str) -> bool {
 fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> {
     if !path_is_within_root(root, path) {
         return None;
+    }
+    if DIAGNOSTICS_INPUT_PATHS
+        .iter()
+        .any(|relative| path_matches_root_file(root, path, relative))
+    {
+        return Some(WorkspaceInputKind::DiagnosticsInput);
     }
     let name = path.file_name().and_then(|name| name.to_str())?;
     if matches!(name, "Cargo.toml" | "Cargo.lock") {
@@ -2919,7 +3345,8 @@ fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
 }
 
 /// Return whether a watched path can change the effective analysis input.
-/// Cargo inputs remain recursive for workspace members. The Python inputs
+/// Cargo inputs remain recursive for workspace members. The diagnostics
+/// inputs (root gap ledger, root `.git/HEAD`) and the Python inputs
 /// are root-scoped — root marker presence and detectable `.py` source below
 /// root `src`/`tests` are what this reload path tracks; Python outside those
 /// roots is not a detection input and stays unwatched.
@@ -2927,6 +3354,9 @@ pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool
     workspace_input_kind(root, path).is_some()
 }
 
+/// Dynamic watcher registrations for the configuration and graph inputs.
+/// The root-anchored diagnostics inputs register separately
+/// (`diagnostics_input_watchers`) because they follow root transitions.
 fn workspace_input_watchers() -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
@@ -2942,6 +3372,43 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
         }))
         .collect()
+}
+
+/// Watchers for the diagnostics inputs of `root` (#4896): exactly the root
+/// ledger and root `.git/HEAD`, never nested copies. Clients such as VS Code
+/// match a string glob against the absolute path, so a bare relative string
+/// never fires; the patterns are a `RelativePattern` anchored at the root
+/// when the client supports it, otherwise absolute string globs. Returns
+/// `Err` when no reliable pattern exists; `workspace_input_kind` stays the
+/// semantic authority over which events count.
+fn diagnostics_input_watchers(
+    root: &Path,
+    relative_pattern_support: bool,
+) -> Result<Vec<LSPAny>, String> {
+    if relative_pattern_support {
+        let base = file_uri_for_path(root)?;
+        return Ok(DIAGNOSTICS_INPUT_PATHS
+            .iter()
+            .map(|relative| {
+                serde_json::json!({
+                    "globPattern": {"baseUri": base.as_str(), "pattern": *relative}
+                })
+            })
+            .collect());
+    }
+    let absolute = root.to_string_lossy().replace('\\', "/");
+    // Glob syntax has no portable escape, so a root containing
+    // metacharacters would match other paths or none at all.
+    if absolute.contains(['*', '?', '[', ']', '{', '}']) {
+        return Err(format!(
+            "workspace root {absolute} contains glob metacharacters"
+        ));
+    }
+    let absolute = absolute.trim_end_matches('/');
+    Ok(DIAGNOSTICS_INPUT_PATHS
+        .iter()
+        .map(|relative| serde_json::json!({"globPattern": format!("{absolute}/{relative}")}))
+        .collect())
 }
 
 #[cfg(test)]
@@ -3146,7 +3613,125 @@ mod workspace_input_tests {
             )
             .collect::<BTreeSet<_>>();
 
+        // The diagnostics inputs follow root transitions, so they are never
+        // part of this once-per-session registration.
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn dynamic_watchers_anchor_diagnostics_inputs_at_the_root() -> Result<(), String> {
+        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"];
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let globs = |relative_pattern_support| {
+            diagnostics_input_watchers(&root, relative_pattern_support).map(|watchers| {
+                watchers
+                    .into_iter()
+                    .filter_map(|watcher| watcher.get("globPattern").cloned())
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        // With RelativePattern support: anchored at the root URI.
+        let base = file_uri_for_path(&root).map_err(|err| format!("root URI failed: {err}"))?;
+        let expected_anchored = expected
+            .iter()
+            .map(|relative| serde_json::json!({"baseUri": base.as_str(), "pattern": relative}))
+            .collect::<Vec<_>>();
+        assert_eq!(globs(true)?, expected_anchored);
+
+        // Without it: absolute string globs, because VS Code matches a
+        // string glob against the absolute path and a bare relative string
+        // never fires.
+        let absolute = root.to_string_lossy().replace('\\', "/");
+        let expected_absolute = expected
+            .iter()
+            .map(|relative| serde_json::json!(format!("{absolute}/{relative}")))
+            .collect::<Vec<_>>();
+        let plain = globs(false)?;
+        assert_eq!(plain, expected_absolute);
+        for glob in plain.iter().filter_map(|glob| glob.as_str()) {
+            assert!(!glob.contains('*'), "{glob} must not be workspace-wide");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_watchers_skip_absolute_diagnostics_globs_for_metacharacter_roots()
+    -> Result<(), String> {
+        for name in ["a*b", "a?b", "a[b]", "a{b,c}"] {
+            let root = std::env::temp_dir().join(name);
+            if diagnostics_input_watchers(&root, false).is_ok() {
+                return Err(format!(
+                    "{} has no reliable string glob and must not register",
+                    root.display()
+                ));
+            }
+            // A RelativePattern base is a URI, not a glob, so it still works.
+            if diagnostics_input_watchers(&root, true)?.len() != DIAGNOSTICS_INPUT_PATHS.len() {
+                return Err(format!(
+                    "{} must still anchor a RelativePattern",
+                    root.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn root_gap_ledger_and_git_head_are_diagnostics_inputs_only() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let ledger = root
+            .join("target")
+            .join("ripr")
+            .join("reports")
+            .join("gap-decision-ledger.json");
+        let head = root.join(".git").join("HEAD");
+        for path in [&ledger, &head] {
+            assert_eq!(
+                workspace_input_kind(&root, path),
+                Some(WorkspaceInputKind::DiagnosticsInput),
+                "{} must refresh diagnostics",
+                path.display()
+            );
+            assert!(workspace_input_path_is_relevant(&root, path));
+        }
+        assert!(!WorkspaceInputKind::DiagnosticsInput.reloads_repository_config());
+        assert!(!WorkspaceInputKind::DiagnosticsInput.invalidates_workspace_graph());
+    }
+
+    #[test]
+    fn nested_or_sibling_ledger_and_head_paths_are_not_diagnostics_inputs() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+        let reports = root.join("target").join("ripr").join("reports");
+        for path in [
+            root.join("sub")
+                .join("target")
+                .join("ripr")
+                .join("reports")
+                .join("gap-decision-ledger.json"),
+            root.join("sub").join(".git").join("HEAD"),
+            reports.join("repo-exposure.json"),
+            reports.join("swarm-attempt-ledger.json"),
+            reports.join("actionable-gaps.json"),
+            root.join(".git").join("ORIG_HEAD"),
+            root.join(".git").join("refs").join("heads").join("main"),
+            root.join("HEAD"),
+            root.join("gap-decision-ledger.json"),
+            outside
+                .join("target")
+                .join("ripr")
+                .join("reports")
+                .join("gap-decision-ledger.json"),
+            outside.join(".git").join("HEAD"),
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &path),
+                None,
+                "{} must not refresh diagnostics",
+                path.display()
+            );
+        }
     }
 }
 
@@ -3478,6 +4063,26 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
     format!(
         "ripr analysis refresh failed after {}: {message}",
         format_duration(duration)
+    )
+}
+
+pub(super) fn deadline_exceeded_log_message(deadline_ms: u64) -> String {
+    format!(
+        "ripr: background analysis exceeded the {deadline_ms}ms deadline and was stopped; adjust the 'refreshDeadlineMs' initialization option or editor setting if the workspace requires more time."
+    )
+}
+
+fn refresh_deadline_ms(deadline: Duration) -> u64 {
+    u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The on-screen config failure notice (#4532): the source-free summary, not
+/// the parser's source excerpt, which stays in the local log
+/// (RIPR-SPEC-0007).
+fn config_failure_notice(error: &str) -> String {
+    format!(
+        "ripr config load failed; analysis is paused: {}",
+        crate::config::config_error_summary(error)
     )
 }
 
@@ -3951,6 +4556,13 @@ impl LanguageServer for Backend {
                     .await;
             }
         }
+        self.diagnostics_input_watch.lock().await.armed = true;
+        self.sync_diagnostics_input_watch().await;
+        // Emit ignored-initialization warnings before the first
+        // `workspace/configuration` pull (#5092). The pull awaits the client
+        // with no timeout; a pull-mode client that never answers must not
+        // suppress the bounded disclosure that a default is in effect.
+        self.disclose_ignored_initialization_options().await;
         // First configuration pull (#2031). This runs in `initialized`, not
         // `initialize`: tower-lsp-server rejects client requests with -32002
         // before the session is initialized.
@@ -4019,6 +4631,10 @@ impl LanguageServer for Backend {
         if let Ok(mut supported) = self.dynamic_file_watch_registration.lock() {
             *supported = supports_dynamic_registration;
         }
+        self.watched_files_relative_pattern_support.store(
+            profile.watched_files_relative_pattern_support,
+            Ordering::SeqCst,
+        );
         let resolution = root_from_initialize_params(&params);
         // Retain the canonical workspace-folder set (#2036, RIPR-SPEC-0139)
         // so `didChangeWorkspaceFolders` deltas apply to stored state
@@ -4052,8 +4668,13 @@ impl LanguageServer for Backend {
             // client await, so a wedged or undriven peer can delay only the
             // bounded disclosure window, never the failure itself.
             let warning = format!("ripr config load failed; analysis is paused: {error}");
+            let shown = config_failure_notice(&error);
             self.set_configuration_failure(error);
-            self.deliver_initialize_failure_disclosures(warning).await;
+            self.deliver_initialize_failure_disclosures(
+                warning,
+                profile.ripr_editor.is_none().then_some(shown),
+            )
+            .await;
         }
         // The profile store lands after the root application and config
         // failure handling because applying a workspace-root authority
@@ -4080,6 +4701,10 @@ impl LanguageServer for Backend {
             );
             self.deliver_initialize_failure_disclosures(
                 "ripr client feature profile could not be stored; analysis is paused".to_string(),
+                profile.ripr_editor.is_none().then(|| {
+                    "ripr client feature profile could not be stored; analysis is paused"
+                        .to_string()
+                }),
             )
             .await;
         }
@@ -4115,18 +4740,23 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        let (config_changed, workspace_graph_changed) =
-            self.watched_file_change_kinds(&params.changes);
-        if config_changed {
+        let changes = self.watched_file_change_kinds(&params.changes);
+        if changes.config_changed {
             self.reload_repository_config().await;
         }
-        if workspace_graph_changed {
+        if changes.workspace_graph_changed {
             self.invalidate_analysis_input_and_end_queued_progress(
                 "workspace_manifest_or_lockfile_changed",
             )
             .await;
             self.publish_analysis_status().await;
             self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
+                .await;
+        } else if changes.diagnostics_input_changed {
+            // A rewritten gap ledger or a branch checkout changes published
+            // diagnostics without touching an open buffer. The graph refresh
+            // above already re-reads both; otherwise schedule one refresh.
+            self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::WatchedInput)
                 .await;
         }
     }
@@ -4394,7 +5024,17 @@ impl LanguageServer for Backend {
         // analysis input, so it neither advances the workspace revision nor
         // schedules a refresh. The save event is still disclosed.
         let uri = params.text_document.uri;
-        let text = params.text.or_else(|| self.document_text(&uri));
+        // With includeText: false the save identity would come from the
+        // retained buffer — but only while that buffer is still a
+        // synchronization authority. After a rejected incremental change
+        // (#1746) the client's persisted document may diverge from the frozen
+        // buffer, so the save carries no observable identity: adopt none
+        // rather than invent one from text the server cannot trust.
+        let text = if self.document_buffer_authority_unknown(&uri) {
+            params.text.clone()
+        } else {
+            params.text.clone().or_else(|| self.document_text(&uri))
+        };
         let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
         // Update the per-document saved-content identity and quarantine
         // state first (#1970): the dedup decision below gates the refresh,
@@ -4578,6 +5218,13 @@ impl LanguageServer for Backend {
     }
 }
 
+/// Parse-layer lookup for a context command's first argument object.
+///
+/// `None` means the arguments are unreadably shaped (missing first element,
+/// or first element is not an object). That miss is a **bad request**, not
+/// "no evidence found". Callers must convert it through
+/// [`context_command_target`], which returns JSON-RPC `InvalidParams`
+/// (`-32602`). Do not `?` this `None` into `Ok(None)` / `result: null`.
 fn context_arguments(arguments: &[LSPAny]) -> Option<&serde_json::Map<String, serde_json::Value>> {
     let first = arguments.first()?;
     first.as_object()
@@ -5585,6 +6232,60 @@ fn push_budget_omission_disclosure(
     ))
 }
 
+/// One visible summary of the same budget omission the selection and log
+/// retain. This is a delivery limitation, never a source finding or action.
+fn delivery_omission_diagnostic(
+    omission: &crate::lsp::diagnostic_budget::DocumentDeliveryOmission,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::INFORMATION),
+        code: Some(tower_lsp_server::ls_types::NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "Displayed diagnostics are a bounded subset: {} of {} current diagnostics were omitted. Narrow the diff or profile, or retrieve current details through {}. This document result is incomplete.",
+            omission.omitted_count, omission.total_count, omission.retrieval_route
+        ),
+        data: Some(serde_json::json!({
+            "kind": "delivery_limitation",
+            "scope": omission.scope,
+            "selected_count": omission.selected_count,
+            "omitted_count": omission.omitted_count,
+            "total_count": omission.total_count,
+            "count_budget": omission.count_budget,
+            "byte_budget": omission.byte_budget,
+            "snapshot_profile_budget_identity": omission.snapshot_profile_budget_identity,
+            "complete_evidence_identity": omission.complete_evidence_identity,
+            "retrieval_route": omission.retrieval_route,
+        })),
+        ..Default::default()
+    }
+}
+
+/// Restore the prior *served* publication during transaction rollback. The
+/// stored baseline contains raw diagnostics; publishing it directly would
+/// bypass the prior budget when a newer refresh is cancelled.
+fn rollback_push_diagnostics(
+    uri: &Uri,
+    raw: &[Diagnostic],
+    selection: Option<&crate::lsp::diagnostic_budget::DiagnosticDeliverySelection>,
+    omission: Option<&crate::lsp::diagnostic_budget::DocumentDeliveryOmission>,
+    quarantined: bool,
+) -> Vec<Diagnostic> {
+    if quarantined || raw.is_empty() {
+        return Vec::new();
+    }
+    let mut served = selection.map_or_else(
+        || raw.to_vec(),
+        |selection| selection.diagnostics_for_document(uri.as_str(), raw),
+    );
+    if let Some(omission) = omission {
+        served.push(delivery_omission_diagnostic(omission));
+    }
+    served
+}
+
 /// Disclosure for the budget-error fallback: every diagnostic is published
 /// unfiltered, so no delivery limit was enforced — a partial state that must
 /// be named rather than presented as a normal complete publication.
@@ -6129,17 +6830,27 @@ fn top_limitation_dto(
             "limited_partial_scope",
             "limited_partial_scope",
             "limited",
-            format!(
-                "analysis inspected {} changed file(s) ({} changed line(s)) of the diff; \
-                 at least {} changed file(s) and {} changed line(s) were not inspected \
-                 (stop reason: {}); raise RIPR_PARTIAL_DIFF_FILE_BUDGET and/or \
-                 RIPR_PARTIAL_DIFF_LINE_BUDGET to widen the analyzed partition",
-                scope.selected_files.len(),
-                scope.selected_changed_lines,
-                scope.uninspected_files_lower_bound,
-                scope.uninspected_changed_lines_lower_bound,
-                scope.stop_reason.as_str(),
-            ),
+            {
+                let uninspected = if scope.has_known_uninspected_scope() {
+                    format!(
+                        "at least {} changed file(s) and {} changed line(s) were not inspected",
+                        scope.uninspected_files_lower_bound,
+                        scope.uninspected_changed_lines_lower_bound,
+                    )
+                } else {
+                    "every changed file ripr's language adapters read was selected, but the budget was exceeded, so the \
+                     result stays partial"
+                        .to_string()
+                };
+                format!(
+                    "analysis inspected {} changed file(s) ({} changed line(s)) of the diff; \
+                     {uninspected} (stop reason: {}); to widen the analyzed partition, {}",
+                    scope.selected_files.len(),
+                    scope.selected_changed_lines,
+                    scope.stop_reason.as_str(),
+                    scope.widen_instruction(),
+                )
+            },
             "analysis/diff-scope-budget",
             scope.selected_files.iter().take(3).cloned().collect(),
             scope.selected_files.len(),
@@ -6343,6 +7054,7 @@ mod top_limitation_selection_tests {
     ) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("C:").join("repo"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -6355,6 +7067,7 @@ mod top_limitation_selection_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope,
@@ -6375,6 +7088,7 @@ mod top_limitation_selection_tests {
             uninspected_files_lower_bound: 2,
             uninspected_changed_lines_lower_bound: 6,
             stop_reason: PartialDiffStopReason::FileBudget,
+            next_file_changed_lines: Some(3),
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -6409,6 +7123,7 @@ mod top_limitation_selection_tests {
         let snapshot = snapshot_for_outcome(incomplete_outcome(0)?, None);
         let snapshot = AnalysisSnapshot {
             root: repo_root.clone(),
+            rust_consumed_sources: Default::default(),
             ..snapshot
         };
         let health = AnalysisHealth {
@@ -6471,6 +7186,45 @@ mod top_limitation_selection_tests {
             value["why_not_actionable"]
                 .as_str()
                 .is_some_and(|text| text.contains("at least 2 changed file(s)"))
+        );
+        let why = value["why_not_actionable"].as_str().unwrap_or_default();
+        assert!(
+            why.contains("raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then re-run"),
+            "the LSP limitation must name the stopping budget and its size: {why}"
+        );
+        assert!(!why.contains("and/or"), "no generic budget wording: {why}");
+        Ok(())
+    }
+
+    #[test]
+    fn partial_scope_with_no_known_uninspected_files_never_says_at_least_zero() -> Result<(), String>
+    {
+        let mut scope = partial_scope_fixture();
+        scope.uninspected_files_lower_bound = 0;
+        scope.uninspected_changed_lines_lower_bound = 0;
+        scope.stop_reason = PartialDiffStopReason::LineBudgetExceededOnFirstFile;
+        scope.selected_changed_lines = 14;
+        scope.next_file_changed_lines = None;
+        let snapshot = snapshot_for_outcome(incomplete_outcome(0)?, Some(scope));
+        let health = AnalysisHealth {
+            snapshot_id: Some("snapshot:lsp-fixture".to_string()),
+            snapshot_run_status: Some(PartialDiffScope::RUN_STATUS.to_string()),
+            state: AnalysisAttemptState::Succeeded,
+            ..AnalysisHealth::default()
+        };
+        let authority = WorkspaceRootAuthority::selected(PathBuf::from("C:").join("repo"));
+        let value = top_limitation_dto(&health, Some(&snapshot), &authority).into_json();
+
+        assert_eq!(value["status"], "limited_partial_scope");
+        let why = value["why_not_actionable"].as_str().unwrap_or_default();
+        assert!(!why.contains("at least 0"), "{why}");
+        assert!(
+            why.contains("every changed file ripr's language adapters read was selected, but the budget was exceeded"),
+            "{why}"
+        );
+        assert!(
+            why.contains("raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 14, then re-run"),
+            "a first-file line stop names the line budget first: {why}"
         );
         Ok(())
     }
@@ -6540,6 +7294,14 @@ fn workspace_status_rejection_repair(
             "regenerate_gap_artifacts",
             "gap artifacts are stale; rerun ripr check to refresh",
         ),
+        GapArtifactRejection::StaleSubject(_) => (
+            "regenerate_gap_artifacts",
+            "gap artifacts describe other source file contents; regenerate them with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+        ),
+        GapArtifactRejection::UnverifiableSubject(_) => (
+            "regenerate_gap_artifacts",
+            "gap artifacts carry no usable source_subject stamp; regenerate them with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+        ),
         GapArtifactRejection::WrongRoot(_) => (
             "verify_workspace_root",
             "gap artifact root does not match workspace root",
@@ -6599,7 +7361,9 @@ fn limitation_sample_sources(
         | GapArtifactRejection::UnsupportedKind(s)
         | GapArtifactRejection::UnsupportedSchema(s)
         | GapArtifactRejection::UnsupportedStaticLimitKind(s)
-        | GapArtifactRejection::WrongRoot(s) => vec![s.clone()],
+        | GapArtifactRejection::WrongRoot(s)
+        | GapArtifactRejection::StaleSubject(s) => vec![s.clone()],
+        GapArtifactRejection::UnverifiableSubject(reason) => vec![(*reason).to_string()],
         GapArtifactRejection::MalformedArtifact(_)
         | GapArtifactRejection::MissingIdentity
         | GapArtifactRejection::StaleArtifact => vec![],
@@ -6620,6 +7384,8 @@ fn limitation_non_claims(category: &str) -> Vec<&'static str> {
             "path resolution required before exposure can be assessed",
         ],
         "stale_artifact"
+        | "stale_subject"
+        | "unverifiable_subject"
         | "missing_identity"
         | "malformed_artifact"
         | "malformed_command_payload" => vec![
@@ -6674,8 +7440,49 @@ fn collect_gap_record_context_packet(
     let record = records
         .iter()
         .find(|record| gap_record_matches(record, gap_id))?;
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, &contents) {
+        return Some(sentinel);
+    }
     let rendered = render_agent_gap_record_packet_json(&display_path(&ledger_path), record).ok()?;
     serde_json::from_str(&rendered).ok()
+}
+
+/// #4544: a command-time packet read re-checks the ledger's `source_subject`
+/// stamp through the shared validator, so a packet computed for other file
+/// contents is a typed stale disclosure instead of a current repair route.
+fn ledger_source_subject_sentinel(root: &Path, contents: &str) -> Option<LSPAny> {
+    let Ok(artifact) = serde_json::from_str::<serde_json::Value>(contents) else {
+        return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
+    };
+    source_subject_sentinel(
+        root,
+        &artifact,
+        super::gap_artifacts::GapArtifactKind::GapDecisionLedger,
+        "gap-decision-ledger.json",
+        "ripr reports gap-ledger",
+    )
+}
+
+fn source_subject_sentinel(
+    root: &Path,
+    artifact: &serde_json::Value,
+    kind: super::gap_artifacts::GapArtifactKind,
+    artifact_name: &str,
+    regenerate: &str,
+) -> Option<LSPAny> {
+    use super::gap_artifacts::GapArtifactRejection;
+    match super::gap_artifacts::validate_source_subject(artifact, kind, root) {
+        Ok(()) => None,
+        Err(GapArtifactRejection::StaleSubject(path)) => Some(repair_packet_sentinel(&format!(
+            "stale_subject: {path} changed since {artifact_name} was written; regenerate it for the current source with {regenerate}"
+        ))),
+        Err(GapArtifactRejection::UnverifiableSubject(reason)) => {
+            Some(repair_packet_sentinel(&format!(
+                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current source files; regenerate it with {regenerate}"
+            )))
+        }
+        Err(other) => Some(repair_packet_sentinel(other.as_str())),
+    }
 }
 
 const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.json";
@@ -6699,7 +7506,9 @@ impl Backend {
 
         // Try actionable-gaps.json first (preferred: projection-validated).
         let actionable_path = absolute_join(&root, Path::new(DEFAULT_ACTIONABLE_GAPS_OUT));
-        if let Some(result) = collect_repair_packet_from_actionable_gaps(&actionable_path, gap_id) {
+        if let Some(result) =
+            collect_repair_packet_from_actionable_gaps(&root, &actionable_path, gap_id)
+        {
             return Some(result);
         }
 
@@ -7076,7 +7885,11 @@ fn workspace_receipt_status_report_paths() -> serde_json::Value {
     })
 }
 
-fn collect_repair_packet_from_actionable_gaps(path: &Path, gap_id: Option<&str>) -> Option<LSPAny> {
+fn collect_repair_packet_from_actionable_gaps(
+    root: &Path,
+    path: &Path,
+    gap_id: Option<&str>,
+) -> Option<LSPAny> {
     let contents = match read_artifact_capped(path) {
         CappedArtifactRead::Contents(contents) => contents,
         // Absent artifact: falling back to the next packet source is honest.
@@ -7122,6 +7935,15 @@ fn collect_repair_packet_from_actionable_gaps(path: &Path, gap_id: Option<&str>)
         return Some(repair_packet_sentinel(
             "gap is not actionable in actionable-gaps.json",
         ));
+    }
+    if let Some(sentinel) = source_subject_sentinel(
+        root,
+        &report,
+        super::gap_artifacts::GapArtifactKind::ActionableGaps,
+        "actionable-gaps.json",
+        "cargo xtask lane1-evidence-audit",
+    ) {
+        return Some(sentinel);
     }
 
     validate_and_render_actionable_gap_packet(packet)
@@ -7276,6 +8098,9 @@ fn collect_repair_packet_from_ledger(
     } else {
         records.iter().find(|r| r.gap_state == "actionable")?
     };
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, &contents) {
+        return Some(sentinel);
+    }
 
     // Use the existing validator for completeness gate.
     if let Err(reason) = validate_agent_gap_record_packet(record) {
@@ -7663,10 +8488,77 @@ mod gap_record_context_tests {
         Ok(root)
     }
 
+    /// Writes the fixture ledger stamped against `root` as the producer does
+    /// (#4544); the fixture's source files are absent, so the stamp is current.
     fn write_gap_ledger(root: &Path) -> Result<(), String> {
         let path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
-        fs::write(path, gap_ledger_json())
+        let ledger = serde_json::from_str::<serde_json::Value>(gap_ledger_json())
+            .map_err(|err| format!("parse fixture ledger failed: {err}"))?;
+        let stamped = crate::output::gap_source_subject::with_source_subject_for_test(root, ledger);
+        fs::write(path, stamped.to_string())
             .map_err(|err| format!("write gap ledger in {} failed: {err}", root.display()))
+    }
+
+    /// #4544: the command-time context and repair packet readers re-check
+    /// the ledger stamp; an edited anchor file or a missing stamp returns a
+    /// typed sentinel instead of a current-looking packet.
+    #[test]
+    fn gap_packets_disclose_stale_or_unverifiable_ledger_subject() -> Result<(), String> {
+        let root = temp_root()?;
+        let result = (|| {
+            write_gap_ledger(&root)?;
+            let args_value = serde_json::json!({
+                "gap_id": "gap:pr:pricing:threshold-boundary",
+                "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT,
+            });
+            let args = args_value
+                .as_object()
+                .ok_or_else(|| "expected object args".to_string())?;
+            let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
+            let gap_id = "gap:pr:pricing:threshold-boundary";
+
+            let current = collect_gap_record_context_packet(&root, args, gap_id)
+                .ok_or_else(|| "expected a current packet".to_string())?;
+            if current["status"] == "not_actionable_or_incomplete" {
+                return Err(format!(
+                    "a current ledger must render its packet: {current}"
+                ));
+            }
+
+            // The anchor file appears after the ledger stamped it as absent.
+            fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+            fs::write(root.join("src/pricing.rs"), "pub fn price() {}\n")
+                .map_err(|err| err.to_string())?;
+            for packet in [
+                collect_gap_record_context_packet(&root, args, gap_id),
+                collect_repair_packet_from_ledger(&root, &ledger_path, Some(gap_id)),
+            ] {
+                let packet = packet.ok_or_else(|| "expected a stale sentinel".to_string())?;
+                let reason = packet["reason"].as_str().unwrap_or_default();
+                if packet["status"] != "not_actionable_or_incomplete"
+                    || !reason.starts_with("stale_subject: src/pricing.rs changed")
+                    || !reason.contains("ripr reports gap-ledger")
+                {
+                    return Err(format!("unexpected stale packet: {packet}"));
+                }
+            }
+
+            // A ledger without a stamp cannot be matched to the workspace.
+            fs::write(&ledger_path, gap_ledger_json()).map_err(|err| err.to_string())?;
+            let packet = collect_gap_record_context_packet(&root, args, gap_id)
+                .ok_or_else(|| "expected an unverifiable sentinel".to_string())?;
+            if !packet["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("unverifiable_subject: source_subject_missing")
+            {
+                return Err(format!("unexpected unstamped packet: {packet}"));
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        result
     }
 
     fn gap_ledger_json() -> &'static str {
@@ -7952,15 +8844,83 @@ mod gap_record_context_tests {
         Ok(())
     }
 
-    #[test]
-    fn context_arguments_returns_none_for_empty_argument_list() {
-        assert!(context_arguments(&[]).is_none());
+    /// Parse miss for unreadably shaped arguments: `None` here is a bad
+    /// request, not "no evidence". Dispatch converts it to InvalidParams
+    /// (#4358) instead of JSON-RPC `result: null`.
+    fn assert_context_arguments_parse_miss_is_typed_invalid_params(
+        arguments: &[LSPAny],
+        command: &str,
+        keys: &[&'static str],
+        shapes: &str,
+    ) -> Result<(), String> {
+        if context_arguments(arguments).is_some() {
+            return Err(
+                "unreadably shaped args are a parse miss at `context_arguments`, not a packet"
+                    .to_string(),
+            );
+        }
+        let error = match context_command_target(command, arguments, keys, shapes) {
+            Ok(target) => {
+                return Err(format!(
+                    "dispatch must convert a parse miss into InvalidParams, got target {target:?}"
+                ));
+            }
+            Err(error) => error,
+        };
+        if error.code != tower_lsp_server::jsonrpc::ErrorCode::InvalidParams {
+            return Err(format!(
+                "expected InvalidParams, got code {:?}: {}",
+                error.code, error.message
+            ));
+        }
+        if !(error.message.contains(command) && error.message.contains("expects one object")) {
+            return Err(format!(
+                "error must name the command and accepted object shape: {}",
+                error.message
+            ));
+        }
+        Ok(())
     }
 
     #[test]
-    fn context_arguments_returns_none_when_first_argument_is_not_an_object() {
+    fn context_arguments_returns_none_for_empty_argument_list() -> Result<(), String> {
+        assert_context_arguments_parse_miss_is_typed_invalid_params(
+            &[],
+            COLLECT_CONTEXT_COMMAND,
+            &["gap_id", "seam_id", "finding_id"],
+            COLLECT_CONTEXT_ARGUMENT_SHAPES,
+        )?;
+        assert_context_arguments_parse_miss_is_typed_invalid_params(
+            &[],
+            COLLECT_EVIDENCE_CONTEXT_COMMAND,
+            &["seam_id"],
+            COLLECT_EVIDENCE_CONTEXT_ARGUMENT_SHAPES,
+        )
+    }
+
+    #[test]
+    fn context_arguments_returns_none_when_first_argument_is_not_an_object() -> Result<(), String> {
         let arg = serde_json::Value::String("not-an-object".to_string());
-        assert!(context_arguments(std::slice::from_ref(&arg)).is_none());
+        let arguments = std::slice::from_ref(&arg);
+        assert_context_arguments_parse_miss_is_typed_invalid_params(
+            arguments,
+            COLLECT_CONTEXT_COMMAND,
+            &["gap_id", "seam_id", "finding_id"],
+            COLLECT_CONTEXT_ARGUMENT_SHAPES,
+        )?;
+        assert_context_arguments_parse_miss_is_typed_invalid_params(
+            arguments,
+            COLLECT_EVIDENCE_CONTEXT_COMMAND,
+            &["seam_id"],
+            COLLECT_EVIDENCE_CONTEXT_ARGUMENT_SHAPES,
+        )?;
+        let null_arg = serde_json::Value::Null;
+        assert_context_arguments_parse_miss_is_typed_invalid_params(
+            std::slice::from_ref(&null_arg),
+            COLLECT_CONTEXT_COMMAND,
+            &["gap_id", "seam_id", "finding_id"],
+            COLLECT_CONTEXT_ARGUMENT_SHAPES,
+        )
     }
 
     #[test]
@@ -8052,6 +9012,190 @@ mod gap_record_context_tests {
 #[cfg(test)]
 mod push_budget_disclosure_tests {
     use super::*;
+
+    #[test]
+    fn omitted_diagnostics_are_visible_without_becoming_actionable() -> Result<(), String> {
+        let uri = push_test_uri()?;
+        let diagnostics = (0..51)
+            .map(|index| headline_diagnostic(&format!("diag:{index:02}"), true))
+            .collect::<Vec<_>>();
+        let selection = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &single_document_batches(diagnostics.clone())?,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+            "snapshot:one",
+            "evidence:one",
+        );
+        let omissions = selection.document_omissions();
+        let omission = omissions.get(uri.as_str()).ok_or("missing omission")?;
+        assert_eq!(
+            (
+                omission.selected_count,
+                omission.omitted_count,
+                omission.total_count
+            ),
+            (50, 1, 51)
+        );
+        let mut published = selection.diagnostics_for_document(uri.as_str(), &diagnostics);
+        published.push(delivery_omission_diagnostic(omission));
+        assert_eq!(published.len(), 51);
+        assert_eq!(
+            rollback_push_diagnostics(&uri, &diagnostics, Some(&selection), Some(omission), false),
+            published,
+            "rollback must restore the bounded publication, not 51 raw findings plus a summary"
+        );
+        assert!(
+            rollback_push_diagnostics(&uri, &diagnostics, Some(&selection), Some(omission), true)
+                .is_empty(),
+            "quarantined buffers remain withdrawn on rollback"
+        );
+        let limitation = published.last().ok_or("missing limitation")?;
+        assert_eq!(
+            limitation.code,
+            Some(tower_lsp_server::ls_types::NumberOrString::String(
+                "ripr-diagnostic-budget-omitted".to_string()
+            ))
+        );
+        assert_eq!(
+            limitation
+                .data
+                .as_ref()
+                .and_then(|data| data.get("omitted_count")),
+            Some(&serde_json::json!(1))
+        );
+        assert_eq!(
+            limitation
+                .data
+                .as_ref()
+                .and_then(|data| data.get("retrieval_route")),
+            Some(&serde_json::json!("ripr/listActionableItems"))
+        );
+        assert!(
+            limitation
+                .data
+                .as_ref()
+                .and_then(|data| data.get("headline_eligible"))
+                .is_none()
+        );
+
+        let complete = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &single_document_batches(diagnostics[..50].to_vec())?,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+            "snapshot:two",
+            "evidence:two",
+        );
+        assert!(
+            complete.document_omissions().is_empty(),
+            "a complete refresh retracts the limitation"
+        );
+        assert_eq!(
+            complete
+                .diagnostics_for_document(uri.as_str(), &diagnostics[..50])
+                .len(),
+            50
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn byte_omission_excludes_profile_filtered() -> Result<(), String> {
+        let uri = push_test_uri()?;
+        let diagnostics = vec![
+            headline_diagnostic("diag:eligible-a", true),
+            headline_diagnostic("diag:eligible-b", true),
+            headline_diagnostic("diag:filtered", false),
+        ];
+        let first_bytes = serde_json::to_vec(&diagnostics[0])
+            .map_err(|error| error.to_string())?
+            .len();
+        let selection = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &single_document_batches(diagnostics)?,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget {
+                max_serialized_bytes: first_bytes,
+                ..Default::default()
+            },
+            "snapshot:bytes",
+            "evidence:bytes",
+        );
+        let omissions = selection.document_omissions();
+        let omission = omissions.get(uri.as_str()).ok_or("missing byte omission")?;
+        assert_eq!(omission.scope, "workspace");
+        assert_eq!(
+            (
+                omission.selected_count,
+                omission.omitted_count,
+                omission.total_count,
+            ),
+            (1, 1, 2),
+            "profile-filtered evidence is not a delivery omission"
+        );
+        assert_eq!(omission.byte_budget, first_bytes);
+
+        let filtered_only = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &single_document_batches(vec![headline_diagnostic("diag:filtered", false)])?,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget::default(),
+            "snapshot:filtered",
+            "evidence:filtered",
+        );
+        assert!(filtered_only.document_omissions().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_budget_reports_document_with_zero_selected() -> Result<(), String> {
+        let first: Uri = "file:///workspace/src/a.rs"
+            .parse()
+            .map_err(|error| format!("parse first URI: {error}"))?;
+        let second: Uri = "file:///workspace/src/b.rs"
+            .parse()
+            .map_err(|error| format!("parse second URI: {error}"))?;
+        let by_uri = BTreeMap::from([
+            (first.clone(), vec![headline_diagnostic("diag:a", true)]),
+            (second.clone(), vec![headline_diagnostic("diag:b", true)]),
+        ]);
+        let selection = crate::lsp::diagnostic_budget::DiagnosticDeliverySelection::evaluate(
+            &by_uri,
+            &crate::lsp::diagnostic_budget::DiagnosticBudget {
+                max_items_per_document: 1,
+                max_items_per_workspace_response: 1,
+                ..Default::default()
+            },
+            "snapshot:workspace",
+            "evidence:workspace",
+        );
+        let omissions = selection.document_omissions();
+        let omission = omissions
+            .get(second.as_str())
+            .ok_or("missing zero-selected omission")?;
+        assert_eq!(
+            (
+                omission.selected_count,
+                omission.omitted_count,
+                omission.total_count
+            ),
+            (0, 1, 1)
+        );
+        assert_eq!(omission.scope, "workspace");
+        let mut published = selection.diagnostics_for_document(second.as_str(), &by_uri[&second]);
+        assert!(published.is_empty());
+        published.push(delivery_omission_diagnostic(omission));
+        assert_eq!(
+            published.len(),
+            1,
+            "omission is visible without a selected finding"
+        );
+        assert_eq!(
+            rollback_push_diagnostics(
+                &second,
+                &by_uri[&second],
+                Some(&selection),
+                Some(omission),
+                false
+            ),
+            published,
+            "rollback keeps the one visible limitation for a zero-selected document"
+        );
+        Ok(())
+    }
 
     fn push_test_uri() -> Result<tower_lsp_server::ls_types::Uri, String> {
         "file:///workspace/src/lib.rs"
@@ -8442,6 +9586,7 @@ mod delivery_selection_parity_tests {
             .collect();
         let snapshot = AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: Some(
                 crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
                     PathBuf::from("/workspace"),
@@ -8460,6 +9605,7 @@ mod delivery_selection_parity_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,
@@ -9377,6 +10523,7 @@ mod list_actionable_items_tests {
     fn snapshot_with_selection(selection: Option<DiagnosticDeliverySelection>) -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: Some("main".to_string()),
             mode: crate::app::Mode::Draft,
@@ -9392,6 +10539,7 @@ mod list_actionable_items_tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
             partial_scope: None,

@@ -113,7 +113,7 @@ type TestOwnerSlot = (usize, Option<usize>);
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct TestValueFacts {
-    index_identity: std::cell::Cell<Option<(usize, usize)>>,
+    index_identity: std::cell::Cell<Option<(usize, usize, u64)>>,
     by_slot: std::cell::RefCell<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
 }
 
@@ -142,40 +142,19 @@ impl TestValueFacts {
         test: &TestSummary,
         owner_fn: Option<&FunctionSummary>,
     ) -> Option<TestOwnerSlot> {
-        let identity = (
-            index.tests.as_ptr() as usize,
-            index.functions.as_ptr() as usize,
-        );
+        let identity = index.storage_identity();
         match self.index_identity.get() {
             None => self.index_identity.set(Some(identity)),
             Some(bound) if bound != identity => return None,
             Some(_) => {}
         }
-        let test_slot = slot_in(&index.tests, test)?;
+        let test_slot = index.test_slot(test)?;
         let owner_slot = match owner_fn {
-            Some(owner) => Some(slot_in(&index.functions, owner)?),
+            Some(owner) => Some(index.function_slot(owner)?),
             None => None,
         };
         Some((test_slot, owner_slot))
     }
-}
-
-/// The position of `item` in `items` when `item` is one of its elements
-/// (by address, not by value).
-fn slot_in<T>(items: &[T], item: &T) -> Option<usize> {
-    let size = std::mem::size_of::<T>();
-    if size == 0 {
-        return None;
-    }
-    let offset = (item as *const T as usize).checked_sub(items.as_ptr() as usize)?;
-    if offset % size != 0 {
-        return None;
-    }
-    let slot = offset / size;
-    items
-        .get(slot)
-        .is_some_and(|candidate| std::ptr::eq(candidate, item))
-        .then_some(slot)
 }
 
 fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> Vec<ValueFact> {
@@ -183,7 +162,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
 
-    for call in &test.calls {
+    for call in test.body_calls() {
         if !owner_name.is_empty() && call.name != owner_name {
             continue;
         }
@@ -464,7 +443,7 @@ pub(crate) fn resolve_direct_call(
         return None;
     }
     let callee = index
-        .functions
+        .functions()
         .iter()
         .find(|function| function.name == callee_name)?;
     let arguments = super::helper_transfer::split_call_arguments_text(trimmed, &callee_name)?;
@@ -1175,7 +1154,7 @@ fn owner_call_parameter_values(
         return rows;
     }
     for test in related_tests {
-        for call in &test.calls {
+        for call in test.body_calls() {
             if call.name != owner_name {
                 continue;
             }
@@ -1466,7 +1445,7 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
     })
 }
 
-fn comparison_operands(expression: &str) -> Option<(String, String)> {
+pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if let Some((left, right)) = expression.split_once(operator) {
             let left = clean_operand(left);
@@ -1543,7 +1522,7 @@ fn boundary_constant(
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<BoundaryConstant> {
     let name = crate::analysis::value_resolution::constant_operand_name(operand)?;
-    let lookup = index.files.get(&owner.file).map_or(
+    let lookup = index.files().get(&owner.file).map_or(
         crate::analysis::value_resolution::NamedConstant::Undeclared,
         |facts| crate::analysis::value_resolution::named_constant(&facts.source, name),
     );
@@ -1599,9 +1578,9 @@ fn owner_calls_passing_constant(
                 &owner.file,
                 &test.file,
                 index
-                    .files
+                    .files()
                     .get(&test.file)
-                    .map(|facts| facts.source.as_str()),
+                    .map(|facts| facts.data().source.as_str()),
                 &constant.name,
             )
         })
@@ -1678,9 +1657,15 @@ pub(in crate::analysis) fn owner_input_values(activation: &ActivationEvidence) -
 /// ([`crate::analysis::value_resolution::test_let_bound_literal`]) rather
 /// than a second let scanner. Only a bound number or boolean counts: the
 /// shared scan strips string contents, so a string binding is not an exact
-/// value here. Anything else (a computed expression, a non-literal
-/// initializer) yields nothing.
-fn owner_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
+/// value here. An identifier with no `let` binding may be an rstest
+/// `#[case]` parameter, which yields one value per case row
+/// ([`crate::analysis::value_resolution::test_case_bound_literals`]).
+/// Anything else (a computed expression, a non-literal initializer)
+/// yields nothing.
+pub(in crate::analysis) fn owner_argument_values(
+    test: &TestSummary,
+    argument: &str,
+) -> Vec<String> {
     let direct = scalar_values(argument);
     if !direct.is_empty() {
         return direct;
@@ -1689,10 +1674,20 @@ fn owner_argument_values(test: &TestSummary, argument: &str) -> Vec<String> {
     if !is_plain_identifier(name) {
         return Vec::new();
     }
-    crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
+    let let_bound: Vec<String> =
+        crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
+            .filter(|value| !value.starts_with(['"', '\'']))
+            .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
+            .into_iter()
+            .collect();
+    if !let_bound.is_empty() {
+        return let_bound;
+    }
+    // An rstest `#[case]` parameter carries one value per case row.
+    crate::analysis::value_resolution::test_case_bound_literals(test, name)
+        .into_iter()
         .filter(|value| !value.starts_with(['"', '\'']))
         .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
-        .into_iter()
         .collect()
 }
 
@@ -1727,7 +1722,7 @@ fn sort_value_facts(facts: &mut Vec<ValueFact>) {
     });
 }
 
-fn call_arguments(text: &str, name: &str) -> Option<Vec<String>> {
+pub(in crate::analysis) fn call_arguments(text: &str, name: &str) -> Option<Vec<String>> {
     let needle = format!("{name}(");
     let start = text.find(&needle)? + name.len();
     let contents = delimited_contents_at(text, start)?;
@@ -2105,8 +2100,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let test = TestSummary {
             name: "absent_delimiter_boundary".to_string(),
@@ -2356,6 +2354,67 @@ mod tests {
     }
 
     #[test]
+    fn owner_call_outside_the_test_span_binds_no_test_value() {
+        // A credited helper's `score(amount)` (#4574) sits on the helper's
+        // line; the test's `let amount = 10` binds a different variable.
+        let mut test = test_with_body_call(
+            "fn score_boundary() {\n    let amount = 10;\n    check(amount + 5);\n}",
+            3,
+            "score(amount)",
+        );
+        test.calls[0].line = 3;
+        let activation = boundary_activation(&test);
+
+        assert!(owner_input_values(&activation).is_empty());
+        assert!(!has_observed_boundary_equality(&activation));
+    }
+
+    #[test]
+    fn rstest_case_parameter_owner_argument_is_an_owner_input() {
+        // `#[case(10, false)] fn t(#[case] amount: i32, ..) { score(amount) }`:
+        // each case row's value flows into the owner (#4601).
+        let mut test = test_with_body_call(
+            "fn score_boundary(#[case] amount: i32, #[case] expected: bool) {\n    assert_eq!(score(amount), expected);\n}",
+            11,
+            "assert_eq!(score(amount), expected);",
+        );
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(10, false)]".to_string(),
+            "#[case(11, true)]".to_string(),
+        ];
+        let activation = boundary_activation(&test);
+
+        assert_eq!(owner_input_values(&activation), vec!["10", "11"]);
+        assert!(has_observed_boundary_equality(&activation));
+    }
+
+    #[test]
+    fn rstest_case_parameter_fails_closed_on_mut_or_let_rebinding() {
+        for body in [
+            "fn score_boundary(#[case] mut amount: i32) {\n    amount += 1;\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    let amount = amount + 1;\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    let (amount, _) = (amount + 5, 0);\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    for amount in [amount + 5] {\n        assert!(score(amount));\n    }\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    if let Some(amount) = Some(amount + 5) {\n        assert!(score(amount));\n    }\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    let run = |amount: i32| score(amount);\n    assert!(run(amount + 5));\n    assert!(score(amount));\n}",
+            "fn score_boundary(#[case] amount: i32) {\n    fn far(amount: i32) -> bool { score(amount) }\n    assert!(far(amount + 100));\n}",
+        ] {
+            let mut test = test_with_body_call(body, 12, "assert!(score(amount));");
+            test.attrs = vec!["#[rstest]".to_string(), "#[case(10)]".to_string()];
+            if body.contains("fn far") {
+                test.nested_fn_names = vec!["far".to_string()];
+            }
+            let activation = boundary_activation(&test);
+
+            assert!(
+                owner_input_values(&activation).is_empty(),
+                "`{body}` must not bind a case value to the owner"
+            );
+        }
+    }
+
+    #[test]
     fn let_bound_owner_argument_fails_closed_on_mut_shadowed_or_computed_bindings() {
         for body in [
             "fn score_boundary() {\n    let mut amount = 10;\n    assert!(score(amount));\n}",
@@ -2506,7 +2565,7 @@ mod tests {
     ) -> (ActivationEvidence, Vec<TestSummary>) {
         let owner = function("pub fn score(amount: i32) -> bool {\n    amount > LIMIT\n}");
         let mut index = crate::analysis::rust_index::RustIndex::default();
-        index.files.insert(
+        index.insert_file_only(
             PathBuf::from("src/lib.rs"),
             crate::analysis::facts::FileFacts {
                 path: PathBuf::from("src/lib.rs"),
@@ -2514,7 +2573,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        index.files.insert(
+        index.insert_file_only(
             PathBuf::from("tests/score.rs"),
             crate::analysis::facts::FileFacts {
                 path: PathBuf::from("tests/score.rs"),
@@ -2828,7 +2887,7 @@ assert_eq!(input.amount, 100);"#
     /// names get different facts, and a test or index the memo is not bound
     /// to is computed fresh without being cached.
     #[test]
-    fn test_value_facts_memo_matches_fresh_facts_for_every_test_and_owner() {
+    fn test_value_facts_memo_matches_fresh_facts_for_every_test_and_owner() -> Result<(), String> {
         let call = |line: usize, text: &str| CallFact {
             line,
             name: "score".to_string(),
@@ -2850,29 +2909,35 @@ assert_eq!(input.amount, 100);"#
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         };
-        let index = crate::analysis::rust_index::RustIndex {
-            tests: vec![
-                test(
-                    "enum_call",
-                    "score(AuthError::RevokedToken);",
-                    vec![call(11, "score(AuthError::RevokedToken);")],
-                ),
-                test(
-                    "literal_call",
-                    "let rows = [(99, 100)];\nscore(7);",
-                    vec![call(12, "score(7);")],
-                ),
-            ],
-            functions: vec![
-                function("pub fn score(error: AuthError) -> u32 {\n    0\n}"),
-                function("pub fn score(code: AuthError) -> u32 {\n    0\n}"),
-            ],
-            ..crate::analysis::rust_index::RustIndex::default()
-        };
+        let index = crate::analysis::rust_index::RustIndex::from_owned(
+            crate::analysis::facts::OwnedRustIndex {
+                tests: vec![
+                    test(
+                        "enum_call",
+                        "score(AuthError::RevokedToken);",
+                        vec![call(11, "score(AuthError::RevokedToken);")],
+                    ),
+                    test(
+                        "literal_call",
+                        "let rows = [(99, 100)];\nscore(7);",
+                        vec![call(12, "score(7);")],
+                    ),
+                ],
+                functions: vec![
+                    function("pub fn score(error: AuthError) -> u32 {\n    0\n}"),
+                    function("pub fn score(code: AuthError) -> u32 {\n    0\n}"),
+                ],
+                ..Default::default()
+            },
+        );
         let memo = TestValueFacts::default();
-        let owners = [None, Some(&index.functions[0]), Some(&index.functions[1])];
+        let owners = [
+            None,
+            Some(index.functions().at(0)),
+            Some(index.functions().at(1)),
+        ];
         for round in 0..2 {
-            for test in &index.tests {
+            for test in &index.tests() {
                 for owner in owners {
                     assert_eq!(
                         memo.facts_for(&index, test, owner),
@@ -2885,24 +2950,44 @@ assert_eq!(input.amount, 100);"#
             }
         }
         assert_ne!(
-            memo.facts_for(&index, &index.tests[1], owners[1]),
-            memo.facts_for(&index, &index.tests[1], owners[2]),
+            memo.facts_for(&index, index.tests().at(1), owners[1]),
+            memo.facts_for(&index, index.tests().at(1), owners[2]),
             "the owner's parameter names are part of the facts"
         );
         let cached = memo.by_slot.borrow().len();
-        assert_eq!(cached, index.tests.len() * owners.len());
+        assert_eq!(cached, index.tests().len() * owners.len());
 
-        let detached = index.tests[0].clone();
+        let detached = index.tests()[0].clone();
         assert_eq!(
             memo.facts_for(&index, &detached, owners[1]),
             value_facts_for_test(&detached, owners[1])
         );
         let other_index = index.clone();
         assert_eq!(
-            memo.facts_for(&other_index, &other_index.tests[0], None),
-            value_facts_for_test(&other_index.tests[0], None)
+            memo.facts_for(&other_index, other_index.tests().at(0), None),
+            value_facts_for_test(other_index.tests().at(0), None)
         );
         assert_eq!(memo.by_slot.borrow().len(), cached);
+
+        // Membership reordering can leave the arena allocations at the same
+        // addresses. A surviving memo must compute uncached after the revision
+        // changes rather than reinterpret its old flat ordinal keys.
+        let mut reordered = index;
+        let before = reordered.storage_identity();
+        reordered.reverse_flat_membership()?;
+        let after = reordered.storage_identity();
+        assert_eq!((before.0, before.1), (after.0, after.1));
+        assert_ne!(before.2, after.2);
+        for test in reordered.tests() {
+            for owner in reordered.functions() {
+                assert_eq!(
+                    memo.facts_for(&reordered, test, Some(owner)),
+                    value_facts_for_test(test, Some(owner))
+                );
+            }
+        }
+        assert_eq!(memo.by_slot.borrow().len(), cached);
+        Ok(())
     }
 
     // #4228: a reversed literal (`100 < amount`) and a local boundary
@@ -3334,8 +3419,11 @@ assert_eq!(input.amount, 100);"#
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 

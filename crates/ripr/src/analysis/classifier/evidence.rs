@@ -1,9 +1,12 @@
 use crate::analysis::classify::{
-    ProbeContext, PropagationWitnessV1, activation_evidence_with_value_facts, classify,
-    confidence_score, current_path_witness, infection_evidence, local_flow_sinks,
-    owner_may_be_reached_unseen, package_prefix, propagation_evidence_with_witness, reach_evidence,
-    reveal_evidence_with_expression,
+    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    activation_evidence_with_value_facts, classify, confidence_score, contains_as_whole_word,
+    current_path_witness, has_same_test_boundary_oracle_pairing, infection_evidence,
+    local_flow_sinks, owner_may_be_reached_unseen, package_prefix,
+    propagation_evidence_with_witness, reach_evidence, reveal_evidence_with_expression,
+    same_test_pairing_missing_summary,
 };
+use crate::analysis::facts::{FunctionSummary, OracleFact, TestSummary};
 use crate::domain::*;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -20,6 +23,7 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) propagation_witness: Option<PropagationWitnessDiagnostic>,
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) related_tests: Vec<RelatedTest>,
+    pub(in crate::analysis) related_tests_matched_total: usize,
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
     pub(in crate::analysis) propagate: StageEvidence,
@@ -35,10 +39,13 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
 impl ClassifiedProbeEvidence {
     pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
         let test_summaries = context.related_test_summaries();
+        // Without a resolved owner (a line in a `macro_rules!` template, an
+        // impl the index did not attribute) there is no name to search for,
+        // so nothing rules reach out.
         let reach = reach_evidence(&context.related_tests, context.owner_fn, || {
             context
                 .owner_fn
-                .is_some_and(|owner| owner_may_be_reached_unseen(owner, context.index))
+                .is_none_or(|owner| owner_may_be_reached_unseen(owner, context.index))
         });
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
@@ -77,16 +84,34 @@ impl ClassifiedProbeEvidence {
         // defeat is memoized per probe because it also depends on the
         // owner's package; the import scan does not, so it uses the
         // run-scoped per-file memo on the context.
+        // #4478: the owner-side half of the owner-return pin, established
+        // once per probe; `None` keeps every assertion on the token rule.
+        let fallback_pin_syntax = OwnerPinSyntax::default();
+        let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
+        // Every diff-classifier consumer of a covered equality uses this same
+        // decision. Keep the original TestSummary and assertion cardinality;
+        // filtering a clone would manufacture singleton matching fallbacks.
+        let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
+            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
+        };
+        let owner_return_pin = context
+            .owner_fn
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
         let package_defeats_by_file = FileDefeatMemo::default();
-        let (observe, discriminate, related_tests) = reveal_evidence_with_expression(
+        let owner_locals = context
+            .owner_fn
+            .map(owner_local_binding_names)
+            .unwrap_or_default();
+        let (observe, discriminate, related_tests, matched_total) = reveal_evidence_with_expression(
             context.probe,
             reveal_expression,
             &context.related_tests,
+            &owner_locals,
             // #3731 review (F11): the related test's file source is
             // reachable here, so the caller computes the same-name-import
             // defeat per test instead of restructuring the reveal inputs.
             &|test, callee| {
-                context.index.files.get(&test.file).is_some_and(|facts| {
+                context.index.files().get(&test.file).is_some_and(|facts| {
                     context.test_file_imports_foreign_callee_name(&test.file, &facts.source, callee)
                 })
             },
@@ -111,17 +136,64 @@ impl ClassifiedProbeEvidence {
                     if test_package == owner_package {
                         return false;
                     }
-                    context.index.functions.iter().any(|function| {
+                    context.index.functions().iter().any(|function| {
                         function.name == callee
                             && package_prefix(&function.file).as_deref()
                                 == Some(test_package.as_str())
                     })
                 })
             },
+            &ReturnOracleAdmission {
+                owner_return_pin: &|test, assertion| {
+                    owner_return_pin.as_ref().is_some_and(|pin| {
+                        pin.admits(
+                            test,
+                            assertion,
+                            context.index,
+                            &|file, name| {
+                                context.index.files().get(file).is_some_and(|facts| {
+                                    context.test_file_imports_foreign_callee_name(
+                                        file,
+                                        &facts.source,
+                                        name,
+                                    )
+                                })
+                            },
+                            pin_syntax,
+                        )
+                    })
+                },
+                assertion_admitted: &assertion_admitted,
+            },
         );
 
         let discriminate =
             tuple_match::discrimination(context, &observe, &discriminate).unwrap_or(discriminate);
+        // #4828: a boundary-class probe may not read `exposed` by taking a
+        // boundary input from one test and a discriminating oracle from
+        // another. Infection and discrimination stay independently scored;
+        // only the combined `exposed` path requires same-test pairing on
+        // the owner call that sits on the boundary. Pairing reuses
+        // activation's `==` facts so named constants and helper hops that
+        // already infected stay paired when the same test holds the oracle.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
+            && infect.state == StageState::Yes
+            && discriminate.state == StageState::Yes
+            && !has_same_test_boundary_oracle_pairing(
+                context.probe,
+                context.owner_fn,
+                &test_summaries,
+                &activation,
+                &assertion_admitted,
+            ) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                same_test_pairing_missing_summary(),
+            )
+        } else {
+            discriminate
+        };
         // The missing-field fact is the authority on whether an assertion
         // observes the constructed field. A token that merely coincides with
         // the field value (`Box` in `downcast_ref::<Box<dyn E>>()`) must not
@@ -176,6 +248,7 @@ impl ClassifiedProbeEvidence {
             propagation_witness,
             activation,
             related_tests,
+            related_tests_matched_total: matched_total,
             reach,
             infect,
             propagate,
@@ -261,6 +334,27 @@ fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -
     summaries
 }
 
+/// Names the owner binds with `let` that are not also named in its
+/// signature. Such a binding exists only inside the owner, so a test's
+/// same-named local can never be it. A `let` that rebinds a parameter
+/// (`let cache = cache;`) keeps the parameter's name out of this list.
+/// Parser-backed facts only; a lexically indexed owner yields none.
+fn owner_local_binding_names(owner: &FunctionSummary) -> Vec<String> {
+    let signature = owner
+        .body
+        .split_once('{')
+        .map_or(owner.body.as_str(), |(head, _)| head);
+    let mut names = owner
+        .let_bindings
+        .iter()
+        .map(|binding| binding.name.clone())
+        .filter(|name| !contains_as_whole_word(signature, name))
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Per-file defeat results for one probe, keyed by test file then callee.
 type FileDefeatMemo = RefCell<BTreeMap<PathBuf, BTreeMap<String, bool>>>;
 
@@ -289,9 +383,11 @@ fn memoized_file_defeat(
 #[cfg(test)]
 mod tests {
     use super::evidence_summaries;
+    use super::owner_local_binding_names;
     use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
     use crate::analysis::classifier::finding::build_finding;
     use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::LetBindingFact;
     use crate::analysis::facts::{FunctionFact, FunctionSummary, ReturnFact, RustIndex};
     use crate::analysis::rust_index::{OracleFact, TestSummary, extract_identifier_tokens};
     use crate::domain::{
@@ -345,8 +441,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 
@@ -385,8 +484,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let context = ProbeContext::new(
             &probe,
@@ -434,13 +536,13 @@ mod tests {
     /// confirmed through the bare name.
     #[test]
     fn cross_package_same_name_function_defeats_owner_confirmation() {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 same_named_function("crates/alpha/src/lib.rs"),
                 same_named_function("crates/beta/src/lib.rs"),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let evidence = owner_harness_context(&index, harness_in("crates/beta/tests/protocol.rs"));
         assert_eq!(
             evidence.discriminate.state,
@@ -464,13 +566,13 @@ mod tests {
     /// relative form) keeps today's behavior.
     #[test]
     fn same_package_harness_and_unscopable_paths_stay_confirmed() {
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 same_named_function("crates/alpha/src/lib.rs"),
                 same_named_function("crates/beta/src/lib.rs"),
             ],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
         let own_package =
             owner_harness_context(&index, harness_in("crates/alpha/tests/protocol.rs"));
         assert_eq!(
@@ -534,8 +636,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
@@ -578,8 +683,11 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
@@ -603,5 +711,32 @@ mod tests {
             return Err("corrupt witness diagnostic was not emitted".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn owner_local_bindings_exclude_names_the_signature_binds() {
+        let binding = |name: &str| LetBindingFact {
+            line: 1,
+            name: name.to_string(),
+        };
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::from_rows".to_string()),
+            name: "from_rows".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 6,
+            body: "fn from_rows(cache: &mut Cache, rows: Vec<u32>) -> Result<Table, String> {\n    let cache = cache;\n    let table = Table { rows };\n    table.validate()?;\n    Ok(table)\n}".to_string(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: vec![binding("cache"), binding("table"), binding("table")],
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        assert_eq!(owner_local_binding_names(&owner), vec!["table".to_string()]);
     }
 }

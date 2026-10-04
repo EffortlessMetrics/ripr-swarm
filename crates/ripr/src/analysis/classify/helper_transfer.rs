@@ -157,7 +157,7 @@ impl HelperChain {
 pub(crate) fn callee_is_unique(callee_name: &str, index: &RustIndex) -> bool {
     !callee_name.is_empty()
         && index
-            .functions
+            .functions()
             .iter()
             .filter(|function| function.name == callee_name)
             .count()
@@ -172,7 +172,7 @@ pub(crate) fn direct_callers<'a>(
     index: &'a RustIndex,
 ) -> Vec<&'a FunctionSummary> {
     index
-        .functions
+        .functions()
         .iter()
         .filter(|function| {
             function.name != callee_name
@@ -544,16 +544,19 @@ mod tests {
             literals: Vec::new(),
             source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
+            impl_attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
         }
     }
 
     fn index(functions: Vec<FunctionSummary>) -> RustIndex {
-        RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions,
-            ..RustIndex::default()
-        }
+            ..Default::default()
+        })
     }
 
     #[test]

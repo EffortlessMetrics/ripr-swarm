@@ -22,7 +22,9 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     let mut per_level = std::collections::BTreeMap::<&'static str, usize>::new();
     // Findings suppressed by an explicit `--suppression-policy` (#1441) are
     // not annotated: filtering PR-annotation noise on accepted surfaces is
-    // the purpose of the policy. The JSON surface keeps them visible.
+    // the purpose of the policy. The JSON surface keeps them visible. When
+    // every finding is omitted this way, emit a denominator notice (#4393)
+    // rather than an empty stream.
     let suppressed_ids: std::collections::BTreeSet<&str> = output
         .suppression
         .iter()
@@ -80,7 +82,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(&actionability.gap_state);
             message.push('/');
             message.push_str(&actionability.actionability_category);
-            message.push_str(" (advisory preview; no repair packet).");
+            message.push_str(advisory_packet_suffix(actionability.repair_packet_ready));
         }
         if let Some(card) = python_repair_card(finding) {
             message.push_str(" Python repair card: missing discriminator `");
@@ -104,7 +106,8 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(&card.oracle_strength);
             message.push_str(", suggested shape `");
             message.push_str(&card.suggested_assertion_shape);
-            message.push_str("` (advisory preview; no repair packet).");
+            message.push('`');
+            message.push_str(advisory_packet_suffix(card.repair_packet_ready));
             for (index, grip) in card.bun_cross_language_grips.iter().enumerate() {
                 if card.bun_cross_language_grips.len() == 1 {
                     message.push_str(" Bun cross-language grip: ");
@@ -158,15 +161,23 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str("` (preview advisory; no repair packet).");
         }
         *per_level.entry(annotation_level).or_default() += 1;
+        // GitHub workflow-command `line` is 1-indexed (documented default 1).
+        // A line-0 probe is unlocated — the same class SARIF already omits
+        // `region` for (#2407). Omit `,line=` so the command does not emit
+        // out-of-contract `line=0` (#5089). This does not claim GitHub UI
+        // file-level placement; omitted `line` may still default to 1.
+        let line_property = match finding.probe.location.line {
+            0 => String::new(),
+            line => format!(",line={line}"),
+        };
         annotations.push_str(&format!(
-            "::{annotation_level} file={},line={},title={}::{}\n",
+            "::{annotation_level} file={}{line_property},title={}::{}\n",
             // `file` arrives via `repository_display_path` (stable text, `%`
             // pre-encoded); `title` is raw text.
             escape_property_pre_encoded(&repository_display_path(
                 &output.root,
                 &finding.probe.location.file
             )),
-            finding.probe.location.line,
             escape_property(&title),
             escape_data(&message)
         ));
@@ -175,9 +186,31 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     // `GITHUB_ANNOTATIONS_PER_LEVEL` annotations of each level per step, so
     // a trailing notice is the first line dropped on a busy run.
     let mut out = String::new();
-    if output.findings.is_empty() {
+    let incomplete = output
+        .analysis_outcome
+        .as_ref()
+        .filter(|outcome| !outcome.kind.is_complete());
+    // #5011: an empty stream is only "clean" when nothing was left
+    // unanalyzed. Run states the human and JSON surfaces disclose as NOT
+    // clean (uncommitted working-tree edits, missing analysis scope,
+    // preview-language files detected but not analyzed) downgrade the
+    // empty-stream notice to warnings naming the unanalyzed surface and
+    // the remedy route. These lead the stream like the other disclosures.
+    let state_warnings = unanalyzed_state_warnings(output);
+    if let Some(outcome) = incomplete {
+        *per_level.entry("warning").or_default() += 1;
+        out.push_str(&incomplete_outcome_warning(
+            outcome,
+            output.findings.is_empty(),
+        ));
+    } else if output.findings.is_empty() && state_warnings.is_empty() {
         out.push_str("::notice title=ripr::No static exposure findings found\n");
-    } else if suppressed > 0 || not_current > 0 {
+    }
+    for warning in &state_warnings {
+        *per_level.entry("warning").or_default() += 1;
+        out.push_str(warning);
+    }
+    if !output.findings.is_empty() && (suppressed > 0 || not_current > 0) {
         out.push_str(&unannotated_denominator_notice(
             output,
             suppressed,
@@ -189,6 +222,98 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     }
     out.push_str(&annotations);
     out
+}
+
+/// An incomplete analysis must not read as a clean one in a PR check: the
+/// annotation stream is often the only thing a reviewer sees, so it names
+/// the outcome and each limitation's recovery, as the human report does.
+fn incomplete_outcome_warning(
+    outcome: &crate::analysis_outcome::AnalysisOutcome,
+    no_findings: bool,
+) -> String {
+    let scope = if no_findings {
+        "Zero findings is not a clean result because the analyzed scope is incomplete."
+    } else {
+        "The findings cover only the analyzed scope; behavior outside it has no finding."
+    };
+    let mut message = format!(
+        "Analysis outcome: {} (analysis incomplete). {scope}",
+        outcome.kind.as_str()
+    );
+    for limitation in &outcome.limitations {
+        message.push_str(&format!(
+            " Limitation: {}: {}",
+            limitation.kind.as_str(),
+            limitation.recovery.detail
+        ));
+    }
+    format!(
+        "::warning title=ripr analysis incomplete::{}\n",
+        escape_data(&message)
+    )
+}
+
+/// The preview suffix must track the shared validator's own verdict, as the
+/// human and JSON surfaces do (#5014): an approved packet is complete (the
+/// preview stays advisory), a blocked one has no repair packet. Claiming
+/// "no repair packet" for a validator-approved packet would route the
+/// operator to a manual step the packet was built to avoid.
+fn advisory_packet_suffix(repair_packet_ready: bool) -> &'static str {
+    if repair_packet_ready {
+        " (advisory preview; complete repair packet)."
+    } else {
+        " (advisory preview; no repair packet)."
+    }
+}
+
+/// Run states the human and JSON surfaces disclose as NOT clean, so an
+/// empty GitHub stream must not read as all-clear either (#5011). Each
+/// warning names the unanalyzed surface and the remedy route, mirroring
+/// the human notes; the preview-advisory arm reuses the JSON surface's
+/// shared `why` strings so the machine surfaces cannot drift.
+fn unanalyzed_state_warnings(output: &CheckOutput) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if output.unanalyzed_working_tree {
+        warnings.push(
+            "::warning title=ripr unanalyzed working tree::Uncommitted source and test changes were not analyzed; `ripr check` reads each file as committed at HEAD. An empty result here does NOT mean those changes are covered; add `--worktree` to include staged and unstaged edits (for example `ripr check --worktree`).\n"
+                .to_string(),
+        );
+    }
+    if output.no_scope_provided {
+        let message = if let Some(base) = output.base.as_deref() {
+            format!(
+                "`{base}...HEAD` contains no changed files, so there was nothing to analyze; the compared base was `{base}`. An empty result means no behavior changed against it — it does NOT mean your changes are covered."
+            )
+        } else {
+            "No analysis scope was provided — `ripr check` is diff-first. Run `ripr check --base BASE` with BASE set to an existing ref to analyze your changes. An empty result here does NOT mean your changed behavior is covered."
+                .to_string()
+        };
+        warnings.push(format!(
+            "::warning title=ripr no analysis scope::{}\n",
+            escape_data(&message)
+        ));
+    }
+    for advisory in &output.preview_language_advisories {
+        if advisory.analyzed(&output.language_runs) {
+            continue;
+        }
+        let why = advisory.unaudited_why(&output.language_runs);
+        let (_language, file_language) = crate::output::human::advisory_language_names(advisory);
+        let file_label = if advisory.file_count == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        let message = format!(
+            "{} {} {} in scope: {}",
+            advisory.file_count, file_language, file_label, why
+        );
+        warnings.push(format!(
+            "::warning title=ripr preview advisory::{}\n",
+            escape_data(&message)
+        ));
+    }
+    warnings
 }
 
 /// GitHub Actions displays at most this many annotations of each level
@@ -375,6 +500,81 @@ mod tests {
         );
     }
 
+    fn partial_outcome() -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    "Not analyzed (Go: 1): pkg/calc.go.",
+                )?,
+            )],
+        )
+    }
+
+    #[test]
+    fn render_never_calls_an_incomplete_analysis_clean() -> Result<(), String> {
+        // A Perl- or Go-only diff is `partial_with_limitations`; the GitHub
+        // stream printed only "No static exposure findings found".
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.analysis_outcome = Some(partial_outcome()?);
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.starts_with("::warning title=ripr analysis incomplete::Analysis outcome: partial_with_limitations"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Zero findings is not a clean result"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Limitation: language_scope_unsupported: Not analyzed (Go: 1): pkg/calc.go."
+            ),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn render_scopes_findings_of_an_incomplete_analysis() -> Result<(), String> {
+        let mut output = output_with_unknown_finding();
+        output.analysis_outcome = Some(partial_outcome()?);
+
+        let rendered = render(&output);
+
+        let first = rendered.lines().next().unwrap_or_default();
+        assert!(
+            first.contains("findings cover only the analyzed scope"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("title=ripr static_unknown::"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn render_escapes_annotations_and_includes_effective_stop_reason_for_unknowns() {
         let rendered = render(&output_with_unknown_finding());
@@ -386,6 +586,108 @@ mod tests {
         // visible scars (#4065).
         assert!(rendered.contains("Add: case, with 100%25 coverage%0Athen verify%0Doutcome"));
         assert!(rendered.contains("Stop reason: static_probe_unknown"));
+    }
+
+    /// Property section of a workflow-command line (`file=...,title=...`),
+    /// excluding the message so a message containing `line=` cannot pass.
+    fn annotation_properties(command: &str) -> &str {
+        let rest = command.strip_prefix("::").unwrap_or(command);
+        let Some((level_and_props, _)) = rest.split_once("::") else {
+            return "";
+        };
+        level_and_props
+            .split_once(' ')
+            .map(|(_, props)| props)
+            .unwrap_or("")
+    }
+
+    fn finding_annotation_commands(rendered: &str) -> Vec<&str> {
+        rendered
+            .lines()
+            .filter(|line| {
+                line.starts_with("::notice file=")
+                    || line.starts_with("::warning file=")
+                    || line.starts_with("::error file=")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn github_annotations_omit_line_property_for_line_zero_probe() {
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.line = 0;
+
+        let rendered = render(&output);
+        let commands = finding_annotation_commands(&rendered);
+        assert_eq!(
+            commands.len(),
+            1,
+            "expected one finding annotation: {rendered}"
+        );
+        let properties = annotation_properties(commands[0]);
+        assert!(
+            commands[0].starts_with("::notice file=src/lib.rs,title=ripr static_unknown::"),
+            "line-0 probe must omit `,line=` from the command: {rendered}"
+        );
+        assert!(
+            !properties.contains("line="),
+            "line-0 command properties must not contain `line=` (neither `line=0` nor `,line=1`): {rendered}"
+        );
+        assert_eq!(
+            properties, "file=src/lib.rs,title=ripr static_unknown",
+            "file and title stay; line is absent: {rendered}"
+        );
+    }
+
+    #[test]
+    fn github_annotations_include_line_property_for_located_probe() {
+        let rendered = render(&output_with_unknown_finding());
+        let commands = finding_annotation_commands(&rendered);
+        assert_eq!(commands.len(), 1, "{rendered}");
+        assert!(
+            commands[0].starts_with("::notice file=src/lib.rs,line=13,title=ripr static_unknown::"),
+            "located probe must keep `,line=13`: {rendered}"
+        );
+        assert!(
+            annotation_properties(commands[0]).contains(",line=13,"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn github_annotations_keep_line_one_as_located() {
+        let mut output = output_with_unknown_finding();
+        output.findings[0].probe.location.line = 1;
+
+        let rendered = render(&output);
+        let commands = finding_annotation_commands(&rendered);
+        assert_eq!(commands.len(), 1, "{rendered}");
+        assert!(
+            annotation_properties(commands[0]).contains(",line=1,"),
+            "line 1 is in-contract and must not be omitted as if it were 0: {rendered}"
+        );
+    }
+
+    #[test]
+    fn github_annotations_omit_line_only_for_the_zero_probe_in_a_mixed_stream() {
+        let mut output = output_with_unknown_finding();
+        let mut unlocated = output.findings[0].clone();
+        unlocated.id = "probe:src_lib_rs:0:static_unknown".to_string();
+        unlocated.probe.id = ProbeId(unlocated.id.clone());
+        unlocated.probe.location.line = 0;
+        output.findings.push(unlocated);
+
+        let rendered = render(&output);
+        let commands = finding_annotation_commands(&rendered);
+        assert_eq!(commands.len(), 2, "{rendered}");
+        assert!(
+            annotation_properties(commands[0]).contains(",line=13,"),
+            "located finding stays located: {rendered}"
+        );
+        assert!(
+            !annotation_properties(commands[1]).contains("line="),
+            "unlocated finding omits `line=` from the command: {rendered}"
+        );
     }
 
     #[test]
@@ -526,6 +828,7 @@ mod tests {
                 flow_sinks: vec![],
                 activation: crate::domain::ActivationEvidence::default(),
                 stop_reasons: vec![],
+                related_tests_matched_total: None,
                 related_tests: vec![],
                 recommended_next_step: None,
                 language: None,
@@ -598,6 +901,7 @@ mod tests {
                 flow_sinks: vec![],
                 activation: crate::domain::ActivationEvidence::default(),
                 stop_reasons: vec![],
+                related_tests_matched_total: None,
                 related_tests: vec![],
                 recommended_next_step: Some("Add discriminator assertion".to_string()),
                 language: None,
@@ -667,6 +971,217 @@ mod tests {
         assert!(rendered.contains(
             "Preview actionability: advisory/incomplete_repair_packet (advisory preview; no repair packet)."
         ));
+    }
+
+    #[test]
+    fn render_discloses_unanalyzed_working_tree_instead_of_clean_notice() {
+        // #5011: the human surface prints UNANALYZED_WORKING_TREE_NOTE and
+        // JSON emits "unanalyzed_working_tree": true; the GitHub stream must
+        // not read as clean for the same CheckOutput. The full stream is
+        // pinned by the fixtures/github_unanalyzed_states golden.
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.unanalyzed_working_tree = true;
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered,
+            include_str!(
+                "../../../../fixtures/github_unanalyzed_states/expected/unanalyzed_working_tree.txt"
+            )
+        );
+    }
+
+    #[test]
+    fn render_discloses_no_scope_provided_instead_of_clean_notice() {
+        // #5011: mirror the human no-scope note; the empty-range variant
+        // (#4012) names the compared base instead. The full stream for the
+        // no-base case is pinned by the fixtures/github_unanalyzed_states
+        // golden.
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.no_scope_provided = true;
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered,
+            include_str!(
+                "../../../../fixtures/github_unanalyzed_states/expected/no_scope_provided.txt"
+            )
+        );
+
+        let mut ranged = output_with_unknown_finding();
+        ranged.findings.clear();
+        ranged.no_scope_provided = true;
+        ranged.base = Some("main".to_string());
+
+        let rendered = render(&ranged);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`main...HEAD` contains no changed files"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("compared base was `main`"), "{rendered}");
+    }
+
+    #[test]
+    fn render_discloses_not_analyzed_preview_advisory_instead_of_clean_notice() {
+        // #5011: a detected-but-not-analyzed preview advisory records no
+        // successful LanguageRun, so the outcome stays "complete" — but the
+        // files were not analyzed and the human/JSON/badge surfaces all say
+        // the result is NOT clean. The wire string is deliberately
+        // unregistered so the recovery text is identical in every
+        // feature-lane build (real adapters vary with compile-time
+        // features); the full stream is pinned by the
+        // fixtures/github_unanalyzed_states golden.
+        let mut output = output_with_unknown_finding();
+        output.findings.clear();
+        output.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "cobol".to_string(),
+            file_count: 2,
+            sample_paths: vec!["src/a.cobol".to_string(), "src/b.cobol".to_string()],
+            javascript_file_count: 0,
+            enabled: false,
+        }];
+
+        let rendered = render(&output);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered,
+            include_str!(
+                "../../../../fixtures/github_unanalyzed_states/expected/preview_advisory.txt"
+            )
+        );
+
+        // Real-language arms: file labels follow the human surface's prose
+        // names (#4555), and the recovery text is feature-dependent, so these
+        // assert feature-independent fragments only.
+        let mut typescript = output_with_unknown_finding();
+        typescript.findings.clear();
+        typescript.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "typescript".to_string(),
+            file_count: 2,
+            sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
+            javascript_file_count: 0,
+            enabled: false,
+        }];
+
+        let rendered = render(&typescript);
+
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.starts_with("::warning title=ripr preview advisory::"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("2 TypeScript files"), "{rendered}");
+        assert!(
+            rendered.contains("files detected but not analyzed"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("not Rust-grade clean"), "{rendered}");
+
+        let mut javascript = output_with_unknown_finding();
+        javascript.findings.clear();
+        javascript.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "typescript".to_string(),
+            file_count: 1,
+            sample_paths: vec!["src/a.js".to_string()],
+            javascript_file_count: 1,
+            enabled: false,
+        }];
+
+        let rendered = render(&javascript);
+
+        assert!(
+            rendered.contains("1 JavaScript file in scope"),
+            "JavaScript-only files take the JavaScript label: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_preview_actionability_suffix_tracks_repair_packet_readiness() {
+        // #5014: the suffix tracks the shared validator's verdict — an
+        // approved packet is complete (still advisory); a blocked packet has
+        // no repair packet.
+        let mut ready = output_with_unknown_finding();
+        ready.findings[0] = typescript_preview_finding(true);
+
+        let rendered = render(&ready);
+
+        assert!(
+            rendered.contains(
+                "Preview actionability: actionable/complete_repair_packet (advisory preview; complete repair packet)."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("no repair packet"),
+            "a validator-approved packet must not be called absent: {rendered}"
+        );
+
+        let mut blocked = output_with_unknown_finding();
+        blocked.findings[0] = typescript_preview_finding(false);
+
+        let rendered = render(&blocked);
+
+        assert!(
+            rendered.contains(
+                "Preview actionability: advisory/incomplete_repair_packet (advisory preview; no repair packet)."
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_typescript_card_suffix_tracks_repair_packet_readiness() {
+        let mut ready = output_with_unknown_finding();
+        ready.findings[0] = typescript_preview_finding(true);
+
+        let rendered = render(&ready);
+
+        assert!(
+            rendered.contains("TypeScript preview card: owner `applyDiscount`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("(advisory preview; complete repair packet)."),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("no repair packet"),
+            "a validator-approved packet must not be called absent: {rendered}"
+        );
+
+        let mut blocked = output_with_unknown_finding();
+        blocked.findings[0] = typescript_preview_finding(false);
+
+        let rendered = render(&blocked);
+
+        assert!(
+            rendered.contains("(advisory preview; no repair packet)."),
+            "a blocked packet keeps the pinned suffix: {rendered}"
+        );
     }
 
     #[test]
@@ -822,13 +1337,71 @@ mod tests {
 
         let rendered = render(&output);
 
-        // The suppressed finding is never annotated, but the run still
-        // carries a denominator so all-suppressed is not silent (#4393).
+        // Deliberate re-pin of the former empty-string assertion: suppressed
+        // findings stay unannotated, but all-suppressed is not silent (#4393).
         assert_eq!(
             rendered,
             "::notice title=ripr::Annotated 0 of 1 static exposure finding(s); 1 suppressed by policy policy/ripr-suppressions.toml. Run `ripr check --format json` to list every finding.\n",
         );
         assert!(!rendered.contains("file=src/lib.rs"));
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "all-suppressed is not an empty run: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_over_broad_src_policy_keeps_unmatched_annotation() {
+        // Over-broad `src/**` hides every src finding; a tests/ finding
+        // outside that glob must still annotate. This rejects both silence
+        // and "any suppression blanks the whole stream" (#4393).
+        use crate::output::suppressions::{CheckSuppressionOutcome, SuppressedCheckFinding};
+        let mut output = output_with_unknown_finding();
+        let template = output.findings[0].clone();
+        let mut src_other = template.clone();
+        src_other.id = "probe:src_other_rs:4:static_unknown".to_string();
+        src_other.probe.location = SourceLocation::new("src/other.rs", 4, 1);
+        let mut tests_other = template;
+        tests_other.id = "probe:tests_other_rs:8:static_unknown".to_string();
+        tests_other.probe.location = SourceLocation::new("tests/other.rs", 8, 1);
+        let src_lib_id = output.findings[0].id.clone();
+        output.findings = vec![output.findings[0].clone(), src_other, tests_other];
+        output.suppression = Some(CheckSuppressionOutcome {
+            policy_path: "policy/over-broad.toml".to_string(),
+            suppressed: vec![
+                SuppressedCheckFinding {
+                    finding_id: src_lib_id,
+                    selector: "src/**".to_string(),
+                },
+                SuppressedCheckFinding {
+                    finding_id: "probe:src_other_rs:4:static_unknown".to_string(),
+                    selector: "src/**".to_string(),
+                },
+            ],
+            warnings: Vec::new(),
+        });
+
+        let rendered = render(&output);
+
+        assert_eq!(
+            rendered.lines().next(),
+            Some(
+                "::notice title=ripr::Annotated 1 of 3 static exposure finding(s); 2 suppressed by policy policy/over-broad.toml. Run `ripr check --format json` to list every finding."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("file=src/lib.rs") && !rendered.contains("file=src/other.rs"),
+            "over-broad src/** must not annotate src findings: {rendered}"
+        );
+        assert!(
+            rendered.contains("file=tests/other.rs"),
+            "a finding outside the over-broad glob must stay annotated: {rendered}"
+        );
+        assert!(
+            !rendered.contains("No static exposure findings found"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -967,6 +1540,7 @@ mod tests {
                 flow_sinks: vec![],
                 activation: crate::domain::ActivationEvidence::default(),
                 stop_reasons: vec![],
+                related_tests_matched_total: None,
                 related_tests: vec![],
                 recommended_next_step: Some(
                     "Add: case, with 100% coverage\nthen verify\routcome".to_string(),
@@ -989,6 +1563,64 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
         }
+    }
+
+    /// Build a TypeScript preview finding. With `complete_packet`, the
+    /// evidence satisfies the shared repair-packet validator so
+    /// `preview_actionability_for` reports `repair_packet_ready: true`
+    /// (same recipe as the human surface's complete-packet fixture).
+    fn typescript_preview_finding(complete_packet: bool) -> Finding {
+        let mut finding = output_with_unknown_finding().findings[0].clone();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language = Some(LanguageId::TypeScript);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.owner_kind = Some(crate::domain::OwnerKind::Function);
+        finding.probe.location = SourceLocation::new("src/lib.ts", 2, 1);
+        finding.evidence = vec![
+            "owner: applyDiscount".to_string(),
+            "gap_state: advisory".to_string(),
+            "actionability_category: incomplete_repair_packet".to_string(),
+            "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
+                .to_string(),
+            "repair_route: project canonical TypeScript repair packet fields later".to_string(),
+            "missing_actionability_fields: canonical_gap_id, verify_command".to_string(),
+            "missing_graph_legs: verify_command, receipt_command".to_string(),
+            "unlock_condition: project complete repair packet fields before public projection"
+                .to_string(),
+            "evidence_needed_to_promote: canonical gap identity and verify command".to_string(),
+            "raw_evidence_ref: leg=rust_seam;file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=applyDiscount;sample=if amount >= threshold".to_string(),
+        ];
+        if complete_packet {
+            finding
+                .evidence
+                .push("typescript_verify_command: jest tests/discount.test.ts".to_string());
+            finding
+                .evidence
+                .push("typescript_oracle_observed: result".to_string());
+            finding
+                .evidence
+                .push("typescript_oracle_expected: 50".to_string());
+            finding
+                .activation
+                .missing_discriminators
+                .push(MissingDiscriminatorFact {
+                    value: "amount == threshold".to_string(),
+                    reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
+                        .to_string(),
+                    flow_sink: None,
+                });
+            finding.related_tests.push(RelatedTest {
+                name: "applies discount at threshold".to_string(),
+                file: PathBuf::from("tests/discount.test.ts"),
+                line: 5,
+                oracle_strength: OracleStrength::Weak,
+                oracle_kind: OracleKind::ExactValue,
+                oracle: Some("expect(result).toBe(50)".to_string()),
+                relation_reason: None,
+                relation_confidence: None,
+            });
+        }
+        finding
     }
 
     fn output_with_python_repair_card() -> CheckOutput {
@@ -1251,6 +1883,7 @@ mod tests {
                 flow_sinks: vec![],
                 activation: crate::domain::ActivationEvidence::default(),
                 stop_reasons: vec![],
+                related_tests_matched_total: None,
                 related_tests: vec![],
                 recommended_next_step: None,
                 language: None,

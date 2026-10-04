@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// Render a path with stable slash separators for JSON and Markdown output.
 pub(crate) fn display_path(path: &Path) -> String {
@@ -32,6 +32,26 @@ pub(crate) fn display_path_text(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+/// Compare output destinations after collapsing `.` / `..` so `--out ./a.json`
+/// and `--out-jsonl a.json` are treated as the same file.
+pub(crate) fn same_output_leaf(left: &Path, right: &Path) -> bool {
+    normalize_output_leaf(left) == normalize_output_leaf(right)
+}
+
+fn normalize_output_leaf(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in Path::new(&display_path(path)).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Render a path for human CLI display (`ripr init`, `ripr doctor`) with one
 /// separator convention on the running host (#4378). See
 /// [`human_path_text`].
@@ -61,11 +81,41 @@ pub(crate) fn human_path_text(text: &str, windows: bool) -> String {
     plain.replace('\\', "/")
 }
 
+/// A valid user-supplied alias can resolve to non-UTF-8 filesystem bytes.
+/// Keep a lossless absolute alias in that case, without collapsing `..`:
+/// its filesystem traversal still selects the diagnosed physical directory.
+pub(crate) fn command_root_display(root: &Path, resolved: &Path) -> Result<String, String> {
+    if resolved.to_str().is_some() {
+        return Ok(human_path(resolved));
+    }
+    absolute_command_root_display(root)
+}
+
+pub(crate) fn absolute_command_root_display(root: &Path) -> Result<String, String> {
+    let path = if root.is_absolute() {
+        std::borrow::Cow::Borrowed(root)
+    } else {
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("cannot bind the selected root to its directory: {error}"))?;
+        std::borrow::Cow::Owned(cwd.join(root))
+    };
+    require_lossless_command_path(&path)?;
+    Ok(human_path(&path))
+}
+
+fn require_lossless_command_path(path: &Path) -> Result<(), String> {
+    path.to_str().map(|_| ()).ok_or_else(|| {
+        "selected root cannot be represented losslessly in a command; rerun doctor from a UTF-8 parent using a UTF-8 alias".to_string()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::{display_path, display_path_text, human_path_text, repository_display_path};
+    use super::{
+        display_path, display_path_text, human_path_text, repository_display_path, same_output_leaf,
+    };
 
     #[test]
     fn human_path_text_uses_one_separator_and_drops_verbatim_prefix_on_windows() {
@@ -145,5 +195,21 @@ mod tests {
             repository_display_path(Path::new("crates/app"), Path::new("crates/app/src/lib.rs")),
             "crates/app/src/lib.rs"
         );
+    }
+
+    #[test]
+    fn same_output_leaf_collapses_dot_and_parent_components() {
+        assert!(same_output_leaf(
+            Path::new("./policy-history.json"),
+            Path::new("policy-history.json")
+        ));
+        assert!(same_output_leaf(
+            Path::new("reports/../ledger.json"),
+            Path::new("ledger.json")
+        ));
+        assert!(!same_output_leaf(
+            Path::new("ledger.json"),
+            Path::new("ledger.jsonl")
+        ));
     }
 }

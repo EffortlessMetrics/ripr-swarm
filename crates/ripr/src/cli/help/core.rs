@@ -45,7 +45,7 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--quiet]
 
 Options:
   --root PATH       Workspace root to analyze. Defaults to current directory.
@@ -53,6 +53,17 @@ Options:
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to 30000.
+  --quiet           Suppress analysis progress and heartbeats on stderr. Does not
+                    change the pilot packet, exit codes, or error reporting.
+
+Progress:
+  Long-running pilot analysis writes producer stages to stderr as
+  `ripr progress: <stage> [repo]` and, while a stage stays active, throttled
+  `still active after <elapsed class>` heartbeats, exactly as `ripr check`
+  reports them. Non-TTY / CI output is newline-delimited with no control
+  sequences; stdout and the pilot packet stay byte-clean. When the default
+  timeout fires, the cold-cache retry continues under the same progress
+  stream. `--quiet` turns this stream off.
 
 Environment variables:
   RIPR_PILOT_SEAM_BUDGET   Maximum seams written to pilot artifacts (repo-exposure.json,
@@ -136,7 +147,11 @@ Options:
                            diff touches; the default), fast (same as draft for
                            now), deep and ready (whole workspace, slowest).
                            Modes never change what an exposure class means.
-                           See docs/CONFIGURATION.md "Analysis modes".
+                           Cost class: whole-workspace modes (deep, ready) can
+                           take roughly an order of magnitude longer than the
+                           diff-scoped modes (instant, draft, fast) on large
+                           workspaces. See docs/CONFIGURATION.md "Analysis
+                           modes".
   --format FORMAT          Output format. Defaults to human. Groups:
                              Analysis (diff-scoped):
                                human, human-full, json, github, sarif
@@ -193,12 +208,28 @@ Options:
                            formats, --gap-ledger, or managed [perl] producer
                            packet generation (pass --perl-facts PATH
                            explicitly instead).
+                           Stdin (--diff -) is not supported: save stdin to
+                           a named diff file and pass --diff PATH instead.
   --git-timeout SECS       Cooperative deadline in seconds for each git
                            invocation in the diff-load path. A git command
                            that exceeds the deadline is terminated and the
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --quiet                  Suppress analysis progress and heartbeats on
+                           stderr. Does not change machine stdout, exit
+                           codes, or error reporting.
+
+Progress:
+  Long-running check analysis writes producer stages to stderr as
+  `ripr progress: <stage> [<scope>]` and, while a stage stays active,
+  throttled `still active after <elapsed class>` heartbeats. Non-TTY
+  / CI output is newline-delimited with no control sequences. A TTY
+  may reuse one line and stays silent for sub-threshold flashes.
+  Machine formats (json, sarif, github) keep stdout byte-clean;
+  they do not disable stderr progress. Unknown totals never become a
+  percentage or ETA. Progress does not mean analysis is faster or
+  that the command will succeed. `--quiet` turns this stream off.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES  Maximum added plus removed Rust diff lines
@@ -210,7 +241,7 @@ Environment variables:
                                     index before check fails closed as
                                     diff_scope_oversized. With --json, stdout
                                     carries a non-consumable limited artifact.
-                                    Default: 800.
+                                    Default: 1200.
   RIPR_PARTIAL_DIFF_FILE_BUDGET     Changed-line files analyzed before check
                                     returns a bounded limited_partial_scope
                                     partition with exact selected paths,
@@ -233,6 +264,11 @@ Environment variables:
                                     error names git_invocation_timeout. 0 disables
                                     the deadline. Invalid values fail closed.
                                     Default: 300 (5 minutes).
+  RIPR_REPO_EXPOSURE_LATENCY_TRACE  When present, emits diagnostic phase/cache
+                                    trace lines for repo-exposure analysis.
+                                    Presence enables tracing even if the value
+                                    is empty or 0; it does not change the
+                                    analysis verdict.
   RIPR_ALLOW_REPO_PERL_EXECUTABLE   Set to 1 to let [perl].executable from
                                     ripr.toml run as the Perl facts exporter.
                                     Unset, ripr ignores it and runs the
@@ -271,9 +307,12 @@ or turn the full-repo limitation into a success state.
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] <finding-id|file:line>
 
 Options:
+  --worktree   Analyze staged and unstaged tracked edits, like
+               `ripr check --worktree`, so a finding listed from uncommitted
+               edits can be selected. Not combinable with --diff or --from.
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
                analysis. The artifact's recorded diff source is re-resolved
@@ -282,6 +321,8 @@ Options:
                analyzer version) fails closed with a typed error naming the
                mismatched fields. --diff/--base passed alongside --from are
                assertions verified against the recording, not overrides.
+               Stdin (--diff -) cannot verify a recorded diff identity;
+               create and reuse the artifact with a named --diff PATH.
   --mode MODE  instant, draft, fast, deep, or ready. Defaults to draft.
                With --from, this feeds the identity recomputation: an
                artifact written with a non-default --mode is consumable only
@@ -307,14 +348,18 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json]
 
 Options:
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
+  --worktree   Analyze staged and unstaged tracked edits, like
+               `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
                analysis (same fail-closed identity gate as explain --from).
+               Stdin (--diff -) cannot verify a recorded diff identity;
+               create and reuse the artifact with a named --diff PATH.
                --max-related-tests is a render-time knob honored fresh,
                including beyond the check --json render cap.
   --mode MODE  How much of the workspace is indexed: instant (changed
@@ -376,7 +421,11 @@ First-run diagnosis (printed automatically):
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
     nature of preview-language evidence.
   - Recommended first command: ripr check (no base: the loader resolves this
-    repository's own default branch)
+    repository's own default branch). When git is not on PATH, the `!` git line
+    names install git or `--diff PATH` / `--diff -`, and the recommended
+    command is `ripr check --diff PATH`. Outside a Git work tree it names the
+    repository-free scan, and a missing root is named in the recovery command
+    through its lossless spelling.
 
 Start-here next step:
   - open `target/ripr/reports/start-here.md` first when it exists

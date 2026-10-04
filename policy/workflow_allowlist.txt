@@ -20,17 +20,21 @@
 .github/workflows/droid-security-scan.yml|20|Droid scheduled security scan writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/droid.yml|20|Droid tag-response workflow writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/future-clippy.yml|1|Advisory future-Clippy lane keeps each run block to one shell command.
+.github/workflows/npm-launcher.yml|1|Script-free npm launcher workflow delegates behavior and package-content proof to two single-command npm invocations.
 .github/workflows/pr-plan.yml|1|Advisory PR Plan workflow keeps each run block to one shell command (mkdir/git, ls, printf).
+.github/workflows/pr-staleness-watchdog.yml|52|Scheduled watchdog finds open PR heads with no Ripr Rust Small Result check run on the head (#4937) and dispatches the workflow within a per-run cap; the sweep is pure gh api orchestration with its audit table, not product logic.
 .github/workflows/publish-extension.yml|20|Release workflow includes marketplace packaging and publishing orchestration.
+.github/workflows/python-wheel-qualification.yml|194|Read-only #4490 package rehearsal retains exact native and PEP 440 identities, wheel metadata/RECORD and two executable-integrity negative controls, plus isolated pip/uv Python preview journeys; static adapter and workflow-shape policy remains in Rust xtask and the workflow has no publication authority.
 .github/workflows/release-server-binaries.yml|1|Release workflow delegates server archive packaging, manifest generation, and release upload branching to Rust xtask commands.
 .github/workflows/routed-rust.yml|63|Routed Rust selects one trusted self-hosted runner or the hosted fallback, preserves normalized result semantics, and delegates implementation proof to the reusable Rust gate workflow.
 .github/workflows/rust-gates.yml|31|Reusable Rust gate implementation preserves scratch tempfail fallback, required proof, bounded PR evidence, and failure-only ordinary artifacts.
 .github/workflows/scratch-gc.yml|3|Scheduled scratch-GC lane reclaims terminal scratch through the shared ci-scratch-lease action (#3841), then trims sccache, reports disk, and keeps the hard-fail guard on a timer so disk recovery does not depend on PR traffic (#1028).
 .github/workflows/security.yml|1|Security workflow installs cargo-deny as a normal binary, then runs the standard cargo-deny command without requiring Docker.
-.github/workflows/server-archive-qualification.yml|82|Exact measured largest run block after preserving curl transport status, bounded rate-limit tokens, response digests, and strict public ruleset shape diagnostics; credential-free, artifact-only qualification delegates packaging and manifest generation to Rust xtask commands.
+.github/workflows/server-archive-qualification.yml|90|Exact measured largest run block retains ruleset diagnostics plus five-target producer, explicit per-target archive-readback evidence, and receipt-v3 aggregation; credential-free qualification delegates payload and archive construction to Rust xtask commands.
 .github/workflows/source-of-truth.yml|15|Advisory source-of-truth workflow runs two xtask doc checks, publishes the bounded spec maintenance digest, and annotates an instrument failure as a failed advisory observation (#3467).
 .github/workflows/test-analytics.yml|1|Test analytics workflow keeps each run block to one cargo or echo command.
 .github/workflows/ub-review.yml|0|ub-review workflow delegates entirely to the EffortlessMetrics/ub-review action (no inline run blocks); see #1469.
 .github/workflows/windows-advisory.yml|15|Advisory Windows lane runs a multi-step log-to-verdict pipeline in YAML; the cargo xtask windows-advisory-summary command is the verdict authority.
 .github/workflows/windows-packaged-qualification.yml|50|On-demand exact-candidate Windows package and VSIX rehearsal must retain identity checks, isolated CLI/editor journeys, and Actions-only receipts in one workflow.
+.github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
 .github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.

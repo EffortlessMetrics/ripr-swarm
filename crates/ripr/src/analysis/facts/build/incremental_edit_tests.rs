@@ -41,7 +41,11 @@ impl RustSyntaxAdapter for CountingSyntaxAdapter {
         RaRustSyntaxAdapter.summarize_file(path, text)
     }
 
-    fn changed_nodes(&self, facts: &FileFacts, ranges: &[TextRange]) -> Vec<SyntaxNodeFact> {
+    fn changed_nodes(
+        &self,
+        facts: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
+        ranges: &[TextRange],
+    ) -> Vec<SyntaxNodeFact> {
         RaRustSyntaxAdapter.changed_nodes(facts, ranges)
     }
 }
@@ -164,11 +168,11 @@ impl EditFixture {
                 .map(|path| PathBuf::from(*path))
                 .collect()
         );
-        assert_eq!(cached.index.files.len(), self.files.len());
+        assert_eq!(cached.index.files().len(), self.files.len());
         assert!(
             cached
                 .index
-                .files
+                .files()
                 .values()
                 .all(|facts| !facts.used_lexical_fallback),
             "the parser-count controls must exercise the primary syntax adapter"
@@ -177,9 +181,9 @@ impl EditFixture {
         // This reads physical source files and parses all of them without any
         // cache. Do not use a second warm build as the correctness oracle.
         let uncached = build_index(&self.root, &self.files)?;
-        assert_eq!(cached.index.files, uncached.files);
-        assert_eq!(cached.index.functions, uncached.functions);
-        assert_eq!(cached.index.tests, uncached.tests);
+        assert_eq!(cached.index.files(), uncached.files());
+        assert_eq!(cached.index.functions(), uncached.functions());
+        assert_eq!(cached.index.tests(), uncached.tests());
         assert_eq!(cached.index.package_names, uncached.package_names);
         assert_eq!(
             serde_json::to_value(owner_findings(&cached.index))?,
@@ -233,14 +237,14 @@ fn production_edit_reuses_other_files_and_revert_reuses_old_generation() -> Test
     assert_eq!(original.len(), edited.len(), "same-size content edit");
     fixture.write(OWNER, &edited)?;
     let changed = fixture.replay(FILE_COUNT - 1, 1, &[OWNER])?;
-    assert_ne!(first.index.files, changed.index.files);
+    assert_ne!(first.index.files(), changed.index.files());
     assert_ne!(
         serde_json::to_value(owner_findings(&first.index))?,
         serde_json::to_value(owner_findings(&changed.index))?
     );
     fixture.write(OWNER, &original)?;
     let restored = fixture.replay(FILE_COUNT, 0, &[])?;
-    assert_eq!(first.index.files, restored.index.files);
+    assert_eq!(first.index.files(), restored.index.files());
     assert_eq!(
         serde_json::to_value(owner_findings(&first.index))?,
         serde_json::to_value(owner_findings(&restored.index))?
@@ -256,14 +260,14 @@ fn related_test_edit_refreshes_assertions_without_reparsing_owner() -> TestResul
     fixture.write(RELATED, &test_source("boundary_case", 9))?;
     let changed = fixture.replay(FILE_COUNT - 1, 1, &[RELATED])?;
     assert_eq!(
-        first.index.files.get(Path::new(OWNER)),
-        changed.index.files.get(Path::new(OWNER))
+        first.index.files().get(Path::new(OWNER)),
+        changed.index.files().get(Path::new(OWNER))
     );
-    assert_ne!(first.index.tests, changed.index.tests);
+    assert_ne!(first.index.tests(), changed.index.tests());
     assert!(relates(&changed.index, "boundary_case"));
     let test = changed
         .index
-        .tests
+        .tests()
         .iter()
         .find(|test| test.name == "boundary_case")
         .ok_or("updated test fact missing")?;
@@ -281,8 +285,8 @@ fn previously_unrelated_test_enters_and_leaves_the_relation_set() -> TestResult<
     let now_related = fixture.replay(FILE_COUNT - 1, 1, &[UNRELATED])?;
     assert!(relates(&now_related.index, "spare_case"));
     assert_eq!(
-        first.index.files.get(Path::new(OWNER)),
-        now_related.index.files.get(Path::new(OWNER))
+        first.index.files().get(Path::new(OWNER)),
+        now_related.index.files().get(Path::new(OWNER))
     );
     fixture.write(UNRELATED, UNRELATED_SOURCE)?;
     let no_longer_related = fixture.replay(FILE_COUNT, 0, &[])?;
@@ -303,7 +307,7 @@ fn added_and_deleted_test_refreshes_relations_without_false_invalidation() -> Te
     assert!(
         !deleted
             .index
-            .files
+            .files()
             .contains_key(Path::new("tests/later.rs"))
     );
     Ok(())
@@ -318,6 +322,136 @@ fn manifest_edit_refreshes_package_authority_without_source_reparse() -> TestRes
     let changed = fixture.replay(FILE_COUNT, 0, &[])?;
     assert!(changed.index.package_names.contains("renamed_fixture"));
     assert!(!changed.index.package_names.contains("cache_edit_fixture"));
-    assert_eq!(first.index.files, changed.index.files);
+    assert_eq!(first.index.files(), changed.index.files());
     Ok(())
+}
+
+#[test]
+fn observer_predicate_facts_recompute_after_build_miss_and_match_warm() -> TestResult<()> {
+    use crate::analysis::seam_cache::{CacheLoad, RepoFileFactCacheKey};
+    use crate::domain::{OracleKind, OracleStrength};
+
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let ordinal = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-4916-cache-{}-{stamp}-{ordinal}",
+        std::process::id()
+    ));
+    fs::create_dir(&root)?;
+    let result = (|| -> TestResult<()> {
+        let path = PathBuf::from("src/lib.rs");
+        let text =
+            "#[test]\nfn published_count() {\n    assert!(plan.published_payload_bytes > 0);\n}\n";
+        let bytes = text.as_bytes().to_vec();
+        let cache = RepoFileFactCache::at_dir(root.join("owned-cache"));
+        let key = RepoFileFactCacheKey::new(&path, &bytes);
+        let prior_key = key.with_test_analyzer_identity(format!(
+            "{}+4916-prior-classifier",
+            crate::build_identity::cache_identity()
+        ));
+        let mut prior_facts = RaRustSyntaxAdapter.summarize_file(&path, text)?;
+        let prior_test = prior_facts
+            .tests
+            .first_mut()
+            .ok_or("seed requires one real parsed test")?;
+        if prior_test.assertions.len() != 1 {
+            return Err("seed requires one real parsed assertion".into());
+        }
+        let prior_assertion = prior_test
+            .assertions
+            .first_mut()
+            .ok_or("seed assertion absent")?;
+        // Retained old producer observation: published-count comparison was
+        // MockExpectation/Medium. Only the cache fixture models that old kind.
+        prior_assertion.kind = OracleKind::MockExpectation;
+        prior_assertion.strength = OracleStrength::Medium;
+        cache
+            .store_file_facts(&prior_key, &prior_facts)
+            .map_err(|error| format!("store prior-build file facts: {error:?}"))?;
+        if !matches!(cache.load_file_facts(&prior_key), CacheLoad::Hit(ref facts) if facts == &prior_facts)
+        {
+            return Err("prior-build seed did not read its exact real facts".into());
+        }
+        if !matches!(cache.load_file_facts(&key), CacheLoad::Miss) {
+            return Err("new build reused prior classifier facts".into());
+        }
+        let files = [(path.clone(), bytes)];
+        let adapter = CountingSyntaxAdapter::default();
+        let cold = build_index_with_file_fact_cache(
+            &root,
+            &files,
+            &adapter,
+            &LexicalRustSyntaxAdapter,
+            &cache,
+            || cache.known_file_paths(),
+        )?;
+        if cold.file_fact_cache.misses != 1
+            || cold.file_fact_cache.hits != 0
+            || cold.file_fact_cache.stores != 1
+            || adapter.parses.load(Ordering::Relaxed) != 1
+        {
+            return Err(format!(
+                "cold recomputation did not reach real parser: {:?}",
+                cold.file_fact_cache
+            )
+            .into());
+        }
+        let cold_facts = cold
+            .index
+            .files()
+            .get(&path)
+            .ok_or("cold file facts absent")?;
+        if cold_facts.used_lexical_fallback || cold_facts.source != text {
+            return Err("cold facts lost parsed source identity".into());
+        }
+        let assertions = &cold_facts
+            .tests
+            .first()
+            .ok_or("cold real test absent")?
+            .assertions;
+        if assertions.len() != 1 {
+            return Err("cold real assertion absent or duplicated".into());
+        }
+        let assertion = assertions.first().ok_or("cold assertion absent")?;
+        if assertion.kind != OracleKind::RelationalCheck
+            || assertion.strength != OracleStrength::Weak
+            || assertion.line != 3
+            || !assertion
+                .observed_tokens
+                .iter()
+                .any(|token| token == "published_payload_bytes")
+        {
+            return Err(
+                format!("cold producer did not recompute weak predicate: {assertion:?}").into(),
+            );
+        }
+        let warm = build_index_with_file_fact_cache(
+            &root,
+            &files,
+            &adapter,
+            &LexicalRustSyntaxAdapter,
+            &cache,
+            || cache.known_file_paths(),
+        )?;
+        if warm.file_fact_cache.hits != 1
+            || warm.file_fact_cache.misses != 0
+            || adapter.parses.load(Ordering::Relaxed) != 1
+        {
+            return Err(format!(
+                "warm reuse was not one real hit without parsing: {:?}",
+                warm.file_fact_cache
+            )
+            .into());
+        }
+        if warm.index.files().get(&path) != Some(cold_facts) {
+            return Err("warm whole facts differ from cold recomputation".into());
+        }
+        Ok(())
+    })();
+    let cleanup = fs::remove_dir_all(&root);
+    match (result, cleanup) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error.into()),
+        (Ok(()), Ok(())) => Ok(()),
+    }
 }

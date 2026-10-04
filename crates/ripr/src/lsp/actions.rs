@@ -64,12 +64,12 @@ pub(super) fn code_action_response(
         // absent; other clients keep the legacy omission.
         actions.push(action);
     }
-    if let Some(diagnostic) = params
-        .context
-        .diagnostics
-        .iter()
-        .find(|d| is_ripr_diagnostic(d) && !is_seam_diagnostic(d) && !is_gap_diagnostic(d))
-    {
+    if let Some(diagnostic) = params.context.diagnostics.iter().find(|d| {
+        is_ripr_diagnostic(d)
+            && !is_seam_diagnostic(d)
+            && !is_gap_diagnostic(d)
+            && !is_delivery_limitation(d)
+    }) {
         actions.push(copy_context_action(
             INSPECT_FINDING_CONTEXT_TITLE,
             INSPECT_FINDING_CONTEXT_COMMAND_TITLE,
@@ -756,6 +756,16 @@ fn push_seam_actions(
         context.diagnostic,
         Some(context.snapshot),
     ));
+    // The compact RepairCard is the same agent handoff object the CLI
+    // `ripr agent card` builds (#4667): assembled here from the snapshot's
+    // own authorities through `app::repair_card_handoff`, never re-derived.
+    // Fail-closed omission when a producer fact cannot be bound; the card's
+    // own route gate decides whether a next action rides on the wire.
+    if let Some(action) =
+        copy_repair_card_action(params, context.diagnostic, context.seam, context.snapshot)
+    {
+        actions.push(action);
+    }
     if let Some(assertion) = suggested_assertion {
         actions.push(copy_suggested_assertion_action(
             context.seam,
@@ -979,6 +989,38 @@ fn copy_context_action(
     })
 }
 
+/// The compact RepairCard copy action (#4668, RIPR-SPEC-0198): the same
+/// card the CLI `ripr agent card` handoff assembles, projected through the
+/// already-advertised `ripr.copyContext` client command so no new client
+/// capability is required. The wire card rides in the target's `packet`
+/// field; its budget stays the ratified default (RIPR-SPEC-0196). Returns
+/// `None` when any producer fact cannot be bound — the projection fails
+/// closed instead of shipping a weakened card.
+fn copy_repair_card_action(
+    params: &CodeActionParams,
+    diagnostic: &Diagnostic,
+    seam: &ClassifiedSeam,
+    snapshot: &AnalysisSnapshot,
+) -> Option<CodeActionOrCommand> {
+    let card = super::repair_card::seam_repair_card(seam, snapshot)?;
+    let rendered = crate::output::json::render_pretty_with_newline(&card, "repair card").ok()?;
+    let mut target = copy_context_target(params, diagnostic);
+    let object = target.as_object_mut()?;
+    object.insert(
+        "label".to_string(),
+        Value::String("repair_card".to_string()),
+    );
+    object.insert("packet".to_string(), Value::String(rendered));
+    Some(copy_context_action(
+        AGENT_CARD_COMMAND_TITLE,
+        AGENT_CARD_COMMAND_TITLE,
+        "copy_repair_card",
+        target,
+        diagnostic,
+        Some(snapshot),
+    ))
+}
+
 const COMMAND_ROOT: &str = ".";
 
 const INSPECT_GAP_PACKET_TITLE: &str = "Inspect gap: copy repair packet";
@@ -995,6 +1037,7 @@ const AGENT_BRIEF_COMMAND_TITLE: &str = "Agent handoff: copy brief command";
 const AFTER_SNAPSHOT_COMMAND_TITLE: &str = "Verify after test: copy after-snapshot command";
 const AGENT_VERIFY_COMMAND_TITLE: &str = "Verify after test: copy verify command";
 const AGENT_RECEIPT_COMMAND_TITLE: &str = "Review result: copy receipt command";
+const AGENT_CARD_COMMAND_TITLE: &str = "Agent handoff: copy repair card";
 const COPY_STATIC_LIMIT_NOTE_TITLE: &str = "Inspect gap: copy static-limit note";
 const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy first repair packet";
 const COPY_PYTHON_AGENT_PACKET_TITLE: &str = "Agent handoff: copy Python packet";
@@ -2170,6 +2213,14 @@ fn is_ripr_diagnostic(diagnostic: &Diagnostic) -> bool {
     diagnostic.source.as_deref() == Some("ripr")
 }
 
+fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
+    matches!(
+        diagnostic.code.as_ref(),
+        Some(tower_lsp_server::ls_types::NumberOrString::String(code))
+            if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+    )
+}
+
 fn is_seam_diagnostic(diagnostic: &Diagnostic) -> bool {
     diagnostic
         .data
@@ -2364,6 +2415,43 @@ mod tests {
                 "{language} {path}"
             );
         }
+    }
+
+    #[test]
+    fn delivery_omission_has_no_finding_context_action() -> Result<(), String> {
+        let limitation = Diagnostic {
+            source: Some("ripr".to_string()),
+            code: Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE.to_string(),
+            )),
+            data: Some(serde_json::json!({"kind": "delivery_limitation"})),
+            ..Default::default()
+        };
+        let params = code_action_params(vec![limitation])?;
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&params, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
+
+        let ordinary = Diagnostic {
+            source: Some("ripr".to_string()),
+            data: Some(serde_json::json!({"finding_id": "finding:control"})),
+            ..Default::default()
+        };
+        let ordinary_actions =
+            code_action_response(&code_action_params(vec![ordinary])?, None, &features);
+        assert_eq!(
+            action_titles(&ordinary_actions),
+            vec![INSPECT_FINDING_CONTEXT_TITLE, REFRESH_ANALYSIS_TITLE],
+            "the client can execute the copy command for an ordinary finding"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2831,6 +2919,7 @@ mod tests {
     fn python_snapshot() -> AnalysisSnapshot {
         AnalysisSnapshot {
             root: PathBuf::from("/workspace"),
+            rust_consumed_sources: Default::default(),
             input_identity: None,
             base: None,
             mode: Mode::Draft,
@@ -2843,6 +2932,7 @@ mod tests {
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri: BTreeMap::new(),
+            diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
             partial_scope: None,

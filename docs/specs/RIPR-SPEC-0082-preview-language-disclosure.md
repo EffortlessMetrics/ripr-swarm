@@ -93,6 +93,9 @@ trigger an advisory. Each advisory carries:
   scope that routed to this adapter
 - `sample_paths`: up to three normalized file paths (forward-slash), drawn from
   the same set `file_count` counts
+- `javascript_file_count`: how many of the `file_count` files are
+  JavaScript-family sources (`0` for every language but `typescript`); used by
+  human prose only (#4555)
 - `enabled`: whether this preview adapter was configured and available for
   this analysis
 
@@ -123,6 +126,43 @@ so an excluded-only diff is never a silently complete result. When the
 adapter is not enabled, no skip limitation is emitted: the not-enabled
 advisory already discloses every routed file with its raw count. No new JSON
 field is introduced.
+
+### Unavailable changed Python source
+
+A new-side changed Python path absent from the selected source root is not an
+analyzed file (#5110). Python reuses the shared regular-source-file admission
+check and emits `changed_file_absent_from_worktree` with the exact path and
+checkout recovery. The path is withheld from probes, summary analyzed counts,
+and the enabled advisory's count/sample paths. The raw changed-input count
+still includes it. Available files in the same diff retain their findings.
+
+The shared outcome is `partial_with_limitations`, `analysis_complete: false`;
+human, JSON and badge projections consume that outcome. A missing-source-only
+badge cannot become a complete green zero. Restoring identical bytes under the
+same root with the same retained diff restores the original findings. Invalid
+UTF-8 retains its existing read-failure limitation, while a readable comment-only
+diff can still be a complete zero. Generated/excluded paths keep the skipped-scope
+rule above; genuine Git deletions are omitted by the parser's new-side selection
+and do not require a nonexistent new-side file to be restored.
+
+Admission matches source discovery's no-follow boundary below the selected root
+(#5141): a changed source whose final entry is a symlink, or whose relative
+ancestor is a symlink or non-directory, is unavailable for this analysis and
+uses the same typed limitation. The selected root itself may be a legitimate
+alias. Direct relative paths and valid repository-prefix suffix paths apply the
+same rule. This is source-availability disclosure, not a filesystem race or
+authentication guarantee. Public CLI controls hold a Git-generated diff fixed
+across regular source, owned file and directory links, and restoration, covering
+explicit roots, implicit repository/nested roots, and a selected-root alias.
+The public control retains one bounded observational text transcript in the
+required test artifact, alongside unchanged JUnit and run context. It does not
+change test selection or retries and is not typed acceptance or release proof.
+Its exact filename binds the current run and attempt, so a skipped or unobserved
+test cannot reuse a cached transcript from another run. The bounded header and
+each collected receipt are persisted before later outcome assertions; a partial
+transcript remains observational evidence, not proof that all controls ran.
+Outside GitHub Actions, absent GitHub identifiers use a unique fixture filename,
+including in other CI environments; this does not create a GitHub artifact receipt.
 
 ### Three honesty cases
 
@@ -167,6 +207,17 @@ Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview an
 The note names the language by its display name (`TypeScript`,
 `JavaScript`, `Python`, `Perl`, owned by `LanguageId::display_name`) and
 counts files as `1 <Language> file` or `N <Language> files`.
+
+The TypeScript adapter analyzes the whole TS/JS family under the `typescript`
+wire name, so its advisory also carries `javascript_file_count`: how many of
+`file_count` are `.js`/`.jsx`/`.mjs`/`.cjs` sources, by the router's exact
+extension lists (#4555). Human prose uses it: a JavaScript-only advisory
+counts `JavaScript file(s)`, a mixed one `TypeScript/JavaScript files`, and
+the not-enabled, not-compiled and none-routed notes name the
+`TypeScript/JavaScript adapter`. The not-enabled note keeps
+the `"typescript"` config value and adds `("typescript" enables the adapter
+for JavaScript files too.)`. A TypeScript-only advisory is unchanged. The JSON
+advisory does not carry the new count; its `language` stays the wire name.
 
 The note is omitted entirely for pure-Rust diffs. The note does not change
 exit code or pass/fail status.
@@ -341,3 +392,7 @@ enabled adapter with a matching non-success `language_runs` entry carries
 - Promote to accepted when an external TypeScript repo exercises the default
   (no-config) disclosure path end-to-end and the silent empty-result gap is
   confirmed closed.
+
+Git-generated paths with filename whitespace retain their exact identity in
+missing-source limitations and preview admission. An available `leading.py`
+remains counted and sampled when the distinct ` leading.py` is missing.

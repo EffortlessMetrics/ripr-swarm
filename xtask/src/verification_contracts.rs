@@ -54,6 +54,14 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        "executed-control",
+        &[producer(
+            "crates/ripr/src/domain/executed_control.rs",
+            "pub(crate) const EXECUTED_CONTROL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "gate-decision",
         &[producer(
             "crates/ripr/src/output/gate.rs",
@@ -90,7 +98,7 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "repair-attempt",
         &[producer(
-            "crates/ripr/src/app/repair_attempt.rs",
+            "crates/ripr/src/app/repair_attempt/mod.rs",
             "const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = \"",
             1,
         )],
@@ -140,6 +148,14 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         &[producer(
             "xtask/src/reports/rust_repair_trust.rs",
             "get(\"schema_version\").and_then(Value::as_str) == Some(\"",
+            1,
+        )],
+    ),
+    (
+        "ripr-intervention-study",
+        &[producer(
+            "crates/ripr/src/domain/intervention_study.rs",
+            "pub(crate) const RIPR_INTERVENTION_STUDY_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -411,6 +427,25 @@ const CONTRACTS: &[VerificationContract] = &[
             "observations",
         ],
     },
+    VerificationContract {
+        schema_path: "schemas/ripr/executed-control.schema.json",
+        schema_pointer: Some("/$defs/packet"),
+        fixture_path: "fixtures/executed-control-contract/corpus.json",
+        subject: ContractSubject::EachItem {
+            array: "/cases",
+            item: Some("/packet"),
+        },
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "schema_version",
+            "kind",
+            "obligation_id",
+            "offered_evidence_kind",
+            "executed_discriminating_control",
+            "ordinary_positive_test",
+            "not_proven",
+        ],
+    },
     // `command_specs.verify` in a generated agent packet is producer output
     // from `crate::agent::command_specs`, so the published command-spec
     // contract is checked against bytes the product actually emitted.
@@ -453,6 +488,26 @@ const CONTRACTS: &[VerificationContract] = &[
             "verification",
             "receipt_state",
             "runtime_mutation",
+            "non_claims",
+        ],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/ripr-intervention-study.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/intervention-study/valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[
+            "schema_version",
+            "implementation_state",
+            "study_id",
+            "assignment",
+            "shared_budget",
+            "intervention_surface",
+            "leakage_controls",
+            "outcome_axes",
+            "stopping_rule",
+            "protocol_digest",
             "non_claims",
         ],
     },

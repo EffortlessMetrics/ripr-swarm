@@ -17,6 +17,13 @@ use std::fmt;
 /// Public/LSP projection token for git invocation timeout (#2303 / #2811).
 pub(crate) const GIT_INVOCATION_TIMEOUT_KIND: &str = "git_invocation_timeout";
 
+/// Repair route appended to a spawned git timeout's Display (#2303). Fixed
+/// deadline probes that cannot be configured render without it through
+/// [`CoreError::render_without_git_timeout_repair`].
+pub(crate) const GIT_TIMEOUT_REPAIR_GUIDANCE: &str = " Repair route: raise or disable the git deadline (0 disables it) — \
+     --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the \
+     gitTimeoutMs initialization option for editor sessions — then re-run.";
+
 /// Crate-internal error used for semantic control flow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CoreError {
@@ -69,6 +76,20 @@ impl CoreError {
         }
     }
 
+    /// Display without the configurable-deadline repair route, for fixed
+    /// deadline probes whose callers name their own escape hatch. Only a
+    /// direct spawned timeout drops the suffix; wrapped or other errors
+    /// render unchanged.
+    pub(crate) fn render_without_git_timeout_repair(&self) -> String {
+        let rendered = self.to_string();
+        match self {
+            Self::GitInvocationTimeout { spawned: true, .. } => rendered
+                .strip_suffix(GIT_TIMEOUT_REPAIR_GUIDANCE)
+                .map_or_else(|| rendered.clone(), str::to_string),
+            _ => rendered,
+        }
+    }
+
     /// The #2811 / component-outcome kind when this error is a git timeout.
     pub(crate) fn git_invocation_timeout_kind(&self) -> Option<&'static str> {
         self.is_git_invocation_timeout()
@@ -93,7 +114,8 @@ impl fmt::Display for CoreError {
                 spawned: true,
             } => write!(
                 formatter,
-                "{GIT_INVOCATION_TIMEOUT_KIND}: {operation} exceeded the {timeout_ms}ms deadline (process terminated)"
+                "{GIT_INVOCATION_TIMEOUT_KIND}: {operation} exceeded the {timeout_ms}ms deadline \
+                 (process terminated).{GIT_TIMEOUT_REPAIR_GUIDANCE}"
             ),
             Self::Message(message) => formatter.write_str(message),
             Self::Context { context, source } => write!(formatter, "{context}: {source}"),
@@ -130,7 +152,7 @@ impl From<CoreError> for String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CoreError, GIT_INVOCATION_TIMEOUT_KIND};
+    use super::{CoreError, GIT_INVOCATION_TIMEOUT_KIND, GIT_TIMEOUT_REPAIR_GUIDANCE};
     use std::error::Error;
 
     fn timeout() -> CoreError {
@@ -142,7 +164,9 @@ mod tests {
         let spawned = timeout();
         assert_eq!(
             spawned.to_string(),
-            "git_invocation_timeout: git -C /workspace [\"diff\"] exceeded the 30000ms deadline (process terminated)"
+            format!(
+                "git_invocation_timeout: git -C /workspace [\"diff\"] exceeded the 30000ms deadline (process terminated).{GIT_TIMEOUT_REPAIR_GUIDANCE}"
+            )
         );
         let zero = CoreError::git_invocation_timeout("git -C /x [\"status\"]", 0, false);
         assert_eq!(

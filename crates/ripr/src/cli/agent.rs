@@ -9,6 +9,7 @@ pub(super) enum AgentCommand {
     StartHelp,
     BriefHelp,
     PacketHelp,
+    CardHelp,
     VerifyHelp,
     VerifyExecuteHelp,
     ReceiptHelp,
@@ -18,6 +19,7 @@ pub(super) enum AgentCommand {
     Start(AgentStartOptions),
     Brief(AgentBriefOptions),
     Packet(AgentPacketOptions),
+    Card(AgentCardOptions),
     Verify(AgentVerifyOptions),
     VerifyExecute(AgentVerifyExecuteOptions),
     Receipt(AgentReceiptOptions),
@@ -55,6 +57,16 @@ pub(super) struct AgentPacketOptions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AgentCardOptions {
+    pub(super) root: PathBuf,
+    pub(super) seam_id: String,
+    /// Emit the versioned `RepairCardV1` JSON document instead of the compact
+    /// human summary. The card is the default handoff; the JSON document is
+    /// the machine-readable form of the same typed fields.
+    pub(super) json: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentVerifyOptions {
     pub(super) root: PathBuf,
     pub(super) before: PathBuf,
@@ -77,6 +89,11 @@ pub(super) struct AgentReceiptOptions {
     pub(super) root: PathBuf,
     pub(super) verify_json: PathBuf,
     pub(super) seam_id: String,
+    /// Selects one repair attempt by id when several exist for the seam
+    /// (#4332). Mirrors `agent repair --attempt`: the binding scan demands
+    /// exactly one match across all states, so a failed attempt followed by
+    /// a fresh one is otherwise permanently ambiguous.
+    pub(super) attempt_id: Option<String>,
     pub(super) test_changed: Option<String>,
     pub(super) commands_run: Vec<String>,
     pub(super) json: bool,
@@ -88,6 +105,9 @@ pub(super) struct AgentStatusOptions {
     pub(super) out_dir: Option<PathBuf>,
     pub(super) root: PathBuf,
     pub(super) json: bool,
+    /// Explicit repair-attempt store locator, resolved against `root`.
+    /// `None` is the repository-local default.
+    pub(super) store: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,6 +137,14 @@ pub(super) struct AgentRepairOptions {
     pub(super) verify_authorization: crate::app::python_repair_verification::VerifyAuthorization,
     /// Request the rollback proof as part of the verify phase (#3570).
     pub(super) verify_rollback: bool,
+    /// Explicit repair-attempt store locator, resolved against `root`.
+    /// `None` is the repository-local default and keeps next-command bytes
+    /// compatible.
+    pub(super) store: Option<PathBuf>,
+    /// Print the phase's JSON document on stdout. Without it stdout carries
+    /// a short human summary and the documents stay in their artifact files,
+    /// the same split `ripr agent status` uses.
+    pub(super) json: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,6 +187,7 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
         Some("start") => parse_agent_start_command(&args[1..]),
         Some("brief") => parse_agent_brief_command(&args[1..]),
         Some("packet") => parse_agent_packet_command(&args[1..]),
+        Some("card") => parse_agent_card_command(&args[1..]),
         Some("verify") => parse_agent_verify_command(&args[1..]),
         Some("verify-execute") => parse_agent_verify_execute_command(&args[1..]),
         Some("receipt") => parse_agent_receipt_command(&args[1..]),
@@ -166,7 +195,7 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
         Some("review-summary") => parse_agent_review_summary_command(&args[1..]),
         Some("repair") => parse_agent_repair_command(&args[1..]),
         Some(other) => Err(format!(
-            "unknown agent subcommand {other:?}; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+            "unknown agent subcommand {other:?}; expected `start`, `brief`, `packet`, `card`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
         )),
     }
 }
@@ -190,6 +219,13 @@ fn parse_agent_packet_command(args: &[String]) -> Result<AgentCommand, String> {
         return Ok(AgentCommand::PacketHelp);
     }
     parse_agent_packet_options(args).map(AgentCommand::Packet)
+}
+
+fn parse_agent_card_command(args: &[String]) -> Result<AgentCommand, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Ok(AgentCommand::CardHelp);
+    }
+    parse_agent_card_options(args).map(AgentCommand::Card)
 }
 
 fn parse_agent_verify_command(args: &[String]) -> Result<AgentCommand, String> {
@@ -242,9 +278,12 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut verify_authorized = false;
     let mut verify_authority: Option<String> = None;
     let mut verify_rollback = false;
+    let mut store: Option<PathBuf> = None;
+    let mut json = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--json" => json = true,
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -317,6 +356,14 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--verify-rollback" => {
                 verify_rollback = true;
+            }
+            "--store" => {
+                i += 1;
+                let value = expect_value(args, i, "--store")?;
+                if value.trim().is_empty() {
+                    return Err("agent repair --store requires a non-empty path".to_string());
+                }
+                store = Some(PathBuf::from(value));
             }
             "--phase" => {
                 i += 1;
@@ -497,6 +544,8 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         edit_authorization,
         verify_authorization,
         verify_rollback,
+        store,
+        json,
     }))
 }
 
@@ -697,6 +746,41 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
     })
 }
 
+pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptions, String> {
+    let mut root = PathBuf::from(".");
+    let mut seam_id: Option<String> = None;
+    let mut json = false;
+
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--root" => {
+                i += 1;
+                root = PathBuf::from(expect_value(args, i, "--root")?);
+            }
+            "--seam-id" => {
+                i += 1;
+                let value = expect_value(args, i, "--seam-id")?;
+                if value.trim().is_empty() {
+                    return Err("agent card --seam-id requires a non-empty ID".to_string());
+                }
+                seam_id = Some(value.to_string());
+            }
+            "--json" => json = true,
+            other => return Err(unknown_argument("agent card", other)),
+        }
+        i += 1;
+    }
+
+    let seam_id = seam_id.ok_or_else(|| "agent card requires --seam-id".to_string())?;
+
+    Ok(AgentCardOptions {
+        root,
+        seam_id,
+        json,
+    })
+}
+
 pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyOptions, String> {
     let mut root = PathBuf::from(".");
     let mut before: Option<PathBuf> = None;
@@ -809,6 +893,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
     let mut root = PathBuf::from(".");
     let mut verify_json: Option<PathBuf> = None;
     let mut seam_id: Option<String> = None;
+    let mut attempt_id: Option<String> = None;
     let mut test_changed: Option<String> = None;
     let mut commands_run = Vec::new();
     let mut json = false;
@@ -832,6 +917,14 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                     return Err("agent receipt --seam-id requires a non-empty ID".to_string());
                 }
                 seam_id = Some(value.to_string());
+            }
+            "--attempt" => {
+                i += 1;
+                let value = expect_value(args, i, "--attempt")?;
+                if value.trim().is_empty() {
+                    return Err("agent receipt --attempt requires a non-empty ID".to_string());
+                }
+                attempt_id = Some(value.to_string());
             }
             "--test" => {
                 i += 1;
@@ -872,6 +965,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
         root,
         verify_json,
         seam_id,
+        attempt_id,
         test_changed,
         commands_run,
         json,
@@ -883,6 +977,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
     let mut root = PathBuf::from(".");
     let mut json = false;
     let mut out_dir = None;
+    let mut store: Option<PathBuf> = None;
 
     let mut i = 0usize;
     while i < args.len() {
@@ -896,6 +991,14 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
                 i += 1;
                 out_dir = Some(PathBuf::from(expect_value(args, i, "--out")?));
             }
+            "--store" => {
+                i += 1;
+                let value = expect_value(args, i, "--store")?;
+                if value.trim().is_empty() {
+                    return Err("agent status --store requires a non-empty path".to_string());
+                }
+                store = Some(PathBuf::from(value));
+            }
             other => return Err(unknown_argument("agent status", other)),
         }
         i += 1;
@@ -905,6 +1008,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
         root,
         json,
         out_dir,
+        store,
     })
 }
 
@@ -1095,10 +1199,24 @@ mod tests {
         assert_eq!(
             parse_agent_args(&args(&["other"])),
             Err(
-                "unknown agent subcommand \"other\"; expected `start`, `brief`, `packet`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"other\"; expected `start`, `brief`, `packet`, `card`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn agent_repair_json_flag_selects_the_stdout_document() {
+        let parse = |extra: &[&str]| {
+            let mut values = vec!["repair", "--seam-id", "seam:sample", "--phase", "before"];
+            values.extend_from_slice(extra);
+            match parse_agent_args(&args(&values)) {
+                Ok(AgentCommand::Repair(options)) => Some(options.json),
+                _ => None,
+            }
+        };
+        assert_eq!(parse(&[]), Some(false));
+        assert_eq!(parse(&["--json"]), Some(true));
     }
 
     #[test]
@@ -1130,6 +1248,8 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                store: None,
+                json: false,
             }))
         );
         assert_eq!(
@@ -1159,7 +1279,58 @@ mod tests {
                         authority: None,
                     },
                 verify_rollback: false,
+                store: None,
+                json: false,
             }))
+        );
+    }
+
+    #[test]
+    fn agent_repair_parses_explicit_store_and_rejects_empty() {
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "repair",
+                "--root",
+                "repo",
+                "--store",
+                "target/ripr/alt-attempts",
+                "--seam-id",
+                "seam:sample",
+                "--phase",
+                "before",
+            ])),
+            Ok(AgentCommand::Repair(AgentRepairOptions {
+                root: PathBuf::from("repo"),
+                seam_id: Some("seam:sample".to_string()),
+                attempt_id: None,
+                phase: AgentRepairPhase::Before,
+                python_repair_trust: None,
+                edit_authorization:
+                    super::super::super::app::python_repair_binding::EditAuthorization {
+                        authorized: false,
+                        authority: None,
+                    },
+                verify_authorization:
+                    super::super::super::app::python_repair_verification::VerifyAuthorization {
+                        authorized: false,
+                        authority: None,
+                    },
+                verify_rollback: false,
+                store: Some(PathBuf::from("target/ripr/alt-attempts")),
+                json: false,
+            }))
+        );
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "repair",
+                "--store",
+                "",
+                "--seam-id",
+                "seam:sample",
+                "--phase",
+                "before",
+            ])),
+            Err("agent repair --store requires a non-empty path".to_string())
         );
     }
 
@@ -1279,6 +1450,8 @@ mod tests {
                     authority: None,
                 },
                 verify_rollback: false,
+                store: None,
+                json: false,
             }))
         );
     }
@@ -1730,6 +1903,49 @@ mod tests {
     }
 
     #[test]
+    fn agent_card_parses_seam_id_request() {
+        assert_eq!(
+            parse_agent_card_options(&args(&[
+                "--root",
+                "repo",
+                "--seam-id",
+                "f3c9e4d21a0b7c88",
+                "--json",
+            ])),
+            Ok(AgentCardOptions {
+                root: PathBuf::from("repo"),
+                seam_id: "f3c9e4d21a0b7c88".to_string(),
+                json: true,
+            })
+        );
+        // The compact human summary is the default handoff; --json is opt-in.
+        assert_eq!(
+            parse_agent_card_options(&args(&["--seam-id", "f3c9e4d21a0b7c88"])),
+            Ok(AgentCardOptions {
+                root: PathBuf::from("."),
+                seam_id: "f3c9e4d21a0b7c88".to_string(),
+                json: false,
+            })
+        );
+    }
+
+    #[test]
+    fn agent_card_requires_seam_id_and_rejects_unknown_arguments() {
+        assert_eq!(
+            parse_agent_card_options(&args(&["--json"])),
+            Err("agent card requires --seam-id".to_string())
+        );
+        assert_eq!(
+            parse_agent_card_options(&args(&["--seam-id", ""])),
+            Err("agent card --seam-id requires a non-empty ID".to_string())
+        );
+        assert_eq!(
+            parse_agent_card_options(&args(&["--seam-id", "abc", "--xml"])),
+            Err("unknown agent card argument \"--xml\". Run `ripr agent card --help`.".to_string())
+        );
+    }
+
+    #[test]
     fn agent_packet_parses_gap_ledger_request() {
         assert_eq!(
             parse_agent_packet_options(&args(&[
@@ -1882,6 +2098,7 @@ mod tests {
                 root: PathBuf::from("repo"),
                 verify_json: PathBuf::from("target/ripr/workflow/agent-verify.json"),
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
+                attempt_id: None,
                 test_changed: Some("pricing_boundary".to_string()),
                 commands_run: vec![
                     "cargo test pricing_boundary".to_string(),
@@ -1890,6 +2107,47 @@ mod tests {
                 json: true,
                 out: Some(PathBuf::from("target/ripr/reports/agent-receipt.json")),
             })
+        );
+    }
+
+    #[test]
+    fn agent_receipt_parses_attempt_selection() {
+        assert_eq!(
+            parse_agent_receipt_options(&args(&[
+                "--verify-json",
+                "target/ripr/workflow/agent-verify.json",
+                "--seam-id",
+                "f3c9e4d21a0b7c88",
+                "--attempt",
+                "repair-attempt-f3c9e4d21a0b7c88",
+                "--json",
+            ])),
+            Ok(AgentReceiptOptions {
+                root: PathBuf::from("."),
+                verify_json: PathBuf::from("target/ripr/workflow/agent-verify.json"),
+                seam_id: "f3c9e4d21a0b7c88".to_string(),
+                attempt_id: Some("repair-attempt-f3c9e4d21a0b7c88".to_string()),
+                test_changed: None,
+                commands_run: Vec::new(),
+                json: true,
+                out: None,
+            })
+        );
+    }
+
+    #[test]
+    fn agent_receipt_rejects_a_blank_attempt_id() {
+        assert_eq!(
+            parse_agent_receipt_options(&args(&[
+                "--verify-json",
+                "v.json",
+                "--seam-id",
+                "s",
+                "--attempt",
+                "  ",
+                "--json",
+            ])),
+            Err("agent receipt --attempt requires a non-empty ID".to_string())
         );
     }
 
@@ -1978,6 +2236,7 @@ mod tests {
                 root: PathBuf::from("repo"),
                 json: true,
                 out_dir: None,
+                store: None,
             })
         );
         assert_eq!(
@@ -1986,7 +2245,31 @@ mod tests {
                 root: PathBuf::from("repo"),
                 json: true,
                 out_dir: None,
+                store: None,
             }))
+        );
+    }
+
+    #[test]
+    fn agent_status_parses_explicit_store_and_rejects_empty() {
+        assert_eq!(
+            parse_agent_status_options(&args(&[
+                "--root",
+                "repo",
+                "--store",
+                "target/ripr/alt-attempts",
+                "--json",
+            ])),
+            Ok(AgentStatusOptions {
+                root: PathBuf::from("repo"),
+                json: true,
+                out_dir: None,
+                store: Some(PathBuf::from("target/ripr/alt-attempts")),
+            })
+        );
+        assert_eq!(
+            parse_agent_status_options(&args(&["--store", ""])),
+            Err("agent status --store requires a non-empty path".to_string())
         );
     }
 
@@ -1998,6 +2281,7 @@ mod tests {
                 root: PathBuf::from("."),
                 json: false,
                 out_dir: None,
+                store: None,
             })
         );
         assert_eq!(

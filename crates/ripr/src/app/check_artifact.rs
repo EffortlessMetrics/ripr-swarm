@@ -340,6 +340,14 @@ fn verify_scope_assertions(
 ) -> Result<(), String> {
     let mut mismatched: Vec<&str> = Vec::new();
     if let Some(asserted_diff) = input.diff_file.as_ref() {
+        // The stdin sentinel is not an assertion about a file named '-'.
+        // Do not accept that unrelated file as evidence for supplied stdin.
+        if asserted_diff == Path::new("-") {
+            return Err(
+                "--from cannot be combined with --diff -: stdin cannot verify a recorded diff-file identity; save stdin to a named diff file and pass --diff <path> when creating and reusing the artifact"
+                    .to_string(),
+            );
+        }
         let asserted = std::fs::canonicalize(asserted_diff).map_err(|err| {
             format!(
                 "asserted --diff {} cannot be resolved: {err}",
@@ -447,6 +455,8 @@ fn closed_analysis_options_view(options: &AnalysisOptions) -> (bool, Option<&Pat
         resolved_subject_identity: _, // derived, not caller input: the R2
         // producer sets it on the internal options clone only (#3278);
         // the caller-visible subject flows through `git_candidate`
+        open_rust_index_paths: _, // private LSP refresh index-only input;
+        // check artifacts use the ordinary empty-path public check route
         git_candidate: _, // unreachable at write time: `run_check` rejects
         // Git candidate subjects before analysis, so an
         // artifact can never carry one until #3277/#3278
@@ -575,6 +585,7 @@ mod raw_path_tests {
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: vec![StopReason::NoChangedRustLine],
+            related_tests_matched_total: None,
             related_tests: vec![RelatedTest {
                 name: "nearby".to_string(),
                 file: raw,
