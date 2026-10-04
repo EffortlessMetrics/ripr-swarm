@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -42,6 +43,10 @@ struct SwarmIngestFacts {
     allowed_files: Vec<String>,
     forbidden_files: Vec<String>,
     edited_forbidden_files: Vec<String>,
+    /// Edited path entries that do not resolve inside the selected root
+    /// (#5984): absolute paths outside it or `..` climbs above it. Surfaced
+    /// for review instead of silently passing the forbidden-edit guard.
+    edited_files_outside_root: Vec<String>,
     verify_present: bool,
     verify_status: Option<String>,
     verify_exit_code: Option<i64>,
@@ -70,10 +75,11 @@ struct SwarmIngestClassification {
 pub(crate) fn render_swarm_ingest_json(
     result_json: &str,
     result_path: &str,
+    root: &Path,
 ) -> Result<String, String> {
     let value: Value = serde_json::from_str(result_json)
         .map_err(|err| format!("failed to parse swarm ingest result JSON: {err}"))?;
-    let facts = swarm_ingest_facts(&value);
+    let facts = swarm_ingest_facts(&value, root);
     let classification = classify_swarm_result(&facts);
     let rendered = serde_json::json!({
         "schema_version": SWARM_INGEST_SCHEMA_VERSION,
@@ -101,6 +107,7 @@ pub(crate) fn render_swarm_ingest_json(
             "allowed_files": &facts.allowed_files,
             "forbidden_files": &facts.forbidden_files,
             "edited_forbidden_files": &facts.edited_forbidden_files,
+            "edited_files_outside_root": &facts.edited_files_outside_root,
             "verify": {
                 "present": facts.verify_present,
                 "status": facts.verify_status,
@@ -138,7 +145,7 @@ pub(crate) fn render_swarm_ingest_json(
     super::json::render_pretty_with_newline(&rendered, "swarm ingest")
 }
 
-fn swarm_ingest_facts(value: &Value) -> SwarmIngestFacts {
+fn swarm_ingest_facts(value: &Value, root: &Path) -> SwarmIngestFacts {
     let forbidden_files = first_string_array(
         value,
         &[
@@ -161,7 +168,8 @@ fn swarm_ingest_facts(value: &Value) -> SwarmIngestFacts {
             &["changes", "edited_files"],
         ],
     );
-    let edited_forbidden_files = edited_forbidden_files(&edited_files, &forbidden_files);
+    let edited_forbidden_files = edited_forbidden_files(&edited_files, &forbidden_files, root);
+    let outside_root = edited_files_outside_root(&edited_files, root);
     let verify_status = first_string(
         value,
         &[
@@ -317,6 +325,7 @@ fn swarm_ingest_facts(value: &Value) -> SwarmIngestFacts {
         ),
         forbidden_files,
         edited_forbidden_files,
+        edited_files_outside_root: outside_root,
         verify_present,
         verify_status,
         verify_exit_code,
@@ -474,18 +483,150 @@ fn receipt_presence_outcome(facts: &SwarmIngestFacts) -> &'static str {
     }
 }
 
-fn edited_forbidden_files(edited_files: &[String], forbidden_files: &[String]) -> Vec<String> {
+/// Canonical comparison key of one edited/forbidden path entry (#5984).
+///
+/// Raw string comparison missed ordinary spellings of the same file: a
+/// different case (`SRC/PRICING.py` on a case-insensitive filesystem), an
+/// absolute path under the selected root, or `..` segments — each evaded the
+/// forbidden-edit guard and let the attempt classify as closed. The key
+/// folds backslashes to `/`, resolves `.`/`..` segments lexically, makes
+/// absolute paths under `root` root-relative, and compares ASCII
+/// case-insensitively, so every spelling of one file produces the same key.
+/// Windows is a supported platform and agent output arrives from
+/// heterogeneous hosts, so the fold is unconditional; its failure direction
+/// is over-flagging a match, which fails closed.
+fn canonical_compare_key(path: &str, root: Option<&Path>) -> String {
+    canonical_path(path, root).key
+}
+
+struct CanonicalPath {
+    /// Lowercased comparison key: root-relative when the path resolves
+    /// inside `root`, otherwise the resolved absolute or `..`-prefixed form.
+    key: String,
+    /// `false` when the path is absolute outside `root` or climbs above it
+    /// with `..`, so it cannot match a root-relative forbidden entry.
+    under_root: bool,
+}
+
+fn canonical_path(path: &str, root: Option<&Path>) -> CanonicalPath {
+    let unix = path.replace('\\', "/");
+    let absolute = is_absolute_unix_path(&unix);
+    let segments = lexical_segments(&unix, absolute);
+    if absolute {
+        if let Some(relative) = root
+            .and_then(absolute_root_segments)
+            .and_then(|root_segments| strip_segment_prefix(&segments, &root_segments))
+        {
+            return CanonicalPath {
+                key: relative.join("/").to_ascii_lowercase(),
+                under_root: true,
+            };
+        }
+        return CanonicalPath {
+            key: segments.join("/").to_ascii_lowercase(),
+            under_root: false,
+        };
+    }
+    let under_root = segments.first().is_none_or(|first| first != "..");
+    CanonicalPath {
+        key: segments.join("/").to_ascii_lowercase(),
+        under_root,
+    }
+}
+
+fn edited_forbidden_files(
+    edited_files: &[String],
+    forbidden_files: &[String],
+    root: &Path,
+) -> Vec<String> {
     let forbidden: BTreeSet<_> = forbidden_files
         .iter()
-        .map(|file| normalize_path(file))
+        .map(|file| canonical_compare_key(file, Some(root)))
         .collect();
     dedup(
         edited_files
             .iter()
-            .filter(|file| forbidden.contains(&normalize_path(file)))
+            .filter(|file| forbidden.contains(&canonical_compare_key(file, Some(root))))
             .cloned()
             .collect(),
     )
+}
+
+/// Edited entries whose canonical form does not resolve inside the selected
+/// root (#5984). They cannot equal a root-relative forbidden entry, so the
+/// guard surfaces them as unmatched evidence instead of silently passing.
+fn edited_files_outside_root(edited_files: &[String], root: &Path) -> Vec<String> {
+    dedup(
+        edited_files
+            .iter()
+            .filter(|file| !canonical_path(file, Some(root)).under_root)
+            .cloned()
+            .collect(),
+    )
+}
+
+/// `//server/share`, `/abs`, and `X:/` drive paths are absolute after the
+/// backslash fold. A drive-relative `X:name` stays relative.
+fn is_absolute_unix_path(path: &str) -> bool {
+    if path.starts_with('/') {
+        return true;
+    }
+    let bytes = path.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+
+/// Resolve `.` and `..` lexically. Relative paths keep leading `..` segments
+/// (they climb above the root); absolute paths clamp at their root.
+fn lexical_segments(unix: &str, absolute: bool) -> Vec<String> {
+    let mut segments: Vec<String> = Vec::new();
+    for segment in unix.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if segments.last().map(String::as_str) == Some("..") {
+                    segments.push("..".to_string());
+                } else if !segments.is_empty() {
+                    segments.pop();
+                } else if !absolute {
+                    segments.push("..".to_string());
+                }
+            }
+            other => segments.push(other.to_string()),
+        }
+    }
+    segments
+}
+
+/// Segments of `root` as an absolute path, unwrapping the verbatim prefix
+/// that `Path::canonicalize` produces on Windows (`\\?\C:\dir`,
+/// `\\?\UNC\server\share`). `None` when `root` is not absolute.
+fn absolute_root_segments(root: &Path) -> Option<Vec<String>> {
+    let unix = root.to_string_lossy().replace('\\', "/");
+    let unix = if let Some(rest) = unix.strip_prefix("//?/UNC/") {
+        format!("//{rest}")
+    } else if let Some(rest) = unix.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        unix
+    };
+    if !is_absolute_unix_path(&unix) {
+        return None;
+    }
+    Some(lexical_segments(&unix, true))
+}
+
+/// Case-insensitive, component-wise prefix strip. Returns the remainder when
+/// every root segment matches, else `None`.
+fn strip_segment_prefix<'a>(segments: &'a [String], root: &[String]) -> Option<&'a [String]> {
+    if root.len() > segments.len() {
+        return None;
+    }
+    for (segment, root_segment) in segments.iter().zip(root) {
+        if !segment.eq_ignore_ascii_case(root_segment) {
+            return None;
+        }
+    }
+    Some(&segments[root.len()..])
 }
 
 fn first_string(value: &Value, paths: &[&[&str]]) -> Option<String> {
@@ -555,10 +696,6 @@ fn dedup(values: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches("./").to_string()
-}
-
 fn normalize_state(state: &str) -> String {
     state.trim().to_ascii_lowercase()
 }
@@ -600,7 +737,11 @@ mod tests {
     use super::*;
 
     fn render_value(json: &str) -> Result<Value, String> {
-        let rendered = render_swarm_ingest_json(json, "agent-result.json")?;
+        render_value_with_root(Path::new("."), json)
+    }
+
+    fn render_value_with_root(root: &Path, json: &str) -> Result<Value, String> {
+        let rendered = render_swarm_ingest_json(json, "agent-result.json", root)?;
         serde_json::from_str(&rendered)
             .map_err(|err| format!("rendered ingest JSON should parse: {err}"))
     }
@@ -633,6 +774,149 @@ mod tests {
             serde_json::json!(["app/pricing.py"])
         );
         assert_eq!(value["safety"]["trusted_success"], false);
+        Ok(())
+    }
+
+    // --- #5984: path-spelling discriminators for the forbidden-edit guard --
+
+    /// One forbidden-edit repro body from #5984: verify passed and the receipt
+    /// claims `resolved` with full provenance, so on the old raw-string
+    /// comparison every non-exact spelling classified `closed`/`resolved`.
+    fn forbidden_edit_repro_json(edited_files_json: &str) -> String {
+        format!(
+            r#"{{
+              "packet": {{
+                "gap_id": "gap:pr:gap:python:src/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                "allowed_files": ["tests/test_pricing.py"],
+                "forbidden_files": ["src/pricing.py"]
+              }},
+              "attempt": {{
+                "status": "completed",
+                "edited_files": {edited_files_json},
+                "verify": {{"status": "passed", "exit_code": 0}}
+              }},
+              "receipt": {{
+                "provenance": {{
+                  "movement": "resolved",
+                  "before_artifact": {{"sha256": "aabbcc0011223344aabbcc0011223344aabbcc0011223344aabbcc0011223344"}},
+                  "after_artifact": {{"sha256": "ddee55667788aaddddee55667788aaddddee55667788aaddddee55667788aadd"}}
+                }}
+              }}
+            }}"#
+        )
+    }
+
+    fn assert_forbidden_edit_witness(value: &Value, expected_edited_forbidden: &[&str]) {
+        assert_eq!(value["classification"]["state"], "edited_forbidden_file");
+        assert_eq!(value["classification"]["outcome"], "unknown");
+        assert_eq!(value["attempt_outcome"], "unknown");
+        assert_eq!(
+            value["classification"]["reason"].as_str(),
+            Some(ingest_reason::FORBIDDEN_EDIT),
+            "the pinned forbidden_edit token must witness the guard, not a prose reason"
+        );
+        assert_eq!(value["safety"]["forbidden_edit_flagged"], true);
+        let flagged: Vec<&str> = value["evidence"]["edited_forbidden_files"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<&str>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(flagged, expected_edited_forbidden);
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_spelled_with_different_case() -> Result<(), String> {
+        // #5984 repro 1: `SRC/PRICING.py` names the same file as the forbidden
+        // `src/pricing.py` on this case-insensitive host; the guard must fail
+        // closed instead of classifying the attempt closed/resolved.
+        let value = render_value(&forbidden_edit_repro_json(
+            r#"["tests/test_pricing.py", "SRC/PRICING.py"]"#,
+        ))?;
+        assert_forbidden_edit_witness(&value, &["SRC/PRICING.py"]);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_spelled_as_absolute_path_under_root() -> Result<(), String> {
+        // #5984 repro 2: agent tool output reports absolute paths; one under
+        // --root must normalize to the root-relative forbidden entry. The
+        // verbatim `\\?\` root form (what `Path::canonicalize` returns on
+        // Windows) must anchor the same files.
+        let root = Path::new("F:/Temp/r3-queue/scratch/app");
+        let value = render_value_with_root(
+            root,
+            &forbidden_edit_repro_json(
+                r#"["tests/test_pricing.py", "F:/Temp/r3-queue/scratch/app/src/pricing.py"]"#,
+            ),
+        )?;
+        assert_forbidden_edit_witness(&value, &["F:/Temp/r3-queue/scratch/app/src/pricing.py"]);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+
+        let backslash = render_value_with_root(
+            root,
+            &forbidden_edit_repro_json(
+                r#"["tests/test_pricing.py", "F:\\Temp\\r3-queue\\scratch\\app\\src\\pricing.py"]"#,
+            ),
+        )?;
+        assert_forbidden_edit_witness(
+            &backslash,
+            &["F:\\Temp\\r3-queue\\scratch\\app\\src\\pricing.py"],
+        );
+
+        let verbatim_root = Path::new(r"\\?\F:\Temp\r3-queue\scratch\app");
+        let verbatim = render_value_with_root(
+            verbatim_root,
+            &forbidden_edit_repro_json(
+                r#"["tests/test_pricing.py", "F:/Temp/r3-queue/scratch/app/src/pricing.py"]"#,
+            ),
+        )?;
+        assert_forbidden_edit_witness(&verbatim, &["F:/Temp/r3-queue/scratch/app/src/pricing.py"]);
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_flags_forbidden_edit_spelled_with_dot_dot_segments() -> Result<(), String> {
+        // #5984 repro 3: `..` segments resolve to the same file.
+        let value = render_value(&forbidden_edit_repro_json(
+            r#"["tests/test_pricing.py", "tests/../src/pricing.py"]"#,
+        ))?;
+        assert_forbidden_edit_witness(&value, &["tests/../src/pricing.py"]);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingest_surfaces_edited_paths_outside_the_root() -> Result<(), String> {
+        // #5984: entries that resolve outside the root cannot match a
+        // root-relative forbidden entry; the guard surfaces them as unmatched
+        // evidence instead of silently passing them.
+        let value = render_value(&forbidden_edit_repro_json(
+            r#"["tests/test_pricing.py", "E:/elsewhere/evil.py", "../outside.py", "tests/../../outside-too.py"]"#,
+        ))?;
+        assert_eq!(value["classification"]["state"], "closed");
+        assert_eq!(value["safety"]["forbidden_edit_flagged"], false);
+        assert_eq!(
+            value["evidence"]["edited_files_outside_root"],
+            serde_json::json!([
+                "E:/elsewhere/evil.py",
+                "../outside.py",
+                "tests/../../outside-too.py"
+            ])
+        );
         Ok(())
     }
 
@@ -1002,7 +1286,8 @@ mod tests {
         let expected = include_str!(
             "../../../../fixtures/first_successful_pr/python-preview-gap/expected/swarm-ingest/closed.json"
         );
-        let rendered = render_swarm_ingest_json(input, "inputs/agent-results/closed.json")?;
+        let rendered =
+            render_swarm_ingest_json(input, "inputs/agent-results/closed.json", Path::new("."))?;
         let rendered: Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("rendered ingest JSON should parse: {err}"))?;
         let expected: Value = serde_json::from_str(expected)
@@ -1030,6 +1315,7 @@ mod tests {
         let rendered = render_swarm_ingest_json(
             input,
             "inputs/agent-results/movement_without_provenance.json",
+            Path::new("."),
         )?;
         let rendered: Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("rendered ingest JSON should parse: {err}"))?;
