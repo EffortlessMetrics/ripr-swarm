@@ -414,8 +414,8 @@ fn validate_current_preflight_recovery(
     Err(format!(
         "first-pr start-here packet is stale for current root/git preflight; rerun `ripr first-pr --root {} --base {} --head {}` before relying on it",
         shell_arg(&options.command_root()),
-        options.base,
-        options.head
+        shell_arg(&options.base),
+        shell_arg(&options.head)
     ))
 }
 
@@ -651,14 +651,19 @@ fn missing_base_command(options: &FirstPrOptions) -> String {
         .filter(|branch| !branch.trim().is_empty())
         .map(|branch| {
             format!(
-                "git fetch origin {branch}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                shell_arg(&options.command_root()), options.base, options.head
+                "git fetch origin -- {}; then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                shell_arg(branch),
+                shell_arg(&options.command_root()),
+                shell_arg(&options.base),
+                shell_arg(&options.head)
             )
         })
         .unwrap_or_else(|| {
             format!(
                 "Fetch or choose a local base ref, then rerun `ripr first-pr --root {} --base {} --head {}`.",
-                shell_arg(&options.command_root()), options.base, options.head
+                shell_arg(&options.command_root()),
+                shell_arg(&options.base),
+                shell_arg(&options.head)
             )
         })
 }
@@ -6171,7 +6176,7 @@ mod tests {
         assert!(
             base["next_command"]
                 .as_str()
-                .is_some_and(|command| command.contains("git fetch origin missing-base"))
+                .is_some_and(|command| command.contains("git fetch origin -- missing-base"))
         );
         let config = preflight_check(&packet, "ripr_config")?;
         assert_eq!(config["status"], "defaulted");
