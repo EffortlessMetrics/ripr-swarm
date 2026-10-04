@@ -17,6 +17,11 @@ pub(crate) mod path_glob;
 mod pipeline;
 mod probes;
 pub(crate) mod repair_route;
+/// Process CPU time and peak resident memory observability (#5213). One
+/// owner for the whole `RIPR_REPO_EXPOSURE_LATENCY_TRACE` family: the
+/// wall-clock phase line and the end-of-run resource-cost receipt both live
+/// here, so a new phase cannot invent a parallel spelling.
+pub(crate) mod resource_cost;
 mod rust_index;
 pub(crate) mod seam_cache;
 mod seam_classification;
@@ -28,6 +33,7 @@ mod source_role_corpus;
 mod summary;
 mod syntax;
 pub(crate) mod test_grip_evidence;
+pub(crate) mod test_stub;
 mod value_resolution;
 mod witness;
 mod workspace;
@@ -42,7 +48,7 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    load_diff, load_diff_range_with_deadline, load_worktree_diff, no_merge_base_diagnosis,
+    load_diff, load_diff_range_with_deadline_core, load_worktree_diff, no_merge_base_diagnosis,
     parse_unified_diff, resolve_base_commit, resolve_effective_base,
     working_tree_has_tracked_changes,
 };
@@ -83,6 +89,7 @@ pub(crate) use seam_inventory::{
     pilot_seam_budget, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
 pub(crate) use workspace::PathDependencyAdjacency;
@@ -437,6 +444,7 @@ fn top_typescript_readiness_blocker(
 }
 
 use crate::config::OraclePolicy;
+use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -754,6 +762,11 @@ pub struct AnalysisResult {
     /// add; they decide the uncommitted-edits note. Empty for every other
     /// mode.
     pub(crate) uncommitted_source_paths: Vec<String>,
+    /// The untracked subset of [`AnalysisResult::uncommitted_source_paths`]
+    /// (#5258): files neither the committed diff nor `--worktree` analyzes,
+    /// so the note can name the real repair (staging) instead of offering
+    /// `--worktree`. Empty when no untracked routed file exists.
+    pub(crate) untracked_source_paths: Vec<String>,
     /// Crate-private numeric diagnostic origins for Rust findings (#4464).
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
@@ -781,13 +794,14 @@ fn reject_git_candidate_subject(options: &AnalysisOptions) -> Result<(), String>
 pub fn run_analysis(options: &AnalysisOptions) -> Result<AnalysisResult, String> {
     reject_git_candidate_subject(options)?;
     run_analysis_with_oracle_policy(options, &OraclePolicy::default(), DEFAULT_LANGUAGES)
+        .map_err(Into::into)
 }
 
 pub(crate) fn run_analysis_with_oracle_policy(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy(options, oracle_policy, languages)
 }
 
@@ -796,7 +810,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
@@ -810,7 +824,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,

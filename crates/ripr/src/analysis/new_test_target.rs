@@ -9,11 +9,11 @@ use crate::analysis::facts::FunctionSourceRole;
 use crate::analysis::language::is_generated_rust_file_with_patterns;
 use crate::analysis::rust_index::{self, FunctionSummary, RustIndex};
 use crate::analysis::seams::{RepoSeam, SeamKind};
-use crate::analysis::syntax::{
-    GovernedCfgTestModule, governed_cfg_test_modules, production_owner_module_path,
-};
+use crate::analysis::syntax::{GovernedCfgTestModule, inline_unit_module_layout};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 mod integration;
 #[cfg(test)]
@@ -28,6 +28,7 @@ pub(crate) use region::validate_inline_region_edit;
 
 const SAFE_NEW_INLINE_UNIT_EVIDENCE: &str = "producer-owned new inline unit test proposal";
 
+#[cfg(test)]
 pub(crate) use integration::admit_new_integration_test;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -153,9 +154,17 @@ pub(crate) enum NewTestProposalProvenance {
 /// When both stay Missing, keep Integration's Cargo/layout blockers. A
 /// PrivateOwner Integration refusal does not replace an InlineUnit module
 /// reason: private items can still earn a same-file unit proposal.
-pub(crate) fn admit_new_test_target(seam: &RepoSeam, index: &RustIndex) -> NewTestTargetAdmission {
-    let integration = admit_new_integration_test(seam, index);
-    let inline = admit_new_inline_unit_test(seam, index);
+///
+/// `owner_fn` is the seam's owner as [`rust_index::find_owner_function`]
+/// resolves it; the evidence pass passes its memoized answer.
+pub(crate) fn admit_new_test_target(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    owner_fn: Option<&FunctionSummary>,
+    layouts: &InlineUnitLayoutMemo,
+) -> NewTestTargetAdmission {
+    let integration = integration::admit_new_integration_test_for_owner(seam, index, owner_fn);
+    let inline = admit_new_inline_unit_test_with(seam, index, owner_fn, layouts);
     let owner_inline_region = inline.region.clone();
     let mut selected = if integration.proposal.is_some() {
         integration
@@ -182,11 +191,22 @@ pub(crate) fn admit_new_test_target(seam: &RepoSeam, index: &RustIndex) -> NewTe
 /// target, a refused DirectOwnerCall stays Missing rather than Proposed, and
 /// an advisory related observer does not block an independently admitted
 /// proposal.
+#[cfg(test)]
 pub(crate) fn admit_new_inline_unit_test(
     seam: &RepoSeam,
     index: &RustIndex,
 ) -> NewTestTargetAdmission {
-    match try_admit_new_inline_unit_test(seam, index) {
+    let owner_fn = rust_index::find_owner_function(index, seam.file(), seam.display_line());
+    admit_new_inline_unit_test_with(seam, index, owner_fn, &InlineUnitLayoutMemo::default())
+}
+
+fn admit_new_inline_unit_test_with(
+    seam: &RepoSeam,
+    index: &RustIndex,
+    owner_fn: Option<&FunctionSummary>,
+    layouts: &InlineUnitLayoutMemo,
+) -> NewTestTargetAdmission {
+    match try_admit_new_inline_unit_test(seam, index, owner_fn, layouts) {
         Ok((proposal, region)) => NewTestTargetAdmission {
             proposal: Some(proposal),
             region: Some(region),
@@ -205,6 +225,8 @@ pub(crate) fn admit_new_inline_unit_test(
 fn try_admit_new_inline_unit_test(
     seam: &RepoSeam,
     index: &RustIndex,
+    owner_fn: Option<&FunctionSummary>,
+    layouts: &InlineUnitLayoutMemo,
 ) -> Result<(NewTestTargetProposal, InlineTestRegionAuthority), NewTestProposalBlocker> {
     if !matches!(
         seam.kind(),
@@ -226,8 +248,7 @@ fn try_admit_new_inline_unit_test(
         return Err(NewTestProposalBlocker::PathUnsafe);
     }
 
-    let owner_fn = rust_index::find_owner_function(index, seam.file(), seam.display_line())
-        .ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
+    let owner_fn = owner_fn.ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
     if owner_fn.source_role != FunctionSourceRole::Production {
         return Err(NewTestProposalBlocker::OwnerUnresolved);
     }
@@ -245,9 +266,12 @@ fn try_admit_new_inline_unit_test(
         return Err(NewTestProposalBlocker::CustomHarness);
     }
 
-    let modules =
-        governed_cfg_test_modules(&facts.source).ok_or(NewTestProposalBlocker::LexicalFallback)?;
-    let region = unique_inline_region(seam.file(), &facts.source, owner_fn, &modules)?;
+    let layout = layouts.layout(seam.file(), &facts.source);
+    let modules = layout
+        .modules
+        .as_deref()
+        .ok_or(NewTestProposalBlocker::LexicalFallback)?;
+    let region = unique_inline_region(seam.file(), &facts.source, owner_fn, &layout, modules)?;
 
     Ok((
         NewTestTargetProposal {
@@ -264,9 +288,12 @@ fn unique_inline_region(
     file: &Path,
     source: &str,
     owner_fn: &FunctionSummary,
+    layout: &InlineUnitFileLayout,
     modules: &[GovernedCfgTestModule],
 ) -> Result<InlineTestRegionAuthority, NewTestProposalBlocker> {
-    let owner_modules = production_owner_module_path(source, owner_fn.start_line)
+    let owner_modules = layout
+        .owner_module_paths
+        .get(&owner_fn.start_line)
         .ok_or(NewTestProposalBlocker::OwnerUnresolved)?;
     let inline = modules
         .iter()
@@ -287,7 +314,7 @@ fn unique_inline_region(
         return Err(NewTestProposalBlocker::AmbiguousModule);
     }
     let module = inline[0];
-    if module.parent_modules != owner_modules {
+    if &module.parent_modules != owner_modules {
         return Err(NewTestProposalBlocker::OwnerInaccessible);
     }
     let body_start = module
@@ -305,8 +332,54 @@ fn unique_inline_region(
         parent_modules: module.parent_modules.clone(),
         body_start,
         close_brace_start,
-        source_digest: region::source_digest(source),
+        source_digest: layout.source_digest.clone(),
     })
+}
+
+/// Parser-backed facts an InlineUnit admission reads from one file. Each
+/// depends only on the file's source, so one parse and one digest per file
+/// serve every seam in it; per seam, admission used to parse the whole file
+/// twice and hash it once, which dominated cold `ripr pilot` time.
+#[derive(Debug)]
+struct InlineUnitFileLayout {
+    /// `None` when the file is not parser-valid.
+    modules: Option<Vec<GovernedCfgTestModule>>,
+    /// Enclosing non-cfg-test modules of each function, by start line.
+    owner_module_paths: BTreeMap<usize, Vec<String>>,
+    source_digest: String,
+}
+
+/// Per-file [`InlineUnitFileLayout`] memo for one evidence pass. The pass
+/// borrows the index immutably, so a file's source cannot change while the
+/// memo lives.
+#[derive(Debug, Default)]
+pub(crate) struct InlineUnitLayoutMemo {
+    layouts: Mutex<BTreeMap<PathBuf, Arc<InlineUnitFileLayout>>>,
+}
+
+impl InlineUnitLayoutMemo {
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<PathBuf, Arc<InlineUnitFileLayout>>> {
+        self.layouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn layout(&self, file: &Path, source: &str) -> Arc<InlineUnitFileLayout> {
+        if let Some(layout) = self.lock().get(file) {
+            return Arc::clone(layout);
+        }
+        let (modules, owner_module_paths) = match inline_unit_module_layout(source) {
+            Some(layout) => (Some(layout.modules), layout.owner_module_paths),
+            None => (None, BTreeMap::new()),
+        };
+        let layout = Arc::new(InlineUnitFileLayout {
+            modules,
+            owner_module_paths,
+            source_digest: region::source_digest(source),
+        });
+        self.lock().insert(file.to_path_buf(), Arc::clone(&layout));
+        layout
+    }
 }
 
 fn path_is_generated_or_vendor(path: &Path) -> bool {
