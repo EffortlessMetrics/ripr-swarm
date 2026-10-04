@@ -20,6 +20,7 @@ use crate::analysis_outcome::{
     AnalysisStage,
 };
 use crate::config::OraclePolicy;
+use crate::core_error::CoreError;
 use crate::domain::Finding;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -40,7 +41,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
@@ -54,7 +55,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     // Immutable Git candidate subject (#3237 / #3277): resolve the
     // bound identity through object plumbing, derive the exact
     // base→candidate diff, and analyze the materialized candidate root.
@@ -110,7 +111,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         rebase_finding_paths_to_repository(&mut result, &resolved.root, &options.root);
         return Ok(result);
     }
-    let loaded = diff::load_diff_with_effective_base(
+    let loaded = diff::load_diff_with_effective_base_core(
         &options.root,
         options.base.as_deref(),
         options.diff_file.as_ref(),
@@ -130,6 +131,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     })?;
     if let Some(overlay) = overlay {
         result.uncommitted_source_paths = overlay.dirty_source_paths();
+        result.untracked_source_paths = overlay.untracked_source_paths();
     }
     bind_effective_base(&mut result, loaded.effective_base)?;
     Ok(result)
@@ -139,7 +141,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
 /// disclose the dirty paths it cannot place back into discovery.
 fn committed_history_overlay(
     options: &AnalysisOptions,
-) -> Result<Option<std::sync::Arc<committed_source::CommittedSourceOverlay>>, String> {
+) -> Result<Option<std::sync::Arc<committed_source::CommittedSourceOverlay>>, CoreError> {
     let Some(overlay) = committed_source::probe(&options.root, options.git_timeout)? else {
         return Ok(None);
     };
@@ -189,9 +191,11 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
-        return Err("worktree diff mode cannot be combined with --diff".to_string());
+        return Err("worktree diff mode cannot be combined with --diff"
+            .to_string()
+            .into());
     }
     // #3237/#3277: the immutable subject's contract is exact-tree diff
     // semantics. Worktree mode analyzes the live tree by definition, so
@@ -203,9 +207,10 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             detail: "git candidate subjects are diff-semantics inputs; worktree mode cannot execute them"
                 .to_string(),
         }
-        .to_string());
+        .to_string()
+        .into());
     }
-    let loaded = diff::load_worktree_diff_with_effective_base(
+    let loaded = diff::load_worktree_diff_with_effective_base_core(
         &options.root,
         options.base.as_deref(),
         options.git_timeout,
@@ -755,8 +760,27 @@ fn run_pipeline_for_diff_text(
                 candidate_line_count += result
                     .candidate_line_count
                     .max(candidate_lines_from_findings(&result.findings));
+                let produced_findings = !result.findings.is_empty();
                 findings.extend(result.findings);
-                limitations.extend(result.limitations);
+                // A preview adapter indexes its whole language across the
+                // workspace even when the diff touches none of it. Its
+                // refusals (parse budget, read caps, walk cap) then concern
+                // files this diff cannot depend on, and must not downgrade a
+                // diff in another language to a partial result. The Rust
+                // adapter ran above and is unaffected. An adapter that did
+                // produce findings consumed its workspace index (a Bun bridge
+                // profile reports Rust-line findings from TypeScript tests),
+                // so its limitations still qualify those findings.
+                let adapter_language = match language {
+                    LanguageId::JavaScript => LanguageId::TypeScript,
+                    other => *other,
+                };
+                let diff_touches_language = preview_changed_files
+                    .iter()
+                    .any(|file| route(&file.path) == Some(adapter_language));
+                if diff_touches_language || produced_findings {
+                    limitations.extend(result.limitations);
+                }
                 if result.changed_files_by_language.is_empty() {
                     changed_files_by_language.push((*language, result.changed_files));
                 } else {
@@ -1105,6 +1129,7 @@ fn run_pipeline_for_diff_text(
         // effective base (#3940); every other path involves no base.
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })
@@ -1300,6 +1325,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         partial_scope: None,
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
     })

@@ -21,6 +21,7 @@
 //! workers) do not see it, so every overlay-aware read site runs on the
 //! pipeline thread.
 
+use crate::core_error::CoreError;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -48,6 +49,10 @@ pub(crate) struct CommittedSourceOverlay {
     /// Neither exists at `HEAD`, but discovery walks the disk without
     /// `.gitignore`, so both read as absent unless tracked.
     ignored: IgnoredPaths,
+    /// Untracked routed paths (#5258), kept beside the dirty set so the
+    /// output layer can tell the `--worktree`-visible edits from the files
+    /// no flag covers.
+    untracked: BTreeSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -89,6 +94,16 @@ impl CommittedSourceOverlay {
         self.entries.keys().map(String::as_str)
     }
 
+    /// Dirty routed paths that are untracked (neither committed nor staged,
+    /// `git status --porcelain` `??` records), root-relative and
+    /// `/`-separated, in order. #5258: these are exactly the paths neither
+    /// the committed diff nor `--worktree` can analyze, so the
+    /// uncommitted-edits note must name them instead of offering
+    /// `--worktree` as their remedy.
+    pub(crate) fn untracked_source_paths(&self) -> Vec<String> {
+        self.untracked.iter().cloned().collect()
+    }
+
     /// Dirty paths that exist at `HEAD` but are missing from the working
     /// tree. Discovery walks the working tree, so these cannot be found and
     /// are disclosed instead of silently dropped.
@@ -123,6 +138,7 @@ impl CommittedSourceOverlay {
             root: root.to_path_buf(),
             canonical_root: root.canonicalize().ok(),
             ignored: IgnoredPaths::default(),
+            untracked: BTreeSet::new(),
             entries: entries
                 .into_iter()
                 .map(|(path, bytes)| (path.to_string(), bytes.map(<[u8]>::to_vec)))
@@ -187,6 +203,12 @@ pub(crate) fn with_overlay<T>(
     work()
 }
 
+/// Capture this thread's overlay before dispatching work to another thread,
+/// which then installs it with [`with_overlay`].
+pub(crate) fn current_overlay() -> Option<Arc<CommittedSourceOverlay>> {
+    CURRENT_OVERLAY.with(|slot| slot.borrow().clone())
+}
+
 /// Root-relative paths the installed overlay serves from `HEAD` although the
 /// working tree lacks them; empty without an overlay for `root`. A caller
 /// that lists the working tree adds these to see the committed file set.
@@ -235,7 +257,7 @@ pub(crate) fn read_source_bytes(root: &Path, relative: &Path) -> std::io::Result
 pub(crate) fn probe(
     root: &Path,
     git_timeout: Option<Duration>,
-) -> Result<Option<CommittedSourceOverlay>, String> {
+) -> Result<Option<CommittedSourceOverlay>, CoreError> {
     // `None` is the caller's "no deadline" (`--git-timeout 0`), as for the
     // diff loader; output stays bounded either way.
     let deadline = git_timeout;
@@ -282,6 +304,11 @@ pub(crate) fn probe(
             .collect(),
         tracked_within: BTreeSet::new(),
     };
+    // #5258: untracked routed paths stay in the dirty set (they have no
+    // `HEAD` content, so the overlay reads them absent) and are also named
+    // here, so the output layer can distinguish them from the edits
+    // `--worktree` covers.
+    let untracked = below_root(records.untracked);
     if dirty.is_empty() && ignored.files.is_empty() && ignored.directories.is_empty() {
         return Ok(None);
     }
@@ -326,6 +353,7 @@ pub(crate) fn probe(
         canonical_root: root.canonicalize().ok(),
         entries,
         ignored,
+        untracked,
     }))
 }
 
@@ -333,7 +361,7 @@ fn is_regular_file_mode(mode: &str) -> bool {
     mode == "100644" || mode == "100755"
 }
 
-fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<Vec<u8>, String> {
+fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<Vec<u8>, CoreError> {
     let describe = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
     let output = crate::git::run_git_output_with_optional_deadline_and_limit(
         root,
@@ -341,14 +369,17 @@ fn git_bytes(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<V
         deadline,
         MAX_GIT_OUTPUT_BYTES,
     )
-    .map_err(|error| format!("committed-source probe: `git {describe}` failed: {error}"))?;
+    .map_err(|error| {
+        error.with_context(format!("committed-source probe: `git {describe}` failed"))
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
         return Err(format!(
             "committed-source probe: `git {describe}` exited with {}: {detail}",
             output.status
-        ));
+        )
+        .into());
     }
     Ok(output.stdout)
 }
@@ -363,6 +394,10 @@ struct StatusRecords {
     /// Rename and copy records carry a second (original) path; both sides
     /// are dirty.
     dirty: Vec<String>,
+    /// The subset of `dirty` that is untracked (`??` records; #5258):
+    /// neither the committed diff nor `--worktree` analyzes these, so the
+    /// uncommitted-edits note must not offer `--worktree` as their remedy.
+    untracked: Vec<String>,
     ignored_files: Vec<String>,
     /// Ignored directories, without the trailing `/`.
     ignored_directories: Vec<String>,
@@ -401,7 +436,13 @@ fn parse_porcelain_z(bytes: &[u8]) -> Result<StatusRecords, String> {
             continue;
         }
         if routed(path) {
-            out.dirty.push(utf8_path(path)?);
+            let named = utf8_path(path)?;
+            // #5258: `??` marks an untracked path — no adapter-routed read
+            // of it can be covered by either diff mode.
+            if *index_status == b'?' {
+                out.untracked.push(named.clone());
+            }
+            out.dirty.push(named);
         }
         if let Some(original) = original.filter(|original| routed(original)) {
             out.dirty.push(utf8_path(original)?);

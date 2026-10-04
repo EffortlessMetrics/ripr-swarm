@@ -203,6 +203,26 @@ The selected finding's `Next step` is never truncated, because the guidance
 ends with its remedy (#4323). Text within the digest line budget stays on one
 line; longer guidance wraps onto four-space continuation lines.
 
+After the drill-in commands, a selected Rust finding that is not `exposed` and
+whose probe family is `predicate`, `return_value`, `error_path`, or
+`match_arm` gets one more block, `Write a test for it:`, naming
+`ripr agent stub --root <root> --at <file>:<line>` (#5355). That command
+resolves the finding location to the gap in the same function and prints a
+compiling test stub, or a named refusal. The line is a route, not a claim
+that a stub exists: side-effect, call-deletion, field-construction, and
+static-unknown families never get it, because the stub producer refuses them.
+
+The stub producer covers free functions and methods of inherent or trait
+impls at module level whose generics are lifetimes only; a trait-impl method
+is called as `<Type as Trait>::method(..)` (#5471). A changed field of the
+struct literal the owner returns gets a stub asserting the whole return
+value. Among several inline test modules gated by plain `cfg(test)`, the stub
+goes into the one naming the owner, else the nearest after it, else the
+nearest before; modules gated by more than `cfg(test)` are never chosen. Impls
+with type or const generics, impls local to a block, owners behind a cfg in
+their own file that a plain `cargo test` build may not enable, and fields of a
+literal the owner does not return are refused by name.
+
 ### Triage states
 
 | State | Meaning |
@@ -271,6 +291,18 @@ sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
 
+### Terminal safety
+
+Repository text (assertion source, test names, observed values, paths) reaches
+the human reports verbatim. Every human report printed to a terminal (`check`
+default and `--format human-full`, `explain`) passes through one final escape:
+control characters other than newline and tab, and the bidi
+formatting characters (U+061C, U+200E/F, U+202A-E, U+2066-9), print as `\u{XX}`.
+A repository therefore cannot clear the screen, retitle the window, overwrite a
+line with a bare carriage return, or reorder displayed text. The escape changes
+no classification, count or selection. Machine formats keep the raw value and
+escape it with their own encoders.
+
 ### Repo-scope warnings
 
 When a repo-scoped check format is combined with `--base` or `--diff`, the CLI
@@ -335,6 +367,8 @@ suggested write cannot fail on the same missing base.
 ## Test Mapping
 
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
+- `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
+- `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_does_not_select_exposed_over_non_exposed_repair`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_reports_missing_scope_as_start_here_state`
 - `crates/ripr/src/output/human.rs::tests::start_here_prefers_a_python_finding_with_a_repair_card`
