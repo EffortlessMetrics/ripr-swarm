@@ -116,7 +116,10 @@ adequacy measure.
 
 The 7 scored mutants are 2 overclaims (`context.rs:72` `&& → ||` and
 `otel/enabled.rs:62` `delete !`, both on `strongly_gripped` predicates) and 5
-agreeing misses on `ungripped` predicates. The 6 span-overlap ties are
+agreeing misses on `ungripped` predicates. The fixture's seams predate #5569;
+a live run on a tree with #5569 reads those 5 seams as `opaque` (their reach is
+unresolved), so they stay `canonical_precise` but unscored and only the 2
+overclaims score. Receipt: `mutation-spot-check-v2` run of 2026-10-04. The 6 span-overlap ties are
 `context.rs:40` (a predicate and a return seam) and `context.rs:85` (a return
 and a call seam), where two seams share one span; they stay excluded even when both seams make the same claim, so the
 hand-found `context.rs:40` overclaim from #5335 is not in the score.
