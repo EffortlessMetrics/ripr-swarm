@@ -47,8 +47,8 @@ impl AnalysisThread {
         }))?;
         result.await.map_err(|stopped| {
             format!(
-                "the analysis job ended without a result ({stopped}; the analysis panicked); \
-                 save again to retry, and report the panic if it repeats"
+                "the analysis job ended without a result ({stopped}; it panicked or was \
+                 dropped before running); save again to retry, and report it if it repeats"
             )
         })
     }
@@ -84,7 +84,10 @@ impl AnalysisThread {
                 )
             })?;
         fresh.send(job).map_err(|unsent| {
-            format!("the new ripr analysis thread exited before taking work ({unsent})")
+            format!(
+                "the new ripr analysis thread exited before taking work ({unsent}); \
+                 save again to retry"
+            )
         })?;
         *sender = Some(fresh);
         Ok(())
@@ -130,7 +133,7 @@ mod tests {
             else {
                 return Err("a panicking job must report a failure".to_owned());
             };
-            assert!(err.contains("analysis panicked"), "{err}");
+            assert!(err.contains("panicked"), "{err}");
             let after = worker.run(|| std::thread::current().id()).await?;
             assert_eq!(before, after, "the thread survives the panic");
             Ok(())
