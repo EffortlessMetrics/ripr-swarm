@@ -227,7 +227,7 @@ const TOOL_PROBES: CommandEffects = CommandEffects {
 const METADATA: &[CommandMetadata] = &[
     CommandMetadata {
         id: "cmd:help",
-        summary: "Route to per-command options and the exhaustive reference.",
+        summary: "Route to per-command options, the exhaustive reference, and the versioned machine catalog.",
         task: "Read detailed help",
         workflows: &["setup"],
         operation: CommandOperation::ReadOnly,
@@ -239,11 +239,11 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
-        example: "ripr help <command>",
+        json_support: true,
+        example: "ripr help --json",
         next_routes: &["help", "doctor", "check"],
         stop_states: &[],
-        limitations: "prints text only; performs no analysis, compilation, test, process, network, mutation, or product-artifact work.",
+        limitations: "prints human text or the versioned machine catalog on stdout; performs no analysis, compilation, test, process, network, mutation, or product-artifact work.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2453,6 +2453,32 @@ mod tests {
         Err(format!(
             "expected exactly one {needle:?} violation, got {violations:?}"
         ))
+    }
+
+    /// `ripr help --json` is a parser-accepted JSON route. The C2 row is the
+    /// authority the catalog projects, so it cannot keep `json_support: false`
+    /// or claim the command prints text only (#5266).
+    #[test]
+    fn help_metadata_reports_the_machine_catalog_route() -> Result<(), String> {
+        let Some(help) = metadata().iter().find(|row| row.id == "cmd:help") else {
+            return Err("cmd:help metadata missing".to_string());
+        };
+        if !help.json_support {
+            return Err("cmd:help must report json_support: true".to_string());
+        }
+        if !help.example.contains("help --json") {
+            return Err(format!(
+                "cmd:help example must name the machine catalog route, got {:?}",
+                help.example
+            ));
+        }
+        if help.limitations.contains("prints text only") {
+            return Err(
+                "cmd:help limitations still claim text-only output after json_support became true"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     #[test]

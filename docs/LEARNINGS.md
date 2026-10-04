@@ -3,6 +3,14 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-04: `help --json` must be named and self-reported (#5266)
+
+A machine-only route that human `ripr help` does not name is undiscoverable.
+`json_support` is the catalog's own authority: if `ripr help --json` parses
+and emits the document, `cmd:help` cannot report `json_support: false` or
+claim it prints text only. Pin the default-screen `More:` line, the
+`--all` header, and the projected catalog row together.
+
 ## 2026-10-03: Windows `where` is not a PATH probe (#5103)
 
 `where prove` searches the process current directory first. Doctor's Perl

@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr help` and `ripr help --all` now name `ripr help --json`, and the
+  machine catalog reports `json_support: true` for `cmd:help`. The catalog
+  used to declare that `help` had no JSON support while that same command
+  emitted the catalog, so a consumer following human help or the catalog
+  itself could not discover the machine-discovery route (#5266).
+
+
+
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
   commands they print, so `--root .` no longer yields a command that fails

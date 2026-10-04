@@ -498,6 +498,7 @@ mod tests {
             "ripr init --ci github",
             "ripr help <command>",
             "ripr help --all",
+            "ripr help --json",
         ] {
             assert!(
                 HELP.contains(needle),

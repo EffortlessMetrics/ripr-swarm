@@ -47,6 +47,7 @@ What are you trying to do?
 More:
   ripr help <command>    Options for one command.
   ripr help --all        Every command, grouped by area.
+  ripr help --json       Versioned machine-readable command catalog.
 
 ripr is static and advisory. It reads changed code, builds mutation-shaped
 probes, and estimates whether tests reach, infect, propagate, and reveal the
@@ -65,6 +66,7 @@ pub(super) const HELP_ALL: &str = r#"ripr — complete command reference.
 
 Task-oriented overview: ripr --help
 Options for one command: ripr help <command>
+Machine catalog: ripr help --json
 
 Global flags (accepted in any position, before or after the command):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
