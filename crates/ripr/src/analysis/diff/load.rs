@@ -813,7 +813,17 @@ pub fn working_tree_has_tracked_changes(root: &Path) -> bool {
 /// for callers that must not read a failed probe as "no uncommitted
 /// changes" (pilot's current change records it as unavailable instead).
 pub fn probe_working_tree_tracked_changes(root: &Path) -> Result<bool, String> {
-    match working_tree_probe(root) {
+    probe_working_tree_tracked_changes_within(root, Some(WORKING_TREE_PROBE_DEADLINE))
+}
+
+/// [`probe_working_tree_tracked_changes`] under a caller's git deadline
+/// (`None` disables it), so a command that honors `RIPR_GIT_TIMEOUT` bounds
+/// this probe the same way as its diff loads.
+pub fn probe_working_tree_tracked_changes_within(
+    root: &Path,
+    deadline: Option<Duration>,
+) -> Result<bool, String> {
+    match working_tree_probe_within(root, deadline) {
         WorkingTreeProbe::Dirty => Ok(true),
         WorkingTreeProbe::Clean => Ok(false),
         WorkingTreeProbe::Error(reason) => Err(reason),
@@ -848,10 +858,14 @@ enum WorkingTreeProbe {
 const WORKING_TREE_PROBE_DEADLINE: Duration = Duration::from_mins(1);
 
 fn working_tree_probe(root: &Path) -> WorkingTreeProbe {
+    working_tree_probe_within(root, Some(WORKING_TREE_PROBE_DEADLINE))
+}
+
+fn working_tree_probe_within(root: &Path, deadline: Option<Duration>) -> WorkingTreeProbe {
     let result = crate::git::run_git_output_with_deadline(
         root,
         &["status", "--porcelain", "--", "."],
-        Some(WORKING_TREE_PROBE_DEADLINE),
+        deadline,
     );
     match result {
         Ok(out) if out.status.success() => {

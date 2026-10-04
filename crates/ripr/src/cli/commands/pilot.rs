@@ -106,6 +106,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // Refuse an invalid RIPR_PILOT_SEAM_BUDGET (#4529) before the analysis
     // it would bound, not after it.
     analysis::pilot_seam_budget()?;
+    // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
+    // check's (#2613): seconds, `0` disables the deadline, and an invalid
+    // value fails closed here rather than running with the default.
+    let git_timeout = super::check::git_timeout_from_env(false, std::env::var("RIPR_GIT_TIMEOUT"))?
+        .unwrap_or(Some(app::default_cli_git_timeout()));
     let mut input = CheckInput {
         root: options.root.clone(),
         mode: options.mode.clone(),
@@ -188,7 +193,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // changed seam past the cut is kept and can still rank change-first. A
     // changed seam pilot cannot recommend is not kept: it would displace an
     // actionable seam and leave nothing to recommend.
-    let current_change = load_pilot_current_change(&input);
+    let current_change = load_pilot_current_change(&input, git_timeout);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
@@ -324,8 +329,10 @@ fn run_pilot_inventory(
 /// of the change. A load failure (not a Git work tree, no resolvable default
 /// base, a git error) never fails pilot: it is recorded as `unavailable` and
 /// the ranking stays repo-wide.
-fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentChange {
-    let git_timeout = Some(app::default_cli_git_timeout());
+fn load_pilot_current_change(
+    input: &CheckInput,
+    git_timeout: Option<std::time::Duration>,
+) -> output::pilot::PilotCurrentChange {
     let mut from_working_tree = false;
     // Resolve the base first: a root with no resolvable base (outside a Git
     // work tree, say) is `unavailable` without running the working-tree
@@ -337,9 +344,10 @@ fn load_pilot_current_change(input: &CheckInput) -> output::pilot::PilotCurrentC
         .and_then(|base| {
             // A failed probe is not a clean tree: loading `<base>...HEAD`
             // then would silently drop uncommitted edits from the change.
-            from_working_tree = analysis::probe_working_tree_tracked_changes(&input.root)
-                .ok()
-                .ok_or("git status failed")?;
+            from_working_tree =
+                analysis::probe_working_tree_tracked_changes_within(&input.root, git_timeout)
+                    .ok()
+                    .ok_or("git status failed")?;
             if from_working_tree {
                 analysis::load_worktree_diff_with_effective_base_core(
                     &input.root,

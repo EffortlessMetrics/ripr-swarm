@@ -50,8 +50,9 @@ pub use diff::records::{
 pub(crate) use diff::{
     load_diff, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
     load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_working_tree_tracked_changes, resolve_base_commit,
-    resolve_effective_base, working_tree_has_tracked_changes,
+    parse_unified_diff, probe_working_tree_tracked_changes,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
+    working_tree_has_tracked_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,

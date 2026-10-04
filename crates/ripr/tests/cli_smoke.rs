@@ -13912,6 +13912,116 @@ fn pilot_says_perl_is_unavailable_when_repo_has_no_rust_seams() -> Result<(), St
     Ok(())
 }
 
+/// `RIPR_GIT_TIMEOUT` bounds pilot's current-change git calls as it bounds
+/// `ripr check` (#2613): an invalid value fails closed before any analysis,
+/// and a hung `git diff` is cut at the configured deadline (not the 5-minute
+/// default), leaving the ranking repo-wide with the reason named.
+#[cfg(unix)]
+#[test]
+fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "pilot-git-timeout",
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"timeout_fx\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn discounted(amount: u32) -> u32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+            ),
+        ],
+        ("NOTES.md", "notes\n"),
+    )?;
+    let out_dir = unique_temp_workspace("pilot-git-timeout-out");
+    let root_arg = root.display().to_string();
+    let out_arg = out_dir.display().to_string();
+    let args = [
+        "pilot",
+        "--root",
+        root_arg.as_str(),
+        "--out",
+        out_arg.as_str(),
+    ];
+
+    let invalid = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &args,
+        &[("RIPR_GIT_TIMEOUT", "soon")],
+    )
+    .map_err(|err| format!("run pilot with invalid timeout: {err}"))?;
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(!invalid.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("RIPR_GIT_TIMEOUT requires a non-negative integer"),
+        "{stderr}"
+    );
+
+    // A `git` shim that hangs on `diff` and passes everything else through.
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("git"))
+        .find(|candidate| candidate.is_file())
+        .ok_or("git is not on PATH")?;
+    let shim_dir = unique_temp_workspace("pilot-git-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then exec sleep 60; fi\ndone\nexec '{}' \"$@\"\n",
+            real_git.display()
+        ),
+    )
+    .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &args,
+        &[("RIPR_GIT_TIMEOUT", "1"), ("PATH", &search_path)],
+    )
+    .map_err(|err| format!("run pilot with hanging git diff: {err}"))?;
+    let elapsed = started.elapsed();
+    assert_success(&output);
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "pilot waited {elapsed:?} on a hung git diff under RIPR_GIT_TIMEOUT=1"
+    );
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
+            .map_err(|err| format!("read pilot summary: {err}"))?,
+    )
+    .map_err(|err| format!("parse pilot summary: {err}"))?;
+    assert_eq!(
+        summary["current_change"]["state"], "unavailable",
+        "{summary}"
+    );
+    assert_eq!(
+        summary["current_change"]["reason"], "git timed out",
+        "{summary}"
+    );
+
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// Rust-only output is untouched by language routing, and adding TypeScript
 /// beside Rust seams leaves the human output byte-identical: the mixed repo
 /// keeps the Rust result and lists the other language in JSON only.
