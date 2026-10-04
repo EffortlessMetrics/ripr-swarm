@@ -539,7 +539,8 @@ mod tests {
 
     /// `ripr help --all` documents `help` in its header rather than as a
     /// catalog listing row. The machine route must appear there so the
-    /// exhaustive screen is not a dead end (#5266).
+    /// exhaustive screen is not a dead end (#5266), and the header must
+    /// except the route from the global `-v` claim.
     #[test]
     fn help_all_header_names_the_machine_catalog() -> Result<(), String> {
         let Some(header) = HELP_ALL.split("\nSetup:\n").next() else {
