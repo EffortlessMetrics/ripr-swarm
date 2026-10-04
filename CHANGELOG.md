@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Changed
 
+- Performance: cold `ripr pilot` parses each production file once for
+  new-test placement instead of twice per seam, and a run that passes the
+  default 30s deadline keeps going instead of restarting. On a 4-core Linux
+  host, cold pilot time fell from 78s to 2.4s on serde, 93s to 19s on
+  ripgrep and 114s to 27s on regex, with byte-identical pilot artifacts. An
+  explicit `--timeout-ms` remains a hard limit.
+
 - Rust finding output preserves the matched related-test/oracle count before
   bounded packing. JSON, SARIF, and human totals agree while retained rows and
   exposure classification remain unchanged. (#5146)
