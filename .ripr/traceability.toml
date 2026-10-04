@@ -6617,7 +6617,10 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::non_ascii_receivers_and_mut_self_methods_are_read_safely",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::review_false_credit_shapes_stay_unjudged",
   "crates/ripr/tests/match_arm_unselected_identity.rs::own_crate_call_with_a_sibling_input_names_the_unselected_arm",
-  "crates/ripr/tests/match_arm_unselected_identity.rs::a_foreign_same_named_import_does_not_name_the_unselected_arm"
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_foreign_same_named_import_does_not_name_the_unselected_arm",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_local_closure_named_like_the_owner_cannot_credit_the_arm",
+  "crates/ripr/tests/match_arm_unselected_identity.rs::a_helper_two_calls_away_may_select_the_arm",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_match_the_call_may_skip_never_credits_the_arm"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

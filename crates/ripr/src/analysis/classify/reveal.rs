@@ -427,6 +427,16 @@ fn analyze_related_assertions(
         let cross_package_defeats_owner = match_context
             .owner_callee
             .is_some_and(|callee| cross_package_name_defeats(test, callee));
+        // RIPR-SPEC-0229: an arm selection is read only in a test whose every
+        // mention of the owner is a direct call this module reads. A
+        // `let reason = |x| ..` closure or any other local use of the name
+        // may shadow the owner, so its calls say nothing about the owner.
+        let match_context = RevealMatchContext {
+            arm_selector: match_context
+                .arm_selector
+                .filter(|selector| selector.observed_inputs(test).is_some()),
+            ..match_context
+        };
         // Refusing credit must not manufacture the singleton-test fallback
         // for an otherwise unrelated surviving oracle.
         let assertion_count = test.assertions.len();

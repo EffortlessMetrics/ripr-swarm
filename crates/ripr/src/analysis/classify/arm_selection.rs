@@ -60,6 +60,12 @@ pub(in crate::analysis) struct ArmSelector {
     binding: ScrutineeBinding,
     owner: String,
     method: bool,
+    /// Whether every call of the owner runs the enclosing `match`: it is
+    /// the first thing the body does, after `let` statements with no
+    /// control flow. A match nested in another arm, an `if`, a loop, or
+    /// after a possible early `return`/`?` may be skipped, so an input
+    /// that fits the arm does not show the arm ran.
+    reached: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +126,7 @@ impl ArmSelector {
         let EnclosingMatch {
             scrutinee,
             earlier_patterns,
+            reached,
         } = enclosing_match(owner, probe.location.line)?;
         let earlier = earlier_patterns
             .iter()
@@ -157,6 +164,7 @@ impl ArmSelector {
             binding,
             owner: owner.name.clone(),
             method,
+            reached,
         })
     }
 
@@ -235,9 +243,10 @@ impl ArmSelector {
     }
 
     /// First-match selection: the changed arm is selected only when its own
-    /// alternatives select the input and every earlier arm provably does
-    /// not. Not matching the changed arm's own pattern is enough for
-    /// `SelectsOther`, whatever the earlier arms are.
+    /// alternatives select the input, every earlier arm provably does not,
+    /// and the call always runs the enclosing `match`. Not matching the
+    /// changed arm's own pattern is enough for `SelectsOther`, whatever the
+    /// earlier arms are and whether the `match` runs at all.
     fn judge(&self, input: &str) -> ArmSelection {
         // `Priority::Low` is not `Level::Low`: a qualifier other than the
         // scrutinee's type (or `Self`) names another enum's variant.
@@ -263,7 +272,11 @@ impl ArmSelector {
                 return ArmSelection::Unknown;
             }
         }
-        ArmSelection::Selects
+        if self.reached {
+            ArmSelection::Selects
+        } else {
+            ArmSelection::Unknown
+        }
     }
 }
 
@@ -628,6 +641,7 @@ fn parameter_name(parameter: &str) -> &str {
 struct EnclosingMatch {
     scrutinee: String,
     earlier_patterns: Vec<String>,
+    reached: bool,
 }
 
 fn enclosing_match(owner: &FunctionSummary, arm_line: usize) -> Option<EnclosingMatch> {
@@ -672,7 +686,31 @@ fn enclosing_match(owner: &FunctionSummary, arm_line: usize) -> Option<Enclosing
     Some(EnclosingMatch {
         scrutinee: scrutinee.to_string(),
         earlier_patterns,
+        reached: match_always_runs(&masked[..keyword]),
     })
+}
+
+/// Whether the owner's body always reaches a `match` whose keyword ends
+/// `masked_before_match`: everything between the body's opening `{` and
+/// the keyword is `let` statements (or a `let x =` head for the match
+/// itself) with no block, closure, branch, loop, early exit or macro.
+fn match_always_runs(masked_before_match: &str) -> bool {
+    let Some(body_open) = masked_before_match.find('{') else {
+        return false;
+    };
+    let prefix = &masked_before_match[body_open + 1..];
+    let control = [
+        "if", "else", "match", "loop", "while", "for", "return", "break", "continue",
+    ];
+    !prefix.contains(['{', '}', '?', '|', '!', '#'])
+        && !prefix.contains("=>")
+        && control
+            .iter()
+            .all(|keyword| whole_word_offsets(prefix, keyword).is_empty())
+        && prefix
+            .split(';')
+            .map(str::trim)
+            .all(|statement| statement.is_empty() || statement.starts_with("let "))
 }
 
 /// Arm patterns in `masked[start..end]`, the part of a match body before
@@ -1214,6 +1252,54 @@ mod tests {
             selector.map(|selector| selector.binding),
             Some(ScrutineeBinding::Parameter(0))
         );
+    }
+
+    #[test]
+    fn a_match_the_call_may_skip_never_credits_the_arm() -> Result<(), String> {
+        let skippable = [
+            // Nested in another arm: `reason(None, false)` never enters it.
+            (
+                "pub fn reason(x: Option<i32>, y: bool) -> i32 {\n    match y {\n        true => match x {\n            Some(v) => v,\n            None => 0,\n        },\n        false => 7,\n    }\n}\n",
+                5,
+                "reason(None, false)",
+            ),
+            // After an early return that `None` takes.
+            (
+                "pub fn reason(x: Option<i32>) -> i32 {\n    if x.is_none() {\n        return 7;\n    }\n    match x {\n        Some(v) => v + 1,\n        None => 0,\n    }\n}\n",
+                7,
+                "reason(None)",
+            ),
+            // After a `?` that may return first.
+            (
+                "pub fn reason(x: Option<i32>) -> Option<i32> {\n    let y = check()?;\n    match x {\n        Some(v) => Some(v + y),\n        None => Some(0),\n    }\n}\n",
+                5,
+                "reason(None)",
+            ),
+        ];
+        for (body, line, call) in skippable {
+            let selector =
+                ArmSelector::establish(&arm_probe("None => 0,", line), &owner(body, "reason"))
+                    .ok_or_else(|| format!("premise: the None arm at line {line} is readable"))?;
+            assert!(
+                !selector.assertion_selects(&format!("assert_eq!({call}, 7);")),
+                "a match the call may skip cannot credit its arm: {body}"
+            );
+            // Missing the arm's pattern still misses the arm.
+            let observed = selector
+                .observed_inputs(&test_with(&format!(
+                    "fn t() {{\n    assert_eq!({}, 7);\n}}\n",
+                    call.replace("None", "Some(1)")
+                )))
+                .ok_or_else(|| "premise: the call is readable".to_string())?;
+            assert_eq!(observed.selection, ArmSelection::SelectsOther);
+        }
+        // Control: `let` statements with no control flow always run first.
+        let straight = "pub fn reason(x: Option<i32>) -> i32 {\n    let base = 1;\n    let total = match x {\n        Some(v) => v + base,\n        None => 0,\n    };\n    total\n}\n";
+        let selector =
+            ArmSelector::establish(&arm_probe("None => 0,", 5), &owner(straight, "reason"))
+                .ok_or_else(|| "premise: the None arm is readable".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(reason(None), 0);"));
+        Ok(())
     }
 
     #[test]

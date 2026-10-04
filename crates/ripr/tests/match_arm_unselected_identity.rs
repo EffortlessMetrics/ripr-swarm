@@ -3,7 +3,9 @@
 //! A changed arm is named as unselected only when every related test's
 //! owner call is a call to the changed owner. A test file that imports a
 //! same-named function from another crate may call that function instead,
-//! so its inputs say nothing about which arm of the changed owner ran.
+//! so its inputs say nothing about which arm of the changed owner ran. A
+//! helper the test calls may reach the owner one or more calls away, and a
+//! local closure may shadow the owner's name.
 
 use ripr::{CheckInput, CheckOutput, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
@@ -61,7 +63,7 @@ struct TempRepo {
 }
 
 impl TempRepo {
-    fn create(test_source: &str) -> Result<Self, String> {
+    fn create(source: &str, test_source: &str, diff: &str) -> Result<Self, String> {
         // A process-wide sequence, not the clock: parallel tests on Windows
         // read the same `SystemTime`, share one root, and overwrite each
         // other's fixture.
@@ -80,11 +82,11 @@ impl TempRepo {
             "[package]\nname = \"match-arm-unselected-identity\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), CANDIDATE_SOURCE)
+        std::fs::write(root.join("src/lib.rs"), source)
             .map_err(|error| format!("write source failed: {error}"))?;
         std::fs::write(root.join("tests/flip.rs"), test_source)
             .map_err(|error| format!("write test failed: {error}"))?;
-        std::fs::write(root.join("diff.patch"), DIFF)
+        std::fs::write(root.join("diff.patch"), diff)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(Self { root })
     }
@@ -137,7 +139,7 @@ fn changed_beta_arm(output: &CheckOutput) -> Result<&ripr::Finding, String> {
 
 #[test]
 fn own_crate_call_with_a_sibling_input_names_the_unselected_arm() -> Result<(), String> {
-    let repo = TempRepo::create(OWN_CRATE_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, OWN_CRATE_TEST, DIFF)?;
     let output = repo.check()?;
     let finding = changed_beta_arm(&output)?;
     assert!(
@@ -154,7 +156,7 @@ fn own_crate_call_with_a_sibling_input_names_the_unselected_arm() -> Result<(), 
 
 #[test]
 fn a_foreign_same_named_import_does_not_name_the_unselected_arm() -> Result<(), String> {
-    let repo = TempRepo::create(FOREIGN_IMPORT_TEST)?;
+    let repo = TempRepo::create(CANDIDATE_SOURCE, FOREIGN_IMPORT_TEST, DIFF)?;
     let output = repo.check()?;
     let finding = changed_beta_arm(&output)?;
     assert!(
@@ -170,5 +172,138 @@ fn a_foreign_same_named_import_does_not_name_the_unselected_arm() -> Result<(), 
         "no evidence line may name the arm as unselected: {:?}",
         finding.evidence
     );
+    Ok(())
+}
+
+const REASON_SOURCE: &str = r#"pub fn reason(x: Option<i32>) -> i32 {
+    match x {
+        Some(v) => v + 1,
+        None => 0,
+    }
+}
+"#;
+
+const REASON_DIFF: &str = r#"diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub fn reason(x: Option<i32>) -> i32 {
+     match x {
+         Some(v) => v + 1,
+-        None => 1,
++        None => 0,
+     }
+ }
+"#;
+
+const DIRECT_NONE_TEST: &str = r#"use match_arm_unselected_identity::reason;
+
+#[test]
+fn none_reads_zero() {
+    assert_eq!(reason(None), 0);
+}
+"#;
+
+const SHADOWED_NONE_TEST: &str = r#"use match_arm_unselected_identity::reason;
+
+#[test]
+fn none_reads_zero() {
+    let reason = |_x: Option<i32>| 0;
+    assert_eq!(reason(None), 0);
+}
+"#;
+
+const DIRECT_SOME_TEST: &str = r#"use match_arm_unselected_identity::reason;
+
+#[test]
+fn some_adds_one() {
+    assert_eq!(reason(Some(1)), 2);
+}
+"#;
+
+const TWO_LEVEL_HELPER_TEST: &str = r#"use match_arm_unselected_identity::reason;
+
+fn inner(v: Option<i32>) -> i32 {
+    reason(v)
+}
+
+fn check_none() {
+    assert_eq!(inner(None), 0);
+}
+
+#[test]
+fn some_adds_one() {
+    assert_eq!(reason(Some(1)), 2);
+    check_none();
+}
+"#;
+
+/// Every match-arm finding on the changed `None` arm. The changed line
+/// yields more than one match-arm probe (the pattern and the whole arm);
+/// each must carry the same verdict.
+fn changed_none_arms(output: &CheckOutput) -> Result<Vec<&ripr::Finding>, String> {
+    let findings = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ProbeFamily::MatchArm
+                && finding.probe.expression.starts_with("None =>")
+        })
+        .collect::<Vec<_>>();
+    if findings.is_empty() {
+        return Err("missing changed None match-arm finding".to_string());
+    }
+    Ok(findings)
+}
+
+#[test]
+fn a_local_closure_named_like_the_owner_cannot_credit_the_arm() -> Result<(), String> {
+    let control = TempRepo::create(REASON_SOURCE, DIRECT_NONE_TEST, REASON_DIFF)?;
+    let output = control.check()?;
+    for finding in changed_none_arms(&output)? {
+        assert_eq!(
+            finding.class,
+            ripr::ExposureClass::Exposed,
+            "control: `reason(None)` selects and pins the changed arm: {:?}",
+            finding.ripr.reveal.discriminate
+        );
+    }
+
+    let shadowed = TempRepo::create(REASON_SOURCE, SHADOWED_NONE_TEST, REASON_DIFF)?;
+    let output = shadowed.check()?;
+    for finding in changed_none_arms(&output)? {
+        assert_ne!(
+            finding.class,
+            ripr::ExposureClass::Exposed,
+            "`reason` here is the test's closure, not the owner: {:?}",
+            finding.ripr.reveal.discriminate
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_helper_two_calls_away_may_select_the_arm() -> Result<(), String> {
+    let control = TempRepo::create(REASON_SOURCE, DIRECT_SOME_TEST, REASON_DIFF)?;
+    let output = control.check()?;
+    assert!(
+        changed_none_arms(&output)?.iter().any(|finding| finding
+            .ripr
+            .infect
+            .summary
+            .starts_with(UNSELECTED_PREFIX)),
+        "control: the only owner call passes `Some(1)`, so the arm is named"
+    );
+
+    let helper = TempRepo::create(REASON_SOURCE, TWO_LEVEL_HELPER_TEST, REASON_DIFF)?;
+    let output = helper.check()?;
+    for finding in changed_none_arms(&output)? {
+        assert!(
+            !finding.ripr.infect.summary.contains(UNSELECTED_PREFIX),
+            "`check_none` reaches `reason(None)` through `inner`: {:?}",
+            finding.ripr.infect
+        );
+    }
     Ok(())
 }

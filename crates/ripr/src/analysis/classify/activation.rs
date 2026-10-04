@@ -1077,18 +1077,33 @@ fn may_reach_owner_unread(
         "panic",
         "matches",
     ];
-    // The test's own `fn name()` header reads as a call to itself; only a
-    // different indexed function is a helper.
-    let helper_call = test.body_calls().any(|call| {
-        call.name != owner
-            && index.functions().iter().any(|function| {
-                function.name == call.name
-                    && !(function.name == test.name && function.file == test.file)
-                    && super::reveal::contains_as_whole_word(&function.body, owner)
-            })
-    });
-    if helper_call {
-        return true;
+    // Follow helpers transitively: `check_none()` may call `inner(None)`,
+    // which calls the owner. The test's own `fn name()` header reads as a
+    // call to itself; only a different indexed function is a helper.
+    let mut pending = test
+        .body_calls()
+        .map(|call| call.name.as_str())
+        .filter(|name| *name != owner)
+        .collect::<Vec<_>>();
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in index.functions().iter().filter(|function| {
+            function.name == name && !(function.name == test.name && function.file == test.file)
+        }) {
+            if super::reveal::contains_as_whole_word(&function.body, owner) {
+                return true;
+            }
+            pending.extend(
+                function
+                    .calls
+                    .iter()
+                    .map(|call| call.name.as_str())
+                    .filter(|callee| *callee != owner),
+            );
+        }
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     let bytes = masked.as_bytes();
