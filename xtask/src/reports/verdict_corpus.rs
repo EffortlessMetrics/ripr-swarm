@@ -1,4 +1,5 @@
-//! Labeled Rust verdict corpus (RIPR-SPEC-0219).
+//! Labeled verdict corpora (RIPR-SPEC-0219 for Rust, RIPR-SPEC-0238 for the
+//! per-language corpora that reuse this harness).
 //!
 //! Each case pairs a one-line edit in a pinned real crate with a runtime truth
 //! label: the edited behavior was mutated and the crate's own test suite was
@@ -18,6 +19,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) const CORPUS_DIR: &str = "fixtures/rust-verdict-corpus";
+/// Languages a corpus may declare. Each language keeps its own corpus
+/// directory, labels and expected report, so a verdict change in one language
+/// never re-blesses another (RIPR-SPEC-0238).
+pub(crate) const CORPUS_LANGUAGES: [&str; 4] = ["rust", "typescript", "python", "perl"];
+const DEFAULT_LANGUAGE: &str = "rust";
 const CORPUS_SCHEMA: &str = "ripr_verdict_corpus.v1";
 const REPORT_SCHEMA: &str = "ripr_verdict_corpus_report.v1";
 const DEFAULT_OUT: &str = "target/ripr/reports/verdict-corpus";
@@ -29,6 +35,10 @@ pub(crate) struct Corpus {
     pub(crate) schema_version: String,
     pub(crate) kind: String,
     pub(crate) spec: String,
+    /// The language every subject in this corpus is written in. Absent means
+    /// Rust, the corpus this harness was built for.
+    #[serde(default = "default_language")]
+    pub(crate) language: String,
     pub(crate) corpus_version: String,
     pub(crate) description: String,
     pub(crate) label_method: String,
@@ -36,6 +46,14 @@ pub(crate) struct Corpus {
     pub(crate) non_claims: Vec<String>,
     pub(crate) subjects: Vec<Subject>,
     pub(crate) cases: Vec<Case>,
+}
+
+fn default_language() -> String {
+    DEFAULT_LANGUAGE.to_string()
+}
+
+fn is_default_language(language: &str) -> bool {
+    language == DEFAULT_LANGUAGE
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -599,6 +617,9 @@ pub(crate) struct CaseRow {
 pub(crate) struct Report {
     pub(crate) schema_version: String,
     pub(crate) spec: String,
+    /// Omitted for Rust so the Rust expected report keeps its bytes.
+    #[serde(skip_serializing_if = "is_default_language")]
+    pub(crate) language: String,
     pub(crate) corpus_version: String,
     pub(crate) cases_total: usize,
     pub(crate) by_truth: BTreeMap<String, usize>,
@@ -802,6 +823,7 @@ pub(crate) fn build_report(
     Ok(Report {
         schema_version: REPORT_SCHEMA.to_string(),
         spec: corpus.spec.clone(),
+        language: corpus.language.clone(),
         corpus_version: corpus.corpus_version.clone(),
         cases_total: rows.len(),
         by_truth,
@@ -829,7 +851,10 @@ pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
 
 pub(crate) fn render_report_markdown(report: &Report) -> String {
     let mut out = String::new();
-    out.push_str("# Rust verdict corpus report\n\n");
+    out.push_str(&format!(
+        "# {} verdict corpus report\n\n",
+        language_title(&report.language)
+    ));
     out.push_str(&format!(
         "Spec: {}. Corpus version: {}. Cases: {}.\n\n",
         report.spec, report.corpus_version, report.cases_total
@@ -918,6 +943,25 @@ pub(crate) fn render_report_markdown(report: &Report) -> String {
     out
 }
 
+/// The `--language` argument a re-bless command needs; empty for Rust.
+fn language_flag(language: &str) -> String {
+    if is_default_language(language) {
+        String::new()
+    } else {
+        format!(" --language {language}")
+    }
+}
+
+fn language_title(language: &str) -> &str {
+    match language {
+        "rust" => "Rust",
+        "typescript" => "TypeScript",
+        "python" => "Python",
+        "perl" => "Perl",
+        other => other,
+    }
+}
+
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().map(|b| format!("{b:02x}")).collect()
@@ -977,6 +1021,13 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
     }
     if corpus.non_claims.is_empty() {
         violations.push("`non_claims` is empty".to_string());
+    }
+    if !CORPUS_LANGUAGES.contains(&corpus.language.as_str()) {
+        violations.push(format!(
+            "language `{}` is not one of {}",
+            corpus.language,
+            CORPUS_LANGUAGES.join(", ")
+        ));
     }
     let mut subjects = BTreeMap::new();
     for subject in &corpus.subjects {
@@ -1689,37 +1740,87 @@ fn first_differing_line(expected: &str, actual: &str) -> String {
     "length differs".to_string()
 }
 
+/// The corpus directory for a language: `fixtures/<language>-verdict-corpus`.
+pub(crate) fn corpus_dir(language: &str) -> Result<PathBuf, String> {
+    if !CORPUS_LANGUAGES.contains(&language) {
+        return Err(format!(
+            "verdict-corpus: --language `{language}` is not one of {}",
+            CORPUS_LANGUAGES.join(", ")
+        ));
+    }
+    if is_default_language(language) {
+        return Ok(PathBuf::from(CORPUS_DIR));
+    }
+    Ok(PathBuf::from(format!("fixtures/{language}-verdict-corpus")))
+}
+
+/// Rust keeps the original output and run paths; every other language nests
+/// under its own name so two corpora never share a run copy or report.
+fn language_path(base: &str, language: &str) -> PathBuf {
+    if is_default_language(language) {
+        PathBuf::from(base)
+    } else {
+        Path::new(base).join(language)
+    }
+}
+
+/// A corpus loaded from a language's directory must declare that language,
+/// so `--language typescript` can never score a Rust corpus under the
+/// TypeScript name.
+fn corpus_for_language(dir: &Path, language: &str) -> Result<Corpus, String> {
+    let corpus = validated_corpus(dir)?;
+    if corpus.language != language {
+        return Err(format!(
+            "verdict-corpus: {} declares language `{}`, not `{language}`",
+            normalize_path(&dir.join("corpus.json")),
+            corpus.language
+        ));
+    }
+    Ok(corpus)
+}
+
 pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
-    let dir = Path::new(CORPUS_DIR);
     let mut iter = args.iter();
     let sub = iter.next().map(String::as_str).unwrap_or("check");
-    let mut out = PathBuf::from(DEFAULT_OUT);
+    let mut out = None;
+    let mut language = DEFAULT_LANGUAGE.to_string();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--out" => {
-                out = PathBuf::from(iter.next().ok_or("--out needs a directory")?);
+                out = Some(PathBuf::from(iter.next().ok_or("--out needs a directory")?));
+            }
+            "--language" => {
+                language = iter
+                    .next()
+                    .ok_or("--language needs one of rust, typescript, python, perl")?
+                    .clone();
             }
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
     }
+    let dir_buf = corpus_dir(&language)?;
+    let dir = dir_buf.as_path();
+    let out_given = out.is_some();
+    let out = out.unwrap_or_else(|| language_path(DEFAULT_OUT, &language));
     match sub {
         "validate" => {
-            if args.len() > 1 {
+            if out_given {
                 return Err(
-                    "verdict-corpus validate takes no options; `--out` applies to report and check"
+                    "verdict-corpus validate takes only --language; `--out` applies to report and check"
                         .to_string(),
                 );
             }
-            let corpus = validated_corpus(dir)?;
+            let corpus = corpus_for_language(dir, &language)?;
             println!(
-                "verdict-corpus: {} cases across {} subjects are valid",
+                "verdict-corpus: {} {} cases across {} subjects are valid",
                 corpus.cases.len(),
+                corpus.language,
                 corpus.subjects.len()
             );
             Ok(())
         }
         "report" | "check" => {
-            let corpus = validated_corpus(dir)?;
+            let corpus = corpus_for_language(dir, &language)?;
             // Read the golden before writing anything, so an `--out` that
             // aliases the expected directory cannot make the check pass.
             let expected_path = dir.join("expected").join("report.json");
@@ -1744,7 +1845,11 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                     normalize_path(&out)
                 ));
             }
-            let report = run_corpus(dir, &corpus, Path::new("target/ripr/verdict-corpus"))?;
+            let report = run_corpus(
+                dir,
+                &corpus,
+                &language_path("target/ripr/verdict-corpus", &language),
+            )?;
             let json = render_report_json(&report)?;
             let markdown = render_report_markdown(&report);
             fs::create_dir_all(&out)
@@ -1767,9 +1872,10 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 && *expected_md != markdown
             {
                 return Err(format!(
-                    "verdict-corpus: {} drifted from the rendered report ({}); re-bless both expected files with `report --out {}`",
+                    "verdict-corpus: {} drifted from the rendered report ({}); re-bless both expected files with `report{} --out {}`",
                     normalize_path(&expected_md_path),
                     first_differing_line(expected_md, &markdown),
+                    language_flag(&language),
                     normalize_path(&dir.join("expected"))
                 ));
             }

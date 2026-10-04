@@ -12062,6 +12062,32 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0238"
+name = "Per-language labeled verdict corpora"
+spec = "docs/specs/RIPR-SPEC-0238-per-language-verdict-corpora.md"
+tests = [
+  "xtask/src/reports/verdict_corpus_tests.rs::a_corpus_without_a_language_is_rust_and_its_report_keeps_its_bytes",
+  "xtask/src/reports/verdict_corpus_tests.rs::a_non_rust_corpus_names_its_language_in_both_reports",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_undeclared_language",
+  "xtask/src/reports/verdict_corpus_tests.rs::each_language_owns_its_corpus_directory_and_run_paths",
+  "xtask/src/reports/verdict_corpus_tests.rs::a_language_directory_must_declare_that_language",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus",
+]
+code = [
+  "xtask/src/reports/verdict_corpus.rs",
+]
+outputs = [
+  "fixtures/rust-verdict-corpus/expected/report.json",
+]
+metrics = [
+  "verdict_corpus_false_actionable_rate",
+  "verdict_corpus_false_exposed_rate",
+  "verdict_corpus_false_silent_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0217"
 name = "Repair-attempt discovery selection and fresh-process resume"
 spec = "docs/specs/RIPR-SPEC-0217-agent-attempt-status-selection.md"
