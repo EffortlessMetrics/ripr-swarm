@@ -834,12 +834,15 @@ jobs:
               stdout,stderr,overflow,error=capture(p)
               wall=time.monotonic_ns()-start
               retain(OUT/(label+'-'+kind+'-stdout'),stdout);retain(OUT/(label+'-'+kind+'-stderr'),stderr)
+              try:
+                  envelope=json.loads(stdout);output_valid=envelope['analysis_outcome']['analysis_complete'] is True and len(envelope['findings'])==6
+              except (ValueError,UnicodeError,KeyError,TypeError):output_valid=False
               raw=t.read_bytes() if t.exists() else b'';retain(OUT/t.name,raw)
               try:metrics={'state':'observed','values':json.loads(raw)}
               except (ValueError,UnicodeError):metrics={'state':'unavailable','reason':'GNU time did not emit valid JSON'}
-              emit({'type':'cli','kind':kind,'label':label,'performance_eligible':metrics['state']=='observed' and not overflow and error is None and p.returncode==0,'wall_ns':wall,'exit_code':p.returncode,'lifetime':metrics,'capture_overflow':overflow,'capture_error':repr(error) if error else None,'stdout_sha256':hashlib.sha256(stdout).hexdigest(),'stderr_sha256':hashlib.sha256(stderr).hexdigest()})
+              emit({'type':'cli','kind':kind,'label':label,'performance_eligible':metrics['state']=='observed' and output_valid and not overflow and error is None and p.returncode==0,'wall_ns':wall,'exit_code':p.returncode,'output_valid':output_valid,'lifetime':metrics,'capture_overflow':overflow,'capture_error':repr(error) if error else None,'stdout_sha256':hashlib.sha256(stdout).hexdigest(),'stderr_sha256':hashlib.sha256(stderr).hexdigest()})
               if error:raise error
-              if overflow or p.returncode:raise RuntimeError('invalid CLI sample: '+str((p.returncode,overflow)))
+              if not output_valid or overflow or p.returncode:raise RuntimeError('invalid CLI sample: '+str((p.returncode,overflow,output_valid)))
               host_guard();return stdout,stderr,p.returncode
           class Session:
               def __init__(self,kind,label):
