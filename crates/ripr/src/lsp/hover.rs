@@ -749,6 +749,13 @@ fn number_or_string_label(value: &NumberOrString) -> String {
 }
 
 fn position_in_range(position: &Position, range: &Range) -> bool {
+    // A zero-width range is a coarse line-level origin: the producer refused
+    // column precision (`OriginKind::CoarseZeroWidth`, base-deleted findings).
+    // Editors render it on that line, so the whole line must reach its hover;
+    // a half-open check would make it unhoverable at every position.
+    if range.start == range.end {
+        return position.line == range.start.line;
+    }
     position_is_after_or_equal(position, &range.start) && position_is_before(position, &range.end)
 }
 

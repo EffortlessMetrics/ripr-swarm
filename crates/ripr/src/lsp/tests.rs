@@ -13929,6 +13929,51 @@ fn hover_for_position_uses_snapshot_finding_hover() -> Result<(), String> {
 }
 
 #[test]
+fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result<(), String> {
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let finding = sample_finding();
+    let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    // Coarse origin: column precision refused, so the producer publishes a
+    // zero-width range at the start of the finding line.
+    let line = diagnostic.range.start.line;
+    diagnostic.range = Range {
+        start: Position { line, character: 0 },
+        end: Position { line, character: 0 },
+    };
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let diagnostics = sample_workspace_diagnostics(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        vec![diagnostic],
+        vec![finding],
+    );
+    let Some(_) = backend.refresh_plan(diagnostics) else {
+        return Err("expected refresh plan".to_string());
+    };
+
+    for character in [0, 12] {
+        let Some(hover) = backend.hover_for_position(&hover_params(uri.clone(), line, character))
+        else {
+            return Err(format!("expected finding hover at {line}:{character}"));
+        };
+        let HoverContents::Markup(markup) = hover.contents else {
+            return Err("expected markup hover".to_string());
+        };
+        assert!(markup.value.contains("**ripr** `weakly_exposed`"));
+        assert!(markup.value.contains("## RIPR Evidence"));
+    }
+    // The coarse range covers its own line only.
+    assert!(
+        backend
+            .hover_for_position(&hover_params(uri, line + 1, 0))
+            .is_none(),
+        "a zero-width range must not reach the next line"
+    );
+    Ok(())
+}
+
+#[test]
 fn finding_hover_avoids_mutation_runtime_language() -> Result<(), String> {
     use super::hover::finding_hover_response;
 

@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Resolve the diff base from the repository by default. `ripr.baseRef`
+  defaulted to `origin/main`, so every repository whose default branch is
+  `master` showed "the base `origin/main` does not resolve" and no
+  diagnostics until the user found the setting. The default is now empty and
+  resolves `origin/HEAD`, then `origin/main`, `origin/master`, `main`,
+  `master`, as `ripr check` does. An explicit setting is still used as given.
+
 - Start the server when Workspace Trust is granted or a first folder is added.
   Activation in an untrusted or folderless window was recorded as a running
   session, so those events did nothing until `ripr: Restart Server`.

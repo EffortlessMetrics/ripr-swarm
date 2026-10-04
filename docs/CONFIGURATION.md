@@ -416,7 +416,7 @@ reads seven keys; everything else is ignored. The schema lives in
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `baseRef` | string | automatic loader base resolution | Git base ref for editor-triggered diffs. An omitted or empty value requests the loader's default-base resolution rather than a hardcoded branch. The VS Code extension separately defaults `ripr.baseRef` to `"origin/main"` and sends that configured value. |
+| `baseRef` | string | automatic loader base resolution | Git base ref for editor-triggered diffs. An omitted or empty value requests the loader's default-base resolution rather than a hardcoded branch. The VS Code extension defaults `ripr.baseRef` to `""`, so it requests the same resolution unless a user sets a ref. |
 | `checkMode` | string | `ripr.toml` `analysis.mode`, otherwise `"draft"` | One of `instant`, `draft`, `fast`, `deep`, `ready`. Unknown values fall back to the repo config/default. |
 | `includeUnchangedTests` | boolean | `ripr.toml` `analysis.include_unchanged_tests`, otherwise `true` | Mirror of the CLI's `--no-unchanged-tests` (inverted). |
 | `seamDiagnostics` | boolean | `ripr.toml` `lsp.seam_diagnostics`, otherwise `true` | Enables repo seam evidence diagnostics in addition to diff-derived Finding diagnostics. |
@@ -505,7 +505,7 @@ download → `PATH`), see
 | Setting | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `ripr.check.mode` | enum: `instant` \| `draft` \| `fast` \| `deep` \| `ready` | `draft` | Editor-side analysis mode. Forwarded as `initializationOptions.checkMode`. |
-| `ripr.baseRef` | string | `"origin/main"` | Git base ref used by editor diagnostics and the context commands. Forwarded as `initializationOptions.baseRef`. |
+| `ripr.baseRef` | string | `""` | Git base ref used by editor diagnostics and the context commands. Forwarded as `initializationOptions.baseRef`; empty resolves the repository default branch like `ripr check`, and the context commands omit `--base`. |
 | `ripr.includeUnchangedTests` | boolean | `true` | Include unchanged tests as static evidence. Forwarded as `initializationOptions.includeUnchangedTests` and the `workspace/configuration` pull. |
 | `ripr.seamDiagnostics` | boolean | `true` | Enable saved-workspace repository seam diagnostics in addition to diff-derived findings. Forwarded as `initializationOptions.seamDiagnostics` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.seam_diagnostics` applies. |
 | `ripr.diagnosticProfile` | enum: `actionable` \| `full` | `actionable` | Select the bounded actionable or audit/debug diagnostic projection. Forwarded as `initializationOptions.diagnosticProfile` only when set in a VS Code settings layer; otherwise `ripr.toml` `lsp.diagnostic_profile` applies. |

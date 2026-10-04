@@ -1004,12 +1004,14 @@ export class RiprClientController {
     const activeLine = editor ? editor.selection.active.line + 1 : undefined;
     const line = lineFromTarget(target) ?? activeLine ?? 1;
     const selector = `${relativePath}:${line}`;
+    // An empty base lets `ripr context` resolve the repository's default
+    // branch the same way the language server does.
+    const baseRef = config.baseRef.trim();
     const args = [
       'context',
       '--root',
       workspaceFolder.uri.fsPath,
-      '--base',
-      config.baseRef,
+      ...(baseRef ? ['--base', baseRef] : []),
       '--at',
       selector,
       '--json'

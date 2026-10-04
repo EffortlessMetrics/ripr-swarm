@@ -162,7 +162,9 @@ separate supply-chain boundary.
 - `ripr.check.mode`: preferred editor check mode for LSP diagnostics and
   context commands. Defaults to `draft`.
 - `ripr.baseRef`: Git base ref used by LSP diagnostics and context commands.
-  Defaults to `origin/main`.
+  Empty by default, which resolves the repository's default branch like
+  `ripr check`: `origin/HEAD`, then `origin/main`, `origin/master`, `main`,
+  `master`.
 - `ripr.includeUnchangedTests`: include unchanged tests as static evidence.
   Defaults to `true`.
 - `ripr.seamDiagnostics`: publish repository seam diagnostics in addition to
