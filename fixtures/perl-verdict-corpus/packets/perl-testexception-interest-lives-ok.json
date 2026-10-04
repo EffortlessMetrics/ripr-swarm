@@ -1,0 +1,613 @@
+{
+  "changes": [
+    {
+      "behavior_hint": "return_value",
+      "change_id": "change:file:lib/Account.pm:38:38",
+      "changed_observable": "$balance / 20",
+      "changed_text_digest": "fnv64:f38043edba635df7",
+      "file_id": "file:lib/Account.pm",
+      "missing_discriminator": null,
+      "owner_id": "owner:lib/Account.pm:sub:Account::interest:613-679",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 25,
+        "end_line": 38,
+        "start_column": 0,
+        "start_line": 38
+      }
+    }
+  ],
+  "dynamic_boundaries": [],
+  "files": [
+    {
+      "digest": "sha256:5e3b51114b3839d24d9747e8d3bc2ada3f6fa8ecf9ee95bd1f22db8cd24e65b4",
+      "file_id": "file:lib/Account.pm",
+      "package_names": [
+        "Account",
+        "Account::Error"
+      ],
+      "path": "lib/Account.pm",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "role": [
+        "source"
+      ]
+    },
+    {
+      "digest": "sha256:dfa10426ef31eff16522eaf5267eb487365bbae35e2289ed9692c79890eb55aa",
+      "file_id": "file:t/account.t",
+      "package_names": [],
+      "path": "t/account.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/account.t"
+      ],
+      "role": [
+        "test"
+      ]
+    }
+  ],
+  "input": {
+    "base": "base",
+    "diff_id": null,
+    "head": "HEAD",
+    "requested_fact_classes": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance"
+    ]
+  },
+  "limitations": [
+    {
+      "evidence_refs": [],
+      "kind": "partial_emitter",
+      "limitation_id": "emitter-partial",
+      "message": "Parser-backed tests/oracles, relations/discriminators (incl. a parser-backed direct_owner_call), boundaries/commands, files/owners, (when a diff is supplied) diff-owned changes, and a deterministic packet_fingerprint are emitted. Export-aware relation reachability and the managed-producer diff source land in later slices."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "narrowed_representation",
+      "limitation_id": "oracle-representation",
+      "message": "oracle facts locate the whole assertion call range; the ripr-perl-facts-v1 schema has no observed/expected expression sub-range fields, so those are conveyed as string expressions only."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "unverified_provenance",
+      "limitation_id": "diff-provenance-unverified",
+      "message": "base/head/diff are caller-asserted and not verified against a repository; this packet does not confirm the supplied diff is the actual base->head diff."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "range_precision",
+      "limitation_id": "change-range-imprecise",
+      "message": "change ranges are line-granular with best-effort column data derived from the diff, not the byte-accurate LineIndex ranges used for owners."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "partial_inference",
+      "limitation_id": "change-behavior-hint-partial",
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+    }
+  ],
+  "oracles": [
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "throws_ok { Account::withdraw(10, 20) } qr/insufficient funds/, 'overdrawing names the reason'",
+      "kind": "exception_observer",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:throws_ok:77-171",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 94,
+        "end_line": 6,
+        "start_column": 0,
+        "start_line": 6
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/account.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "throws_ok { Account::transfer(10, 11) } qr/exceeds balance/, 'one over the balance dies'",
+      "kind": "exception_observer",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:throws_ok:174-262",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 88,
+        "end_line": 8,
+        "start_column": 0,
+        "start_line": 8
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/account.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "lives_ok { Account::transfer(10, 10) } 'the whole balance may move'",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:lives_ok:264-331",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 67,
+        "end_line": 9,
+        "start_column": 0,
+        "start_line": 9
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/account.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "dies_ok { Account::close_out(1000) } 'large balances cannot close'",
+      "kind": "exception_observer",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:dies_ok:334-400",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 66,
+        "end_line": 11,
+        "start_column": 0,
+        "start_line": 11
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/account.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "lives_ok { Account::interest(100) } 'interest never dies'",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:lives_ok:403-460",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 57,
+        "end_line": 13,
+        "start_column": 0,
+        "start_line": 13
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": "owner:lib/Account.pm:sub:Account::interest:613-679",
+      "test_id": "test:t/account.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "throws_ok { Account::freeze('fraud') } 'Account::Error', 'freezing raises an account error'",
+      "kind": "exception_observer",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:throws_ok:463-554",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 91,
+        "end_line": 15,
+        "start_column": 0,
+        "start_line": 15
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/account.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "lives_and { is(Account::balance_after(10, 4), 5) } 'a withdrawal costs a fee of one'",
+      "kind": "exception_observer",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:lives_and:557-641",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 84,
+        "end_line": 17,
+        "start_column": 0,
+        "start_line": 17
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/account.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(Account::balance_after(10, 4), 5)",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/account.t:is:569-605",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 48,
+        "end_line": 17,
+        "start_column": 12,
+        "start_line": 17
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/account.t"
+    }
+  ],
+  "owners": [
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "package",
+      "name": "Account",
+      "owner_id": "owner:lib/Account.pm:package:Account:0-15",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 15,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "package",
+      "name": "Account::Error",
+      "owner_id": "owner:lib/Account.pm:package:Account::Error:45-67",
+      "package": "Account",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 22,
+        "end_line": 5,
+        "start_column": 0,
+        "start_line": 5
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "new",
+      "owner_id": "owner:lib/Account.pm:sub:Account::Error::new:70-144",
+      "package": "Account::Error",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 10,
+        "start_column": 0,
+        "start_line": 7
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "message",
+      "owner_id": "owner:lib/Account.pm:sub:Account::Error::message:146-176",
+      "package": "Account::Error",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 30,
+        "end_line": 12,
+        "start_column": 0,
+        "start_line": 12
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "package",
+      "name": "Account",
+      "owner_id": "owner:lib/Account.pm:package:Account:178-193",
+      "package": "Account::Error",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 15,
+        "end_line": 14,
+        "start_column": 0,
+        "start_line": 14
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "withdraw",
+      "owner_id": "owner:lib/Account.pm:sub:Account::withdraw:196-344",
+      "package": "Account",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 20,
+        "start_column": 0,
+        "start_line": 16
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "transfer",
+      "owner_id": "owner:lib/Account.pm:sub:Account::transfer:346-495",
+      "package": "Account",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 28,
+        "start_column": 0,
+        "start_line": 22
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "close_out",
+      "owner_id": "owner:lib/Account.pm:sub:Account::close_out:497-611",
+      "package": "Account",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 34,
+        "start_column": 0,
+        "start_line": 30
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "interest",
+      "owner_id": "owner:lib/Account.pm:sub:Account::interest:613-679",
+      "package": "Account",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 39,
+        "start_column": 0,
+        "start_line": 36
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "freeze",
+      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:681-800",
+      "package": "Account",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 45,
+        "start_column": 0,
+        "start_line": 41
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "kind": "sub",
+      "name": "balance_after",
+      "owner_id": "owner:lib/Account.pm:sub:Account::balance_after:802-891",
+      "package": "Account",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Account.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 50,
+        "start_column": 0,
+        "start_line": 47
+      }
+    }
+  ],
+  "packet_fingerprint": "sha256:17bc1505345bc0fd84bfb53dca3101cde14c17237ad0db9e01afcef55c67a708",
+  "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
+  "packet_status": "partial",
+  "producer": {
+    "capabilities": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance",
+      "test_facts"
+    ],
+    "name": "perl-lsp",
+    "version": "0.17.0"
+  },
+  "provenance": [
+    {
+      "confidence": "high",
+      "provenance_id": "cli-surface",
+      "source": "operator_config"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/account.t",
+      "provenance_id": "prov:test_discovery:file:t/account.t",
+      "range": "3:0-3:19",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/account.t",
+      "provenance_id": "prov:oracle_extraction:file:t/account.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Account.pm",
+      "provenance_id": "prov:syntax:file:lib/Account.pm",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/account.t",
+      "provenance_id": "prov:syntax:file:t/account.t",
+      "source": "syntax"
+    }
+  ],
+  "relations": [
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Account.pm:sub:Account::balance_after:802-891",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__balance_after_802-891",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/account.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Account.pm:sub:Account::close_out:497-611",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__close_out_497-611",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/account.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Account.pm:sub:Account::freeze:681-800",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__freeze_681-800",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/account.t"
+    },
+    {
+      "change_id": "change:file:lib/Account.pm:38:38",
+      "confidence": "medium",
+      "oracle_id": "oracle:t/account.t:lives_ok:403-460",
+      "owner_id": "owner:lib/Account.pm:sub:Account::interest:613-679",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__interest_613-679:change:file:lib/Account.pm:38:38",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/account.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Account.pm:sub:Account::transfer:346-495",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__transfer_346-495",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/account.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Account.pm:sub:Account::withdraw:196-344",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/account.t:lib/Account.pm:owner_lib/Account.pm_sub_Account__withdraw_196-344",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/account.t"
+    }
+  ],
+  "root": {
+    "path_style": "posix",
+    "repo_relative": "s",
+    "vcs_head": "HEAD"
+  },
+  "schema_version": "ripr-perl-facts-v1",
+  "tests": [
+    {
+      "confidence": "high",
+      "file_id": "file:t/account.t",
+      "framework": "Test::Exception",
+      "name": "t/account.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/account.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 20,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/account.t"
+    }
+  ],
+  "verify_commands": [
+    {
+      "argv": [
+        "prove",
+        "t/account.t"
+      ],
+      "command_id": "verify_cmd:t/account.t:1",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/account.t"
+    }
+  ]
+}

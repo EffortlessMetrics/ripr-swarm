@@ -12071,15 +12071,23 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_an_undeclared_language",
   "xtask/src/reports/verdict_corpus_tests.rs::each_language_owns_its_corpus_directory_and_run_paths",
   "xtask/src/reports/verdict_corpus_tests.rs::a_language_directory_must_declare_that_language",
+  "xtask/src/reports/verdict_corpus_tests.rs::committed_perl_corpus_is_valid_and_covers_each_test_library",
+  "xtask/src/reports/verdict_corpus_tests.rs::perl_expected_report_rows_agree_with_corpus_labels",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_holds_perl_packets_to_their_pins_and_provenance",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_perl_facts_and_a_producer_outside_a_perl_corpus",
+  "xtask/src/reports/verdict_corpus_tests.rs::perl_findings_count_while_their_subject_is_unresolved_and_rust_ones_do_not",
+  "xtask/src/reports/verdict_corpus_tests.rs::report_keeps_edited_packet_rates_apart_from_producer_rates",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
+  "fixtures/perl-verdict-corpus",
 ]
 code = [
   "xtask/src/reports/verdict_corpus.rs",
 ]
 outputs = [
   "fixtures/rust-verdict-corpus/expected/report.json",
+  "fixtures/perl-verdict-corpus/expected/report.json",
 ]
 metrics = [
   "verdict_corpus_false_actionable_rate",

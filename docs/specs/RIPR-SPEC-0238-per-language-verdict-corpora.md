@@ -99,6 +99,34 @@ StrykerJS (or, for a test library Stryker cannot drive, the same mutants
 applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
+### Perl corpus
+
+ripr does not read Perl; it reads a `ripr-perl-facts-v1` packet
+(RIPR-SPEC-0064). So the Perl corpus names its producer once, in
+`fact_producer` (`name`, `repository`, a 40-hex `commit`, `command`), and
+every Perl case carries `perl_facts`: a `packet` under `packets/`, its
+`sha256`, and a `provenance`. `producer` means the bytes the pinned producer
+wrote for that case's diff. `edited_producer` means a producer packet edited
+to carry a fact the producer does not emit yet (a RIPR-SPEC-0235 example);
+it must say what was edited in `edits`, and its packet fingerprint is
+recomputed. The validator refuses a Perl case without a packet, a packet
+outside `packets/` or off its pin, an edited packet without edits, a
+producer packet with edits, a Perl corpus without a producer, and a
+producer or packet in any other language's corpus.
+
+`check` runs the `lang-perl` build with `--perl-facts <packet>`. Perl
+findings carry `unresolved_subject` currentness today (#3280), so the Perl
+projection counts them where other languages count only `candidate_current`
+findings. Each row names its packet provenance, and the report adds
+`by_packet_provenance` rates, so only producer rates describe what a Perl
+user gets now. The Rust report has no provenance field and keeps its bytes.
+
+Subjects are authored Perl distributions (`authored-perl-<library>-<name>`)
+covering Test::More, Test2::V0 and Test::Exception. Truth is hand-written
+mutants of the rewritten line run under `prove -l t`, because no Perl
+mutation tool drives all three libraries; each mutant names the failing
+test file and assertion and carries an equivalence review.
+
 ## Required Evidence
 
 - A corpus without `language` reads as Rust and its rendered report has no
@@ -109,6 +137,12 @@ labeling toolchain and test command each case names.
   refuses anything else; a directory declaring another language is refused.
 - Each committed non-Rust corpus validates, contains both truth directions,
   and its expected report agrees with its labels row by row.
+- A Perl case is refused without a pinned packet under `packets/`, and an
+  edited packet is refused without its edits; a packet or producer in a
+  non-Perl corpus is refused.
+- Perl findings with `unresolved_subject` currentness count on their anchor;
+  Rust findings with that currentness do not.
+- Producer and edited-packet rates are reported apart.
 
 ## Non-Goals
 
@@ -139,6 +173,12 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_rejects_an_undeclared_language`
 - `each_language_owns_its_corpus_directory_and_run_paths`
 - `a_language_directory_must_declare_that_language`
+- `committed_perl_corpus_is_valid_and_covers_each_test_library`
+- `perl_expected_report_rows_agree_with_corpus_labels`
+- `validator_holds_perl_packets_to_their_pins_and_provenance`
+- `validator_refuses_perl_facts_and_a_producer_outside_a_perl_corpus`
+- `perl_findings_count_while_their_subject_is_unresolved_and_rust_ones_do_not`
+- `report_keeps_edited_packet_rates_apart_from_producer_rates`
 
 ## Implementation Mapping
 

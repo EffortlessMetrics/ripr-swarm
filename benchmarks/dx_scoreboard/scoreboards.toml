@@ -252,6 +252,72 @@ source = "file:fixtures/rust-verdict-corpus/expected/report.json#false_exposed_r
 pending_reason = "fixtures/rust-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check` reports any drift"
 
 [[metric]]
+id = "trust.perl_verdict_corpus_false_verdict"
+board = "trust"
+title = "Wrong Perl verdicts on the hand-checked Perl verdict corpus"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+# Perl verdicts come from fact packets; any newly wrong case regresses.
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_verdict_rate"
+pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_actionable"
+board = "trust"
+title = "Hand-checked Perl edits the tests fully catch that ripr still flags as a gap"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_actionable_rate"
+pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_exposed"
+board = "trust"
+title = "Hand-checked Perl edits the tests miss that ripr credits as caught"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_exposed_rate"
+pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_false_silent"
+board = "trust"
+title = "Hand-checked Perl edits the tests miss that ripr reports as fine"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#false_silent_rate"
+pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
+id = "trust.perl_verdict_corpus_abstention"
+board = "trust"
+title = "Hand-checked Perl edits where ripr gives no specific verdict"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.2
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "file:fixtures/perl-verdict-corpus/expected/report.json#abstention_rate"
+pending_reason = "fixtures/perl-verdict-corpus/expected/report.json is missing; restore it from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
+
+[[metric]]
 id = "trust.discriminator_claim_agreement"
 board = "trust"
 title = "When ripr says a test discriminates, real mutants are caught"

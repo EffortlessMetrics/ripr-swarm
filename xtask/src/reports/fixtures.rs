@@ -800,6 +800,20 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     })
 }
 
+/// Memoized result of the one `cargo build -p ripr --features lang-perl` this
+/// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
+static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// The debug binary with the `lang-perl` preview adapter compiled in, for the
+/// Perl verdict corpus (RIPR-SPEC-0238): the default build refuses Perl
+/// packets. It is the same path as [`ripr_fixture_binary`], built with the
+/// default features plus `lang-perl`, so the Rust adapter is unchanged.
+pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
+    ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_PERL_BINARY_BUILD, &|| {
+        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"]).map(|_status| ())
+    })
+}
+
 /// Resolve `binary` after ensuring `build` has run exactly once for `build_once`.
 ///
 /// The build is unconditional with respect to the binary already existing — that

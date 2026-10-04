@@ -1,0 +1,2093 @@
+{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0238",
+  "language": "perl",
+  "corpus_version": "2026-10-04.1",
+  "description": "Hand-labeled Perl verdict corpus: one-line rewrites in three small authored Perl distributions (Test::More, Test2::V0 and Test::Exception), each with the fact packet the pinned perl-ripr-facts producer wrote for that diff, labeled with what the distribution's own tests actually discriminate, so ripr's Perl verdicts can be scored as false actionable, false exposed, false silent, abstained, or ideal. A second group of cases edits a producer packet to carry a RIPR-SPEC-0235 fact the producer cannot emit yet.",
+  "label_method": "For each case the rewrite was applied to a fresh copy of the authored distribution and `prove -l t` was run to confirm it keeps every test green (behavior_preserving_rewrite). Each listed mutant of the rewritten text was then applied by hand on the anchor line and `prove -l t` run again; no Perl mutation tool drives Test::More, Test2 and Test::Exception alike, so the mutants are hand-written and each was reviewed for equivalence. A mutant counts as detected (`tests_failed`) when prove fails after every file compiles, and its failing_test names the test file and the failing assertion's name. Truth is derived from the count of mutants with tests_failed: all is discriminated, none is not_discriminated, otherwise partially_discriminated. The fact packet comes from `fact_producer` run on the same diff; an edited_producer packet names its edits and has its fingerprint recomputed.",
+  "verdict_projection": "Only candidate_current findings on the anchor file and line count. For Perl, a finding whose source_currentness is unresolved_subject also counts, because every Perl finding carries that currentness today (#3280): ripr reads a packet, not the source, so it never resolves the subject itself. exposed is credited; a named static_limit_kind or a no_static_path, infection_unknown, propagation_unknown or static_unknown class is limited; any other class (weakly_exposed, reachable_unrevealed) is a gap. A gap on the line outranks credit, and credit outranks a limit. No anchored finding is silent. Rates are also reported by packet provenance, so producer packets and edited packets never mix.",
+  "non_claims": [
+    "Rates describe this corpus only; they are not a population estimate for Perl code or for ripr in general.",
+    "Every subject is authored to fill a cell of ripr's Perl oracle and reach rules; its rates are not real-world rates.",
+    "ripr does not parse Perl. Every verdict here is ripr's reading of a committed fact packet, so a wrong verdict can come from the producer's facts or from ripr's rules; the case reasoning says which.",
+    "edited_producer cases measure ripr's rules on facts the pinned producer does not emit; they are not evidence about the producer.",
+    "Truth comes from the listed hand-written mutants, not from exhaustive mutation; a discriminated label means every listed mutant made prove fail.",
+    "The harness does not run Perl, prove, the fact producer, mutation testing, or any network access."
+  ],
+  "fact_producer": {
+    "name": "perl-ripr-facts",
+    "repository": "https://github.com/EffortlessMetrics/perl-lsp-swarm",
+    "commit": "99458fde50b8204ecf7054779bb3670e6b5fdda5",
+    "command": "perl-ripr-facts ripr-facts --root <subject> --base base --head HEAD --diff <case>.diff --out <case>.json, run from the subject's parent directory with the subject committed as `base` and the rewrite as HEAD"
+  },
+  "subjects": [
+    {
+      "subject_id": "authored-perl-test2-ledger",
+      "origin": "authored",
+      "version_label": "authored@28e86e6",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "lib/Ledger.pm",
+          "sha256": "feb5e60ef79bc754c5c918525cde8cb3258e05e04b82bb2d27cd788e42a6cdf4"
+        },
+        {
+          "path": "t/ledger.t",
+          "sha256": "3dceac387a906f34dde83da8729b6e603ee6059221d1a430d97747840ec322b2"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-perl-testexception-account",
+      "origin": "authored",
+      "version_label": "authored@28e86e6",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "lib/Account.pm",
+          "sha256": "0e13d20123079744e664f949190a5200a9343acab79bcc715a4247fdd00e2290"
+        },
+        {
+          "path": "t/account.t",
+          "sha256": "dfa10426ef31eff16522eaf5267eb487365bbae35e2289ed9692c79890eb55aa"
+        }
+      ]
+    },
+    {
+      "subject_id": "authored-perl-testmore-shop",
+      "origin": "authored",
+      "version_label": "authored@28e86e6",
+      "license": "MIT OR Apache-2.0",
+      "shared_corpus": null,
+      "retained_files": [
+        {
+          "path": "lib/Shop/Cart.pm",
+          "sha256": "fd14c91b94e52368f9f688d68073723a92b5950aeecee789c181448dc4d4800f"
+        },
+        {
+          "path": "lib/Shop/Pricing.pm",
+          "sha256": "b8e69fb8c3f602a0ea94bcce0819f706afc1090393abdfcff8cacd79699bc7d0"
+        },
+        {
+          "path": "t/bulk.t",
+          "sha256": "665e9d78103ecba5087b1a1a1b859f90d4c42f66a54b07fe8c5aef33adc872c3"
+        },
+        {
+          "path": "t/cart.t",
+          "sha256": "8a52dfdbc0abf659a22aabd9101184b5c5a8331ec1a95dc8f0a6ceead1208996"
+        },
+        {
+          "path": "t/load.t",
+          "sha256": "0ad0daaf9a557eb0bf3d0b8fb505d13847c358ae11bf84104f2370c7c3a64940"
+        },
+        {
+          "path": "t/pricing.t",
+          "sha256": "5ac5798b356cd1174f899664081910dd51ce6b29a3bed7de7d503c5112b19c4d"
+        },
+        {
+          "path": "t/qualified.t",
+          "sha256": "9d21fe82fac270e82341af4f72bb7df8838ae641a0dffb63b5ba423798de5813"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "perl-testmore-discount-imported-boundary",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-discount-imported-boundary.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 14
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_exported_call_at_boundary",
+      "hard_case": "The test calls discount() imported through Exporter; the producer proves direct_owner_call only for a package-qualified call, so the only relation is file_proximity to the package.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "100 < $amount",
+            "outcome": "tests_failed",
+            "failing_test": "t/pricing.t: discount starts at exactly 100",
+            "equivalence_review": "not equivalent: 100 no longer earns the discount"
+          },
+          {
+            "replacement": "101 <= $amount",
+            "outcome": "tests_failed",
+            "failing_test": "t/pricing.t: discount starts at exactly 100",
+            "equivalence_review": "not equivalent: 100 no longer earns the discount"
+          },
+          {
+            "replacement": "99 <= $amount",
+            "outcome": "tests_failed",
+            "failing_test": "t/pricing.t: no discount just below the threshold",
+            "equivalence_review": "not equivalent: 99 earns the discount"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is(discount(100), 90) and is(discount(99), 99) sit on both sides of the threshold, so any move of the boundary fails a test. Spec cells: RIPR-SPEC-0064 (relation kinds), Test::More is().",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-discount-imported-boundary.json",
+        "sha256": "4d8b5faf9dfedb7036a3a243465633fdcd54bd8a7c5f7c8dc00d5870b9e9e553",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-shipping-smoke-ok",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-shipping-smoke-ok.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 23
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_ok_truthy_smoke",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "if (20 <= $weight) {",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: a 20 kg parcel pays 15"
+          },
+          {
+            "replacement": "if (30 < $weight) {",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: a 25 kg parcel pays 5"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "ok(shipping_fee(25)) only checks that the fee is truthy; both fees (5 and 15) pass, so no boundary mutant fails. Spec cells: RIPR-SPEC-0064 smoke_ok/weak_smoke.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-shipping-smoke-ok.json",
+        "sha256": "cf6155c6842096c6c05508851d6bb720f2c7e0909c3ee7a20af1b85f11e5baae",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-tier-far-from-boundary",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-tier-far-from-boundary.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 31
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_far_from_boundary",
+      "hard_case": "The exact is() targets the changed sub but its inputs (2000, 10) sit far from the 1000 threshold; the producer still records the changed predicate as the oracle's observed_sink.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 'gold' if 1000 < $points;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 1000 points become silver"
+          },
+          {
+            "replacement": "return 'gold' if 1500 <= $points;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 1200 points become silver"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "Inputs 2000 and 10 are far from 1000, so moving the gold threshold changes no asserted value. An exact assertion on the owner is not observation of the changed predicate. Spec cells: RIPR-SPEC-0064 sink alignment, #5498.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-tier-far-from-boundary.json",
+        "sha256": "09b3cb2b26839256e718cf6436c3d2f91d6354d6a582b7c8a34b5835fe1a9228",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-points-cmp-ok-positive",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-points-cmp-ok-positive.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 38
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_cmp_ok_greater_than_zero",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "my $points = int($spent / 5);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 100 spent earns 20 points"
+          },
+          {
+            "replacement": "my $points = int($spent * 10);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 100 spent earns 1000 points"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "cmp_ok(loyalty_points(100), '>', 0) accepts any positive count, so changing the divisor or operator keeps it green. Spec cells: RIPR-SPEC-0064 predicate_boundary_assertion (cmp_ok).",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-points-cmp-ok-positive.json",
+        "sha256": "ba814925ade38beb65a3f9aa7207ec5f462807c3f334c0e0ef23cc126de54849",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-quote-is-deeply-total",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-quote-is-deeply-total.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 48
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "testmore_is_deeply_whole_hash",
+      "hard_case": "is_deeply compares the whole returned hash across several lines; the producer leaves observed_sink empty for the hash-field change, so ripr reads the strong exact oracle as observation_unconfirmed.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "$quote{total} = $quote{shipping} - $quote{subtotal};",
+            "outcome": "tests_failed",
+            "failing_test": "t/qualified.t: quote adds shipping to the discounted subtotal",
+            "equivalence_review": "not equivalent: total becomes -85"
+          },
+          {
+            "replacement": "$quote{total} = $quote{subtotal};",
+            "outcome": "tests_failed",
+            "failing_test": "t/qualified.t: quote adds shipping to the discounted subtotal",
+            "equivalence_review": "not equivalent: shipping is dropped from the total"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is_deeply pins subtotal, shipping and total, so any change to how total is computed fails the test. Spec cells: RIPR-SPEC-0064 hash_or_object_field, #5498 observation_unconfirmed.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-quote-is-deeply-total.json",
+        "sha256": "f1ea355e9890d43064ab4f8a0d3d7122c69d7f8ed73426607d2466a4bfac377a",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-round-cents-like",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-round-cents-like.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 54
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_format",
+      "test_shape": "testmore_like_format_regex",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return sprintf(\"%.2f\", $value + 1);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 2 rounds to 3.00"
+          },
+          {
+            "replacement": "return sprintf(\"%.2f\", -$value);",
+            "outcome": "tests_failed",
+            "failing_test": "t/qualified.t: money has two decimals",
+            "equivalence_review": "not equivalent: 2 rounds to -2.00"
+          },
+          {
+            "replacement": "return sprintf(\"%.3f\", $value);",
+            "outcome": "tests_failed",
+            "failing_test": "t/qualified.t: money has two decimals",
+            "equivalence_review": "not equivalent: three decimals"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "like() checks only the two-decimal shape: a mutant that shifts the value keeps the shape and passes, while sign or precision mutants fail. Spec cells: RIPR-SPEC-0064 like/weak_broad.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-round-cents-like.json",
+        "sha256": "edeeebb8de94294cf58702c54143f5725de4eca040e11d48acd0ebab630afb54",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-clamp-isnt",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-clamp-isnt.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 78
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_isnt_single_value",
+      "hard_case": "isnt() rejects exactly one value; the producer maps it to a strong exact oracle and records the changed predicate as its observed sink.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 99 if 100 < $qty;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: an order of 100 is no longer clamped"
+          },
+          {
+            "replacement": "return 99 if 120 < $qty;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 110 is no longer clamped"
+          },
+          {
+            "replacement": "return 98 if 99 < $qty;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: clamped orders become 98"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "isnt(clamp_qty(150), 150) only rejects 150, so moving the clamp threshold or the clamp value keeps it green. Spec cells: RIPR-SPEC-0064 oracle strength (isnt).",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-clamp-isnt.json",
+        "sha256": "21aa3a126d49c07e0dc10caf929f8b64e00993649c9dbe289c76f15209066f13",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-bulk-subtest",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-bulk-subtest.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 59
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_subtest_is_exported_call",
+      "hard_case": "Assertions sit inside a subtest and call the sub through an Exporter import, so the producer relates the test to the package only.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 50 < $qty ? 1 : 0;",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: fifty is bulk",
+            "equivalence_review": "not equivalent: 50 is not bulk"
+          },
+          {
+            "replacement": "return 49 <= $qty ? 1 : 0;",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: forty-nine is not",
+            "equivalence_review": "not equivalent: 49 is bulk"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is_bulk(50) and is_bulk(49) bracket the threshold inside a subtest, so either boundary mutant fails. Spec cells: RIPR-SPEC-0064 subtest test facts.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-bulk-subtest.json",
+        "sha256": "b9f4f9c248fe7a318cde3d801f0d30c21526c5f04af418de0afcbce70765ca6e",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-tax-table-loop",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-tax-table-loop.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 64
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_selection",
+      "test_shape": "testmore_table_driven_loop",
+      "hard_case": "Table-driven: the assertion runs inside a for loop over a data table, and the call is an Exporter import.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "my $rate = $region ne 'north' ? 0.2 : 0.2;",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: tax for south",
+            "equivalence_review": "not equivalent: south pays 20%"
+          },
+          {
+            "replacement": "my $rate = $region ne 'north' ? 0.1 : 0.25;",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: tax for north",
+            "equivalence_review": "not equivalent: north pays 25%"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Both regions are asserted with exact expected tax, so changing either rate fails one row of the table. Spec cells: RIPR-SPEC-0064 relation kinds.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-tax-table-loop.json",
+        "sha256": "81dafc5c1dff615d1621d3fcaad85933c7e4d0dba78bcb8db031772d9b6db6b4",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-bundle-helper-sub",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-bundle-helper-sub.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 72
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_helper_sub_wraps_is",
+      "hard_case": "The is() lives in a test-file helper sub that receives the expected value as an argument.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return $sum - (3 < @$items ? 5 : 0);",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: three items earn the bundle discount",
+            "equivalence_review": "not equivalent: three items lose the discount"
+          },
+          {
+            "replacement": "return $sum - (2 <= @$items ? 5 : 0);",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: two items do not",
+            "equivalence_review": "not equivalent: two items earn the discount"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "check_bundle() asserts both three items (discount) and two items (none), so moving the threshold either way fails. Spec cells: RIPR-SPEC-0064 helper_call (deferred).",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-bundle-helper-sub.json",
+        "sha256": "ee2d3dad1cf92a35d6c1cfae0aed19fff2d7f3230a95c52de57f82f73b1e0c52",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-cart-method-total",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-cart-method-total.diff",
+      "anchor": {
+        "file": "lib/Shop/Cart.pm",
+        "line": 20
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_is_method_call",
+      "hard_case": "The test reaches the changed code through an instance method call; the producer does not prove method receivers.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "$total += $_->{qty} + $_->{price} for @{ $self->{items} };",
+            "outcome": "tests_failed",
+            "failing_test": "t/cart.t: total multiplies price by quantity",
+            "equivalence_review": "not equivalent: total becomes 18"
+          },
+          {
+            "replacement": "$total += $_->{price} for @{ $self->{items} };",
+            "outcome": "tests_failed",
+            "failing_test": "t/cart.t: total multiplies price by quantity",
+            "equivalence_review": "not equivalent: quantity is ignored"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is($cart->total, 25) pins price times quantity over two lines, so either mutant fails. Spec cells: RIPR-SPEC-0064 method_receiver.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-cart-method-total.json",
+        "sha256": "115cb43dd2bc9773a9142db697071398d75786920175d04379610c83161e06c6",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-cart-dynamic-dispatch",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-cart-dynamic-dispatch.diff",
+      "anchor": {
+        "file": "lib/Shop/Cart.pm",
+        "line": 26
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_is_through_dynamic_method_name",
+      "hard_case": "The test reaches item_count only through $self->$action() with the method name as data, a dynamic dispatch no static relation can follow.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 1 + @{ $self->{items} };",
+            "outcome": "tests_failed",
+            "failing_test": "t/cart.t: run dispatches to the named action",
+            "equivalence_review": "not equivalent: two items count as three"
+          },
+          {
+            "replacement": "return 0 + @{ $self->{items} } - 1;",
+            "outcome": "tests_failed",
+            "failing_test": "t/cart.t: run dispatches to the named action",
+            "equivalence_review": "not equivalent: two items count as one"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is($cart->run('item_count'), 2) fails for any change to the count. Spec cells: RIPR-SPEC-0064 dynamic boundaries.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-cart-dynamic-dispatch.json",
+        "sha256": "6091e47ba545fe62464b6b50f93cfe3e4eae5c3f19bbcb7b856735398cb6825b",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-summary-deep-is-count",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-summary-deep-is-count.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: two amounts count as three"
+          },
+          {
+            "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: total doubles"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Test2's is() compares the whole hash deeply, so changing count or total fails it. Spec cells: RIPR-SPEC-0064 Test2::V0 is().",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-summary-deep-is-count.json",
+        "sha256": "4a3e5482ee9b03e15d0b243bb028429deb28c846c5e1055bca9f43d4c4dc005f",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-format-entry-like",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-format-entry-like.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 18
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_format",
+      "test_shape": "test2_like_prefix_regex",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return sprintf(\"%s %d\", $date, $amount);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the sign is dropped"
+          },
+          {
+            "replacement": "return sprintf(\"%s %+d\", $date, -$amount);",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the sign flips"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "like(..., qr/^2026/) only checks the date prefix, so dropping or flipping the sign keeps it green. Spec cells: RIPR-SPEC-0064 Test2 like/weak_broad.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-format-entry-like.json",
+        "sha256": "6b8bd348a9a5e27216fd0873a8b105b80ea9d63b906e31c72a559b1ece2f99e9",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-overdrawn-ok-smoke",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-overdrawn-ok-smoke.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 23
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "test2_ok_truthy_smoke",
+      "hard_case": null,
+      "truth": {
+        "state": "partially_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 0 >= $balance ? 1 : 0;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: zero reads as overdrawn"
+          },
+          {
+            "replacement": "return -5 > $balance ? 1 : 0;",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: negative balances are overdrawn",
+            "equivalence_review": "not equivalent: -1 is no longer overdrawn"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "ok(is_overdrawn(-1)) passes when zero becomes overdrawn but fails when -1 stops being overdrawn: one of two mutants is caught. Spec cells: RIPR-SPEC-0064 smoke_ok.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-overdrawn-ok-smoke.json",
+        "sha256": "7eca8346dc52ee9d12a05e2d892408b53555895543d5cbf8abbcceb9f1c6ef0a",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-withdraw-dies-like-message",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-withdraw-dies-like-message.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 28
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_message",
+      "test_shape": "test2_like_dies_message",
+      "hard_case": "The exception is observed through like(dies { ... }, qr/.../), which the producer maps to a weak broad exception observer.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "die \"insufficient\" . \" balance\\n\" if $amount > $balance;",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: overdrawing names the reason",
+            "equivalence_review": "not equivalent: the message no longer says funds"
+          },
+          {
+            "replacement": "die \"insufficient\" . \" funds\\n\" if $amount > $balance + 20;",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: overdrawing names the reason",
+            "equivalence_review": "not equivalent: overdrawing by 10 no longer dies"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The regex pins 'insufficient funds' and the call overdraws by 10, so changing the message or raising the threshold fails. Spec cells: RIPR-SPEC-0064 exception_observer.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-withdraw-dies-like-message.json",
+        "sha256": "0a34637a46215dbeabb5f6cf3f6515dd5dbe331de3bd085d91e13ff9aa55e65b",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-deposit-lives-only",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-deposit-lives-only.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 34
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test2_ok_lives_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return $amount - $balance;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the deposit subtracts the balance"
+          },
+          {
+            "replacement": "return $balance;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the deposit is ignored"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "ok(lives { deposit(5, 5) }) checks only that deposit does not die; its return value is never asserted. Spec cells: RIPR-SPEC-0064 lives/weak_smoke.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-deposit-lives-only.json",
+        "sha256": "a2ca89791552c7ff2992a49d56014ca387f76dbd4027f223eb5b1934dd957769",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-fee-isnt-zero",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-fee-isnt-zero.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 39
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test2_isnt_single_value",
+      "hard_case": "isnt() rejects one value; the producer maps it to a strong exact oracle and records the changed line as its observed sink.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return $amount / 50;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the fee doubles"
+          },
+          {
+            "replacement": "return $amount / 1000;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: the fee drops tenfold"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "isnt(fee(100), 0) only rejects zero, so a doubled or tenfold-smaller fee keeps it green. Spec cells: RIPR-SPEC-0064 oracle strength (isnt).",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-fee-isnt-zero.json",
+        "sha256": "b4e711e3c6b11f8b319d09a4d821892c8507c8484debcd72f69866a48071ed27",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-net-change-imported",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-net-change-imported.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 45
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "test2_is_exported_call",
+      "hard_case": "The call is an Exporter import, so the producer relates the test to the package only.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "$net = $net - $_ for @amounts;",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: net change sums signed amounts",
+            "equivalence_review": "not equivalent: 5 and -3 net to -2"
+          },
+          {
+            "replacement": "$net = $net + abs($_) for @amounts;",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: net change sums signed amounts",
+            "equivalence_review": "not equivalent: 5 and -3 net to 8"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is(net_change(5, -3), 2) fails when the sum subtracts or takes absolute values. Spec cells: RIPR-SPEC-0064 relation kinds.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-net-change-imported.json",
+        "sha256": "435b232e73d434869a6e1a83bc35d1e1a73233df8f7e396c67e794b8bcabb0f5",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-test2-close-month-subtest",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-test2-close-month-subtest.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 52
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "test2_subtest_is_at_boundary",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 0 < $sum->{total} ? 'balanced' : 'short';",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: zero is balanced",
+            "equivalence_review": "not equivalent: a zero month is short"
+          },
+          {
+            "replacement": "return -1 <= $sum->{total} ? 'balanced' : 'short';",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: negative is short",
+            "equivalence_review": "not equivalent: a month short by one is balanced"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The subtest asserts a zero month (balanced) and a month short by one (short), so either boundary mutant fails. Spec cells: RIPR-SPEC-0064 Test2 subtest.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-test2-close-month-subtest.json",
+        "sha256": "539161c51310e028be513951aaa0d495947cf9928ffcf996586eeea564a8a65f",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testexception-withdraw-throws-message",
+      "subject_id": "authored-perl-testexception-account",
+      "diff": "cases/perl-testexception-withdraw-throws-message.diff",
+      "anchor": {
+        "file": "lib/Account.pm",
+        "line": 19
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_message",
+      "test_shape": "testexception_throws_ok_regex",
+      "hard_case": "throws_ok with a message regex pins the exception text, but the producer maps every throws_ok to a weak broad exception observer.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "die \"insufficient balance: \" . \"need $amount\\n\" if $amount > $balance;",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: overdrawing names the reason",
+            "equivalence_review": "not equivalent: the message no longer says funds"
+          },
+          {
+            "replacement": "die \"insufficient funds: \" . \"need $amount\\n\" if $amount > $balance * 3;",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: overdrawing names the reason",
+            "equivalence_review": "not equivalent: overdrawing 20 from 10 no longer dies"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "throws_ok { withdraw(10, 20) } qr/insufficient funds/ fails if the message changes or the overdraw stops dying. Spec cells: RIPR-SPEC-0064 Test::Exception throws_ok.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testexception-withdraw-throws-message.json",
+        "sha256": "24b04e553c05e534c77132f1af5689f3800f5e2a841a033258ffd5aedf90992d",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testexception-transfer-boundary-pair",
+      "subject_id": "authored-perl-testexception-account",
+      "diff": "cases/perl-testexception-transfer-boundary-pair.diff",
+      "anchor": {
+        "file": "lib/Account.pm",
+        "line": 25
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testexception_throws_and_lives_pair",
+      "hard_case": "The boundary is pinned by a pair: throws_ok one over the balance and lives_ok at the balance. Neither oracle alone is exact.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "if ($from <= $amount) {",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: the whole balance may move",
+            "equivalence_review": "not equivalent: moving the whole balance dies"
+          },
+          {
+            "replacement": "if ($from + 1 < $amount) {",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: one over the balance dies",
+            "equivalence_review": "not equivalent: one over the balance is allowed"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Moving the comparison either way breaks one side of the pair. Spec cells: RIPR-SPEC-0064 throws_ok, lives_ok.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testexception-transfer-boundary-pair.json",
+        "sha256": "1c0ac48a7d7b7c2e9d2c5648c67fdf43de497c77e0072f5102be0a0671be71db",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testexception-close-out-dies-ok",
+      "subject_id": "authored-perl-testexception-account",
+      "diff": "cases/perl-testexception-close-out-dies-ok.diff",
+      "anchor": {
+        "file": "lib/Account.pm",
+        "line": 33
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testexception_dies_ok_far_from_boundary",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "die \"balance must be zero\\n\" if 100 <= $balance;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 100 cannot close"
+          },
+          {
+            "replacement": "die \"balance must be zero\\n\" if 500 < $balance;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 200 can close"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "dies_ok { close_out(1000) } only checks a balance far above 100, so moving the threshold keeps it green. Spec cells: RIPR-SPEC-0064 dies_ok.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testexception-close-out-dies-ok.json",
+        "sha256": "258780e997b6b7a7b8d42422150702b4a0dfb1186e76955397d2df61e1a3fe12",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testexception-interest-lives-ok",
+      "subject_id": "authored-perl-testexception-account",
+      "diff": "cases/perl-testexception-interest-lives-ok.diff",
+      "anchor": {
+        "file": "lib/Account.pm",
+        "line": 39
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testexception_lives_ok_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return $balance / 10;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: interest doubles"
+          },
+          {
+            "replacement": "return $balance * 20;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: interest is 400 times larger"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "lives_ok { interest(100) } never looks at the returned interest. Spec cells: RIPR-SPEC-0064 lives_ok/weak_smoke.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testexception-interest-lives-ok.json",
+        "sha256": "6acb37c6647568b9154465d19e5876ed6d00ee9bd8a7b481b88918a2681e447b",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testexception-freeze-class",
+      "subject_id": "authored-perl-testexception-account",
+      "diff": "cases/perl-testexception-freeze-class.diff",
+      "anchor": {
+        "file": "lib/Account.pm",
+        "line": 44
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "error_class",
+      "test_shape": "testexception_throws_ok_class",
+      "hard_case": "throws_ok with a class name pins the exception class, which the producer maps to a weak broad exception observer.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "die \"frozen\\n\" if $reason;",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: freezing raises an account error",
+            "equivalence_review": "not equivalent: a plain string is not an Account::Error"
+          },
+          {
+            "replacement": "die Account::Error->new(message => $reason) if !$reason;",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: freezing raises an account error",
+            "equivalence_review": "not equivalent: a reason no longer freezes"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "throws_ok { freeze('fraud') } 'Account::Error' fails for a plain string die and for a freeze that no longer dies. Spec cells: RIPR-SPEC-0064 Test::Exception throws_ok class.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testexception-freeze-class.json",
+        "sha256": "b4e675438c2c992dd6c96b84530a332afd6a732f01bd97a68659849c8011d6d0",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testexception-lives-and-is",
+      "subject_id": "authored-perl-testexception-account",
+      "diff": "cases/perl-testexception-lives-and-is.diff",
+      "anchor": {
+        "file": "lib/Account.pm",
+        "line": 50
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testexception_lives_and_wraps_is",
+      "hard_case": null,
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return $balance - ($amount + 2);",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: a withdrawal costs a fee of one",
+            "equivalence_review": "not equivalent: the fee doubles"
+          },
+          {
+            "replacement": "return $balance - ($amount - 1);",
+            "outcome": "tests_failed",
+            "failing_test": "t/account.t: a withdrawal costs a fee of one",
+            "equivalence_review": "not equivalent: the fee becomes a refund"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "lives_and { is(balance_after(10, 4), 5) } pins the fee of one, so either fee mutant fails. Spec cells: RIPR-SPEC-0064 lives_and.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testexception-lives-and-is.json",
+        "sha256": "2d45343801be5b8ca0329cc53e1f3230f6b85d2314da763d15c716afaf3a3e8e",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-testmore-can-ok-only",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-testmore-can-ok-only.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 84
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_can_ok_use_ok_only",
+      "hard_case": null,
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 4 * $items;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: wrapping costs 4 per item"
+          },
+          {
+            "replacement": "return 3 + $items;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: two items cost 5"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "t/load.t only loads Shop::Pricing and checks can_ok for gift_wrap_fee; no test calls it, so both mutants survive. ripr reports no_static_path, a limit rather than the ideal gap, because a mention-only oracle gives no relation to the change.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "no_static_path"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-testmore-can-ok-only.json",
+        "sha256": "135e72d52472fc532608a29d811370ad240e9d78c999c22a5b1deb90e66451cc",
+        "provenance": "producer"
+      }
+    },
+    {
+      "case_id": "perl-0235-ex01-sink-unconfirmed",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-0235-ex01-sink-unconfirmed.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_sink_unconfirmed",
+      "hard_case": "RIPR-SPEC-0235 example 1: the strong oracle carries no observed_sink, so the packet cannot confirm the assertion reaches the changed return.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: two amounts count as three"
+          },
+          {
+            "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: total doubles"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is(summary(...), {total=>..., count=>...}) pins both fields, so both mutants fail t/ledger.t. With the observed sink removed the spec asks for withheld credit with an unconfirmed-observation reason, not a repairable weakness; a weakly_exposed verdict here is a false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex01-sink-unconfirmed.json",
+        "sha256": "8d1731ead03f142c0392e67db33eb5c16fd5ded89fc39622c8aab8181705f021",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex12-static-unknown-hint",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-0235-ex12-static-unknown-hint.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_static_unknown_hint",
+      "hard_case": "RIPR-SPEC-0235 example 12: the relation's reachability_hint is static_unknown.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: two amounts count as three"
+          },
+          {
+            "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: total doubles"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The test discriminates both mutants, but the packet says reachability is unknown, so the spec's answer is static_unknown, a limit. ripr follows the hint.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex12-static-unknown-hint.json",
+        "sha256": "a49e517afc90eba2565eeb566336d657f4401c17261e0a5d1a2ce7c1318188d3",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"reachability_hint\": \"static_unknown\"}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex19-sink-whitespace",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-0235-ex19-sink-whitespace.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_sink_spacing",
+      "hard_case": "RIPR-SPEC-0235 example 19: the observed sink differs from the changed observable only in whitespace.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: two amounts count as three"
+          },
+          {
+            "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: total doubles"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Both mutants fail t/ledger.t. The spec treats a sink that matches after whitespace normalization as aligned, so ideal is exposed; weakly_exposed is a false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex19-sink-whitespace.json",
+        "sha256": "bb1dc7edac2f07c34c2942e659cfd38406caad653c49ec5d0bc5d9b618296a0e",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": {\"strip_spaces\": true}}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex23-missing-test-runner",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-0235-ex23-missing-test-runner.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_missing_runner",
+      "hard_case": "RIPR-SPEC-0235 example 23: a missing_test_runner dynamic boundary on the test file.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: two amounts count as three"
+          },
+          {
+            "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: total doubles"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Both mutants fail t/ledger.t when prove runs it. The spec says a missing runner boundary should withhold credit (a limit); ripr ignores the boundary and reports exposed, which this corpus scores as credited because the test does discriminate. The case keeps the boundary visible for a later spec-conformance check.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex23-missing-test-runner.json",
+        "sha256": "3e8c620fca4c0abd5767599a0a6d6c8d7b3b80c9e1a70aaa0074b8d725971477",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then append to dynamic_boundaries: {\"boundary_id\": \"boundary:runner:t/ledger.t\", \"confidence\": \"high\", \"file_id\": \"file:t/ledger.t\", \"kind\": \"missing_test_runner\", \"owner_id\": null, \"provenance_refs\": [], \"range\": {\"end_column\": 0, \"end_line\": 0, \"start_column\": 0, \"start_line\": 0}}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex24-framework-indirection",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-0235-ex24-framework-indirection.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_framework_indirection",
+      "hard_case": "RIPR-SPEC-0235 example 24: a framework_indirection limitation with no confirmed sink.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: two amounts count as three"
+          },
+          {
+            "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: total doubles"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Both mutants fail t/ledger.t. A framework_indirection limitation should withhold credit as a named static limit; ripr names opaque_custom_assertion_helper, which projects to limited, an acceptable verdict for a discriminated case.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "weakly_exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex24-framework-indirection.json",
+        "sha256": "16601498acb3b120e20b6a6e2da8a56c02c374b09c0f36234932364a3556f900",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; append to limitations: {\"evidence_refs\": [], \"kind\": \"framework_indirection\", \"limitation_id\": \"framework-indirection\", \"message\": \"assertions go through a framework wrapper\"}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex25-dynamic-dispatch",
+      "subject_id": "authored-perl-test2-ledger",
+      "diff": "cases/perl-0235-ex25-dynamic-dispatch.diff",
+      "anchor": {
+        "file": "lib/Ledger.pm",
+        "line": 13
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "hash_field_value",
+      "test_shape": "test2_is_deep_hash_dynamic_dispatch",
+      "hard_case": "RIPR-SPEC-0235 example 25: a dynamic_dispatch limitation with no confirmed sink.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: two amounts count as three"
+          },
+          {
+            "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+            "outcome": "tests_failed",
+            "failing_test": "t/ledger.t: summary totals and counts",
+            "equivalence_review": "not equivalent: total doubles"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "Both mutants fail t/ledger.t. A dynamic_dispatch limitation should give static_unknown with the dynamic_dispatch limit kind, and ripr does: limited, acceptable for a discriminated case.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "limited",
+        "full_checkout_classifications": [
+          "static_unknown"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex25-dynamic-dispatch.json",
+        "sha256": "ef2155d2c090bf47403964c1d95d0403ec4bb3e9dd6a2f86d7975f1bde2ab92e",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; append to limitations: {\"evidence_refs\": [], \"kind\": \"dynamic_dispatch\", \"limitation_id\": \"dynamic-dispatch\", \"message\": \"the owner is reached through dynamic dispatch\"}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex28-cross-test-oracle",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-0235-ex28-cross-test-oracle.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 31
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_far_from_boundary_cross_test",
+      "hard_case": "RIPR-SPEC-0235 example 28: the relation names a different test file than the oracle that carries the sink.",
+      "truth": {
+        "state": "not_discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return 'gold' if 1000 < $points;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 1000 points become silver"
+          },
+          {
+            "replacement": "return 'gold' if 1500 <= $points;",
+            "outcome": "tests_passed",
+            "failing_test": null,
+            "equivalence_review": "not equivalent: 1200 points become silver"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "gap",
+        "acceptable_verdicts": [
+          "gap",
+          "limited"
+        ]
+      },
+      "reasoning": "The only assertion on tier_label checks 1200 and 50 points, far from 1000, so both boundary mutants survive. The spec says an oracle from another test cannot credit the relation (reachable_unrevealed); ripr still reports exposed, a false exposed.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "credited",
+        "full_checkout_classifications": [
+          "exposed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex28-cross-test-oracle.json",
+        "sha256": "0842bcbb18c2a7f3d9f0f523eb74f70f244c44cfea2ade2656b1e5f6efdd56cc",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"test_id\": \"test:t/pricing.t\"}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex13-method-receiver",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-0235-ex13-method-receiver.diff",
+      "anchor": {
+        "file": "lib/Shop/Cart.pm",
+        "line": 20
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "testmore_is_method_receiver_relation",
+      "hard_case": "RIPR-SPEC-0235 example 13: the relation is a method_receiver call bound to the is() oracle on $cart->total.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "$total += $_->{qty} + $_->{price} for @{ $self->{items} };",
+            "outcome": "tests_failed",
+            "failing_test": "t/cart.t: total multiplies price by quantity",
+            "equivalence_review": "not equivalent: total becomes 18"
+          },
+          {
+            "replacement": "$total += $_->{price} for @{ $self->{items} };",
+            "outcome": "tests_failed",
+            "failing_test": "t/cart.t: total multiplies price by quantity",
+            "equivalence_review": "not equivalent: quantity is ignored"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "is($cart->total, 26) fails under both mutants. Once the packet binds the method_receiver relation to that exact oracle, the spec credits it; ripr reports reachable_unrevealed, a false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex13-method-receiver.json",
+        "sha256": "f0015220e21f671a7f16520e58414904615cb35d81d22733043a31518a179455",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-testmore-cart-method-total, then in relations where {\"test_id\": \"test:t/cart.t\"} set {\"change_id\": \"$CHANGE_ID\", \"oracle_id\": \"oracle:t/cart.t:is:117-175\", \"owner_id\": \"$CHANGE_OWNER\", \"reachability_hint\": \"reachable\", \"relation_kind\": \"method_receiver\"}; in oracles where {\"oracle_id\": \"oracle:t/cart.t:is:117-175\"} set {\"target_owner_id\": \"$CHANGE_OWNER\"}; the packet fingerprint was recomputed."
+      }
+    },
+    {
+      "case_id": "perl-0235-ex14-helper-call",
+      "subject_id": "authored-perl-testmore-shop",
+      "diff": "cases/perl-0235-ex14-helper-call.diff",
+      "anchor": {
+        "file": "lib/Shop/Pricing.pm",
+        "line": 72
+      },
+      "edit_kind": "behavior_preserving_rewrite",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "testmore_is_helper_call_relation",
+      "hard_case": "RIPR-SPEC-0235 example 14: the relation is a helper_call bound to the is() inside the test helper sub.",
+      "truth": {
+        "state": "discriminated",
+        "method": "runtime_mutant_kill",
+        "test_command": "prove -l t",
+        "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+        "mutants": [
+          {
+            "replacement": "return $sum - (3 < @$items ? 5 : 0);",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: three items earn the bundle discount",
+            "equivalence_review": "not equivalent: three items lose the discount"
+          },
+          {
+            "replacement": "return $sum - (2 <= @$items ? 5 : 0);",
+            "outcome": "tests_failed",
+            "failing_test": "t/bulk.t: two items do not",
+            "equivalence_review": "not equivalent: two items earn the discount"
+          }
+        ]
+      },
+      "expected": {
+        "ideal_verdict": "credited",
+        "acceptable_verdicts": [
+          "credited",
+          "limited",
+          "silent"
+        ]
+      },
+      "reasoning": "The helper sub checks bundle_price on both sides of three items, so both mutants fail t/bulk.t. With the helper_call relation bound to that oracle the spec credits it; ripr reports reachable_unrevealed, a false actionable.",
+      "labeling_observation": {
+        "ripr_commit": "28e86e6",
+        "full_checkout_verdict": "gap",
+        "full_checkout_classifications": [
+          "reachable_unrevealed"
+        ],
+        "excerpt_parity": "matched"
+      },
+      "perl_facts": {
+        "packet": "packets/perl-0235-ex14-helper-call.json",
+        "sha256": "d9363fed9745c47b6046efebb474d1132b099e74a291d9fcf88702be4cac2417",
+        "provenance": "edited_producer",
+        "edits": "Started from the producer packet of perl-testmore-bundle-helper-sub, then in relations where {\"test_id\": \"test:t/bulk.t\"} set {\"change_id\": \"$CHANGE_ID\", \"oracle_id\": \"oracle:t/bulk.t:is:490-528\", \"owner_id\": \"$CHANGE_OWNER\", \"reachability_hint\": \"reachable\", \"relation_kind\": \"helper_call\"}; in oracles where {\"oracle_id\": \"oracle:t/bulk.t:is:490-528\"} set {\"target_owner_id\": \"$CHANGE_OWNER\"}; the packet fingerprint was recomputed."
+      }
+    }
+  ]
+}
