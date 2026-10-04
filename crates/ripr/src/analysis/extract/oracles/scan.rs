@@ -29,6 +29,8 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         }
         // Give the existing terminal-failure authority first refusal before
         // generic name admission can join or misclassify a matcher guard.
+        // #3284: peek without consuming the block, preserving assertions
+        // inside it; only its condition and first body statement participate.
         if (trimmed.starts_with("if ") || trimmed.starts_with("if("))
             && let Some(oracle) =
                 peeked_err_return_guard_oracle(&trimmed, lines.peek(), start_line + offset)
@@ -70,19 +72,6 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
                 observed_tokens,
                 ok_value_observed: None,
             });
-        } else if trimmed.starts_with("if ") || trimmed.starts_with("if(") {
-            // #3284: a terminal `if <cond> { return Err(...) }` guard is
-            // the manual expansion of a message-carrying assertion. The
-            // lexical path recognizes it WITHOUT consuming the block:
-            // joining the whole if-body would swallow real assertions
-            // inside it (review finding — a main regression in the first
-            // draft), so only the condition line plus a one-line peek at
-            // the first body statement participates.
-            if let Some(oracle) =
-                peeked_err_return_guard_oracle(&trimmed, lines.peek(), start_line + offset)
-            {
-                out.push(oracle);
-            }
         }
     }
     out.extend(guarded.oracles);
