@@ -114,11 +114,16 @@ fn declared_binding_reads_only_a_let_declaration() {
     assert_eq!(declared_binding("    end == 0"), None);
     assert_eq!(declared_binding("    letter = 1;"), None);
     assert_eq!(declared_binding("let (a, b) = pair;"), None);
+    assert_eq!(declared_binding("let Some(x) = maybe;"), None);
+    assert_eq!(declared_binding("let Point { x, y } = p;"), None);
+    assert_eq!(declared_binding("let ref x = y;"), None);
+    assert_eq!(declared_binding("let r#type = 1;"), None);
 }
 
 #[test]
 fn anchored_findings_follow_a_retarget_only_for_the_anchor_binding() {
-    let relation = "binding_predicate_relation: changed binding `end` initializer `a` -> `b` flows into predicate operand at line 13";
+    let relation = "binding_predicate_relation: changed binding `end` initializer `a.find(d)` -> `a.rfind(d)` flows into predicate operand at line 13";
+    let anchor_line = "    let end = a.rfind(d);";
     let mut retargeted = finding("weakly_exposed", 13, "candidate_current");
     retargeted["evidence"] = json!([relation]);
     let mut other_binding = finding("exposed", 14, "candidate_current");
@@ -129,9 +134,13 @@ fn anchored_findings_follow_a_retarget_only_for_the_anchor_binding() {
     other_file["evidence"] = json!([relation]);
     other_file["probe"]["file"] = json!("src/other.rs");
     let check = json!({"findings": [retargeted, other_binding, other_file]});
-    // Without a binding the anchor line alone counts, and nothing sits there.
+    // Without a `let` anchor the anchor line alone counts, and nothing sits
+    // there.
     assert!(anchored_findings(&check, &anchor(), None).is_empty());
-    let followed = anchored_findings(&check, &anchor(), Some("end"));
+    assert!(anchored_findings(&check, &anchor(), Some("    end == 0")).is_empty());
+    // A same-named `let` elsewhere in the diff has another initializer.
+    assert!(anchored_findings(&check, &anchor(), Some("    let end = a.len();")).is_empty());
+    let followed = anchored_findings(&check, &anchor(), Some(anchor_line));
     assert_eq!(followed.len(), 1, "{followed:#?}");
     assert_eq!(
         followed[0].pointer("/probe/line").and_then(Value::as_u64),
@@ -574,8 +583,8 @@ fn validator_holds_each_subject_origin_to_its_own_provenance() -> Result<(), Str
             .any(|v| v.contains("commit is not a 40-hex sha")),
         "{violations:#?}"
     );
-    // Relabeling an upstream excerpt as authored cannot hide its provenance:
-    // it still names its upstream repository.
+    // An upstream excerpt relabeled as authored but still naming its
+    // upstream repository is refused.
     let violations = tampered(|raw| {
         raw["subjects"][0]["origin"] = json!("authored");
     })?;
@@ -594,6 +603,38 @@ fn validator_holds_each_subject_origin_to_its_own_provenance() -> Result<(), Str
         violations
             .iter()
             .any(|v| v.contains("license is not `MIT OR Apache-2.0`")),
+        "{violations:#?}"
+    );
+    // A full relabel that drops the upstream fields still fails: authored ids
+    // carry the `authored-` prefix and retain no LICENSE file. Renaming the
+    // subject and every case that names it is the remaining route, and that
+    // shows in review, not in this validator.
+    let violations = tampered(|raw| {
+        raw["subjects"][0]["origin"] = json!("authored");
+        raw["subjects"][0]["upstream"] = Value::Null;
+        raw["subjects"][0]["commit"] = Value::Null;
+        raw["subjects"][0]["shared_corpus"] = Value::Null;
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must be named `authored-<name>`")),
+        "{violations:#?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("retains a LICENSE file")),
+        "{violations:#?}"
+    );
+    // An upstream subject cannot take the authored prefix.
+    let violations = tampered(|raw| {
+        raw["subjects"][0]["subject_id"] = json!("authored-serde");
+    })?;
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("reserved for authored subjects")),
         "{violations:#?}"
     );
     // An unknown origin is a parse error, not a silent default.

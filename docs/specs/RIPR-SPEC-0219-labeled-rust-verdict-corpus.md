@@ -70,12 +70,15 @@ their sha256. Retained files are byte-identical to the upstream commit and
 include its license files.
 
 An `authored` subject is a small crate written for this corpus to fill a
-verdict or probe-family cell the upstream cases leave empty. It carries no
-upstream URL, commit, or shared-corpus reference, its license is this
-repository's (`MIT OR Apache-2.0`), and the whole crate is retained, so no
-separate license file is needed. Its cases carry runtime truth exactly as
-upstream cases do. Authored cases are chosen to fill cells, so their rates
-are not real-world rates: the report gives every rate again per origin under
+verdict or probe-family cell the upstream cases leave empty. Its id starts
+with `authored-` (an upstream id may not), it carries no upstream URL,
+commit, or shared-corpus reference, its license is this repository's
+(`MIT OR Apache-2.0`), it retains no license file of its own, and the whole
+crate is retained. Its cases carry runtime truth exactly as upstream cases
+do, with the whole stored crate standing in for the pinned checkout.
+Authored cases are chosen to fill cells, so their rates are not real-world
+rates: the report gives the false-verdict, false-actionable, false-exposed,
+false-silent, ideal, and abstention rates again per origin under
 `by_origin`, and a row names its origin.
 
 A case is one edit in one subject: a unified diff under `cases/`, the
@@ -116,8 +119,12 @@ anchor is a changed single-line `let`, RIPR-SPEC-0157 moves ripr's probe to
 the predicate that uses the binding, so the projection also reads
 candidate-current findings in the anchor file whose evidence carries
 ``binding_predicate_relation: changed binding `<name>` `` for the binding the
-anchor declares, and the row records `followed_retarget`. The case keeps the
-line its diff adds as its anchor. A gap on
+anchor declares, with the anchor's initializer as the new initializer, and
+the row records `followed_retarget`. The case keeps the line its diff adds as
+its anchor. Only a plain `let name` (optionally `mut`) is followed; patterns
+fail closed. This couples the projection to the wording of that evidence
+line: a wording change stops the following, and a retargeting case then
+reads silent until the projection is updated. A gap on
 the line outranks credit, and credit outranks a limit. The per-finding
 reading mirrors the human "Start here" triage. The line-level precedence is
 this corpus's own policy, not triage's ranking: triage orders findings to
@@ -170,8 +177,12 @@ the distinct codes seen in that case's run.
   arithmetic are pinned by unit tests.
 - The committed expected report agrees with the corpus labels row by row.
 - The validator holds upstream subjects to a pinned URL, commit, and license
-  file, and authored subjects to no upstream provenance and this repository's
-  license; the report keeps authored rates apart from upstream rates.
+  file, and authored subjects to the `authored-` id prefix, no upstream
+  provenance, no license file, and this repository's license; the report
+  keeps authored rates apart from upstream rates. Relabeling a vendored
+  excerpt as authored therefore means renaming the subject and every case
+  that names it, which review sees; the validator cannot detect a rename
+  that also strips the license file.
 
 ## Non-Goals
 

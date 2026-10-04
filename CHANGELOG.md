@@ -331,9 +331,9 @@ are scoped or reviewed.
   exposed (3 of 13 not fully discriminated), the corpus's first. Authored
   cases are reported apart from upstream ones under `by_origin`, because
   they were chosen to fill cells: the upstream rates stay 10 of 20 false
-  actionable and 0 of 14 false exposed. For a changed `let`, the verdict now
-  follows ripr's retarget to the predicate that uses it (RIPR-SPEC-0157), so
-  such a case no longer reads as silent (RIPR-SPEC-0219).
+  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
+  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
+  current case exercises it (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline
