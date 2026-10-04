@@ -105,9 +105,13 @@ read-only and without execution authority (ADR 0022):
   terminal projection consumes the same `AgentReceiptReading` as CLI status:
   advisory plus improved static grip reports `improved`; complete unchanged
   and regressed receipts preserve their movements; complete `changed` stays
-  open and reports `limited`. Incomplete or unavailable producer completeness
-  reports `limited`, and producer-invalid status reports `invalid`, even when
-  static movement improved. Receipt presence alone never reports `closed`;
+  open and reports `limited`. Producer-invalid status reports `invalid` first;
+  recorded stale and gap-mismatch lifecycle states retain `stale` and `invalid`
+  before other incomplete or unavailable producer completeness reports
+  `limited`, even when static movement improved. Advisory regression retains
+  the trimmed, case-insensitive legacy `static_movement.state` fallback after
+  `provenance.movement` and before `seam.change`; it cannot bypass completeness.
+  Receipt presence alone never reports `closed`;
   the declared vocabulary and schema stay unchanged. Producer completeness,
   static movement and runtime execution remain separate evidence axes. Session transactions
   report `awaiting_edit` with an explicit null receipt: RIPR performs no
@@ -223,6 +227,13 @@ read-only and without execution authority (ADR 0022):
   `complete_unchanged_receipt_preserves_unchanged_status` and the existing
   `regressed_movement_survives_the_presence_lifecycle`. A failing case cannot
   prevent another case's exact test selector from running.
+  Literal adapter controls
+  `terminal_receipts_preserve_stale_and_mismatch_before_completeness` and
+  `terminal_legacy_regression_preserves_completeness_and_field_precedence`
+  separately pin lifecycle specificity, producer-invalid precedence,
+  legacy normalization and field priority, incomplete/missing-status guards,
+  and near-token refusal. They do not establish producer or retention
+  authenticity for those compatibility inputs.
 - `crates/ripr/src/mcp/gaps.rs::tests` — the committed producer
   repair-readiness evaluation and its fail-closed gates.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —

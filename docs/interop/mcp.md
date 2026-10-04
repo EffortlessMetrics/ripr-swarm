@@ -175,9 +175,14 @@ byte bindings. Terminal status uses the same receipt reading as CLI agent
 status: an advisory receipt with improved static grip reports `improved`;
 complete unchanged and regressed receipts preserve those movements. A
 complete `changed` receipt leaves the gap open and reports `limited`.
-Producer-incomplete or unavailable completeness reports `limited`, and a
-producer-invalid receipt reports `invalid`, even when its recorded static
-movement is improved. Receipt presence alone never reports `closed`; the
+Producer-invalid status reports `invalid` first. Recorded stale and
+gap-mismatch lifecycle states retain `stale` and `invalid`, including with
+incomplete producer status. Other producer-incomplete or unavailable
+completeness reports `limited`, even when its recorded static movement is
+improved. Advisory regression retains the trimmed, case-insensitive legacy
+`static_movement.state` fallback after `provenance.movement` and before
+`seam.change`; regression cannot bypass the completeness gate.
+Receipt presence alone never reports `closed`; the
 existing wire vocabulary remains unchanged. The nested producer document
 preserves completeness and movement independently. RIPR performs no
 verification and issues no receipt: the external client owns the edit, the

@@ -165,18 +165,34 @@ pub(crate) fn command_spec_document(spec: &crate::domain::CommandSpec) -> Value 
 /// as CLI status. Authentic bytes establish receipt presence, not producer
 /// completeness or gap closure; static movement remains separate evidence.
 fn terminal_receipt_status(value: &Value) -> &'static str {
+    use crate::output::receipt_lifecycle as lifecycle;
+
     let reading = AgentReceiptReading::from_value(value);
     if reading.status.as_deref() == Some("invalid") {
         return "invalid";
     }
-    if reading.shows_gap_closed() {
-        return "improved";
+    match reading.receipt_state.as_str() {
+        lifecycle::RECEIPT_GAP_MISMATCH => return "invalid",
+        lifecycle::RECEIPT_STALE => return "stale",
+        _ => {}
     }
     if !reading.is_advisory() {
         return "limited";
     }
-    if reading.leaves_gap_open() && reading.movement.as_deref() == Some("regressed") {
+    // Retain the existing adapter's legacy movement field and normalization.
+    // This only preserves regression after the completeness gate; it cannot
+    // promote an incomplete/invalid receipt or turn presence into closure.
+    let movement_regressed = value
+        .pointer("/provenance/movement")
+        .or(value.pointer("/static_movement/state"))
+        .or(value.pointer("/seam/change"))
+        .and_then(Value::as_str)
+        .is_some_and(|movement| movement.trim().eq_ignore_ascii_case("regressed"));
+    if movement_regressed {
         return "regressed";
+    }
+    if reading.shows_gap_closed() {
+        return "improved";
     }
     receipt_status_from_lifecycle(&reading.receipt_state)
 }
@@ -1215,6 +1231,10 @@ mod tests {
             (
                 json!({"status": "advisory", "static_movement": {"state": "regressed"}, "summary": {"receipt_state": "receipt_stale"}}),
                 "stale",
+            ),
+            (
+                json!({"status": "advisory", "static_movement": {"state": "regressed"}, "summary": {"receipt_state": "receipt_movement_improved"}}),
+                "regressed",
             ),
         ];
         for (receipt, expected) in cases {
