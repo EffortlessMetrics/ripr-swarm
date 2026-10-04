@@ -92,6 +92,11 @@
         "numerator": 28,
         "denominator": 70,
         "rate": "0.4000"
+      },
+      "abstention_rate": {
+        "numerator": 15,
+        "denominator": 70,
+        "rate": "0.2143"
       }
     },
     "upstream": {
@@ -124,6 +129,11 @@
         "numerator": 5,
         "denominator": 34,
         "rate": "0.1471"
+      },
+      "abstention_rate": {
+        "numerator": 19,
+        "denominator": 34,
+        "rate": "0.5588"
       }
     }
   },

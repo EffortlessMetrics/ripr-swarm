@@ -78,6 +78,10 @@ impl SubjectOrigin {
 
 /// Authored subjects are this repository's own code, under its license.
 pub(crate) const AUTHORED_LICENSE: &str = "MIT OR Apache-2.0";
+/// Authored subject ids carry this prefix, and upstream ids may not, so
+/// relabeling a vendored excerpt as authored changes its id and every case
+/// that names it, which review sees.
+pub(crate) const AUTHORED_PREFIX: &str = "authored-";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -317,6 +321,9 @@ fn is_candidate_current(finding: &Value) -> bool {
 /// RIPR-SPEC-0157 moves the probe for a changed single-line `let` to the
 /// predicate that uses the binding, so the verdict for that edit sits on the
 /// use line, not on the anchor.
+/// Patterns (`let Some(x)`, `let Foo { x }`, `let (a, b)`), `ref` and raw
+/// identifiers fail closed: only a plain identifier followed by a type, an
+/// initializer or the end of the statement names a binding.
 pub(crate) fn declared_binding(line: &str) -> Option<String> {
     let rest = line.trim_start().strip_prefix("let ")?.trim_start();
     let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
@@ -324,7 +331,42 @@ pub(crate) fn declared_binding(line: &str) -> Option<String> {
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
         .collect();
-    (!name.is_empty() && !name.starts_with(|c: char| c.is_ascii_digit())).then_some(name)
+    let after = rest[name.len()..].trim_start();
+    let plain = !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name != "ref"
+        && name != "mut"
+        && after.starts_with(['=', ':', ';'])
+        && !after.starts_with("==");
+    plain.then_some(name)
+}
+
+/// The new initializer a `binding_predicate_relation` evidence line names:
+/// the last backticked span before `flows into`.
+fn relation_initializer(evidence: &str) -> Option<&str> {
+    let (head, _) = evidence.split_once(" flows into ")?;
+    let rest = head.strip_suffix('`')?;
+    let (_, init) = rest.rsplit_once('`')?;
+    Some(init)
+}
+
+/// Whether `evidence` is ripr's retarget relation for the `let` on the
+/// anchor line: same binding, and the relation's new initializer is the
+/// anchor statement's initializer, so a same-named `let` elsewhere in the
+/// diff is not followed.
+fn is_anchor_relation(evidence: &str, anchor_line: &str, binding: &str) -> bool {
+    let prefix = format!("binding_predicate_relation: changed binding `{binding}` initializer ");
+    if !evidence.starts_with(&prefix) {
+        return false;
+    }
+    let Some(init) = relation_initializer(evidence) else {
+        return false;
+    };
+    let statement = anchor_line.trim().trim_end_matches(';').trim_end();
+    !init.is_empty()
+        && statement
+            .strip_suffix(init)
+            .is_some_and(|head| head.trim_end().ends_with('='))
 }
 
 /// Findings that speak for the anchored line on the candidate side. Base-side
@@ -332,15 +374,17 @@ pub(crate) fn declared_binding(line: &str) -> Option<String> {
 /// anchor this includes the findings ripr retargeted
 /// from it (RIPR-SPEC-0157): candidate-current findings in the anchor file
 /// whose evidence carries the spec's `binding_predicate_relation` line for
-/// this binding. Following ripr's own relation keeps a retargeted probe from
-/// scoring as silent on the anchor without hand-editing the anchor line.
+/// this binding and this initializer. Following ripr's own relation keeps a
+/// retargeted probe from scoring as silent on the anchor without
+/// hand-editing the anchor line. This couples the projection to the wording
+/// of that evidence line (`analysis/language/rust/probes.rs`); a wording
+/// change stops the following, and a case that retargets then reads silent.
 pub(crate) fn anchored_findings<'a>(
     check: &'a Value,
     anchor: &Anchor,
-    binding: Option<&str>,
+    anchor_line: Option<&str>,
 ) -> Vec<&'a Value> {
-    let relation = binding
-        .map(|name| format!("binding_predicate_relation: changed binding `{name}` initializer"));
+    let relation = anchor_line.and_then(|line| declared_binding(line).map(|name| (line, name)));
     check
         .get("findings")
         .and_then(Value::as_array)
@@ -352,23 +396,23 @@ pub(crate) fn anchored_findings<'a>(
                 .filter(|finding| {
                     finding.pointer("/probe/line").and_then(Value::as_u64)
                         == Some(anchor.line as u64)
-                        || relation
-                            .as_deref()
-                            .is_some_and(|prefix| carries_evidence(finding, prefix))
+                        || relation.as_ref().is_some_and(|(line, name)| {
+                            carries_evidence(finding, |e| is_anchor_relation(e, line, name))
+                        })
                 })
                 .collect()
         })
         .unwrap_or_default()
 }
 
-fn carries_evidence(finding: &Value, prefix: &str) -> bool {
+fn carries_evidence(finding: &Value, matches: impl Fn(&str) -> bool) -> bool {
     finding
         .get("evidence")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .any(|line| line.starts_with(prefix))
+        .any(matches)
 }
 
 /// Line-level precedence is this corpus's own policy, not the triage
@@ -562,6 +606,7 @@ pub(crate) struct OriginRates {
     pub(crate) false_exposed_rate: Ratio,
     pub(crate) false_silent_rate: Ratio,
     pub(crate) ideal_rate: Ratio,
+    pub(crate) abstention_rate: Ratio,
 }
 
 fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
@@ -590,6 +635,7 @@ fn origin_rates(rows: &[&CaseRow]) -> OriginRates {
         false_exposed_rate: ratio(false_exposed, not_fully),
         false_silent_rate: ratio(false_silent, not_fully),
         ideal_rate: ratio(count(Outcome::Ideal), rows.len()),
+        abstention_rate: ratio(count(Outcome::Abstained), rows.len()),
     }
 }
 
@@ -601,9 +647,9 @@ pub(crate) fn case_row(
     case: &Case,
     origin: SubjectOrigin,
     check: &Value,
-    anchor_binding: Option<&str>,
+    anchor_line: Option<&str>,
 ) -> (CaseRow, usize, usize, BTreeMap<String, usize>) {
-    let anchored = anchored_findings(check, &case.anchor, anchor_binding);
+    let anchored = anchored_findings(check, &case.anchor, anchor_line);
     let followed_retarget = anchored
         .iter()
         .any(|f| f.pointer("/probe/line").and_then(Value::as_u64) != Some(case.anchor.line as u64));
@@ -661,12 +707,12 @@ pub(crate) fn case_row(
     (row, scored, contradicted, code_counts)
 }
 
-/// `anchor_bindings` maps a case id to the binding its anchor line declares,
-/// read from the patched run copy.
+/// `anchor_lines` maps a case id to its anchor line's text, read from the
+/// patched run copy.
 pub(crate) fn build_report(
     corpus: &Corpus,
     checks: &[(String, Value)],
-    anchor_bindings: &BTreeMap<String, String>,
+    anchor_lines: &BTreeMap<String, String>,
 ) -> Result<Report, String> {
     let by_id: BTreeMap<&str, &Value> = checks.iter().map(|(id, v)| (id.as_str(), v)).collect();
     let origins: BTreeMap<&str, SubjectOrigin> = corpus
@@ -695,7 +741,7 @@ pub(crate) fn build_report(
             case,
             origin,
             check,
-            anchor_bindings.get(&case.case_id).map(String::as_str),
+            anchor_lines.get(&case.case_id).map(String::as_str),
         );
         findings_scored += scored;
         findings_contradicted += contradicted;
@@ -797,18 +843,19 @@ pub(crate) fn render_report_markdown(report: &Report) -> String {
         out.push_str(
             "\nBy subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.\n\n",
         );
-        out.push_str("| Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal |\n");
-        out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+        out.push_str("| Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |\n");
+        out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
         for (origin, rates) in &report.by_origin {
             let cell = |r: &Ratio| format!("{}/{}", r.numerator, r.denominator);
             out.push_str(&format!(
-                "| {origin} | {} | {} | {} | {} | {} | {} |\n",
+                "| {origin} | {} | {} | {} | {} | {} | {} | {} |\n",
                 rates.cases_total,
                 cell(&rates.false_verdict_rate),
                 cell(&rates.false_actionable_rate),
                 cell(&rates.false_exposed_rate),
                 cell(&rates.false_silent_rate),
                 cell(&rates.ideal_rate),
+                cell(&rates.abstention_rate),
             ));
         }
     }
@@ -960,6 +1007,11 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
     }
     match subject.origin {
         SubjectOrigin::Upstream => {
+            if id.starts_with(AUTHORED_PREFIX) {
+                violations.push(format!(
+                    "upstream subject `{id}` uses the `{AUTHORED_PREFIX}` id prefix reserved for authored subjects"
+                ));
+            }
             let commit = subject.commit.as_deref().unwrap_or_default();
             if commit.len() != 40 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
                 violations.push(format!("subject `{id}` commit is not a 40-hex sha"));
@@ -973,6 +1025,20 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
             }
         }
         SubjectOrigin::Authored => {
+            if !id.starts_with(AUTHORED_PREFIX) {
+                violations.push(format!(
+                    "authored subject `{id}` must be named `{AUTHORED_PREFIX}<name>` so a relabeled upstream excerpt keeps a visible id change"
+                ));
+            }
+            if subject
+                .retained_files
+                .iter()
+                .any(|f| f.path.contains("LICENSE"))
+            {
+                violations.push(format!(
+                    "authored subject `{id}` retains a LICENSE file; authored code is under this repository's license, and a third-party license means vendored code"
+                ));
+            }
             if subject.upstream.is_some()
                 || subject.commit.is_some()
                 || subject.shared_corpus.is_some()
@@ -1516,10 +1582,10 @@ fn materialize(dir: &Path, case: &Case, work_root: &Path) -> Result<(PathBuf, Pa
 fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<String>), String> {
     let (work, diff) = materialize(dir, case, work_root)?;
     let anchored_file = work.join(&case.anchor.file);
-    let binding = read(&anchored_file)?
+    let anchor_line = read(&anchored_file)?
         .lines()
         .nth(case.anchor.line.saturating_sub(1))
-        .and_then(declared_binding);
+        .map(str::to_string);
     let cache = std::path::absolute(work_root.join(".cache").join(&case.case_id))
         .map_err(|err| format!("resolve cache dir: {err}"))?;
     let binary = ripr_fixture_binary()?;
@@ -1545,7 +1611,7 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     if let Ok(canonical) = fs::canonicalize(&work) {
         relativize_probe_files(&mut check, &canonical);
     }
-    Ok((check, binding))
+    Ok((check, anchor_line))
 }
 
 /// ripr names probe files by joining them onto the absolute `--root`; the
@@ -1568,15 +1634,15 @@ pub(crate) fn relativize_probe_files(check: &mut Value, root: &Path) {
 
 fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, String> {
     let mut checks = Vec::new();
-    let mut bindings = BTreeMap::new();
+    let mut anchor_lines = BTreeMap::new();
     for case in &corpus.cases {
-        let (check, binding) = run_case(dir, case, work_root)?;
-        if let Some(binding) = binding {
-            bindings.insert(case.case_id.clone(), binding);
+        let (check, anchor_line) = run_case(dir, case, work_root)?;
+        if let Some(line) = anchor_line {
+            anchor_lines.insert(case.case_id.clone(), line);
         }
         checks.push((case.case_id.clone(), check));
     }
-    build_report(corpus, &checks, &bindings)
+    build_report(corpus, &checks, &anchor_lines)
 }
 
 fn validated_corpus(dir: &Path) -> Result<Corpus, String> {

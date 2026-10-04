@@ -15,7 +15,7 @@ and `authored-roles` for test shapes other RIPR specs define, each case naming
 its specs in its reasoning), and one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
-checkout.
+checkout (for an authored crate, the whole stored crate).
 
 ## When
 
@@ -41,5 +41,5 @@ report must equal `expected/report.json`.
 When a ripr change moves a verdict, `check` fails and names the first
 differing line. Read `target/ripr/reports/verdict-corpus/report.md`. A row
 marked `changed_since_labeling` must be re-checked against the full pinned
-checkout before the expected report is refreshed with
+checkout (for an authored crate, the stored crate itself) before the expected report is refreshed with
 `cargo xtask verdict-corpus report --out fixtures/rust-verdict-corpus/expected`.

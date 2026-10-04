@@ -344,6 +344,9 @@ are scoped or reviewed.
   corpus's first silent verdict). Authored rates now read 23 of 36 false
   actionable and 4 of 34 false exposed; upstream rates are unchanged
   (RIPR-SPEC-0219).
+  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
+  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
+  current case exercises it (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline

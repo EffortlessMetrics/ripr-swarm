@@ -14,10 +14,10 @@ Spec: RIPR-SPEC-0219. Corpus version: 2026-10-04.5. Cases: 104.
 
 By subject origin. Authored cases are written to fill cells the upstream cases leave empty, so only the upstream rates describe real-world tests.
 
-| Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal |
-| --- | --- | --- | --- | --- | --- | --- |
-| authored | 70 | 27/70 | 23/36 | 4/34 | 0/34 | 28/70 |
-| upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 |
+| Origin | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| authored | 70 | 27/70 | 23/36 | 4/34 | 0/34 | 28/70 | 15/70 |
+| upstream | 34 | 10/34 | 10/20 | 0/14 | 0/14 | 5/34 | 19/34 |
 
 | Case | Origin | Truth | Ideal | Observed | Classes | Outcome | Changed since labeling | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
