@@ -946,6 +946,51 @@ fn from_spot_check_v2(base_row: &Value) -> bool {
     })
 }
 
+/// Opens the population suffix on every spot-check row's evidence. The
+/// suffix runs to the end of the evidence, so the last occurrence is the one
+/// ingest wrote.
+const POPULATION_MARKER: &str = " [population: ";
+
+/// One repository of a spot-check population: its name, checkout revision,
+/// cargo-mutants version and any cargo-mutants arguments, since a change in
+/// any of them changes which mutants a rate is computed over.
+fn population_member(repo: &Value) -> Option<String> {
+    let name = repo["name"].as_str().filter(|name| !name.is_empty())?;
+    let revision = repo["revision"]
+        .as_str()
+        .filter(|revision| !revision.is_empty())?;
+    let mut member = format!("{name}@{revision}");
+    if let Some(version) = repo["cargo_mutants_version"].as_str() {
+        member.push_str(&format!(" cargo-mutants {version}"));
+    }
+    let args = repo["cargo_mutants_args"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    if !args.is_empty() {
+        member.push_str(&format!(" args {}", args.join(" ")));
+    }
+    Some(member)
+}
+
+/// The population a spot-check row was measured over, read back from the
+/// evidence of each of its samples. `None` when a sample predates the suffix
+/// or when samples disagree, so neither can pass as a known population.
+fn spot_check_population(row: &Value) -> Option<String> {
+    let samples = row["samples"].as_array()?;
+    let mut populations = samples.iter().map(|sample| {
+        let detail = sample["detail"].as_str()?;
+        let start = detail.rfind(POPULATION_MARKER)? + POPULATION_MARKER.len();
+        detail[start..].strip_suffix(']').map(str::to_string)
+    });
+    let first = populations.next()??;
+    populations
+        .all(|population| population.as_deref() == Some(first.as_str()))
+        .then_some(first)
+}
+
 /// Convert a `ripr-mutation-spot-check-v2` receipt into scoreboard rows:
 ///
 /// - discriminator claim agreement: when ripr says a test discriminates the
@@ -955,6 +1000,12 @@ fn from_spot_check_v2(base_row: &Value) -> bool {
 /// - join coverage: canonical precise records over every runtime record,
 ///   because agreement rates only speak for the mutants that could be joined
 ///   to a seam by `seam_id` or span containment.
+///
+/// Rates pool every repository, so each row's evidence ends with the
+/// population it measured (every repository's name, revision, cargo-mutants
+/// version and arguments). A baseline over a different population is not
+/// compared: swapping a repository moves a pooled rate without any verdict
+/// changing (#6311).
 pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, String> {
     let families = value["scored_families"]
         .as_object()
@@ -995,7 +1046,14 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         .filter(|repos| !repos.is_empty())
         .ok_or("mutation spot-check receipt needs a non-empty repos array")?;
     let (mut joined, mut mutants) = (0_u64, 0_u64);
+    let mut population = Vec::new();
     for (index, repo) in repos.iter().enumerate() {
+        population.push(population_member(repo).ok_or_else(|| {
+            format!(
+                "mutation spot-check repo {} needs a name and revision, so its rates can be tied to the repositories they measured",
+                index + 1
+            )
+        })?);
         let precise = repo["pairings"]["canonical_precise"].as_u64();
         let total = repo["pairings"]["records_total"].as_u64();
         let (Some(precise), Some(total)) = (precise, total) else {
@@ -1047,9 +1105,12 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
     } else {
         String::new()
     };
+    population.sort();
+    let population = format!("{POPULATION_MARKER}{}]", population.join(", "));
     for row in &mut rows {
         if let Some(Value::String(evidence)) = row.get_mut("evidence") {
             evidence.push_str(&caveat);
+            evidence.push_str(&population);
         }
     }
     let evidence = format!(
@@ -1674,14 +1735,31 @@ pub(crate) fn compare_with_baseline(
     let Some(base_row) = base_row else {
         return json!({"comparable": false, "reason": "metric absent from baseline"});
     };
-    if def.source == "ingest:mutation-spot-check" && !from_spot_check_v2(base_row) {
-        return json!({
-            "comparable": false,
-            "value": base_row["value"],
-            "reason": format!(
-                "baseline was not ingested from a {MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt"
-            ),
-        });
+    if def.source == "ingest:mutation-spot-check" {
+        if !from_spot_check_v2(base_row) {
+            return json!({
+                "comparable": false,
+                "value": base_row["value"],
+                "reason": format!(
+                    "baseline was not ingested from a {MUTATION_SPOT_CHECK_SCHEMA_VERSION} receipt"
+                ),
+            });
+        }
+        // A pooled rate over other repositories, revisions or cargo-mutants
+        // runs is a different population, not a trend.
+        let before = spot_check_population(base_row);
+        let now = spot_check_population(row);
+        if before.is_none() || before != now {
+            return json!({
+                "comparable": false,
+                "value": base_row["value"],
+                "reason": format!(
+                    "baseline measured population [{}]; this run measured [{}]",
+                    before.as_deref().unwrap_or("unrecorded"),
+                    now.as_deref().unwrap_or("unrecorded"),
+                ),
+            });
+        }
     }
     // Samples with a repository are judged per repository below.
     let incomplete = |r: &Value| {

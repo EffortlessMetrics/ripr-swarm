@@ -557,9 +557,11 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
         },
         "repos": [
-            {"pairings": {"canonical_precise": 2, "records_total": 86, "seam_precise": 80},
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "pairings": {"canonical_precise": 2, "records_total": 86, "seam_precise": 80},
              "calibration_metrics": {"mutants_total": 86}},
-            {"pairings": {"canonical_precise": 170, "records_total": 1659},
+            {"name": "semver", "revision": "280ebcb6", "cargo_mutants_version": "27.1.0",
+             "pairings": {"canonical_precise": 170, "records_total": 1659},
              "calibration_metrics": {"mutants_total": 1659}},
         ],
     });
@@ -653,6 +655,91 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             );
         }
     }
+
+    // Every row names the population it pooled.
+    let population =
+        "[population: atuin@90f590b9 cargo-mutants 27.1.0, semver@280ebcb6 cargo-mutants 27.1.0]";
+    for sample in &unsampled {
+        assert!(sample.detail.ends_with(population), "{}", sample.detail);
+    }
+
+    // A pooled rate over a different population is not a trend: swapping a
+    // repository, moving a revision, or changing the cargo-mutants arguments
+    // or version each make the baseline incomparable (#6311). Repository
+    // order alone does not.
+    let comparable_against = |receipt: &Value| -> Result<Vec<Option<bool>>, String> {
+        let samples = parse_ingest(receipt, &config)?;
+        let report = build_report(
+            &config,
+            &["trust".to_string()],
+            &samples,
+            &context("r"),
+            Some(&current),
+            true,
+        );
+        [
+            "trust.discriminator_claim_agreement",
+            "trust.gap_claim_agreement",
+            "trust.mutation_join_coverage",
+        ]
+        .iter()
+        .map(|id| Ok(metric(&report, id)?["baseline"]["comparable"].as_bool()))
+        .collect()
+    };
+    let mut reordered = receipt.clone();
+    if let Some(repos) = reordered["repos"].as_array_mut() {
+        repos.reverse();
+    }
+    assert_eq!(comparable_against(&reordered)?, vec![Some(true); 3]);
+    let mut swapped = receipt.clone();
+    swapped["repos"][1]["name"] = json!("ripgrep");
+    let mut moved = receipt.clone();
+    moved["repos"][0]["revision"] = json!("0123abcd");
+    let mut upgraded = receipt.clone();
+    upgraded["repos"][1]["cargo_mutants_version"] = json!("27.2.0");
+    for changed in [&swapped, &moved, &upgraded, &sampled] {
+        assert_eq!(comparable_against(changed)?, vec![Some(false); 3]);
+    }
+    let samples = parse_ingest(&swapped, &config)?;
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &samples,
+        &context("r"),
+        Some(&current),
+        true,
+    );
+    let reason = metric(&report, "trust.gap_claim_agreement")?["baseline"]["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        reason.contains("semver@280ebcb6") && reason.contains("ripgrep@280ebcb6"),
+        "{reason}"
+    );
+
+    // A v2 baseline written before rows named their population cannot show
+    // it measured the same repositories, so it is not compared either.
+    let mut unrecorded = current.clone();
+    for row in unrecorded["metrics"].as_array_mut().into_iter().flatten() {
+        for sample in row["samples"].as_array_mut().into_iter().flatten() {
+            sample["detail"] = json!(
+                "ingested from mutation-spot-check: ripr-mutation-spot-check-v2: 14 canonical precise mutants scored"
+            );
+        }
+    }
+    let report = build_report(
+        &config,
+        &["trust".to_string()],
+        &unsampled,
+        &context("r"),
+        Some(&unrecorded),
+        true,
+    );
+    assert_eq!(
+        metric(&report, "trust.mutation_join_coverage")?["baseline"]["comparable"].as_bool(),
+        Some(false)
+    );
 
     // v1 operator-text pairings measure a different population, so a v1
     // receipt is refused rather than read through a key fallback.
@@ -1080,7 +1167,8 @@ fn malformed_mutation_and_generic_receipts_are_rejected() {
             "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 1},
             "claims_no_discriminator": {"agreement_rate": 0.5, "mutants_scored": 1},
         },
-        "repos": [{"pairings": {"seam_precise": 5}, "calibration_metrics": {"mutants_total": 9}}],
+        "repos": [{"name": "a", "revision": "abc",
+                   "pairings": {"seam_precise": 5}, "calibration_metrics": {"mutants_total": 9}}],
     });
     // A v1-shaped repo row must not fall back to its `seam_precise` count.
     assert!(
@@ -1094,6 +1182,15 @@ fn malformed_mutation_and_generic_receipts_are_rejected() {
             .is_err_and(|e| e.contains("calibration_metrics.mutants_total differs"))
     );
     receipt["repos"][0]["pairings"]["records_total"] = json!(9);
+    // A rate that cannot name the repositories it pooled is not ingested.
+    for field in ["name", "revision"] {
+        let mut anonymous = receipt.clone();
+        anonymous["repos"][0][field] = json!("");
+        assert!(
+            mutation_spot_check_to_input(&anonymous)
+                .is_err_and(|e| e.contains("needs a name and revision"))
+        );
+    }
     assert!(mutation_spot_check_to_input(&receipt).is_ok_and(|input| {
         input["metrics"]
             .as_array()
