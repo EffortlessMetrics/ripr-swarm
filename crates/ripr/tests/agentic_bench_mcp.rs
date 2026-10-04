@@ -75,6 +75,22 @@ fn nonempty_str<'a>(value: &'a Value, pointer: &str, context: &str) -> Result<&'
     Ok(text)
 }
 
+/// Resolve a tool name through `tools/list`: the driver must use a name
+/// the server advertised, never a literal it guessed (#5209).
+fn tool_named(tools: &Value, name: &str) -> Result<String, String> {
+    let entries = at(tools, "/result/tools", "tools/list")?
+        .as_array()
+        .ok_or_else(|| format!("tools/list: `/result/tools` is not an array: {tools}"))?;
+    for entry in entries {
+        if entry.pointer("/name").and_then(Value::as_str) == Some(name) {
+            return Ok(name.to_string());
+        }
+    }
+    Err(format!(
+        "tools/list: server did not advertise {name:?}: {tools}"
+    ))
+}
+
 /// One stdout line. A line that is not JSON is a protocol violation,
 /// never a skippable frame. Replies correlate by their `id` member.
 struct WireLine {
@@ -272,6 +288,16 @@ impl McpSession {
             "method": "tools/call",
             "params": { "name": tool, "arguments": arguments }
         }))
+    }
+
+    fn list_tools(&mut self, id: &str) -> Result<Value, String> {
+        self.send_value(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/list",
+            "params": {}
+        }))?;
+        self.await_reply(id, REPLY_TIMEOUT)
     }
 
     fn call(&mut self, id: &str, tool: &str, arguments: Value) -> Result<Value, String> {
@@ -755,7 +781,18 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
     let mut session = McpSession::spawn(&fixture.root)?;
     session.initialize()?;
 
-    let reply = session.call("b2-status", "ripr_workspace_status", json!({}))?;
+    // #5209: the B2 driver selects every tool from `tools/list` — no
+    // literal tool name below may reach the wire undiscovered.
+    let tools = session.list_tools("b2-tools")?;
+    let status_tool = tool_named(&tools, "ripr_workspace_status")?;
+    let refresh_tool = tool_named(&tools, "ripr_refresh")?;
+    let list_tool = tool_named(&tools, "ripr_list_gaps")?;
+    let gap_tool = tool_named(&tools, "ripr_get_gap")?;
+    let prepare_tool = tool_named(&tools, "ripr_prepare_repair")?;
+    let attempt_tool = tool_named(&tools, "ripr_get_repair_attempt")?;
+    let receipt_tool = tool_named(&tools, "ripr_get_receipt_status")?;
+
+    let reply = session.call("b2-status", &status_tool, json!({}))?;
     let status = tool_success(&reply, "b2 status")?.clone();
     if as_str(&status, "/workspace/workspace_state", "b2 status")? != "ready" {
         return Err(format!("b2 status: fixture root is not ready: {status}"));
@@ -768,7 +805,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
     }
     let bound = response_bound(&status)?;
 
-    let reply = session.call("b2-refresh", "ripr_refresh", json!({}))?;
+    let reply = session.call("b2-refresh", &refresh_tool, json!({}))?;
     let refresh = tool_success(&reply, "b2 refresh")?.clone();
     let (snapshot, findings, total) = require_completed_refresh(&refresh)?;
     if total == 0 || findings == 0 {
@@ -777,7 +814,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         ));
     }
 
-    let reply = session.call("b2-status-after", "ripr_workspace_status", json!({}))?;
+    let reply = session.call("b2-status-after", &status_tool, json!({}))?;
     let status = tool_success(&reply, "b2 status after refresh")?.clone();
     if as_str(&status, "/session/attempt_state", "b2 status after refresh")? != "completed" {
         return Err(format!("b2 status after refresh: not completed: {status}"));
@@ -793,7 +830,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         ));
     }
 
-    let reply = session.call("b2-list", "ripr_list_gaps", json!({}))?;
+    let reply = session.call("b2-list", &list_tool, json!({}))?;
     let list = tool_success(&reply, "b2 list_gaps")?.clone();
     require_consistent_counts(&list, &snapshot, total)?;
     let selected = as_u64(&list, "/selected", "b2 list_gaps")?;
@@ -813,11 +850,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         ));
     }
 
-    let reply = session.call(
-        "b2-gap",
-        "ripr_get_gap",
-        json!({ "canonical_id": canonical }),
-    )?;
+    let reply = session.call("b2-gap", &gap_tool, json!({ "canonical_id": canonical }))?;
     let gap = tool_success(&reply, "b2 get_gap")?.clone();
     if as_str(&gap, "/snapshot_id", "b2 get_gap")? != snapshot {
         return Err(format!("b2 get_gap: snapshot drifted: {gap}"));
@@ -838,7 +871,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
 
     let reply = session.call(
         "b2-prepare",
-        "ripr_prepare_repair",
+        &prepare_tool,
         json!({ "canonical_id": canonical }),
     )?;
     let first = tool_success(&reply, "b2 prepare_repair")?.clone();
@@ -848,7 +881,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
     let first_text = as_str(&reply, "/result/content/0/text", "b2 prepare_repair")?.to_string();
     let reply = session.call(
         "b2-prepare-replay",
-        "ripr_prepare_repair",
+        &prepare_tool,
         json!({ "canonical_id": canonical }),
     )?;
     let second = tool_success(&reply, "b2 prepare_repair replay")?.clone();
@@ -865,13 +898,13 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
     // Replay twin: a different item must not replay the same document.
     let reply = session.call(
         "b2-prepare-twin",
-        "ripr_prepare_repair",
+        &prepare_tool,
         json!({ "canonical_id": UNKNOWN_CANONICAL_ID }),
     )?;
     require_failure_code(&reply, "b2 prepare_repair twin", "item_not_found")?;
     let reply = session.call(
         "b2-prepare-stale",
-        "ripr_prepare_repair",
+        &prepare_tool,
         json!({ "canonical_id": canonical, "snapshot_id": STALE_SNAPSHOT_ID }),
     )?;
     let stale = require_failure_code(&reply, "b2 prepare_repair stale", "stale_snapshot")?;
@@ -895,7 +928,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         }
         let reply = session.call(
             "b2-attempt",
-            "ripr_get_repair_attempt",
+            &attempt_tool,
             json!({ "attempt_id": attempt }),
         )?;
         let attempt_doc = tool_success(&reply, "b2 get_repair_attempt")?.clone();
@@ -919,7 +952,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         }
         let reply = session.call(
             "b2-receipt",
-            "ripr_get_receipt_status",
+            &receipt_tool,
             json!({ "receipt_id": attempt }),
         )?;
         let receipt = tool_success(&reply, "b2 get_receipt_status")?.clone();
@@ -936,7 +969,7 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         }
         let reply = session.call(
             "b2-gap-linked",
-            "ripr_get_gap",
+            &gap_tool,
             json!({ "canonical_id": canonical }),
         )?;
         let linked = tool_success(&reply, "b2 get_gap after prepare")?.clone();
@@ -960,13 +993,13 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
         }
         let reply = session.call(
             "b2-attempt-unknown",
-            "ripr_get_repair_attempt",
+            &attempt_tool,
             json!({ "attempt_id": UNKNOWN_ATTEMPT_ID }),
         )?;
         require_failure_code(&reply, "b2 get_repair_attempt unknown", "attempt_not_found")?;
         let reply = session.call(
             "b2-receipt-unknown",
-            "ripr_get_receipt_status",
+            &receipt_tool,
             json!({ "receipt_id": UNKNOWN_ATTEMPT_ID }),
         )?;
         require_failure_code(&reply, "b2 get_receipt_status unknown", "attempt_not_found")?;

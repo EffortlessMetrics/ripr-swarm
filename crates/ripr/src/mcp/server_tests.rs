@@ -233,7 +233,7 @@ async fn get_gap_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), Stri
 #[tokio::test]
 async fn get_gap_accepts_canonical_id_at_the_dispatch_edge() -> Result<(), String> {
     // #5209: the tool input spells the identity the outputs emit
-    // (`canonical_id`), not a second `canonical_id` name. A pre-refresh server
+    // (`canonical_id`), not the old `gap_id` name. A pre-refresh server
     // answers past-dispatch calls with typed `no_snapshot`, which proves
     // the dispatch edge accepted the spelling.
     let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
@@ -259,6 +259,25 @@ async fn get_gap_accepts_canonical_id_at_the_dispatch_edge() -> Result<(), Strin
         != Some(workspace::CODE_NO_SNAPSHOT)
     {
         return Err(format!("canonical_id call lost no_snapshot: {value}"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_gap_rejects_the_retired_gap_id_name() -> Result<(), String> {
+    // #5209 removal side: guessing the old `gap_id` spelling fails at the
+    // dispatch edge with invalid params, the same commit that accepts
+    // `canonical_id` above.
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    let arguments = serde_json::from_value(serde_json::json!({"gap_id": "gap:x"}))
+        .map_err(|error| error.to_string())?;
+    let result = server.get_gap_tool(arguments).await;
+    if !matches!(
+        result,
+        Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS
+    ) {
+        return Err("get_gap must reject gap_id with invalid params".to_string());
     }
     Ok(())
 }
@@ -488,6 +507,11 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
             "prepare_repair rejects unknown arguments",
         ),
         (
+            "prepare",
+            serde_json::json!({"gap_id": "gap:x"}),
+            "prepare_repair rejects the retired gap_id name",
+        ),
+        (
             "attempt",
             serde_json::json!({}),
             "get_repair_attempt rejects a missing attempt_id",
@@ -546,6 +570,11 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
             "card",
             serde_json::json!({"canonical_id": "gap:x", "verbose": true}),
             "get_repair_card rejects unknown arguments",
+        ),
+        (
+            "card",
+            serde_json::json!({"gap_id": "gap:x"}),
+            "get_repair_card rejects the retired gap_id name",
         ),
     ] {
         let arguments: Option<serde_json::Map<String, Value>> =
