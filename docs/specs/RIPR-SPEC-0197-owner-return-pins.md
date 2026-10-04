@@ -247,7 +247,12 @@ rule only for an assertion whose context was admitted.
   context does not also claim that no assertion or oracle was detected. The
   disclosure is computed after admission and never changes what is credited.
 - Macro-binding ambiguity is scoped to what can bind the name: a foreign
-  macro whose arguments only invoke `assert_eq!(..)` binds nothing; a
+  macro whose arguments only invoke `assert_eq!(..)` binds nothing for tests
+  outside its expansion (its expansion could build `macro_rules! assert_eq`
+  or `use .. as assert_eq` from those tokens, but every trusted name is a
+  standard-prelude macro and rustc rejects a bare use that such a
+  macro-expanded binding would shadow, E0659; `owner_pin_execution`
+  pins this with compiled controls); a
   `macro_rules!` confined to an inline module or function body (no
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member

@@ -1416,6 +1416,112 @@ fn macro_use_module_admission_matches_runtime() -> Result<(), String> {
     Ok(())
 }
 
+/// A macro whose arguments only invoke `assert_eq!(..)` binds nothing for
+/// tests outside its expansion. Its expansion sees the tokens as a pattern
+/// and can emit `macro_rules! assert_eq`, `use .. as assert_eq` or a
+/// re-export, but every trusted name is a standard-prelude macro, and rustc
+/// rejects a bare use that a macro-expanded binding would shadow (E0659).
+/// So the exemption relies on the compiler, and these controls pin that:
+/// the pass-through row compiles, is credited and catches the wrong library;
+/// each token-built shadow fails to compile.
+#[test]
+fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/owner_return_pin_direct");
+    let production = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let test_module = |inner: &str| {
+        format!(
+            "#[cfg(test)]\nmod tests {{\n    use super::*;\n{inner}\n    #[test]\n    fn checks() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+        )
+    };
+    let source = format!(
+        "{production}\nmacro_rules! wrap {{ ($($tokens:tt)*) => {{ $($tokens)* }}; }}\nfn _uses() {{ wrap!(assert_eq!(1, 1)); }}\n{}",
+        test_module("")
+    );
+    let scratch = Scratch::create()?;
+    std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+    std::fs::copy(
+        fixture.join("input/Cargo.toml"),
+        scratch.0.join("Cargo.toml"),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(fixture.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: serde_json::Value =
+        serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
+    let findings = json["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["classification"], "exposed");
+    for wrong in [false, true] {
+        let runtime_source = if wrong {
+            source.replace("input * 3", "input * 2")
+        } else {
+            source.clone()
+        };
+        source_runtime_control_with(
+            &runtime_source,
+            &[],
+            &format!("wrapper runtime: pass_through, wrong={wrong}"),
+            1,
+            wrong,
+        )?;
+    }
+
+    let define = "macro_rules! define { ($name:ident ! $($rest:tt)*) => { macro_rules! $name { ($a:expr, $b:expr) => {{ let _ = (&$a, &$b); }}; } }; }";
+    let rename = "macro_rules! define { ($name:ident ! $($rest:tt)*) => { pub use std::assert_ne as $name; }; }";
+    for (case, shadow) in [
+        (
+            "defines_at_the_crate_root",
+            format!("{define}\ndefine!(assert_eq!());\n{}", test_module("")),
+        ),
+        (
+            "defines_in_the_test_module",
+            format!("{define}\n{}", test_module("    define!(assert_eq!());")),
+        ),
+        (
+            "renames_in_the_test_module",
+            format!("{rename}\n{}", test_module("    define!(assert_eq!());")),
+        ),
+        (
+            "re_exported_through_a_glob",
+            format!(
+                "{rename}\nmod shadow {{ define!(assert_eq!()); }}\n{}",
+                test_module("    use crate::shadow::*;")
+            ),
+        ),
+    ] {
+        let runtime = Scratch::create()?;
+        let path = runtime.0.join("subject.rs");
+        std::fs::write(&path, format!("{production}\n{shadow}"))
+            .map_err(|error| error.to_string())?;
+        let output = run(
+            Path::new("rustc"),
+            &[
+                "--edition=2024".as_ref(),
+                "--test".as_ref(),
+                path.as_os_str(),
+                "-o".as_ref(),
+                runtime.0.join("test").as_os_str(),
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success() && stderr.contains("E0659"),
+            "{case}: a macro-expanded `assert_eq` must not compile beside the prelude's: {stderr}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn async_test_discovery_does_not_supply_execution_provenance() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
