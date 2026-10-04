@@ -232,8 +232,13 @@ pub(crate) fn render_human_triage(
         match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => {
                 out.push_str("\nNext: drill into the top finding:\n");
-                out.push_str(&format!("  {}\n", navigation.explain_command(&finding.id)));
-                out.push_str(&format!("  {}\n", navigation.context_command(&finding.id)));
+                for command in [
+                    navigation.explain_command(&finding.id),
+                    navigation.context_command(&finding.id),
+                ] {
+                    out.push_str(&format!("  {command}\n"));
+                    super::push_powershell_variant(out, "  ", &command);
+                }
             }
             // #4321: a `--worktree` run without `--write-artifact` has no
             // artifact for sibling commands to replay; say so and name the
