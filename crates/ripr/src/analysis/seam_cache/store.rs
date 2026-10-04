@@ -988,6 +988,56 @@ mod tests {
         Ok(())
     }
 
+    /// The owned envelopes write `classified_seams` through the related-test
+    /// table (#5291). The borrowed writers must use the same serializer, or a
+    /// stored entry would not decode. Shared related tests make the table
+    /// representation differ from plain serialization.
+    #[test]
+    fn borrowed_writers_match_owned_bytes_with_shared_related_tests() -> Result<(), String> {
+        use super::super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+        let a = related("a", RelationReason::SameModule);
+        let b = related("b", RelationReason::SameModule);
+        let seams = vec![
+            seam(1, vec![a.clone(), b.clone()]),
+            seam(2, vec![b, a.clone()]),
+            seam(3, vec![a]),
+        ];
+        let key = empty_key();
+
+        let owned = CacheEnvelope::new_with_fallback(key.clone(), seams.clone(), None, Vec::new());
+        let owned_bytes = codec::encode(&owned)?;
+        let borrowed = borrowed_cache_envelope(&key, &seams, None, &[]);
+        let digest = semantic_body_digest(CACHE_ENVELOPE_DIGEST_DOMAIN, &borrowed)?;
+        let mut streamed = Vec::new();
+        encode_checksummed_pretty_to_writer(&borrowed, digest, &mut streamed)?;
+        assert_eq!(
+            streamed, owned_bytes,
+            "single-entry writer diverged from owned codec"
+        );
+        assert_eq!(
+            checksummed_pretty_len(&borrowed)?,
+            owned_bytes.len(),
+            "byte planner must count the encoded table representation"
+        );
+
+        let owned_shard = super::super::ShardedCacheEnvelope::new(key.clone(), 0, 2, seams.clone());
+        let owned_shard_bytes = codec::encode_shard(&owned_shard)?;
+        let borrowed_shard = borrowed_shard_envelope(&key, 0, 2, &seams);
+        let digest = semantic_body_digest(SHARDED_ENVELOPE_DIGEST_DOMAIN, &borrowed_shard)?;
+        let mut streamed = Vec::new();
+        encode_checksummed_pretty_to_writer(&borrowed_shard, digest, &mut streamed)?;
+        assert_eq!(
+            streamed, owned_shard_bytes,
+            "shard writer diverged from owned codec"
+        );
+        assert_eq!(
+            checksummed_pretty_len(&borrowed_shard)?,
+            owned_shard_bytes.len()
+        );
+        Ok(())
+    }
+
     #[test]
     fn below_exactly_and_one_byte_over_the_encoded_ceiling() -> Result<(), String> {
         let dir = isolated_dir("exact-ceiling");

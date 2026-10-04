@@ -117,6 +117,7 @@ proving a universal RSS threshold.
 
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_single_entry_matches_owned_codec_bytes`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_shard_matches_owned_codec_bytes`
+- `crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_writers_match_owned_bytes_with_shared_related_tests`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::below_exactly_and_one_byte_over_the_encoded_ceiling`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::variable_size_records_force_byte_shards_when_record_count_would_not`
 - `crates/ripr/src/analysis/seam_cache/store.rs::tests::many_small_records_empty_and_multi_shard_round_trip`
