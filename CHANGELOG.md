@@ -9,6 +9,14 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- `ripr help --json` now projects a typed per-command `exit` object for the
+  0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
+  `check` findings still completing with 0, `gate evaluate` `config_error`=2
+  versus `blocked`=3, and `agent verify`'s empty-stdout refusal without
+  scraping `stop_states` (#5066).
+
 ### Fixed
 
 - Repair attempts: concurrent `ripr agent repair --phase after` invocations
@@ -17,6 +25,11 @@ are scoped or reviewed.
   OS lock with base revalidation, so exactly one after phase commits and
   the loser gets a typed retry refusal instead of a silent overwrite
   (#5287).
+- Preview-language refusals (parse budget, read caps, walk cap) no longer
+  downgrade a diff that touches none of that language. A Rust-only change in a
+  repository with an unrelated, deeply nested Python fixture (found trialing
+  `bat`) was reported `partial_with_limitations`; it now completes. The same
+  refusal still surfaces when the diff touches that language.
 - `ripr help --all` now names `ripr help --json` and excepts that route
   from the global `-v` claim. The default `More:` line and `cmd:help`
   `json_support: true` already landed with #5398; the exhaustive screen
