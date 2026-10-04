@@ -400,3 +400,21 @@ fn full_device_on_stdout_is_a_nonzero_exit_with_a_stated_cause() -> Result<(), S
     );
     Ok(())
 }
+
+#[test]
+fn doctor_says_when_the_cache_cannot_be_written() -> Result<(), String> {
+    let fixture = Fixture::new("doctor-cache")?;
+    write(&fixture.cache, "not a directory")?;
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["doctor", "--root"])
+        .arg(&fixture.root)
+        .env(CACHE_DIR_ENV, &fixture.cache)
+        .output()
+        .map_err(|error| format!("run ripr doctor: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("! Cache not writable") && stdout.contains("RIPR_CACHE_DIR"),
+        "doctor must name the unwritable cache and the remedy: {stdout}"
+    );
+    Ok(())
+}

@@ -1471,6 +1471,43 @@ fn report_cache_status(root: &Path) {
         println!("- Cache location: {}", output::path::human_path(&cache_dir));
     }
     println!("- Cache size: {size_display} (run `ripr cache status` for details)");
+    if let Some(reason) = cache_unwritable_reason(&cache_dir) {
+        // The cache is optional, so this does not fail doctor; it only
+        // explains why every run will recompute instead of reusing facts.
+        println!(
+            "! Cache not writable: {reason}; results stay correct but every run recomputes. \
+Point RIPR_CACHE_DIR at a writable directory or free space there."
+        );
+    }
+}
+
+/// Why a cache entry could not be created under `cache_dir`, or `None` when
+/// one could. Probes the nearest existing ancestor with a short-lived
+/// exclusive file so doctor does not create the cache directory itself.
+fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
+    let mut probe_dir = cache_dir;
+    loop {
+        match std::fs::metadata(probe_dir) {
+            Ok(metadata) if metadata.is_dir() => break,
+            Ok(_) => return Some(format!("{} is not a directory", probe_dir.display())),
+            Err(_) => match probe_dir.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => probe_dir = parent,
+                _ => return None,
+            },
+        }
+    }
+    let probe = probe_dir.join(format!(".ripr-doctor-probe-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            None
+        }
+        Err(error) => Some(format!("cannot write in {}: {error}", probe_dir.display())),
+    }
 }
 
 const GENERATED_WORKFLOW_PATH: &str = ".github/workflows/ripr.yml";
@@ -1629,6 +1666,35 @@ fn report_config_status(root: &Path, config: Result<RiprConfig, String>, ok: &mu
 mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
+
+    #[test]
+    fn cache_unwritable_reason_names_a_blocking_file_and_accepts_a_creatable_path()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("cache-writable");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let blocker = root.join("blocker");
+        std::fs::write(&blocker, "file").map_err(|error| error.to_string())?;
+
+        let reason = cache_unwritable_reason(&blocker.join("cache"));
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("is not a directory")),
+            "{reason:?}"
+        );
+        // A missing cache under a writable parent is fine and is not created.
+        let missing = root.join("not-yet").join("cache");
+        assert_eq!(cache_unwritable_reason(&missing), None);
+        assert!(!root.join("not-yet").exists());
+        let probes = std::fs::read_dir(&root)
+            .map_err(|error| error.to_string())?
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains("doctor-probe"))
+            .count();
+        assert_eq!(probes, 0, "probe file must be removed");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn generated_workflow_line_flags_unpinned_and_other_version_installs() {
