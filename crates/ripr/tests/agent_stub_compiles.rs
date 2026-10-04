@@ -605,6 +605,80 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
     scratch.cleanup()
 }
 
+/// Runs git in `repo`; its captured streams land in `scratch`, outside it.
+fn git(scratch: &Path, repo: &Path, args: &[&str]) -> Result<(), String> {
+    let mut git = Command::new("git");
+    git.current_dir(repo)
+        .args([
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+        ])
+        .args(args);
+    let output = run_bounded(git, scratch, "git", Duration::from_secs(30))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+/// #5471: the stub resolver reads the file on disk. A committed-history
+/// check reads HEAD content for a file with uncommitted edits, so the route
+/// could stub an expression the finding never saw; it is not printed then.
+#[test]
+fn check_prints_no_stub_route_when_it_analyzed_other_bytes_than_the_disk() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let streams = scratch.directory.clone();
+    let root = streams.join("repo");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_snapshot\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let lib = root.join("src/lib.rs");
+    let source = |op: &str| {
+        format!(
+            "pub fn fee(n: u32, cap: u32) -> u32 {{\n    if n {op} cap {{ cap }} else {{ n }}\n}}\n"
+        )
+    };
+    std::fs::write(&lib, source(">")).map_err(|error| error.to_string())?;
+    git(&streams, &root, &["init", "-q"])?;
+    git(&streams, &root, &["add", "."])?;
+    git(&streams, &root, &["commit", "-qm", "base"])?;
+    std::fs::write(&lib, source(">=")).map_err(|error| error.to_string())?;
+    git(&streams, &root, &["commit", "-qam", "change boundary"])?;
+    let check = |root: &Path| -> Result<String, String> {
+        let mut check = ripr_command();
+        check
+            .args(["check", "--root"])
+            .arg(root)
+            .args(["--base", "HEAD~1"]);
+        let output = run_bounded(check, &streams, "check", Duration::from_mins(2))?;
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    };
+
+    // Clean tree: HEAD is the disk, so the route is offered.
+    let clean = check(&root)?;
+    assert!(clean.contains("src/lib.rs:2"), "{clean}");
+    assert!(clean.contains("Write a test for it:"), "{clean}");
+
+    // An uncommitted edit: HEAD was analyzed, the disk differs.
+    std::fs::write(&lib, source("<")).map_err(|error| error.to_string())?;
+    let dirty = check(&root)?;
+    assert!(dirty.contains("src/lib.rs:2"), "{dirty}");
+    assert!(
+        !dirty.contains("Write a test for it:") && !dirty.contains("No test stub here"),
+        "a route over other bytes must not be offered: {dirty}"
+    );
+    scratch.cleanup()
+}
+
 struct Scratch {
     directory: PathBuf,
     cleanup_attempted: bool,

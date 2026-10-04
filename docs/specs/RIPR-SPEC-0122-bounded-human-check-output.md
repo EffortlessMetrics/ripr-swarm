@@ -230,8 +230,11 @@ evidence and stays with `--seam-id`). The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,
 `No test stub here: <reason>`, naming the producer's refusal. When the
 function has no seam of that kind, or the location is refused as ambiguous,
-nothing is printed. Only the default human
-format runs the resolver; JSON and `human-full` output are unchanged.
+nothing is printed. The resolver reads the files on disk, so a check
+that analyzed other bytes (`--candidate-tree`, or a committed-history diff
+that read HEAD content behind uncommitted edits) prints no route. Only the
+default human format runs the resolver; JSON and `human-full` output are
+unchanged.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method

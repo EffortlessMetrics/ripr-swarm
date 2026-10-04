@@ -943,8 +943,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         worktree_explicitly_provided,
     );
     // #5471: only the default human render prints the `ripr agent stub`
-    // route, and only as the stub resolver decides it for that finding.
-    let navigation = if matches!(format, OutputFormat::Human) {
+    // route, and only as the stub resolver decides it for that finding. The
+    // resolver reads the files on disk, so a check of other bytes (a
+    // candidate tree, or HEAD content behind uncommitted edits) prints no
+    // route: it could stub an expression the finding never saw.
+    let analyzed_live_files = candidate_tree.is_none() && !output.unanalyzed_working_tree;
+    let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
         navigation.with_stub_route(app::test_stub::check_stub_route(
             &limited_check_input.root,
             &config,
