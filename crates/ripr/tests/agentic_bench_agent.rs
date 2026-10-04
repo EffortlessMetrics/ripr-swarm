@@ -832,7 +832,7 @@ fn b1_anti_gaming_stale_verify_bytes_are_rejected() -> Result<(), String> {
 
     let fresh_bytes = read_bytes(&verify_path)?;
     if fresh_bytes == decoy_bytes {
-        return Err("the planted decoy verify bytes survived the funnel".to_string());
+        return Err("the planted decoy verify bytes persisted through the funnel".to_string());
     }
     let fresh: Value = serde_json::from_slice(&fresh_bytes)
         .map_err(|error| format!("fresh verify bytes are not JSON: {error}"))?;
