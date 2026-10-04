@@ -104,7 +104,7 @@ fn ripr(dir: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<Ran, String>
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(format!(
-                    "ripr {args:?} exceeded {RIPR_DEADLINE:?} and was killed"
+                    "ripr {args:?} exceeded {RIPR_DEADLINE:?} and was terminated"
                 ));
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
