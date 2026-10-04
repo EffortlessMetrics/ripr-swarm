@@ -224,7 +224,9 @@ pub(crate) fn load_issue_lifecycle_intake_corpus(
         ));
     }
     if corpus.captured_at.trim().is_empty() || corpus.base_main.trim().is_empty() {
-        return Err("issue lifecycle intake corpus must record captured_at and base_main".to_string());
+        return Err(
+            "issue lifecycle intake corpus must record captured_at and base_main".to_string(),
+        );
     }
     if corpus.rows.len() != REQUIRED_ISSUE_LIFECYCLE_INTAKE_CATEGORIES.len() {
         return Err(format!(
