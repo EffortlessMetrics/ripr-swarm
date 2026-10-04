@@ -1747,3 +1747,87 @@ fn an_analyzed_smoke_row_without_a_duration_is_refused() -> Result<(), String> {
     rust_corpus_smoke_to_input(&closed)?;
     Ok(())
 }
+
+#[test]
+fn pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete() -> Result<(), String>
+{
+    let cut = |picks: u64, confirmed: u64, refuted: u64, distinct: u64| {
+        json!({
+            "picks": picks,
+            "confirmed": confirmed,
+            "refuted": refuted,
+            "unscored": picks - confirmed - refuted,
+            "precision": confirmed as f64 / (confirmed + refuted) as f64,
+            "scored_share": (confirmed + refuted) as f64 / picks as f64,
+            "distinct_functions": distinct,
+            "distinct_function_share": distinct as f64 / picks as f64,
+        })
+    };
+    let receipt = json!({
+        "schema_version": "ripr-pilot-ranking-v1",
+        "corpus_version": "2026-10-04.1",
+        "status": "complete",
+        "repos_total": 5,
+        "unavailable_repos": 0,
+        "pooled": {"top5": cut(25, 8, 12, 20), "top10": cut(50, 13, 22, 40)},
+    });
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(&receipt, &config)?;
+    let value = |id: &str| {
+        samples
+            .iter()
+            .find(|sample| sample.metric == id)
+            .map(|sample| sample.outcome.clone())
+    };
+    assert_eq!(
+        value("ranking.pilot_precision_top5"),
+        Some(SampleOutcome::Value(0.4))
+    );
+    assert_eq!(
+        value("ranking.pilot_precision_top10"),
+        Some(SampleOutcome::Value(13.0 / 35.0))
+    );
+    assert_eq!(
+        value("ranking.pilot_scored_share_top10"),
+        Some(SampleOutcome::Value(0.7))
+    );
+    assert_eq!(
+        value("ranking.pilot_distinct_function_share_top10"),
+        Some(SampleOutcome::Value(0.8))
+    );
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.detail.contains("over 5 of 5 repositories"))
+    );
+
+    // A crate that could not be fetched or scored changes the population, so
+    // every row is incomplete instead of a rate the gate compares as like for
+    // like.
+    let mut lost = receipt.clone();
+    lost["status"] = json!("incomplete");
+    lost["unavailable_repos"] = json!(1);
+    let samples = parse_ingest(&lost, &config)?;
+    assert_eq!(samples.len(), 4);
+    assert!(
+        samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Incomplete(_))),
+    );
+
+    // Nothing scored is no precision, not a perfect or zero one.
+    let mut unscored = receipt.clone();
+    unscored["pooled"]["top5"]["precision"] = Value::Null;
+    let samples = parse_ingest(&unscored, &config)?;
+    assert!(
+        samples
+            .iter()
+            .any(|sample| sample.metric == "ranking.pilot_precision_top5"
+                && matches!(sample.outcome, SampleOutcome::Incomplete(_)))
+    );
+
+    let mut malformed = receipt;
+    malformed["pooled"]["top10"]["precision"] = json!(1.5);
+    assert!(parse_ingest(&malformed, &config).is_err_and(|err| err.contains("between 0 and 1")));
+    Ok(())
+}

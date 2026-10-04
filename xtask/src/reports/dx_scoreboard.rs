@@ -42,12 +42,15 @@ const MUTATION_SPOT_CHECK_SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
 /// One JSON object per line from the first-run walk's scoreboard export.
 const FIRST_RUN_ROW_SCHEMA_VERSION: &str = "first_run_row.v1";
 const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
+/// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
+/// judged against the checked-in mutation answer key); converted on ingest.
+const PILOT_RANKING_SCHEMA_VERSION: &str = super::pilot_ranking::RECEIPT_SCHEMA_VERSION;
 /// Row metrics that carry their own per-step `budget`.
 const FIRST_RUN_BUDGETED: [&str; 3] = ["secs", "stdout_lines", "workflow_lines"];
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
-const BOARDS: [&str; 7] = [
+const BOARDS: [&str; 8] = [
     "speed",
     "ci",
     "trust",
@@ -55,6 +58,7 @@ const BOARDS: [&str; 7] = [
     "first_run",
     "agent",
     "corpus",
+    "ranking",
 ];
 
 const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
@@ -63,7 +67,7 @@ Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
 target/ripr/reports/dx-scoreboard.{json,md}.
 
-  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus
+  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus,ranking
   --repo <id>         limit corpus measurements to these corpus ids
   --include-heavy     also measure corpus entries marked heavy
   --corpus-dir <dir>  where pinned corpus checkouts live
@@ -477,9 +481,13 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let converted = rust_corpus_smoke_to_input(value)?;
         return parse_ingest(&converted, config);
     }
+    if value["schema_version"].as_str() == Some(PILOT_RANKING_SCHEMA_VERSION) {
+        let converted = pilot_ranking_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
         return Err(format!(
-            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
+            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
         ));
     }
     let source = value["source"]
@@ -973,6 +981,77 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
             "ripr-rust-corpus-smoke-v1 receipt, corpus {corpus_version}, tier {tier}, {} repositories",
             repos.len()
         ),
+        "metrics": rows,
+    }))
+}
+
+/// Convert a `ripr-pilot-ranking-v1` receipt (`cargo xtask pilot-ranking
+/// score`) into pooled `ranking` rows: precision of pilot's top 5 and top 10,
+/// the share of top-10 picks a label could judge, and the share of top-10
+/// picks that name a function no earlier pick named.
+///
+/// Scored share sits beside precision because precision can rise by making
+/// picks unjudgeable. A receipt that lost a repository measured a different
+/// population than its baseline, so every row is incomplete (lost completion
+/// to the gate) rather than a rate compared as like for like.
+pub(crate) fn pilot_ranking_to_input(value: &Value) -> Result<Value, String> {
+    let corpus = value["corpus_version"].as_str().unwrap_or("unknown");
+    let unavailable = value["unavailable_repos"]
+        .as_u64()
+        .ok_or("pilot-ranking receipt needs unavailable_repos as a non-negative integer")?;
+    let total = value["repos_total"]
+        .as_u64()
+        .filter(|total| *total > 0)
+        .ok_or("pilot-ranking receipt needs a positive repos_total")?;
+    let complete = unavailable == 0 && value["status"].as_str() == Some("complete");
+    let mut rows = Vec::new();
+    for (metric, cut, field) in [
+        ("ranking.pilot_precision_top5", "top5", "precision"),
+        ("ranking.pilot_precision_top10", "top10", "precision"),
+        ("ranking.pilot_scored_share_top10", "top10", "scored_share"),
+        (
+            "ranking.pilot_distinct_function_share_top10",
+            "top10",
+            "distinct_function_share",
+        ),
+    ] {
+        let entry = &value["pooled"][cut];
+        let count = |key: &str| {
+            entry[key]
+                .as_u64()
+                .ok_or_else(|| format!("pilot-ranking pooled.{cut} needs {key}"))
+        };
+        let (picks, confirmed, refuted) = (count("picks")?, count("confirmed")?, count("refuted")?);
+        let rate = match &entry[field] {
+            Value::Null => None,
+            rate => Some(
+                rate.as_f64()
+                    .filter(|rate| (0.0..=1.0).contains(rate))
+                    .ok_or_else(|| {
+                        format!("pilot-ranking pooled.{cut}.{field} must be between 0 and 1")
+                    })?,
+            ),
+        };
+        let mut evidence = format!(
+            "{confirmed} confirmed, {refuted} refuted of {picks} picks over {} of {total} repositories, corpus {corpus}",
+            total - unavailable
+        );
+        if !complete {
+            evidence.push_str(&format!(
+                "; {unavailable} repositories unavailable, so this run is not comparable"
+            ));
+        }
+        rows.push(json!({
+            "id": metric,
+            "value": rate.unwrap_or(0.0),
+            "completed": complete && rate.is_some(),
+            "evidence": evidence,
+        }));
+    }
+    Ok(json!({
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "source": "pilot-ranking",
+        "evidence": format!("ripr-pilot-ranking-v1 receipt, corpus {corpus}, {total} repositories"),
         "metrics": rows,
     }))
 }

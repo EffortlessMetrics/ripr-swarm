@@ -646,3 +646,58 @@ regression_floor = 500
 runner_dependent = true
 per_repo = true
 source = "ingest:rust-corpus-smoke"
+
+# --------------------------------------------------------------- ranking --
+# Pilot's top picks judged against the checked-in mutation answer key in
+# benchmarks/pilot_ranking/ (`cargo xtask pilot-ranking score`). Pooled over
+# the five pinned crates; per-crate detail stays in the receipt. One pick
+# moves top-10 precision by about 0.025 and top-5 precision by about 0.05,
+# so each floor allows one pick of noise and fails on two.
+
+[[metric]]
+id = "ranking.pilot_precision_top5"
+board = "ranking"
+title = "Pilot's top 5 picks per crate where a real mutant there was missed (of picks a label can judge)"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0.6
+regression_pct = 0
+regression_floor = 0.1
+runner_dependent = false
+source = "ingest:pilot-ranking"
+
+[[metric]]
+id = "ranking.pilot_precision_top10"
+board = "ranking"
+title = "Pilot's top 10 picks per crate where a real mutant there was missed (of picks a label can judge)"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0.6
+regression_pct = 0
+regression_floor = 0.05
+runner_dependent = false
+source = "ingest:pilot-ranking"
+
+[[metric]]
+id = "ranking.pilot_scored_share_top10"
+board = "ranking"
+title = "Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable)"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0.8
+regression_pct = 0
+regression_floor = 0.1
+runner_dependent = false
+source = "ingest:pilot-ranking"
+
+[[metric]]
+id = "ranking.pilot_distinct_function_share_top10"
+board = "ranking"
+title = "Pilot's top 10 picks that land in a function no higher pick named"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0.9
+regression_pct = 0
+regression_floor = 0.04
+runner_dependent = false
+source = "ingest:pilot-ranking"
