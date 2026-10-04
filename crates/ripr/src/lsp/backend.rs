@@ -4877,7 +4877,14 @@ impl LanguageServer for Backend {
         self.trace_inbound("request", "shutdown", None).await;
         self.refresh_scheduler.stop();
         self.progress.end_all(AnalysisProgressEnd::Cancelled).await;
-        self.clear_all_diagnostic_uris();
+        // Mirror the root-change path: dropping the tracked URIs without
+        // publishing leaves stale diagnostics in the client (#5202).
+        let uris = self.clear_all_diagnostic_uris();
+        if !self.pull_diagnostics_enabled() {
+            for uri in uris {
+                self.client.publish_diagnostics(uri, Vec::new(), None).await;
+            }
+        }
         self.reset_health_for_input_change();
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
