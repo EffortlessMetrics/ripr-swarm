@@ -4,6 +4,8 @@ use super::*;
 
 #[test]
 fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
+    let imports =
+        "import assert from 'node:assert/strict'; import { test, suite } from 'node:test';\n";
     for value in [
         "true",
         "\"known defect\"",
@@ -22,6 +24,7 @@ fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
                 "suite('qualified', {{ expectFailure: {value} }}, () => {{ test('child', {callback}); }});"
             ),
         ] {
+            let source = format!("{imports}{source}");
             let file = Path::new("tests/qualified.test.ts");
             let tests = extract_tests(file, &source);
             assert!(tests.is_empty(), "{source}: {tests:?}");
@@ -29,7 +32,7 @@ fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
     }
     for value in ["false", "undefined"] {
         let source = format!(
-            "test('ordinary', {{ expectFailure: {value} }}, () => {{ assert.strictEqual(isAdult(18), true); }});"
+            "{imports}test('ordinary', {{ expectFailure: {value} }}, () => {{ assert.strictEqual(isAdult(18), true); }});"
         );
         let tests = extract_tests(Path::new("tests/ordinary.test.ts"), &source);
         assert_eq!(tests.len(), 1, "{source}: {tests:?}");
