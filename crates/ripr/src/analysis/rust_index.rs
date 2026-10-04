@@ -413,9 +413,16 @@ mod tests {
             function("same_start_narrow", 14, 15),
             function("lone", 33, 35),
         ];
+        // Enough functions, in mixed order, that an unstable sort reorders
+        // equal start lines (checked: `sort_unstable_by_key` fails here).
+        let mut functions = functions;
+        for i in 0..32 {
+            functions.insert(0, function(&format!("pad_{i}"), 100 - i, 100 - i));
+            functions.push(function(&format!("tie_{i}"), 44, 45 - i % 2));
+        }
         let lookup = FileOwnerLookup::new(&functions);
         let mut owned = 0;
-        for line in 0..=45 {
+        for line in 0..=101 {
             let expected = functions
                 .iter()
                 .filter(|f| f.start_line <= line && line <= f.end_line)
@@ -443,6 +450,7 @@ mod tests {
         );
         assert_eq!(lookup.owner(25).map(|f| f.name.as_str()), Some("outer"));
         assert_eq!(lookup.owner(31), None);
+        assert_eq!(lookup.owner(45).map(|f| f.name.as_str()), Some("tie_30"));
         assert!(owned > 30, "only {owned} lines had an owner");
         Ok(())
     }
