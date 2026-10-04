@@ -11,6 +11,11 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Calibration: `cargo xtask mutation-calibration` now imports cargo-mutants
+  JSON through the same product importer as `ripr calibrate cargo-mutants`.
+  A real cargo-mutants 27.1 `mutants.out` (`scenario.Mutant`,
+  `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable`, merge by mutant name)
+  is no longer read as all-unknown (#5374).
 - Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
   `mutants.out` output. Outcomes nested under `scenario.Mutant` with
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
