@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
+  `mutants.out` output. Outcomes nested under `scenario.Mutant` with
+  `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
+  `caught`/`missed`/`timeout`/`unviable`, and `outcomes.json` and
+  `mutants.json` records merge by mutant name. Before, every outcome from a
+  cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
+  filled.
+
 - GitHub: `ripr check --format github` omits `,line=` when a finding's probe
   location is line 0, instead of emitting out-of-contract `line=0`. Findings
   with `line >= 1` still emit `,line={n}`. JSON, SARIF, and human text are

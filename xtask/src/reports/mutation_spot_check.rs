@@ -1,0 +1,811 @@
+//! `cargo xtask mutation-spot-check` — ground-truth spot check of static grip
+//! verdicts against real cargo-mutants outcomes on real repositories.
+//!
+//! For each supplied checkout the command writes a `repo-exposure-json`
+//! snapshot, obtains a cargo-mutants `mutants.out` directory (supplied, or run
+//! with `--run-mutants`), and joins the two through the product
+//! `ripr calibrate cargo-mutants` path so the join stays owned by one
+//! implementation. The harness then scores only the joins it can trust:
+//!
+//! - `seam_precise`: an operator mutant (cargo-mutants `BinaryOperator` or
+//!   `UnaryOperator`) whose original operator token appears in the expression
+//!   of a `predicate_boundary` or `return_value` seam on the same line. The
+//!   mutant changes the seam's own behavior, so its outcome tests the verdict.
+//! - `function_body`: a `FnValue` mutant that replaces the whole function
+//!   body. It is caught or missed by the function's tests as a whole, not by a
+//!   discriminator for the joined seam; reported, never scored.
+//! - `same_line_other`: any other unambiguous file/line join (a call-presence
+//!   seam joined to an arithmetic mutant on the same line, for example);
+//!   reported, never scored.
+//!
+//! Scored verdict families: `strongly_gripped` claims a discriminator exists
+//! (a caught mutant agrees, a missed one is an overclaim); `ungripped` and
+//! `reachable_unrevealed` claim none does (a missed mutant agrees, a caught one
+//! is a false gap). `weakly_gripped` and the unknown classes do not make a
+//! claim a single operator mutant can settle, so their outcomes are counted
+//! but not scored. Claims are limited to the recorded checkout revisions, the
+//! cargo-mutants version that produced the outcomes, and this join rule.
+
+use crate::run::{capture_output_with_timeout, capture_stdout_to_file_with_timeout};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
+const DEFAULT_JOBS: usize = 2;
+const DEFAULT_MUTANT_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_EXAMPLES: usize = 10;
+const EXPOSURE_TIMEOUT: Duration = Duration::from_mins(15);
+const CALIBRATE_TIMEOUT: Duration = Duration::from_mins(5);
+const MUTANTS_TIMEOUT: Duration = Duration::from_hours(4);
+const SCRATCH: &str = "target/ripr/reports/mutation-spot-check";
+const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]";
+
+pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    let options = parse_options(args)?;
+    let binary = match &options.ripr {
+        Some(path) => path.clone(),
+        None => {
+            crate::run::run("cargo", &["build", "-p", "ripr"])?;
+            crate::ripr_debug_binary()
+        }
+    };
+    let scratch = PathBuf::from(SCRATCH);
+    fs::create_dir_all(&scratch)
+        .map_err(|err| format!("create spot-check scratch {}: {err}", scratch.display()))?;
+
+    let mut repos = Vec::new();
+    for (name, checkout) in &options.repos {
+        repos.push(spot_check_repo(
+            &binary, &scratch, name, checkout, &options,
+        )?);
+    }
+    let report = build_report(&repos, options.examples);
+    let json_text = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("serialize mutation spot check: {err}"))?;
+    crate::write_report("mutation-spot-check.json", &format!("{json_text}\n"))?;
+    crate::write_report("mutation-spot-check.md", &spot_check_markdown(&report))?;
+    println!("Wrote target/ripr/reports/mutation-spot-check.json");
+    println!("Wrote target/ripr/reports/mutation-spot-check.md");
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct Options {
+    repos: Vec<(String, PathBuf)>,
+    mutants_out: BTreeMap<String, PathBuf>,
+    run_mutants: bool,
+    jobs: usize,
+    mutant_timeout_secs: u64,
+    examples: usize,
+    ripr: Option<PathBuf>,
+}
+
+fn parse_options(args: &[String]) -> Result<Options, String> {
+    let mut options = Options {
+        repos: Vec::new(),
+        mutants_out: BTreeMap::new(),
+        run_mutants: false,
+        jobs: DEFAULT_JOBS,
+        mutant_timeout_secs: DEFAULT_MUTANT_TIMEOUT_SECS,
+        examples: DEFAULT_EXAMPLES,
+        ripr: None,
+    };
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        match flag {
+            "--repo" | "--mutants-out" => {
+                index += 1;
+                let (name, path) = parse_named_path(required_arg(args, index, flag)?, flag)?;
+                if flag == "--repo" {
+                    if options.repos.iter().any(|(existing, _)| *existing == name) {
+                        return Err(format!("duplicate --repo name `{name}`"));
+                    }
+                    options.repos.push((name, path));
+                } else if options.mutants_out.insert(name.clone(), path).is_some() {
+                    return Err(format!("duplicate --mutants-out name `{name}`"));
+                }
+            }
+            "--run-mutants" => options.run_mutants = true,
+            "--jobs" => {
+                index += 1;
+                options.jobs = parse_positive(required_arg(args, index, flag)?, flag)? as usize;
+            }
+            "--mutant-timeout-secs" => {
+                index += 1;
+                options.mutant_timeout_secs =
+                    parse_positive(required_arg(args, index, flag)?, flag)?;
+            }
+            "--examples" => {
+                index += 1;
+                options.examples = parse_positive(required_arg(args, index, flag)?, flag)? as usize;
+            }
+            "--ripr" => {
+                index += 1;
+                options.ripr = Some(PathBuf::from(required_arg(args, index, flag)?));
+            }
+            other => {
+                return Err(format!(
+                    "unknown mutation-spot-check argument `{other}`; {USAGE}"
+                ));
+            }
+        }
+        index += 1;
+    }
+    if options.repos.is_empty() {
+        return Err(format!(
+            "mutation-spot-check needs at least one --repo; {USAGE}"
+        ));
+    }
+    for name in options.mutants_out.keys() {
+        if !options.repos.iter().any(|(repo, _)| repo == name) {
+            return Err(format!("--mutants-out `{name}` names no --repo"));
+        }
+    }
+    Ok(options)
+}
+
+fn parse_named_path(value: &str, flag: &str) -> Result<(String, PathBuf), String> {
+    match value.split_once('=') {
+        Some((name, path)) if !name.trim().is_empty() && !path.trim().is_empty() => {
+            Ok((name.trim().to_string(), PathBuf::from(path.trim())))
+        }
+        _ => Err(format!("{flag} expects <name>=<path>, got `{value}`")),
+    }
+}
+
+fn parse_positive(value: &str, flag: &str) -> Result<u64, String> {
+    match value.parse::<u64>() {
+        Ok(parsed) if parsed > 0 => Ok(parsed),
+        _ => Err(format!("{flag} must be a positive integer, got `{value}`")),
+    }
+}
+
+fn required_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
+    match args.get(index) {
+        Some(value) if !value.trim().is_empty() => Ok(value),
+        _ => Err(format!("missing value for {flag}; {USAGE}")),
+    }
+}
+
+struct RepoRun {
+    name: String,
+    revision: String,
+    exposure_run_status: Option<String>,
+    cargo_mutants_version: Option<String>,
+    metrics: Value,
+    pairs: Vec<Pair>,
+}
+
+fn spot_check_repo(
+    binary: &Path,
+    scratch: &Path,
+    name: &str,
+    checkout: &Path,
+    options: &Options,
+) -> Result<RepoRun, String> {
+    let revision = run_text(
+        "git",
+        &[
+            "-C".to_string(),
+            path_arg(checkout),
+            "rev-parse".to_string(),
+            "HEAD".to_string(),
+        ],
+        Duration::from_secs(30),
+        "git rev-parse for spot-check checkout",
+    )?
+    .trim()
+    .to_string();
+
+    let exposure_path = scratch.join(format!("{name}.repo-exposure.json"));
+    let exposure = capture_stdout_to_file_with_timeout(
+        &path_arg(binary),
+        &[
+            "check".to_string(),
+            "--root".to_string(),
+            path_arg(checkout),
+            "--format".to_string(),
+            "repo-exposure-json".to_string(),
+        ],
+        &[],
+        &exposure_path,
+        EXPOSURE_TIMEOUT,
+        "ripr repo-exposure-json for spot check",
+    )?;
+    if exposure.timed_out || !exposure.status.is_some_and(|status| status.success()) {
+        return Err(format!(
+            "ripr repo-exposure-json failed for `{name}`: {}",
+            exposure.stderr.trim()
+        ));
+    }
+    let exposure_json = read_json(&exposure_path)?;
+
+    let mutants_dir = match options.mutants_out.get(name) {
+        Some(dir) => dir.clone(),
+        None if options.run_mutants => run_cargo_mutants(scratch, name, checkout, options)?,
+        None => {
+            return Err(format!(
+                "no cargo-mutants outcomes for `{name}`: pass --mutants-out {name}=<dir> or --run-mutants"
+            ));
+        }
+    };
+    let outcomes = read_json(&mutants_dir.join("outcomes.json"))?;
+    let mutant_records = read_json(&mutants_dir.join("mutants.json"))?;
+
+    let calibration = run_text(
+        &path_arg(binary),
+        &[
+            "calibrate".to_string(),
+            "cargo-mutants".to_string(),
+            "--mutants-json".to_string(),
+            path_arg(&mutants_dir),
+            "--repo-exposure-json".to_string(),
+            path_arg(&exposure_path),
+            "--format".to_string(),
+            "json".to_string(),
+        ],
+        CALIBRATE_TIMEOUT,
+        "ripr calibrate cargo-mutants for spot check",
+    )?;
+    let calibration: Value = serde_json::from_str(&calibration)
+        .map_err(|err| format!("parse calibration JSON for `{name}`: {err}"))?;
+
+    Ok(RepoRun {
+        name: name.to_string(),
+        revision,
+        exposure_run_status: exposure_json
+            .get("run_status")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        cargo_mutants_version: outcomes
+            .get("cargo_mutants_version")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        metrics: calibration.get("metrics").cloned().unwrap_or(Value::Null),
+        pairs: classify_matches(&calibration, &exposure_json, &mutant_records),
+    })
+}
+
+fn run_cargo_mutants(
+    scratch: &Path,
+    name: &str,
+    checkout: &Path,
+    options: &Options,
+) -> Result<PathBuf, String> {
+    let output_root = scratch.join(format!("{name}-mutants"));
+    let _ = fs::remove_dir_all(&output_root);
+    fs::create_dir_all(&output_root)
+        .map_err(|err| format!("create {}: {err}", output_root.display()))?;
+    let output = capture_output_with_timeout(
+        "cargo",
+        &[
+            "mutants".to_string(),
+            "--dir".to_string(),
+            path_arg(checkout),
+            "--output".to_string(),
+            path_arg(&output_root),
+            "--jobs".to_string(),
+            options.jobs.to_string(),
+            "--timeout".to_string(),
+            options.mutant_timeout_secs.to_string(),
+            "--no-shuffle".to_string(),
+        ],
+        &[],
+        MUTANTS_TIMEOUT,
+        "cargo mutants for spot check",
+    )?;
+    // cargo-mutants exits 2 when mutants were missed and 3 when some timed
+    // out; both are results. Any other non-zero exit (1 usage, 4 baseline
+    // failure) means there is no outcome set to score.
+    let code = output.status.and_then(|status| status.code());
+    if output.timed_out || !matches!(code, Some(0 | 2 | 3)) {
+        return Err(format!(
+            "cargo mutants failed for `{name}` (exit {code:?}); is cargo-mutants installed and does the baseline pass?\n{}",
+            output.stderr.trim()
+        ));
+    }
+    Ok(output_root.join("mutants.out"))
+}
+
+fn run_text(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+    context: &str,
+) -> Result<String, String> {
+    let output = capture_output_with_timeout(program, args, &[], timeout, context)?;
+    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+        return Err(format!("{context} failed: {}", output.stderr.trim()));
+    }
+    Ok(output.stdout)
+}
+
+fn read_json(path: &Path) -> Result<Value, String> {
+    let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))
+}
+
+fn path_arg(path: &Path) -> String {
+    path.display().to_string()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Pair {
+    pairing: &'static str,
+    grip_class: String,
+    outcome: String,
+    seam_id: String,
+    seam_kind: String,
+    file: String,
+    line: u64,
+    expression: String,
+    mutant: String,
+}
+
+/// Classify every unambiguous calibration match. Ambiguous and unmatched
+/// runtime records stay in the calibration metrics and are never scored.
+fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> Vec<Pair> {
+    let genres: BTreeMap<&str, &str> = mutants
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|mutant| {
+            Some((
+                mutant.get("name")?.as_str()?,
+                mutant.get("genre")?.as_str()?,
+            ))
+        })
+        .collect();
+    let expressions: BTreeMap<&str, &str> = exposure
+        .get("seams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|seam| {
+            Some((
+                seam.get("seam_id")?.as_str()?,
+                seam.get("expression").and_then(Value::as_str).unwrap_or(""),
+            ))
+        })
+        .collect();
+    let text = |value: &Value, pointer: &str| {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    calibration
+        .get("matches")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|record| {
+            let mutant = text(record, "/runtime/mutant_id");
+            let seam_id = text(record, "/static/seam_id");
+            let seam_kind = text(record, "/static/seam_kind");
+            let expression = expressions
+                .get(seam_id.as_str())
+                .copied()
+                .unwrap_or("")
+                .to_string();
+            let genre = genres.get(mutant.as_str()).copied().unwrap_or("");
+            Pair {
+                pairing: pairing_for(genre, &mutant, &seam_kind, &expression),
+                grip_class: text(record, "/static/seam_grip_class"),
+                outcome: text(record, "/runtime/runtime_outcome"),
+                seam_id,
+                seam_kind,
+                file: text(record, "/static/file"),
+                line: record
+                    .pointer("/static/line")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                expression,
+                mutant,
+            }
+        })
+        .collect()
+}
+
+fn pairing_for(genre: &str, mutant: &str, seam_kind: &str, expression: &str) -> &'static str {
+    if genre == "FnValue" {
+        return "function_body";
+    }
+    let operator_genre = matches!(genre, "BinaryOperator" | "UnaryOperator");
+    let behavior_seam = matches!(seam_kind, "predicate_boundary" | "return_value");
+    match original_operator(mutant) {
+        Some(operator) if operator_genre && behavior_seam && expression.contains(operator) => {
+            "seam_precise"
+        }
+        _ => "same_line_other",
+    }
+}
+
+/// The operator a cargo-mutants operator mutant replaces or deletes, from its
+/// name: `src/a.rs:3:9: replace > with >= in f` → `>`,
+/// `src/a.rs:3:9: delete ! in f` → `!`.
+fn original_operator(mutant: &str) -> Option<&str> {
+    let (_, description) = mutant.split_once(": ")?;
+    let rest = description
+        .strip_prefix("replace ")
+        .or_else(|| description.strip_prefix("delete "))?;
+    let operator = rest.split_whitespace().next()?;
+    (!operator.is_empty() && !operator.chars().any(char::is_alphanumeric)).then_some(operator)
+}
+
+fn verdict_family(grip_class: &str) -> &'static str {
+    match grip_class {
+        "strongly_gripped" => "claims_discriminator",
+        "ungripped" | "reachable_unrevealed" => "claims_no_discriminator",
+        "weakly_gripped" => "weak",
+        "intentional" | "suppressed" => "excluded",
+        _ => "unknown",
+    }
+}
+
+/// `agree`, `overclaim` (claimed a discriminator, mutant missed), `false_gap`
+/// (claimed none, mutant caught), or `unscored`.
+fn agreement(family: &str, outcome: &str) -> &'static str {
+    match (family, outcome) {
+        ("claims_discriminator", "caught") | ("claims_no_discriminator", "missed") => "agree",
+        ("claims_discriminator", "missed") => "overclaim",
+        ("claims_no_discriminator", "caught") => "false_gap",
+        _ => "unscored",
+    }
+}
+
+fn build_report(repos: &[RepoRun], examples: usize) -> Value {
+    let mut by_pairing: BTreeMap<&str, BTreeMap<String, BTreeMap<String, usize>>> = BTreeMap::new();
+    let mut scored: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
+    let mut seams_scored: BTreeMap<&str, BTreeSet<(String, String)>> = BTreeMap::new();
+    let mut disagreements: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    let mut example_seams = BTreeSet::new();
+    for repo in repos {
+        for pair in &repo.pairs {
+            *by_pairing
+                .entry(pair.pairing)
+                .or_default()
+                .entry(pair.grip_class.clone())
+                .or_default()
+                .entry(pair.outcome.clone())
+                .or_default() += 1;
+            if pair.pairing != "seam_precise" {
+                continue;
+            }
+            let family = verdict_family(&pair.grip_class);
+            let verdict = agreement(family, &pair.outcome);
+            if verdict == "unscored" {
+                continue;
+            }
+            *scored
+                .entry(family)
+                .or_default()
+                .entry(verdict)
+                .or_default() += 1;
+            seams_scored
+                .entry(family)
+                .or_default()
+                .insert((repo.name.clone(), pair.seam_id.clone()));
+            let list = disagreements.entry(verdict).or_default();
+            if verdict != "agree"
+                && list.len() < examples
+                && example_seams.insert((repo.name.clone(), pair.seam_id.clone()))
+            {
+                list.push(json!({
+                    "repo": repo.name,
+                    "revision": repo.revision,
+                    "file": pair.file,
+                    "line": pair.line,
+                    "seam_kind": pair.seam_kind,
+                    "seam_id": pair.seam_id,
+                    "expression": pair.expression,
+                    "grip_class": pair.grip_class,
+                    "mutant": pair.mutant,
+                    "runtime_outcome": pair.outcome,
+                }));
+            }
+        }
+    }
+    disagreements.remove("agree");
+    let families = scored
+        .iter()
+        .map(|(family, counts)| {
+            let agree = counts.get("agree").copied().unwrap_or(0);
+            let total: usize = counts.values().sum();
+            (
+                family.to_string(),
+                json!({
+                    "mutants_scored": total,
+                    "seams_scored": seams_scored.get(family).map_or(0, BTreeSet::len),
+                    "counts": counts,
+                    "agreement_rate": rate(agree, total),
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    json!({
+        "schema_version": SCHEMA_VERSION,
+        "status": "advisory",
+        "claim_boundary": "Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
+        "repos": repos.iter().map(|repo| json!({
+            "name": repo.name,
+            "revision": repo.revision,
+            "exposure_run_status": repo.exposure_run_status,
+            "cargo_mutants_version": repo.cargo_mutants_version,
+            "calibration_metrics": repo.metrics,
+            "pairings": pairing_counts(&repo.pairs),
+        })).collect::<Vec<_>>(),
+        "outcomes_by_pairing_and_grip_class": by_pairing,
+        "scored_families": families,
+        "disagreement_examples": disagreements,
+    })
+}
+
+fn pairing_counts(pairs: &[Pair]) -> BTreeMap<&'static str, usize> {
+    let mut counts = BTreeMap::new();
+    for pair in pairs {
+        *counts.entry(pair.pairing).or_default() += 1;
+    }
+    counts
+}
+
+fn rate(numerator: usize, denominator: usize) -> Value {
+    if denominator == 0 {
+        Value::Null
+    } else {
+        json!(((numerator as f64 / denominator as f64) * 1000.0).round() / 1000.0)
+    }
+}
+
+fn spot_check_markdown(report: &Value) -> String {
+    let mut out = String::from("# Mutation spot check\n\n");
+    if let Some(boundary) = report.get("claim_boundary").and_then(Value::as_str) {
+        out.push_str(&format!("{boundary}\n\n"));
+    }
+    out.push_str("## Repositories\n\n| Repo | Revision | cargo-mutants | Mutants | Unambiguous joins | Ambiguous | Unmatched | Seam-precise |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    for repo in report
+        .get("repos")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let metric = |key: &str| {
+            repo.pointer(&format!("/calibration_metrics/{key}"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} | {} | {} | {} | {} |\n",
+            repo.get("name").and_then(Value::as_str).unwrap_or(""),
+            repo.get("revision")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .get(..12)
+                .unwrap_or(""),
+            repo.get("cargo_mutants_version")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            metric("mutants_total"),
+            metric("matched_total"),
+            metric("ambiguous_file_line_total"),
+            metric("unmatched_mutants_total"),
+            repo.pointer("/pairings/seam_precise")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        ));
+    }
+    out.push_str("\n## Scored verdicts (seam-precise joins)\n\n| Verdict family | Seams | Mutants | Agree | Overclaim | False gap | Agreement |\n| --- | --- | --- | --- | --- | --- | --- |\n");
+    if let Some(families) = report.get("scored_families").and_then(Value::as_object) {
+        for (family, row) in families {
+            let count = |key: &str| {
+                row.pointer(&format!("/counts/{key}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            out.push_str(&format!(
+                "| {family} | {} | {} | {} | {} | {} | {} |\n",
+                row.get("seams_scored").and_then(Value::as_u64).unwrap_or(0),
+                row.get("mutants_scored")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                count("agree"),
+                count("overclaim"),
+                count("false_gap"),
+                row.get("agreement_rate")
+                    .and_then(Value::as_f64)
+                    .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0)),
+            ));
+        }
+    }
+    out.push_str("\n## Outcomes by pairing and grip class\n\n| Pairing | Grip class | Outcomes |\n| --- | --- | --- |\n");
+    if let Some(pairings) = report
+        .get("outcomes_by_pairing_and_grip_class")
+        .and_then(Value::as_object)
+    {
+        for (pairing, classes) in pairings {
+            for (class, outcomes) in classes.as_object().into_iter().flatten() {
+                let cells = outcomes
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(outcome, count)| format!("{outcome} {count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("| {pairing} | {class} | {cells} |\n"));
+            }
+        }
+    }
+    out.push_str("\n## Disagreement examples\n\n");
+    let mut any = false;
+    for (verdict, rows) in report
+        .get("disagreement_examples")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        for row in rows.as_array().into_iter().flatten() {
+            any = true;
+            let field = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("");
+            out.push_str(&format!(
+                "- **{verdict}** {} `{}:{}` {} `{}` is `{}`; mutant `{}` was {}.\n",
+                field("repo"),
+                field("file"),
+                row.get("line").and_then(Value::as_u64).unwrap_or(0),
+                field("seam_kind"),
+                field("expression"),
+                field("grip_class"),
+                field("mutant")
+                    .split_once(": ")
+                    .map_or(field("mutant"), |(_, rest)| rest),
+                field("runtime_outcome"),
+            ));
+        }
+    }
+    if !any {
+        out.push_str("None in the scored joins.\n");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn original_operator_reads_replace_and_delete_names() {
+        assert_eq!(
+            original_operator("src/a.rs:3:9: replace > with >= in f"),
+            Some(">")
+        );
+        assert_eq!(original_operator("src/a.rs:3:9: delete ! in f"), Some("!"));
+        assert_eq!(
+            original_operator("src/a.rs:3:9: replace f -> bool with true"),
+            None
+        );
+        assert_eq!(
+            original_operator("src/a.rs:3:9: delete match arm Some(x) in f"),
+            None
+        );
+    }
+
+    #[test]
+    fn pairing_scores_only_operator_mutants_inside_behavior_seams() {
+        let boundary = "src/a.rs:3:9: replace > with >= in f";
+        assert_eq!(
+            pairing_for("BinaryOperator", boundary, "predicate_boundary", "i > 0"),
+            "seam_precise"
+        );
+        // Same line, but the seam's claim is about a call, not the operator.
+        assert_eq!(
+            pairing_for("BinaryOperator", boundary, "call_presence", "f(i > 0)"),
+            "same_line_other"
+        );
+        // Same line and kind, but the operator is outside the seam expression.
+        assert_eq!(
+            pairing_for("BinaryOperator", boundary, "predicate_boundary", "x == y"),
+            "same_line_other"
+        );
+        assert_eq!(
+            pairing_for(
+                "FnValue",
+                "src/a.rs:3:9: replace f -> bool with true",
+                "return_value",
+                "x > 0"
+            ),
+            "function_body"
+        );
+    }
+
+    #[test]
+    fn agreement_separates_overclaims_from_false_gaps() {
+        assert_eq!(
+            agreement(verdict_family("strongly_gripped"), "caught"),
+            "agree"
+        );
+        assert_eq!(
+            agreement(verdict_family("strongly_gripped"), "missed"),
+            "overclaim"
+        );
+        assert_eq!(agreement(verdict_family("ungripped"), "missed"), "agree");
+        assert_eq!(
+            agreement(verdict_family("ungripped"), "caught"),
+            "false_gap"
+        );
+        assert_eq!(
+            agreement(verdict_family("weakly_gripped"), "missed"),
+            "unscored"
+        );
+        assert_eq!(
+            agreement(verdict_family("activation_unknown"), "caught"),
+            "unscored"
+        );
+        assert_eq!(
+            agreement(verdict_family("strongly_gripped"), "timeout"),
+            "unscored"
+        );
+    }
+
+    #[test]
+    fn report_scores_precise_joins_and_keeps_examples_per_seam() {
+        let calibration = json!({"matches": [
+            {"static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
+             "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "caught"}},
+            {"static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
+             "runtime": {"mutant_id": "src/a.rs:3:9: replace > with >= in f", "runtime_outcome": "missed"}},
+            {"static": {"seam_id": "s2", "seam_kind": "return_value", "seam_grip_class": "strongly_gripped", "file": "src/a.rs", "line": 7},
+             "runtime": {"mutant_id": "src/a.rs:7:5: replace + with - in g", "runtime_outcome": "caught"}},
+            {"static": {"seam_id": "s3", "seam_kind": "call_presence", "seam_grip_class": "strongly_gripped", "file": "src/a.rs", "line": 9},
+             "runtime": {"mutant_id": "src/a.rs:9:5: replace + with - in h", "runtime_outcome": "missed"}}
+        ]});
+        let exposure = json!({"seams": [
+            {"seam_id": "s1", "expression": "i > 0"},
+            {"seam_id": "s2", "expression": "a + b"},
+            {"seam_id": "s3", "expression": "h(a + b)"}
+        ]});
+        let mutants = json!([
+            {"name": "src/a.rs:3:9: replace > with < in f", "genre": "BinaryOperator"},
+            {"name": "src/a.rs:3:9: replace > with >= in f", "genre": "BinaryOperator"},
+            {"name": "src/a.rs:7:5: replace + with - in g", "genre": "BinaryOperator"},
+            {"name": "src/a.rs:9:5: replace + with - in h", "genre": "BinaryOperator"}
+        ]);
+        let repo = RepoRun {
+            name: "demo".to_string(),
+            revision: "abc".to_string(),
+            exposure_run_status: None,
+            cargo_mutants_version: Some("27.1.0".to_string()),
+            metrics: Value::Null,
+            pairs: classify_matches(&calibration, &exposure, &mutants),
+        };
+        let report = build_report(&[repo], 5);
+
+        let gap = &report["scored_families"]["claims_no_discriminator"];
+        assert_eq!(gap["mutants_scored"], 2);
+        assert_eq!(gap["seams_scored"], 1);
+        assert_eq!(gap["counts"]["false_gap"], 1);
+        assert_eq!(gap["agreement_rate"], 0.5);
+        // The call-presence miss is a same-line join, so it cannot count as
+        // an overclaim against the strongly gripped verdict.
+        let clean = &report["scored_families"]["claims_discriminator"];
+        assert_eq!(clean["mutants_scored"], 1);
+        assert_eq!(clean["agreement_rate"], 1.0);
+        assert_eq!(
+            report["outcomes_by_pairing_and_grip_class"]["same_line_other"]["strongly_gripped"]["missed"],
+            1
+        );
+        assert_eq!(
+            report["disagreement_examples"]["false_gap"][0]["seam_id"],
+            "s1"
+        );
+        assert!(report["disagreement_examples"].get("overclaim").is_none());
+        assert!(spot_check_markdown(&report).contains("**false_gap** demo `src/a.rs:3`"));
+    }
+}

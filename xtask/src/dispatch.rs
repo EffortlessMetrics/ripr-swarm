@@ -89,6 +89,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::SeamInventoryScalingBenchmark(args) => {
             super::reports::seam_inventory_scaling_benchmark(&args)
         }
+        XtaskCommand::MutationSpotCheck(args) => super::reports::mutation_spot_check(&args),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
         XtaskCommand::Lane1EvidenceAudit => super::reports::lane1_evidence_audit_report(),
