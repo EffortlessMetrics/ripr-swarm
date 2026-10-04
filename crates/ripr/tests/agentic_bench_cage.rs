@@ -213,19 +213,59 @@ fn compatibility_receipt_path(root: &Path) -> PathBuf {
     root.join("target/ripr/reports/agent-receipt.json")
 }
 
-fn assert_no_advisory_receipt(root: &Path, context: &str) -> Result<(), String> {
-    let path = compatibility_receipt_path(root);
-    if !path.is_file() {
-        return Ok(());
-    }
-    let receipt = read_json(&path)?;
-    if receipt.pointer("/status").and_then(Value::as_str) == Some("advisory") {
+fn attempt_local_receipt_path(root: &Path, attempt_id: &str) -> PathBuf {
+    attempt_dir(root, attempt_id)
+        .join("artifacts")
+        .join("agent-receipt.json")
+}
+
+/// Fail-closed cases must not write the compatibility projection or retain an
+/// attempt-local copy. Production keeps the global file as a one-slot
+/// projection (`target/ripr/reports/agent-receipt.json`) and copies a
+/// successful receipt beside the attempt; this suite only checks those
+/// production locations.
+fn assert_no_receipt_written(root: &Path, attempt_id: &str, context: &str) -> Result<(), String> {
+    let global = compatibility_receipt_path(root);
+    if global.is_file() {
         return Err(format!(
-            "{context}: wrote an advisory receipt at {}:\n{receipt}",
-            path.display()
+            "{context}: wrote the compatibility receipt at {}",
+            global.display()
         ));
     }
+    let local = attempt_local_receipt_path(root, attempt_id);
+    if local.is_file() {
+        return Err(format!(
+            "{context}: retained an attempt-local receipt at {}",
+            local.display()
+        ));
+    }
+    let manifest_path = attempt_dir(root, attempt_id).join("attempt.json");
+    if let Ok(manifest) = read_json(&manifest_path) {
+        for pointer in ["/artifacts", "/terminal_artifacts"] {
+            let Some(artifacts) = manifest.pointer(pointer).and_then(Value::as_array) else {
+                continue;
+            };
+            if artifacts.iter().any(|artifact| {
+                artifact.get("role").and_then(Value::as_str) == Some("agent_receipt")
+            }) {
+                return Err(format!(
+                    "{context}: attempt manifest lists an agent_receipt under {pointer}:\n{manifest}"
+                ));
+            }
+        }
+    }
     Ok(())
+}
+
+fn assert_exit_code(output: &Output, expected: i32, context: &str) -> Result<(), String> {
+    if output.status.code() == Some(expected) {
+        return Ok(());
+    }
+    Err(format!(
+        "{context}: want exit {expected}, got {:?}\n{}",
+        output.status.code(),
+        combined_output(output)
+    ))
 }
 
 fn start_before(label: &str) -> Result<(Journey, Fixture), String> {
@@ -369,20 +409,20 @@ fn b6_manifest_names_the_production_oracle() -> Result<(), String> {
     Ok(())
 }
 
-/// Out-of-surface production edit fails closed: violated verdict, CLI refusal,
-/// no advisory receipt.
+/// Out-of-surface production edit fails closed: violated verdict, CLI
+/// refusal, no receipt. Production evaluates the cage during finish, then the
+/// receipt path refuses (`not receipt-ready`). That refusal is after the
+/// verify render, so `--json` prints the bare verify document and the process
+/// exits 2 (`CommandError::Failure`). It is not the pre-verify exit-3
+/// `repair_after_refusal` path (diverged HEAD, input drift, no-movement
+/// verify, replaced trust manifest).
 #[test]
 fn b6_out_of_surface_edit_fails_closed() -> Result<(), String> {
     let (journey, _owned) = start_before("agentic-b6-out-of-surface")?;
     add_in_surface_test(&journey.root)?;
     edit_out_of_surface(&journey.root)?;
     let after = run_after(&journey)?;
-    if after.status.success() {
-        return Err(format!(
-            "after-phase accepted an out-of-surface src edit:\n{}",
-            combined_output(&after)
-        ));
-    }
+    assert_exit_code(&after, 2, "out-of-surface after-phase")?;
     let status = verdict_status(&journey.root, &journey.attempt_id)?;
     if status != "violated" {
         return Err(format!(
@@ -404,14 +444,25 @@ fn b6_out_of_surface_edit_fails_closed() -> Result<(), String> {
             "CLI refusal did not name the out-of-surface kind:\n{joined}"
         ));
     }
-    if let Ok(document) = parse_stdout_json(&after)
-        && document.get("kind").and_then(Value::as_str) == Some("repair_after_result")
-    {
+    if !joined.contains("not receipt-ready") {
         return Err(format!(
-            "out-of-surface refusal printed a success after-result envelope:\n{document}"
+            "CLI refusal did not use the production receipt-ready refusal:\n{joined}"
         ));
     }
-    assert_no_advisory_receipt(&journey.root, "out-of-surface edit")?;
+    if let Ok(document) = parse_stdout_json(&after) {
+        let kind = document.get("kind").and_then(Value::as_str);
+        if kind == Some("repair_after_result") {
+            return Err(format!(
+                "out-of-surface refusal printed a success after-result envelope:\n{document}"
+            ));
+        }
+        if kind == Some("repair_after_refusal") {
+            return Err(format!(
+                "out-of-surface cage refusal is post-verify exit 2, not typed repair_after_refusal:\n{document}"
+            ));
+        }
+    }
+    assert_no_receipt_written(&journey.root, &journey.attempt_id, "out-of-surface edit")?;
     Ok(())
 }
 
@@ -452,7 +503,10 @@ fn b6_superseded_snapshot_never_replays_a_stale_verdict() -> Result<(), String> 
         ));
     }
     let stale_text = combined_output(&stale);
-    if !stale_text.contains("tampered or stale") && !stale_text.contains("not receipt-ready") {
+    // Production reread re-evaluates the cage and compares it to the stored
+    // after verdict. There is no `superseded` cage token; the refusal string
+    // is the expected-value oracle for the original B6 supersession ledger.
+    if !stale_text.contains("tampered or stale") {
         return Err(format!(
             "stale receipt refusal did not use the production binding vocabulary:\n{stale_text}"
         ));
@@ -475,42 +529,25 @@ fn b6_superseded_snapshot_never_replays_a_stale_verdict() -> Result<(), String> 
 }
 
 /// Over-budget capture fails closed: a file one byte over the production
-/// per-file bound makes the baseline incomparable, so an in-surface test
-/// edit cannot earn a receipt.
+/// per-file bound is planted before `--phase before` so both snapshots see
+/// `WorktreeIdentity::Other`. Production `evaluate_edit_cage` then records
+/// `incomparable` (`!delta.comparable`); an in-surface test edit cannot earn
+/// a receipt. The numeric bound is an expected-value pin of
+/// `MAX_CAPTURE_FILE_BYTES`; this suite does not reimplement capture.
 #[test]
 fn b6_over_budget_capture_fails_closed() -> Result<(), String> {
     let (journey, _owned) = start_before_after("agentic-b6-over-budget", plant_over_budget_file)?;
     add_in_surface_test(&journey.root)?;
     let after = run_after(&journey)?;
-    if after.status.success() {
+    assert_exit_code(&after, 2, "over-budget after-phase")?;
+    let status = verdict_status(&journey.root, &journey.attempt_id)?;
+    if status != "incomparable" {
         return Err(format!(
-            "after-phase earned a receipt over an over-budget capture:\n{}",
+            "over-budget capture verdict is {status}, want incomparable\n{}",
             combined_output(&after)
         ));
     }
-    let joined = combined_output(&after);
-    let status = attempt_manifest(&journey.root, &journey.attempt_id)
-        .ok()
-        .and_then(|manifest| {
-            manifest
-                .pointer("/after/verdict/status")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    if status.as_deref() == Some("compliant") {
-        return Err(format!(
-            "over-budget capture still recorded a compliant verdict: {status:?}\n{joined}"
-        ));
-    }
-    if let Some(status) = status.as_deref()
-        && status != "incomparable"
-        && status != "violated"
-    {
-        return Err(format!(
-            "over-budget capture verdict is {status}, want incomparable (or a fail-closed violated):\n{joined}"
-        ));
-    }
-    assert_no_advisory_receipt(&journey.root, "over-budget capture")?;
+    assert_no_receipt_written(&journey.root, &journey.attempt_id, "over-budget capture")?;
     Ok(())
 }
 
@@ -524,13 +561,12 @@ fn b6_invalid_packet_and_manifest_are_rejected_before_any_receipt() -> Result<()
         .map_err(|error| format!("corrupt retained packet: {error}"))?;
     add_in_surface_test(&packet_journey.root)?;
     let after = run_after(&packet_journey)?;
-    if after.status.success() {
-        return Err(format!(
-            "after-phase accepted a corrupted retained packet:\n{}",
-            combined_output(&after)
-        ));
-    }
-    assert_no_advisory_receipt(&packet_journey.root, "invalid packet")?;
+    assert_exit_code(&after, 2, "invalid packet after-phase")?;
+    assert_no_receipt_written(
+        &packet_journey.root,
+        &packet_journey.attempt_id,
+        "invalid packet",
+    )?;
 
     let (manifest_journey, _manifest_owned) = start_before("agentic-b6-invalid-manifest")?;
     let manifest_path =
@@ -539,12 +575,11 @@ fn b6_invalid_packet_and_manifest_are_rejected_before_any_receipt() -> Result<()
         .map_err(|error| format!("corrupt attempt manifest: {error}"))?;
     add_in_surface_test(&manifest_journey.root)?;
     let after = run_after(&manifest_journey)?;
-    if after.status.success() {
-        return Err(format!(
-            "after-phase accepted a corrupted attempt manifest:\n{}",
-            combined_output(&after)
-        ));
-    }
-    assert_no_advisory_receipt(&manifest_journey.root, "invalid attempt manifest")?;
+    assert_exit_code(&after, 2, "invalid attempt manifest after-phase")?;
+    assert_no_receipt_written(
+        &manifest_journey.root,
+        &manifest_journey.attempt_id,
+        "invalid attempt manifest",
+    )?;
     Ok(())
 }

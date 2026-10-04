@@ -24,7 +24,9 @@ aligned on `tests/` vs `src/` for this fixture.
 1. **Out-of-surface edit.** `--phase before`, then edit `src/lib.rs` (and
    the selected test so the pair is not a no-movement refusal), then
    `--phase after`. Production must fail closed: attempt `after.verdict.status`
-   is `violated`, the CLI refuses, and no advisory receipt is written.
+   is `violated`, the CLI exits 2 with the post-verify `not receipt-ready`
+   refusal (not exit-3 `repair_after_refusal`), and neither the compatibility
+   receipt nor an attempt-local copy is written.
 2. **Stale snapshot / reread.** An in-surface finish writes a receipt.
    `ripr agent receipt --attempt` against the unchanged tree is the
    production reread. After the tree moves, that same receipt command must
@@ -33,16 +35,17 @@ aligned on `tests/` vs `src/` for this fixture.
    already finished. Production has no `superseded` cage token; those
    refusal strings are the expected-value oracle for the original B6
    supersession ledger.
-3. **Over-budget capture.** After `--phase before`, plant a sparse file one
-   byte over production `MAX_CAPTURE_FILE_BYTES` (16 MiB). `--phase after`
-   must fail closed (`incomparable` / non-compliant) and must not write an
-   advisory receipt. The numeric bound is an expected-value pin of the
+3. **Over-budget capture.** Plant a sparse file one byte over production
+   `MAX_CAPTURE_FILE_BYTES` (16 MiB) *before* `--phase before`, so both
+   snapshots see the over-budget path as capture `Other` rather than a new
+   out-of-surface edit. `--phase after` must record `incomparable`, exit 2,
+   and write no receipt. The numeric bound is an expected-value pin of the
    production constant; the test does not reimplement capture.
 4. **Invalid packet / attempt manifest.** After `--phase before`, corrupt
-   the retained packet or `attempt.json`. `--phase after` must refuse
-   before any receipt. Bench-manifest schema rejection stays with
-   `cargo xtask agentic-bench` (the production owner); this suite does not
-   copy that validator.
+   the retained packet or `attempt.json`. `--phase after` must refuse with
+   exit 2 before any receipt (compatibility file or attempt-local copy).
+   Bench-manifest schema rejection stays with `cargo xtask agentic-bench`
+   (the production owner); this suite does not copy that validator.
 
 ## Run
 
