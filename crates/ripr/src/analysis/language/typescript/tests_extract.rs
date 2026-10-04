@@ -621,6 +621,20 @@ pub(crate) fn collect_tests_from_statements(
         }
         returned |= may_return(stmt, source);
     }
+    // A block/destructuring declaration can also shadow `undefined` at a
+    // registration. Over-collecting block names only withholds credit; do not
+    // enter unrelated function bodies or count test callback parameters here.
+    let mut declared_names = Vec::new();
+    collect_block_declared_names(statements, &mut declared_names);
+    if declared_names.iter().any(|name| name == "undefined")
+        && !level.iter().any(|(name, _, _)| name == "undefined")
+    {
+        level.push((
+            "undefined".to_string(),
+            ScopeValue::Other,
+            Phase::Declaration,
+        ));
+    }
     scope.sites.extend(sites);
     // A `beforeEach`/`beforeAll` the file declares, or imports from anything
     // but a test runner, is not known to run before each test: its writes are
@@ -652,9 +666,29 @@ pub(crate) fn collect_tests_from_statements(
     }
     scope.levels.push(level);
     scope.iterables.push(iterables);
+    let unshadowed_undefined = !imports.iter().any(|import| import.local == "undefined")
+        && !scope
+            .levels
+            .iter()
+            .flatten()
+            .any(|(name, _, _)| name == "undefined");
     for stmt in statements {
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
+        }
+        // The structural helpers recognize global `undefined`; apply this
+        // declaration-scope fence before either a test or suite can donate
+        // assertions. Callback-local bindings do not affect registration options.
+        if !unshadowed_undefined
+            && let Statement::ExpressionStatement(expression) = stmt
+            && let Expression::CallExpression(call) = &expression.expression
+            && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
+            && !declaration_options_are_active_with_undefined(call, false)
+        {
+            continue;
         }
         if let Some((describe_name, body)) = describe_body_from_statement(stmt, source) {
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
@@ -1391,6 +1425,22 @@ fn collect_block_declared_names(statements: &[Statement<'_>], out: &mut Vec<Stri
 
 fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<String>) {
     match statement {
+        Statement::ExportNamedDeclaration(export) => match &export.declaration {
+            Some(oxc_ast::ast::Declaration::VariableDeclaration(declaration)) => {
+                out.extend(declaration_binding_names(declaration));
+            }
+            Some(oxc_ast::ast::Declaration::FunctionDeclaration(function)) => {
+                if let Some(identifier) = &function.id {
+                    out.push(identifier.name.to_string());
+                }
+            }
+            Some(oxc_ast::ast::Declaration::ClassDeclaration(class)) => {
+                if let Some(identifier) = &class.id {
+                    out.push(identifier.name.to_string());
+                }
+            }
+            _ => {}
+        },
         Statement::VariableDeclaration(declaration) => {
             out.extend(declaration_binding_names(declaration));
         }
@@ -1628,19 +1678,30 @@ fn call_callee_is_active_declaration(
 /// exactly like `.skip` (no test, no describe walk, not a dropped
 /// registration).
 fn declaration_options_are_active(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    declaration_options_are_active_with_undefined(call, true)
+}
+
+fn declaration_options_are_active_with_undefined(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    unshadowed_undefined: bool,
+) -> bool {
     call.arguments
         .iter()
         .take(3)
         .all(|argument| match argument {
-            oxc_ast::ast::Argument::ObjectExpression(options) => options
-                .properties
-                .iter()
-                .all(declaration_option_property_is_active),
+            oxc_ast::ast::Argument::ObjectExpression(options) => {
+                options.properties.iter().all(|property| {
+                    declaration_option_property_is_active(property, unshadowed_undefined)
+                })
+            }
             _ => true,
         })
 }
 
-fn declaration_option_property_is_active(property: &ObjectPropertyKind<'_>) -> bool {
+fn declaration_option_property_is_active(
+    property: &ObjectPropertyKind<'_>,
+    unshadowed_undefined: bool,
+) -> bool {
     let ObjectPropertyKind::ObjectProperty(property) = property else {
         // `{ ...opts }` may carry `skip: true`.
         return false;
@@ -1661,7 +1722,9 @@ fn declaration_option_property_is_active(property: &ObjectPropertyKind<'_>) -> b
     }
     match &property.value {
         Expression::BooleanLiteral(literal) => !literal.value,
-        Expression::Identifier(ident) => !property.shorthand && ident.name == "undefined",
+        Expression::Identifier(ident) => {
+            unshadowed_undefined && !property.shorthand && ident.name == "undefined"
+        }
         _ => false,
     }
 }

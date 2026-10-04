@@ -41,6 +41,43 @@ fn node_expected_failure_options_cannot_supply_ordinary_test_evidence() {
 }
 
 #[test]
+fn shadowed_undefined_cannot_disable_test_qualification_options() {
+    let imports =
+        "import assert from 'node:assert/strict'; import { test, suite } from 'node:test';\n";
+    let callback = "() => { assert.strictEqual(isAdult(18), true); }";
+    for key in ["skip", "todo", "fails", "expectFailure"] {
+        let registration = format!("test('qualified', {{ {key}: undefined }}, {callback});");
+        for source in [
+            format!("const undefined = true; {registration}"),
+            format!("const {{ flag: undefined }} = config; {registration}"),
+            format!("import {{ flag as undefined }} from './config'; {registration}"),
+            format!("export const undefined = true; {registration}"),
+            format!("suite('outer', () => {{ const undefined = true; {registration} }});"),
+            format!("suite.each([true])('outer', (undefined) => {{ {registration} }});"),
+            format!("for (const undefined of [true]) {{ {registration} }}"),
+            format!("[true].forEach((undefined) => {{ {registration} }});"),
+            format!(
+                "const undefined = true; suite('qualified', {{ {key}: undefined }}, () => {{ test('child', {callback}); }});"
+            ),
+        ] {
+            let source = format!("{imports}{source}");
+            let tests = extract_tests(Path::new("tests/shadowed.test.ts"), &source);
+            assert!(tests.is_empty(), "{source}: {tests:?}");
+        }
+    }
+    for source in [
+        format!("function unrelated(undefined) {{ return undefined; }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        "test('ordinary', { expectFailure: undefined }, (undefined) => { assert.strictEqual(isAdult(18), true); });".to_string(),
+        format!("const undefined = true; test('ordinary', {{ expectFailure: false }}, {callback});"),
+    ] {
+        let source = format!("{imports}{source}");
+        let tests = extract_tests(Path::new("tests/ordinary.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert_eq!(tests[0].assertions.len(), 1);
+    }
+}
+
+#[test]
 fn extracts_active_test_modifiers_with_assertions() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),

@@ -4,7 +4,7 @@ generation = 1
 source_issue = "issue:5433"
 design_reference = "RIPR-SPEC-0027"
 change_class = "behavior_change"
-claim_boundary = "Node expectFailure options cannot supply ordinary TypeScript oracle/discriminator credit through the existing declaration option admission owner. Literal false/undefined and independent ordinary tests remain admitted. Source candidate only until exact-head tests and hosted proof execute; native date-fns framework observations are separate preparation, not accepted analyzer outcomes."
+claim_boundary = "Node expectFailure options cannot supply ordinary TypeScript oracle/discriminator credit through the existing declaration option admission owner. Literal false, unshadowed global undefined and independent ordinary tests remain admitted. Shadowed undefined cannot bypass shared qualification options. Source candidate only until exact-head tests and hosted proof execute; native date-fns framework observations are separate preparation, not accepted analyzer outcomes."
 non_goals = [
   "runner execution or dynamic expected-failure matcher evaluation",
   "focus selection and general runner binding semantics",

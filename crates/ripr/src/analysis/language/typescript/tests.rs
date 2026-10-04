@@ -41,48 +41,56 @@ test("qualified", { expectFailure: true }, () => {
     assert.strictEqual(applyDiscount(100, 100), 90);
 });
 "#;
-    for (neighbor, exposed) in [
-        ("", false),
-        (
-            r#"test("ordinary exact", () => { assert.strictEqual(applyDiscount(100, 100), 90); });"#,
-            true,
-        ),
-        (
-            r#"test("ordinary far", () => { assert.strictEqual(applyDiscount(500, 100), 450); });"#,
-            false,
+    for qualified in [
+        qualified.to_string(),
+        format!(
+            "const undefined = true;\n{}",
+            qualified.replace("expectFailure: true", "expectFailure: undefined")
         ),
     ] {
-        let source = format!("{qualified}\n{neighbor}");
-        let tests = extract_tests(Path::new("tests/lib.test.ts"), &source);
-        let finding = classify_change(
-            Path::new("src/lib.ts"),
-            2,
-            "    if (amount >= threshold) {",
-            &[test_owner("applyDiscount", "src/lib.ts")],
-            &tests,
-            None,
-            &ReExportIndex::empty(),
-            None,
-        )
-        .ok_or("missing classifier subject")?;
-        assert_eq!(
-            matches!(finding.class, ExposureClass::Exposed),
-            exposed,
-            "{neighbor}: {finding:?}"
-        );
-        assert!(
-            finding
-                .related_tests
-                .iter()
-                .all(|test| !test.name.contains("qualified"))
-        );
-        if exposed {
+        for (neighbor, exposed) in [
+            ("", false),
+            (
+                r#"test("ordinary exact", () => { assert.strictEqual(applyDiscount(100, 100), 90); });"#,
+                true,
+            ),
+            (
+                r#"test("ordinary far", () => { assert.strictEqual(applyDiscount(500, 100), 450); });"#,
+                false,
+            ),
+        ] {
+            let source = format!("{qualified}\n{neighbor}");
+            let tests = extract_tests(Path::new("tests/lib.test.ts"), &source);
+            let finding = classify_change(
+                Path::new("src/lib.ts"),
+                2,
+                "    if (amount >= threshold) {",
+                &[test_owner("applyDiscount", "src/lib.ts")],
+                &tests,
+                None,
+                &ReExportIndex::empty(),
+                None,
+            )
+            .ok_or("missing classifier subject")?;
+            assert_eq!(
+                matches!(finding.class, ExposureClass::Exposed),
+                exposed,
+                "{neighbor}: {finding:?}"
+            );
             assert!(
                 finding
                     .related_tests
                     .iter()
-                    .any(|test| test.oracle_strength == OracleStrength::Strong)
+                    .all(|test| !test.name.contains("qualified"))
             );
+            if exposed {
+                assert!(
+                    finding
+                        .related_tests
+                        .iter()
+                        .any(|test| test.oracle_strength == OracleStrength::Strong)
+                );
+            }
         }
     }
     Ok(())
