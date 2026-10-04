@@ -76,7 +76,7 @@ under-credit.
 
 Measured on main bcb0be576 by calling the production `extract_tests`,
 `related_test_candidates` and `classify_change_with_old` from a probe test
-in a scratch copy (research notes and `probe.log`). The owner is
+in a scratch copy; the probe scripts were not committed. The owner is
 `src/subject.py`, `def parse(text): return int(text) + 1` changed from
 `return int(text)`, unless the row says otherwise. Tests import `parse` from
 `src.subject`.
@@ -387,7 +387,7 @@ otherwise. Python never emits `reachable_unrevealed` or
 
 ### Decisions
 
-Steven delegated these choices on 2026-10-04 ("make reasonable documented
+The owner delegated these choices on 2026-10-04 ("make reasonable documented
 decisions and proceed"). Each records the adopted option, why, and the
 rejected alternative. Any can be reversed later without touching the rest.
 

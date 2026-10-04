@@ -72,8 +72,8 @@ Measured with `ripr check --format json` on one-function git fixtures
 (`src/lib.ts` holds `price(amount)`; the diff changes `return amount - 10`
 to `return amount - 20`; the test imports `price` from `../src/lib`). The
 binary was built from d52f0eff, whose TypeScript source differs from main
-bcb0be576 only by two `miss: None` field additions. Scenario scripts and
-results are in the research notes for this spec.
+bcb0be576 only by two `miss: None` field additions. The scenario scripts
+were not committed; each row below states its input.
 
 | Test snippet | Today | What it pins |
 | --- | --- | --- |
@@ -394,7 +394,7 @@ opaque, which the class contradicts.
 
 ### Decisions
 
-Steven delegated these choices on 2026-10-04 ("make reasonable documented
+The owner delegated these choices on 2026-10-04 ("make reasonable documented
 decisions and proceed"). Each records the adopted option, why, and the
 rejected alternative. Any can be reversed later without touching the rest.
 

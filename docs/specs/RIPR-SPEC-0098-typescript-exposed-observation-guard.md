@@ -66,8 +66,10 @@ The guard applies to SideEffect and CallDeletion (effect branch) and to
 ReturnValue and FieldConstruction (value branch). Predicate, MatchArm,
 ErrorPath and StaticUnknown always pass. The value branch passes when a
 strong family-matching assertion's observed expression references the
-owner or a changed token as a whole identifier, or is a bare local whose
-first initializer does; RIPR-SPEC-0234 rules 6 and 7 state the matching.
+owner or a changed token, or is a bare local whose first initializer
+does. Today the reference test is a substring match; RIPR-SPEC-0234
+rule 6 proposes whole-identifier matching, and rule 7 states the alias
+case.
 This paragraph was corrected on 2026-10-04 (see Later Amendment).
 
 ### Observation guard logic (SideEffect / CallDeletion only)

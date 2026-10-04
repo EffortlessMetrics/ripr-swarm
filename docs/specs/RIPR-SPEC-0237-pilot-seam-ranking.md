@@ -101,8 +101,8 @@ Which classes enter the ranked set is RIPR-SPEC-0236's decision. The set
 is every class with a rank in the class order below, `opaque` included.
 `strongly_gripped`, `intentional` and `suppressed` are never ranked.
 Ranking does not read `[severity.seams]`: `SeverityConfig::for_seam` is
-called only by the LSP diagnostics, SARIF, the badge summary and the agent
-brief, never by pilot or the seam inventory. A class set to `off` is still
+called only by the LSP diagnostics, SARIF, the badge summary, the agent
+brief and review comments (`output/review_comments.rs`), never by pilot or the seam inventory. A class set to `off` is still
 ranked.
 
 ### Class order
@@ -265,7 +265,7 @@ spec. Real mutation testing remains the independent authority.
 
 ### Decisions
 
-Steven delegated these choices on 2026-10-04 ("make reasonable documented
+The owner delegated these choices on 2026-10-04 ("make reasonable documented
 decisions and proceed"). Each records the adopted option, why, and the
 rejected alternative. Any can be reversed later without touching the rest.
 
@@ -465,8 +465,7 @@ unless stated. Output lists `file:line` in final order. "today" is main
 - Existing: `crates/ripr/src/cli/commands/pilot.rs`
   `pilot_rejects_non_positive_max_seams`.
 - Planned: one unit test per remaining example (4 to 9, 13 to 16, 18, 21
-  to 26). Examples 21 and 22 fail on #6294 head and pass after the
-  decision 2 change. Example 13 fails under per-class rounds.
+  to 26). Example 13 fails under per-class rounds.
 
 ## Implementation Mapping
 

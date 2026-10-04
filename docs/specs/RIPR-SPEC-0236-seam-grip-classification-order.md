@@ -62,7 +62,7 @@ one boundary of the order only.
 
 Measured on main `bcb0be576` with
 `ripr check --root . --format repo-exposure-json` on one-file probe crates
-(`m36/c1` to `m36/c10` in the session scratchpad), plus `ripr pilot` and
+(`c1` to `c10`, not committed; each row states its input), plus `ripr pilot` and
 `--format repo-sarif` where shown:
 
 | Probe | Stages R/A/P/O/D, missing | Class today | What the evidence supports |
@@ -261,7 +261,7 @@ Further rules:
 
 ### Decisions
 
-Steven delegated these choices on 2026-10-04 ("make reasonable documented
+The owner delegated these choices on 2026-10-04 ("make reasonable documented
 decisions and proceed"). Each records the adopted option, why, and the
 rejected alternative. Any can be reversed later without touching the rest.
 
@@ -291,7 +291,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 4. **Witness cache key.** Adopted: owner file plus name (rule R4).
    Rejected: name only, which is correct today only because the witness
    search is name-based. A path-aware witness search is a separate
-   precision change (ISSUES FOR ROOT).
+   precision change, out of scope here.
 5. **Reach limitation category.** Adopted: a typed source tag mapped to
    `opaque_static_evidence`, as RIPR-SPEC-0230 already states. Rejected:
    parse the `(kind)` prefix of the summary, which is still text coupling;
@@ -326,7 +326,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `ripr pilot` on c4 lists `checkout` first and the three opaque seams
   after it; `actionable_total` is 4 (unchanged).
 - No seam moves into or out of `reachable_unrevealed`, and none moves into
-  `strongly_gripped`, `weakly_gripped` or `ungripped`. Golden drift lists every seam whose class moved.
+  `strongly_gripped`, `weakly_gripped` or `ungripped`.
+  Golden drift lists every seam whose class moved.
 - Runtime-control integration tests (`cargo test -p ripr --test '*'`) pass
   unchanged.
 

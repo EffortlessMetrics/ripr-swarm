@@ -277,7 +277,7 @@ For each change, the first match wins:
 
 ### Decisions
 
-Steven delegated these choices on 2026-10-04 ("make reasonable documented
+The owner delegated these choices on 2026-10-04 ("make reasonable documented
 decisions and proceed"). Each records the adopted option, why, and the
 rejected alternative. Any can be reversed later without touching the rest.
 
