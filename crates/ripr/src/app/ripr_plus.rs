@@ -25,7 +25,10 @@
 //! in `ripr check --format repo-exposure-summary-json`, not inside a
 //! receipt-composition subcommand.
 //!
-//! Output: `target/ripr/reports/ripr-plus.{json,md}`.
+//! Output: `target/ripr/reports/ripr-plus.{json,md}`. A failed run that would
+//! replace a real receipt first copies it to
+//! `target/ripr/reports/ripr-plus.last-good.{json,md}`; that copy describes an
+//! earlier run and is never current evidence.
 
 use crate::cli::unknown_argument;
 use crate::config::RiprConfig;
@@ -39,6 +42,9 @@ const RIPR_PLUS_JSON: &str = "target/ripr/reports/ripr-plus.json";
 const RIPR_PLUS_MD: &str = "target/ripr/reports/ripr-plus.md";
 const RIPR_PLUS_LAST_GOOD_JSON: &str = "target/ripr/reports/ripr-plus.last-good.json";
 const RIPR_PLUS_LAST_GOOD_MD: &str = "target/ripr/reports/ripr-plus.last-good.md";
+/// Shared by the error text and help so both carry the same authority limit.
+const LAST_GOOD_IS_STALE: &str =
+    "it describes an earlier run, may be stale for the current HEAD, and is not current evidence.";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct RiprPlusOptions {
@@ -110,12 +116,14 @@ fn keep_last_good_receipt(repo: &Path) -> String {
                 RIPR_PLUS_LAST_GOOD_JSON,
                 previous,
             );
+            // `Ok(true)` when the Markdown was kept beside the JSON.
             let markdown_result = match fs::read(repo.join(RIPR_PLUS_MD)) {
                 Ok(markdown) => write_parented_file(
                     &repo.join(RIPR_PLUS_LAST_GOOD_MD),
                     RIPR_PLUS_LAST_GOOD_MD,
                     markdown,
-                ),
+                )
+                .map(|()| true),
                 // No canonical Markdown: drop any saved one so the pair never
                 // describes two different runs.
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -123,15 +131,22 @@ fn keep_last_good_receipt(repo: &Path) -> String {
                         Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(format!(
                             "failed to remove stale {RIPR_PLUS_LAST_GOOD_MD}: {err}"
                         )),
-                        _ => Ok(()),
+                        _ => Ok(false),
                     }
                 }
                 Err(err) => Err(format!("failed to read {RIPR_PLUS_MD}: {err}")),
             };
             match (json_result, markdown_result) {
-                (Ok(()), Ok(())) => format!(
-                    " The previous receipt (status `{status}`) is kept at {RIPR_PLUS_LAST_GOOD_JSON}; {RIPR_PLUS_JSON} now records this failed run as indeterminate."
-                ),
+                (Ok(()), Ok(markdown_kept)) => {
+                    let kept_at = if markdown_kept {
+                        format!("{RIPR_PLUS_LAST_GOOD_JSON} and {RIPR_PLUS_LAST_GOOD_MD}")
+                    } else {
+                        RIPR_PLUS_LAST_GOOD_JSON.to_string()
+                    };
+                    format!(
+                        " The previous receipt (status `{status}`) is kept at {kept_at}; {LAST_GOOD_IS_STALE} {RIPR_PLUS_JSON} now records this failed run as indeterminate."
+                    )
+                }
                 (json, markdown) => {
                     let mut failures = Vec::new();
                     if let Err(err) = json {
@@ -141,7 +156,7 @@ fn keep_last_good_receipt(repo: &Path) -> String {
                         failures.push(err);
                     }
                     format!(
-                        " The previous receipt (status `{status}`) was only partly kept ({}); {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
+                        " The previous receipt (status `{status}`) was only partly kept ({}); {LAST_GOOD_IS_STALE} {RIPR_PLUS_JSON} now records this failed run as indeterminate.",
                         failures.join("; ")
                     )
                 }
@@ -224,6 +239,13 @@ cannot be read or composed, or --check cannot establish zero (an
 Outputs:
   target/ripr/reports/ripr-plus.json
   target/ripr/reports/ripr-plus.md
+  target/ripr/reports/ripr-plus.last-good.json  (failed runs only)
+  target/ripr/reports/ripr-plus.last-good.md    (failed runs only)
+
+A failed run still writes an `indeterminate` receipt to ripr-plus.json. When
+that replaces a real receipt, the previous pair is first copied to
+ripr-plus.last-good.{json,md}. The copy describes an earlier run, may be stale
+for the current HEAD, and is not current evidence.
 
 Current inputs contain exposure or ledger evidence only. They do not establish
 complete test-efficiency measurement or bind that evidence to current candidate
@@ -1138,6 +1160,11 @@ mod tests {
         };
         assert!(message.contains("previous receipt"), "{message}");
         assert!(message.contains("ripr-plus.last-good.json"), "{message}");
+        assert!(message.contains("ripr-plus.last-good.md"), "{message}");
+        assert!(
+            message.contains("may be stale for the current HEAD"),
+            "{message}"
+        );
         let canonical: Value = serde_json::from_str(&canonical.map_err(|err| err.to_string())?)
             .map_err(|err| format!("canonical receipt is not JSON: {err}"))?;
         assert_eq!(canonical["status"], "indeterminate");
@@ -1175,6 +1202,10 @@ mod tests {
         let json = fs::read_to_string(repo.join(RIPR_PLUS_LAST_GOOD_JSON));
         let _ = fs::remove_dir_all(&repo);
         assert!(kept.contains("is kept at"), "{kept}");
+        assert!(
+            !kept.contains("ripr-plus.last-good.md"),
+            "a dropped Markdown must not be named as kept: {kept}"
+        );
         assert!(
             !stale_md,
             "a saved Markdown from an older run must not outlive its JSON"
