@@ -1615,14 +1615,14 @@ fn call_callee_is_active_declaration(
 }
 
 /// Whether a registration's options object leaves it running. `node:test`
-/// and Vitest accept `{ skip, todo }` (and Vitest `{ fails }`, which inverts
-/// the verdict) in the options object, which registers exactly what `.skip` /
+/// and Vitest accept `{ skip, todo }`; Vitest `{ fails }` and Node
+/// `{ expectFailure }` invert the verdict. These options register what `.skip` /
 /// `.todo` / `.fails` register: no running discriminator. The options object
 /// sits before the callback (`it(name, opts, fn)`), in legacy Vitest after
 /// it (`it(name, fn, opts)`), and `node:test` also accepts it in place of
 /// the name (`test(opts, fn)`); all three positions are checked.
 ///
-/// Fail-closed (#4638 review): a `skip` / `todo` / `fails` key whose value is
+/// Fail-closed (#4638 / #5433): a `skip` / `todo` / `fails` / `expectFailure` key whose value is
 /// anything but literal `false` / `undefined`, a spread, a computed key, or a
 /// method/accessor makes the registration inactive — it is then handled
 /// exactly like `.skip` (no test, no describe walk, not a dropped
@@ -1653,7 +1653,7 @@ fn declaration_option_property_is_active(property: &ObjectPropertyKind<'_>) -> b
         PropertyKey::StringLiteral(literal) => literal.value.as_str(),
         _ => return false,
     };
-    if !matches!(key, "skip" | "todo" | "fails") {
+    if !matches!(key, "skip" | "todo" | "fails" | "expectFailure") {
         return true;
     }
     if property.method || property.kind != oxc_ast::ast::PropertyKind::Init {

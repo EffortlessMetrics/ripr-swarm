@@ -128,9 +128,15 @@ Test discovery:
   (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
   trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
   an options object (before or after the callback) whose `skip` / `todo` /
-  `fails` key holds anything but literal `false` / `undefined`, or that
+  `fails` / Node `expectFailure` key holds anything but literal `false` /
+  `undefined`, or that
   holds a spread, computed key, or method, registers nothing, exactly like
   `.skip`
+- Node `expectFailure` and Vitest `fails` invert verification; TODO may
+  execute while suppressing failure. Refusing their ordinary discriminator
+  credit does not assert that their bodies never execute. An independent
+  ordinary active test retains its evidence. Runner execution, selection and
+  expected-failure matcher evaluation are not performed by this adapter.
 - a `describe` / `context` / `suite` whose title is not a string literal
   (`describe(Div.name, fn)`, a template literal): its body is walked and the
   suite is named by the computed-title placeholder `<computed title, line N>`
