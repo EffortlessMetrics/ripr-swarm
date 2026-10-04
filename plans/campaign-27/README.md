@@ -1,7 +1,7 @@
 # Campaign 27 Plans
 
 This folder holds campaign-specific implementation plans that need more
-sequencing detail than the campaign ledger or active manifest should carry.
+sequencing detail than the campaign ledger should carry.
 Plans here are execution guides only; they do not replace proposals, specs,
 ADRs, the Campaign 27 ledger, or the repository tracking model.
 
