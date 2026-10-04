@@ -259,7 +259,10 @@ fn impl_self_type_name(id: &str) -> Option<&str> {
     let self_type = header.rsplit_once(" for ").map_or(header, |(_, ty)| ty);
     let self_type = self_type.split('<').next().unwrap_or(self_type);
     let self_type = self_type.rsplit("::").next().unwrap_or(self_type).trim();
-    let self_type = self_type.trim_start_matches(['&', '*']).trim_start_matches("mut ").trim();
+    let self_type = self_type
+        .trim_start_matches(['&', '*'])
+        .trim_start_matches("mut ")
+        .trim();
     (!self_type.is_empty()).then_some(self_type)
 }
 
@@ -1368,7 +1371,10 @@ mod tests {
 
     #[test]
     fn impl_self_type_name_reads_inherent_trait_generic_and_path_impls() {
-        assert_eq!(impl_self_type_name("src/lib.rs::impl Site::build"), Some("Site"));
+        assert_eq!(
+            impl_self_type_name("src/lib.rs::impl Site::build"),
+            Some("Site")
+        );
         assert_eq!(
             impl_self_type_name("src/lib.rs::m::impl Display for Site<T>::fmt"),
             Some("Site")
