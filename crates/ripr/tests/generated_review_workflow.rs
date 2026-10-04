@@ -1240,6 +1240,10 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
 }
 
 /// Every `next_command` string the packet carries on the named check.
+/// Unix-only like its only caller: on Windows the caller does not exist, and
+/// an ungated copy here is dead code (clippy `-D warnings` on a Windows
+/// check-fast lane; inherited from main, file untouched by this branch).
+#[cfg(unix)]
 fn recovery_texts(packet: &serde_json::Value, check_id: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut stack = vec![packet];
