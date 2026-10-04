@@ -431,6 +431,12 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut run_limitations = None;
     let mut input_source_subject = None;
     let mut input_root = None;
+    // #5264: "input parsed, zero records derived" is a different state from
+    // "input unreadable or malformed". Only the latter is `blocked`; the
+    // former is the honest healthy no-op for languages a route does not
+    // project, and it must be distinguishable by `status` alone.
+    let mut parsed_cleanly = false;
+    let mut source_value_snapshot = None;
     let mut records = match input.records_json {
         Ok(contents) => {
             let source_value = serde_json::from_str::<Value>(&contents).ok();
@@ -457,13 +463,18 @@ pub(crate) fn build_gap_decision_ledger_report(
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned);
             }
-            match parse_gap_decision_source(input.source_kind, &contents) {
-                Ok(records) => records,
+            let parsed = match parse_gap_decision_source(input.source_kind, &contents) {
+                Ok(records) => {
+                    parsed_cleanly = true;
+                    records
+                }
                 Err(err) => {
                     warnings.push(format!("parse {} failed: {err}", input.records_path));
                     Vec::new()
                 }
-            }
+            };
+            source_value_snapshot = source_value;
+            parsed
         }
         Err(err) => {
             warnings.push(err);
@@ -488,8 +499,29 @@ pub(crate) fn build_gap_decision_ledger_report(
     }
 
     let summary = summarize_records(&records);
+    // #5264: name the route's language coverage when a valid check output
+    // carried findings but none projected. Without this, a machine consumer
+    // keying on `status` reads a healthy Rust run exactly like corrupted
+    // input, because both used to end at an empty `blocked` ledger.
+    if parsed_cleanly
+        && records.is_empty()
+        && input.source_kind == GapDecisionLedgerSourceKind::CheckOutput
+    {
+        let input_items = input_findings_total_from_source_value(source_value_snapshot.as_ref());
+        if input_items > 0 {
+            warnings.push(format!(
+                "check output contained {input_items} findings, but the --check-output route \
+                 projects Python/TypeScript/Perl findings only; no gap records were derived \
+                 from them"
+            ));
+        }
+    }
     let status = if records.is_empty() {
-        "blocked"
+        if parsed_cleanly {
+            "no_records"
+        } else {
+            "blocked"
+        }
     } else if warnings.is_empty() {
         "advisory"
     } else {
@@ -764,7 +796,19 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
 
     out.push_str("## Records\n\n");
     if report.records.is_empty() {
-        out.push_str("No gap records were supplied.\n\n");
+        // #5264: name the two different empty states. `blocked` means the
+        // input could not be read; `no_records` means the input parsed but
+        // nothing projected to gap records (the warnings section above names
+        // the route coverage when a valid check output carried findings).
+        if report.status == "blocked" {
+            out.push_str(
+                "No gap records could be read from the input; see the warnings above.\n\n",
+            );
+        } else {
+            out.push_str(
+                "No gap records were derived from the input; see the warnings above for the reason.\n\n",
+            );
+        }
     } else {
         for record in &report.records {
             render_record_markdown(record, &mut out);
@@ -854,6 +898,26 @@ fn parse_gap_decision_source(
         GapDecisionLedgerSourceKind::Records => parse_gap_records_json(contents),
         GapDecisionLedgerSourceKind::RepoExposure => gap_records_from_repo_exposure_json(contents),
         GapDecisionLedgerSourceKind::CheckOutput => gap_records_from_check_output_json(contents),
+    }
+}
+
+/// Input size the `--check-output` route was asked to project (#5264): the
+/// `findings` array when present, else the `finding_alignment.items` array.
+/// Used only to disclose why zero records were derived from a valid document;
+/// the projection itself stays owned by [`gap_records_from_check_output_json`].
+fn input_findings_total_from_source_value(source_value: Option<&Value>) -> usize {
+    let Some(value) = source_value else {
+        return 0;
+    };
+    let findings = value.get("findings").and_then(Value::as_array);
+    let alignment_items = value
+        .pointer("/finding_alignment/items")
+        .and_then(Value::as_array);
+    match (findings, alignment_items) {
+        (Some(findings), Some(items)) => findings.len().max(items.len()),
+        (Some(findings), None) => findings.len(),
+        (None, Some(items)) => items.len(),
+        (None, None) => 0,
     }
 }
 
@@ -3572,6 +3636,64 @@ mod tests {
         }));
         assert_eq!(missing_case_record.status, "blocked");
         assert!(missing_case_record.warnings[0].contains("missing expected_gap_record"));
+    }
+
+    /// #5264: a valid check output whose findings the `--check-output` route
+    /// cannot project (Rust has no projection) is a healthy no-op, not
+    /// corrupt input. It must not share the `blocked` status a parse failure
+    /// produces, and it must carry a machine-readable warning naming the
+    /// route's language coverage and how many findings went unprojected.
+    #[test]
+    fn gap_decision_ledger_distinguishes_valid_rust_check_output_from_malformed_input() {
+        let rust_check_output = report_from_check_output(serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "findings": [
+                {"id": "probe:src_lib_rs:predicate:c80557eb",
+                 "source_currentness": "candidate_current", "language": "rust"},
+                {"id": "probe:src_lib_rs:return:d41d8cd9",
+                 "source_currentness": "candidate_current", "language": "rust"},
+                {"id": "probe:src_main_rs:predicate:abb07d04",
+                 "source_currentness": "candidate_current", "language": "rust"}
+            ]
+        }));
+        assert_eq!(rust_check_output.status, "no_records");
+        assert_eq!(rust_check_output.summary.records_total, 0);
+        assert!(
+            rust_check_output.warnings.iter().any(|warning| {
+                warning.contains("3 findings")
+                    && warning.contains("Python/TypeScript/Perl")
+                    && warning.contains("--check-output")
+            }),
+            "zero derived records from a valid Rust check output must carry the \
+             route-coverage warning, got {:?}",
+            rust_check_output.warnings
+        );
+
+        let malformed = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok("{".to_string()),
+        });
+        assert_eq!(malformed.status, "blocked");
+        assert!(malformed.warnings[0].contains("invalid JSON"));
+    }
+
+    /// A valid check output with zero findings derives zero records for the
+    /// honest reason: there was nothing to project. That is `no_records`
+    /// without the language-coverage warning.
+    #[test]
+    fn gap_decision_ledger_no_records_for_valid_empty_check_output_has_no_language_warning() {
+        let empty = report_from_check_output(serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "findings": []
+        }));
+        assert_eq!(empty.status, "no_records");
+        assert_eq!(empty.summary.records_total, 0);
+        assert!(empty.warnings.is_empty());
     }
 
     #[test]
@@ -6740,18 +6862,30 @@ mod tests {
 
     // ── render_gap_decision_ledger_markdown with no records ──────────────────
 
+    /// #5264: the two empty states render different, honest placeholders. A
+    /// valid empty input is `no_records`; an unreadable input is `blocked`.
     #[test]
     fn render_gap_decision_ledger_markdown_no_records_shows_placeholder() {
-        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+        let no_records = build_gap_decision_ledger_report(GapDecisionLedgerInput {
             root: ".".to_string(),
             generated_at: "test".to_string(),
             source_kind: GapDecisionLedgerSourceKind::Records,
             records_path: "empty.json".to_string(),
             records_json: Ok("[]".to_string()),
         });
-        let markdown = render_gap_decision_ledger_markdown(&report);
-        assert!(markdown.contains("No gap records were supplied."));
-        // Blocked status produces "blocked"
+        let markdown = render_gap_decision_ledger_markdown(&no_records);
+        assert!(markdown.contains("No gap records were derived from the input;"));
+        assert!(markdown.contains("Status: `no_records`"));
+
+        let blocked = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::Records,
+            records_path: "bad.json".to_string(),
+            records_json: Ok("{".to_string()),
+        });
+        let markdown = render_gap_decision_ledger_markdown(&blocked);
+        assert!(markdown.contains("No gap records could be read from the input;"));
         assert!(markdown.contains("Status: `blocked`"));
     }
 

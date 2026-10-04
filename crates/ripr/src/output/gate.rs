@@ -23,6 +23,8 @@ use repair_route::{
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -241,6 +243,12 @@ pub(crate) fn build_gate_decision_report(
         input.mode,
         causal_delta.as_ref(),
     );
+    let subject = build_gate_subject(
+        input,
+        // `Value::Null` stands in for an absent or rejected pr-guidance
+        // document; the producer-subject read treats it as absent.
+        (!pr_guidance.is_null()).then_some(&pr_guidance),
+    );
     let exception_blocking = exception_policy
         .as_ref()
         .map(|report| report.blocking_count())
@@ -280,6 +288,7 @@ pub(crate) fn build_gate_decision_report(
                 .as_ref()
                 .map(|path| display_path(path)),
         },
+        subject,
         policy,
         summary,
         new_unsuppressed,
@@ -289,6 +298,77 @@ pub(crate) fn build_gate_decision_report(
         causal_delta,
         causal_projection,
         exception_policy,
+    })
+}
+
+/// Subject identity of this evaluation (#5263): the writing binary's build
+/// identity plus, per consumed input document, a `sha256` content hash of the
+/// exact bytes consumed. The pr-guidance entry additionally copies the
+/// producer's own `run_receipt` identity (resolved base/head SHAs, root
+/// identity, cache identity) verbatim when the document carries one, so a
+/// downstream `pr-ledger record --base/--head` can be cross-checked against
+/// what the gate actually consumed instead of the caller's assertion.
+///
+/// Hashing is best-effort: an unreadable input leaves `content_hash` absent
+/// while the read failure itself already surfaces as a `config_error` or a
+/// warning, so the subject never invents an identity for bytes it did not
+/// see. Entries are keyed in a `BTreeMap`, so the rendered block is
+/// deterministic for identical inputs.
+fn build_gate_subject(input: &GateEvaluateInput, pr_guidance: Option<&Value>) -> GateSubject {
+    let mut inputs = BTreeMap::new();
+    for (name, path) in [
+        ("gap_ledger", input.gap_ledger.as_ref()),
+        ("pr_guidance", input.pr_guidance.as_ref()),
+        ("repo_exposure", input.repo_exposure.as_ref()),
+    ] {
+        let Some(path) = path else {
+            continue;
+        };
+        let resolved = resolve_root_path(&input.root, path);
+        let content_hash = std::fs::read(&resolved)
+            .ok()
+            .map(|bytes| format!("sha256:{:x}", Sha256::digest(bytes)));
+        let producer_subject = if name == "pr_guidance" {
+            pr_guidance.and_then(producer_subject_from_pr_guidance)
+        } else {
+            None
+        };
+        inputs.insert(
+            name.to_string(),
+            GateSubjectInput {
+                content_hash,
+                producer_subject,
+            },
+        );
+    }
+    GateSubject {
+        analyzer_version: crate::build_identity::cache_identity().to_string(),
+        inputs,
+    }
+}
+
+/// Copy the input document's `run_receipt` identity verbatim (#5263). The
+/// receipt must carry resolved base/head SHAs to count as a producer
+/// subject; a receipt missing them is treated as absent rather than partly
+/// quoted, so no field here is ever inferred from a different field.
+fn producer_subject_from_pr_guidance(value: &Value) -> Option<GateProducerSubject> {
+    let receipt = value.get("run_receipt")?;
+    let base_sha = receipt.get("base_sha").and_then(Value::as_str)?;
+    let head_sha = receipt.get("head_sha").and_then(Value::as_str)?;
+    if base_sha.is_empty() || head_sha.is_empty() {
+        return None;
+    }
+    Some(GateProducerSubject {
+        root_identity: receipt
+            .get("root_identity")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        base_sha: base_sha.to_string(),
+        head_sha: head_sha.to_string(),
+        reusable_cache_identity: receipt
+            .get("reusable_cache_identity")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 

@@ -81,12 +81,14 @@ struct OutputFormatSpec {
     format: OutputFormat,
     cli_names: &'static [&'static str],
     is_repo_seam_inventory: bool,
-    /// `true` for the seven full-repo audit-path formats (the help's
+    /// `true` for the full-repo audit-path formats (the help's
     /// "Repo-scope (full-repo analysis)" group plus
     /// `agent-seam-packets-json`): every invocation walks and classifies the
     /// whole Rust corpus, so the CLI discloses the expected cost class at
-    /// invocation time (#4945). Repo badge formats render disk reports plus
-    /// the compact seam summary and stay outside this class.
+    /// invocation time (#4945). The seam-native repo badge formats joined
+    /// this class when their `canonical_actionable_gap` basis moved onto the
+    /// full classified inventory so it agrees with repo-exposure (#5261);
+    /// the repo badge-plus formats still render disk reports only.
     is_full_repo_analysis: bool,
     /// `true` only when warm reruns of the format's walk can hit a
     /// seam-facts cache: the classified and compact-classified inventory
@@ -164,15 +166,18 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::RepoBadgeJson,
         cli_names: &["repo-badge-json"],
-        is_full_repo_analysis: false,
-        is_seam_fact_cache_backed: false,
+        // #5261: the canonical_actionable_gap basis now derives from the
+        // full classified inventory so the badge cannot contradict
+        // repo-exposure on the same tree; the cost disclosure follows.
+        is_full_repo_analysis: true,
+        is_seam_fact_cache_backed: true,
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
         format: OutputFormat::RepoBadgeShields,
         cli_names: &["repo-badge-shields"],
-        is_full_repo_analysis: false,
-        is_seam_fact_cache_backed: false,
+        is_full_repo_analysis: true,
+        is_seam_fact_cache_backed: true,
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -296,11 +301,11 @@ impl OutputFormat {
 
     /// Returns `true` when the format runs the full-repo seam analysis walk:
     /// the help's "Repo-scope (full-repo analysis)" group plus
-    /// `agent-seam-packets-json`. Every such invocation walks and classifies
-    /// the whole analyzable Rust corpus, so these are the audit-path surfaces
-    /// the CLI must disclose invocation-time cost for (#4945). Repo badge
-    /// formats render disk reports plus the compact seam summary and stay
-    /// outside this class.
+    /// `agent-seam-packets-json` and the seam-native repo badge formats
+    /// (#5261). Every such invocation walks and classifies the whole
+    /// analyzable Rust corpus, so these are the audit-path surfaces the CLI
+    /// must disclose invocation-time cost for (#4945). The repo badge-plus
+    /// formats render disk reports only and stay outside this class.
     pub(crate) fn is_full_repo_analysis(&self) -> bool {
         FORMAT_SPECS
             .iter()
@@ -393,13 +398,15 @@ mod tests {
     }
 
     /// #4945: the invocation-time audit-path cost disclosure covers exactly
-    /// the seven full-repo analysis formats — the help's "Repo-scope
-    /// (full-repo analysis)" group plus `agent-seam-packets-json` — and no
-    /// diff-scoped, badge, or gap-ledger surface claims minutes it does not
-    /// charge. The warm-rerun clause is honest per format: only the
-    /// cache-backed classified/compact-classified walks claim seam-facts
-    /// cache reuse; the raw `repo-seams-*` walks disclose that every run
-    /// pays the full walk (#4945 review).
+    /// the full-repo analysis formats — the help's "Repo-scope
+    /// (full-repo analysis)" group, `agent-seam-packets-json`, and (since
+    /// #5261 moved their basis onto the full classified inventory) the two
+    /// seam-native repo badge formats — and no diff-scoped, badge-plus, or
+    /// gap-ledger surface claims minutes it does not charge. The warm-rerun
+    /// clause is honest per format: only the cache-backed
+    /// classified/compact-classified walks claim seam-facts cache reuse; the
+    /// raw `repo-seams-*` walks disclose that every run pays the full walk
+    /// (#4945 review).
     #[test]
     fn repo_format_audit_path_disclosure_covers_exactly_the_full_repo_analysis_group()
     -> Result<(), String> {
@@ -468,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_format_audit_path_group_is_the_seven_measured_formats() {
+    fn repo_format_audit_path_group_is_the_full_repo_analysis_formats() {
         let expected: Vec<&str> = vec![
             "repo-seams-json",
             "repo-seams-md",
@@ -477,6 +484,11 @@ mod tests {
             "repo-exposure-md",
             "repo-sarif",
             "agent-seam-packets-json",
+            // #5261: the seam-native repo badge walks the same full
+            // classified inventory as repo-exposure, so it discloses the
+            // same cost class.
+            "repo-badge-json",
+            "repo-badge-shields",
         ];
         let mut observed: Vec<&str> = FORMAT_SPECS
             .iter()
@@ -488,14 +500,15 @@ mod tests {
         sorted_expected.sort_unstable();
         assert_eq!(
             observed, sorted_expected,
-            "the audit-path disclosure group must be exactly the seven measured formats"
+            "the audit-path disclosure group must be exactly the full-repo analysis formats"
         );
     }
 
     /// #4945 review: only the classified/compact-classified audit walks read
     /// a seam-facts cache. The raw `repo-seams-*` walks rebuild the corpus
     /// index every run (`inventory_seams_at_with_config` never touches
-    /// `RepoSeamFactCache`), so exactly these five may claim warm reruns.
+    /// `RepoSeamFactCache`), so exactly these classified walks may claim
+    /// warm reruns.
     #[test]
     fn repo_format_audit_path_cache_backed_group_is_exactly_the_classified_walks() {
         let expected: Vec<&str> = vec![
@@ -504,6 +517,10 @@ mod tests {
             "repo-exposure-md",
             "repo-sarif",
             "agent-seam-packets-json",
+            // #5261: the seam-native repo badge reads the same classified
+            // cache, so its disclosure may claim warm reruns too.
+            "repo-badge-json",
+            "repo-badge-shields",
         ];
         let mut observed: Vec<&str> = FORMAT_SPECS
             .iter()

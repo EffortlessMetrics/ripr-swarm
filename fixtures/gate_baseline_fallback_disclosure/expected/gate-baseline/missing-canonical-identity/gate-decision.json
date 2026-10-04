@@ -106,6 +106,14 @@
   "root": ".",
   "schema_version": "0.1",
   "status": "advisory",
+  "subject": {
+    "analyzer_version": "0.0.0+pinned-golden-analyzer-version",
+    "inputs": {
+      "pr_guidance": {
+        "content_hash": "sha256:d38e23875bfc2c416b4fb8a6e0c5f9b48bba412675a7eb204938ba54488dac02"
+      }
+    }
+  },
   "summary": {
     "acknowledged": 0,
     "advisory": 1,

@@ -1,10 +1,158 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Best-effort temp-dir teardown. The `io::Result` is matched with `if let`
 /// so a `#[must_use]` cleanup failure is an explicit ignore.
 fn ignore_remove_dir_all(path: impl AsRef<Path>) {
     if let Ok(()) = fs::remove_dir_all(path) {}
+}
+
+/// #5263: gate-decision.json must bind the decision to the build that
+/// produced it and to the exact input bytes it consumed, copying the input
+/// document's own producer receipt when it carries one. Without this block a
+/// stale gate receipt (older binary, changed guidance document at the same
+/// path) is byte-indistinguishable from a fresh one.
+#[test]
+fn gate_decision_records_subject_identity_of_build_and_inputs() -> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("system time before unix epoch: {err}"))?
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-gate-subject-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
+    let guidance_path = root.join("comments.json");
+    let write_guidance = |receipt: Value| -> Result<(), String> {
+        let mut document = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "status": "advisory",
+            "root": ".",
+            "base": "main",
+            "head": "HEAD",
+            "comments": [],
+            "summary_only": [],
+            "suppressed": [],
+            "warnings": []
+        });
+        if !receipt.is_null() {
+            document["run_receipt"] = receipt;
+        }
+        fs::write(
+            &guidance_path,
+            serde_json::to_string_pretty(&document)
+                .map_err(|err| format!("serialize guidance: {err}"))?,
+        )
+        .map_err(|err| format!("write guidance: {err}"))
+    };
+    let input = |root: &Path| -> GateEvaluateInput {
+        GateEvaluateInput {
+            root: root.to_path_buf(),
+            repo_exposure: None,
+            pr_guidance: Some(PathBuf::from("comments.json")),
+            gap_ledger: None,
+            sarif_policy: None,
+            labels_json: None,
+            labels: Vec::new(),
+            agent_verify: None,
+            agent_receipt: None,
+            recommendation_calibration: None,
+            mutation_calibration: None,
+            baseline: None,
+            mode: GateMode::VisibleOnly,
+            acknowledgement_labels: Vec::new(),
+            exception_policy: None,
+        }
+    };
+
+    write_guidance(serde_json::json!({
+        "schema_version": "0.1",
+        "status": "complete",
+        "root_identity": "//example/checkout",
+        "base_sha": "1111111111111111111111111111111111111111",
+        "head_sha": "2222222222222222222222222222222222222222",
+        "reusable_cache_identity": "sha256:producer-cache-identity"
+    }))?;
+    let report = build_gate_decision_report(&input(&root))?;
+    let value: Value = serde_json::from_str(&render_gate_decision_json(&report)?)
+        .map_err(|err| format!("gate decision JSON should parse: {err}"))?;
+
+    assert_eq!(
+        value["subject"]["analyzer_version"],
+        crate::build_identity::cache_identity(),
+        "the subject must stamp the build identity of the writing binary"
+    );
+    let expected_hash = format!(
+        "sha256:{:x}",
+        Sha256::digest(fs::read(&guidance_path).map_err(|err| format!("read guidance: {err}"))?)
+    );
+    assert_eq!(
+        value["subject"]["inputs"]["pr_guidance"]["content_hash"], expected_hash,
+        "the subject must hash the exact bytes consumed"
+    );
+    let producer = &value["subject"]["inputs"]["pr_guidance"]["producer_subject"];
+    assert_eq!(
+        producer["base_sha"],
+        "1111111111111111111111111111111111111111"
+    );
+    assert_eq!(
+        producer["head_sha"],
+        "2222222222222222222222222222222222222222"
+    );
+    assert_eq!(producer["root_identity"], "//example/checkout");
+    assert_eq!(
+        producer["reusable_cache_identity"],
+        "sha256:producer-cache-identity"
+    );
+
+    // Rewriting the guidance document in place at the same path must change
+    // the recorded content hash: a receipt regenerated against different
+    // bytes is no longer indistinguishable from the original.
+    write_guidance(serde_json::json!({
+        "schema_version": "0.1",
+        "status": "complete",
+        "root_identity": "//example/checkout",
+        "base_sha": "3333333333333333333333333333333333333333",
+        "head_sha": "4444444444444444444444444444444444444444",
+        "reusable_cache_identity": "sha256:producer-cache-identity-2"
+    }))?;
+    let report = build_gate_decision_report(&input(&root))?;
+    let value: Value = serde_json::from_str(&render_gate_decision_json(&report)?)
+        .map_err(|err| format!("gate decision JSON should parse: {err}"))?;
+    assert_ne!(
+        value["subject"]["inputs"]["pr_guidance"]["content_hash"], expected_hash,
+        "changed input bytes at the same path must change the recorded hash"
+    );
+    assert_eq!(
+        value["subject"]["inputs"]["pr_guidance"]["producer_subject"]["base_sha"],
+        "3333333333333333333333333333333333333333"
+    );
+
+    // A guidance document without a producer receipt renders the content
+    // hash but no producer subject: nothing is invented.
+    write_guidance(Value::Null)?;
+    let report = build_gate_decision_report(&input(&root))?;
+    let value: Value = serde_json::from_str(&render_gate_decision_json(&report)?)
+        .map_err(|err| format!("gate decision JSON should parse: {err}"))?;
+    assert!(
+        value
+            .pointer("/subject/inputs/pr_guidance/producer_subject")
+            .is_none(),
+        "no run_receipt means no producer subject"
+    );
+    assert_eq!(
+        value["subject"]["inputs"]["pr_guidance"]["content_hash"],
+        format!(
+            "sha256:{:x}",
+            Sha256::digest(
+                fs::read(&guidance_path).map_err(|err| format!("read guidance: {err}"))?
+            )
+        )
+    );
+
+    ignore_remove_dir_all(&root);
+    Ok(())
 }
 
 #[test]
@@ -2428,7 +2576,8 @@ fn calibrated_gate_fixture_matrix_matches_checked_outputs() -> Result<(), String
         let input = case.input()?;
         let mut report = build_gate_decision_report(&input)?;
         report.root = ".".to_string();
-        let rendered_json = render_gate_decision_json(&report)?;
+        let rendered_json =
+            pin_gate_subject_analyzer_version(&render_gate_decision_json(&report)?)?;
         let rendered_md = render_gate_decision_markdown(&report);
         let expected_dir =
             PathBuf::from("fixtures/boundary_gap/expected/calibrated-gate").join(case.name);
@@ -2482,7 +2631,8 @@ fn baseline_fallback_disclosure_fixture_matrix_matches_checked_outputs() -> Resu
         };
         let mut report = build_gate_decision_report(&input)?;
         report.root = ".".to_string();
-        let rendered_json = render_gate_decision_json(&report)?;
+        let rendered_json =
+            pin_gate_subject_analyzer_version(&render_gate_decision_json(&report)?)?;
         let rendered_md = render_gate_decision_markdown(&report);
         assert_repo_fixture(
             &dir.join("gate-decision.json"),
@@ -3970,6 +4120,35 @@ fn read_repo_fixture(path: &Path) -> Result<String, String> {
     let resolved = repo_root().join(path);
     fs::read_to_string(&resolved)
         .map_err(|err| format!("read {} failed: {err}", resolved.display()))
+}
+
+/// #5263: the subject block stamps the writing binary's build identity, which
+/// differs per checkout — a golden carrying a real identity could never pass
+/// on another machine. Replace the observed value with the pinned golden
+/// value after checking its shape, so every other byte stays under
+/// comparison: a render that stopped stamping its own build would re-pin
+/// against itself and fail the shape check.
+fn pin_gate_subject_analyzer_version(rendered: &str) -> Result<String, String> {
+    const PINNED: &str = "0.0.0+pinned-golden-analyzer-version";
+    let value: Value = serde_json::from_str(rendered)
+        .map_err(|err| format!("rendered gate decision JSON should parse: {err}"))?;
+    let observed = value
+        .pointer("/subject/analyzer_version")
+        .and_then(Value::as_str)
+        .ok_or("rendered gate decision JSON carries no subject.analyzer_version")?
+        .to_string();
+    if observed == PINNED {
+        return Err("rendered subject.analyzer_version is the pinned golden value, so the render did not stamp its own build identity".to_string());
+    }
+    if !observed.contains('+') {
+        return Err(format!(
+            "rendered subject.analyzer_version must be a build identity (version+commit), got `{observed}`"
+        ));
+    }
+    Ok(rendered.replace(
+        &format!("\"analyzer_version\": \"{observed}\""),
+        &format!("\"analyzer_version\": \"{PINNED}\""),
+    ))
 }
 
 fn require_contains(actual: &str, expected: &str, label: &str) -> Result<(), String> {

@@ -2308,7 +2308,12 @@ Field contract:
   artifacts, or `"gap_decision_ledger"` when repo badge formats are explicitly
   rendered from supplied GapRecord projection targets. Diff-scoped badge
   formats currently use `finding_exposure`; repo-scoped public badge formats
-  use `canonical_actionable_gap` unless `--gap-ledger` is supplied.
+  use `canonical_actionable_gap` unless `--gap-ledger` is supplied. The
+  `canonical_actionable_gap` count derives from the same full classified seam
+  inventory `repo-exposure-json` renders, so the two artifacts cannot
+  contradict each other on one tree (#5261); these badge formats are
+  therefore full-repo audit-path surfaces and disclose the same invocation
+  cost class.
 - `message` — the headline rendered as a string for Shields compatibility.
   Diff-scoped and internal badges render the bare count (for example `"5"`).
   Repo-scoped public badges render the closed RIPR-SPEC-0066 vocabulary
@@ -9044,6 +9049,19 @@ Field contract:
 - `inputs.gap_ledger` - optional explicit gap decision ledger input. When
   supplied, gate candidates come from GapRecord gate-candidate projection
   targets instead of raw PR guidance candidates.
+- `subject` - identity of the evaluation (#5263): `analyzer_version` (the
+  writing binary's build identity, the same stamp `check --write-artifact`
+  records) plus one entry per consumed input document keyed by input name.
+  Each entry carries `content_hash`, the `sha256:<hex>` of the exact bytes
+  consumed (`null` only when the bytes could not be read; the read failure
+  itself surfaces as a `config_error` or warning). The `pr_guidance` entry
+  additionally carries `producer_subject` when its document recorded a
+  `run_receipt`: the producer's resolved `base_sha`, `head_sha`,
+  `root_identity`, and `reusable_cache_identity`, copied verbatim so a
+  `pr-ledger record --base/--head` assertion can be cross-checked against
+  what the gate actually consumed. The block has no timestamp: identical
+  evaluations stay byte-identical, and staleness is carried by the content
+  hashes and producer SHAs.
 - `policy.mode` - effective gate mode after config and CLI precedence.
 - `policy.threshold` - initially `high_confidence_new_gap`.
 - `policy.acknowledgement_labels` - configured labels that can turn a blocking
@@ -16709,8 +16727,12 @@ JSON shape:
 ```
 
 `status` is `advisory` when records parse cleanly, `advisory_with_warnings`
-when records are present but violate projection-safety checks, and `blocked`
-when no records can be read. The summary counts are projection inputs only;
+when records are present but violate projection-safety checks, `no_records`
+when the input parsed cleanly but zero gap records were derived from it (for
+the `--check-output` route a warning then names how many findings the
+Python/TypeScript/Perl-only projections skipped), and `blocked` when no
+records can be read because the artifact is missing, unreadable, or
+malformed. The summary counts are projection inputs only;
 they are not gate authority.
 
 `source_subject` records which source contents the ledger was computed from

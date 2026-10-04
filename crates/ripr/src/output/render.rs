@@ -62,20 +62,26 @@ pub(crate) fn render_check_with_config_and_progress(
             let summary = ripr_summary_with_suppressions(output, config)?;
             Ok(badge::render_native_json(&summary))
         }
-        OutputFormat::RepoBadgeJson => {
-            let mut summary = ripr_repo_canonical_actionable_summary(output, config)?;
-            badge::attach_public_projection(&mut summary, REPO_RIPR_BADGE_SOURCE_REPORT);
-            Ok(badge::render_native_json(&summary))
-        }
+        OutputFormat::RepoBadgeJson => repo_inventory_with_progress(
+            progress,
+            || ripr_repo_canonical_actionable_summary(output, config),
+            |mut summary| {
+                badge::attach_public_projection(&mut summary, REPO_RIPR_BADGE_SOURCE_REPORT);
+                Ok(badge::render_native_json(&summary))
+            },
+        ),
         OutputFormat::BadgeShields => {
             let summary = ripr_summary_with_suppressions(output, config)?;
             Ok(badge::render_shields_json(&summary))
         }
-        OutputFormat::RepoBadgeShields => {
-            let mut summary = ripr_repo_canonical_actionable_summary(output, config)?;
-            badge::attach_public_projection(&mut summary, REPO_RIPR_BADGE_SOURCE_REPORT);
-            Ok(badge::render_shields_json(&summary))
-        }
+        OutputFormat::RepoBadgeShields => repo_inventory_with_progress(
+            progress,
+            || ripr_repo_canonical_actionable_summary(output, config),
+            |mut summary| {
+                badge::attach_public_projection(&mut summary, REPO_RIPR_BADGE_SOURCE_REPORT);
+                Ok(badge::render_shields_json(&summary))
+            },
+        ),
         OutputFormat::BadgePlusJson | OutputFormat::RepoBadgePlusJson => {
             let mut summary = ripr_plus_summary_from_disk(output, format.is_repo_scope(), config)?;
             maybe_attach_repo_plus_projection(&mut summary, output, format);
@@ -382,18 +388,28 @@ fn ripr_summary_with_suppressions(
     ))
 }
 
+/// The repo badge's `canonical_actionable_gap` basis derives from the same
+/// full classified seam inventory `repo-exposure-json` renders (#5261). The
+/// compact classified walk zeroes the related-test and observed-value
+/// evidence payload and approximates activation for several seam kinds, so
+/// evidence records projected from it reclassify actionable gaps as
+/// `unknown` and the badge rendered a clean `0 actionable` beside an
+/// actionable repo-exposure record on the same tree. Agreement with
+/// repo-exposure outranks the compact walk's cost saving: a wrong clean
+/// signal on the public projection is the same harm as a wrong repair
+/// signal on the other side, and the full classified inventory is the
+/// cache-backed walk the audit-path disclosure already names.
 fn ripr_repo_canonical_actionable_summary(
     output: &CheckOutput,
     config: &RiprConfig,
 ) -> Result<badge::BadgeSummary, String> {
-    let classified =
-        analysis::inventory_compact_classified_seams_at_with_config(&output.root, config)?;
+    let report = analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
     let policy = badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..badge::BadgePolicy::default()
     };
     Ok(badge::ripr_canonical_actionable_gap_badge_summary(
-        &classified,
+        &report.classified,
         policy,
     ))
 }
@@ -730,6 +746,110 @@ mod tests {
 
         assert!(native.contains("\"kind\""));
         assert!(shields.contains("\"schemaVersion\": 1"));
+        Ok(())
+    }
+
+    /// #5261: the repo badge's `canonical_actionable_gap` count must agree
+    /// with `repo-exposure-json` on the same tree. The compact classified
+    /// walk this badge used to consume drops the related-test and
+    /// observed-value payload and approximates activation for several seam
+    /// kinds, so actionable gaps reclassified as `unknown` rendered a clean
+    /// `0 actionable` beside an actionable exposure record. A workspace
+    /// whose only tests reach the boundary but never exercise it pins the
+    /// agreement: both surfaces must count the same canonical actionable
+    /// gaps, and a zero badge beside a nonzero exposure count fails.
+    #[test]
+    fn repo_badge_actionable_count_agrees_with_repo_exposure_on_the_same_tree() -> Result<(), String>
+    {
+        let root = temp_root("ripr-render-badge-agreement")?;
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create tests dir: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]
+name=\"ripr-badge-agreement\"
+version=\"0.1.0\"
+edition=\"2021\"
+",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {
+    amount >= threshold
+}
+
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold {
+        amount - 10
+    } else {
+        amount
+    }
+}
+",
+        )
+        .map_err(|err| format!("write lib.rs: {err}"))?;
+        std::fs::write(
+            root.join("tests/pricing.rs"),
+            "use ripr_badge_agreement::{discounted_total, over_threshold};
+
+#[test]
+fn below_threshold_has_no_discount() {
+    assert_eq!(discounted_total(50, 100), 50);
+}
+
+#[test]
+fn happy_path_passes() {
+    assert!(over_threshold(5, 3));
+}
+",
+        )
+        .map_err(|err| format!("write tests/pricing.rs: {err}"))?;
+
+        let mut output = check_output_with(Vec::new());
+        output.root = root.clone();
+        let config = RiprConfig::default();
+
+        let exposure = render_check_with_config(&output, &OutputFormat::RepoExposureJson, &config)?;
+        let exposure_value: serde_json::Value = serde_json::from_str(&exposure)
+            .map_err(|err| format!("repo-exposure JSON should parse: {err}"))?;
+        let exposure_actionable: Vec<String> = exposure_value["seams"]
+            .as_array()
+            .ok_or_else(|| "repo-exposure JSON should carry a seams array".to_string())?
+            .iter()
+            .filter(|seam| {
+                let item = &seam["evidence_record"]["canonical_item"];
+                item["gap_state"] == "actionable"
+                    && !item["repair_route"].is_null()
+                    && !item["verify_command"].is_null()
+            })
+            .filter_map(|seam| {
+                seam["evidence_record"]["canonical_item"]["canonical_gap_id"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect();
+
+        let badge = render_check_with_config(&output, &OutputFormat::RepoBadgeJson, &config)?;
+        let badge_value: serde_json::Value = serde_json::from_str(&badge)
+            .map_err(|err| format!("repo-badge JSON should parse: {err}"))?;
+        let badge_count = badge_value["counts"]["unsuppressed_exposure_gaps"]
+            .as_u64()
+            .ok_or_else(|| "badge should carry unsuppressed_exposure_gaps".to_string())?;
+
+        assert!(
+            !exposure_actionable.is_empty(),
+            "fixture must produce at least one actionable canonical gap with a complete              repair route on the exposure path, or the agreement proves nothing"
+        );
+        assert_eq!(
+            badge_count as usize,
+            exposure_actionable.len(),
+            "badge actionable count {badge_count} must equal the repo-exposure canonical              actionable gap count {} on the same tree",
+            exposure_actionable.len()
+        );
+
+        remove_temp_root(&root)?;
         Ok(())
     }
 
