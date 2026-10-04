@@ -107,6 +107,11 @@ fn classify_run_separates_test_failures_from_build_failures() {
         failing(&[])
     );
     assert_eq!(classify_run(false, true, failed, ""), RunOutcome::TimedOut);
+    let should_panic = "running 1 test\ntest checks::tests::over - should panic ... FAILED\n\ntest result: FAILED.";
+    assert_eq!(
+        classify_run(false, false, should_panic, ""),
+        failing(&["checks::tests::over"])
+    );
     // A binary that aborts (stack overflow) started but named no failure.
     let aborted = "running 9 tests\n\nthread 'test_align' has overflowed its stack\n";
     assert_eq!(

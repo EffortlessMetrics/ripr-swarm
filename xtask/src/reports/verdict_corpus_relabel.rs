@@ -187,6 +187,8 @@ pub(crate) fn classify_run(
         .filter_map(|line| {
             let rest = line.strip_prefix("test ")?;
             let name = rest.strip_suffix(" ... FAILED")?;
+            // libtest marks `#[should_panic]` tests as `name - should panic`.
+            let name = name.strip_suffix(" - should panic").unwrap_or(name);
             Some(name.trim().to_string())
         })
         .collect();

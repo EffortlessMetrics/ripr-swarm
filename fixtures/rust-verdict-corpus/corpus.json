@@ -2029,7 +2029,7 @@
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
-        "test_command": "cargo test",
+        "test_command": "cargo test -- --skip alloc_tests::string_round_trip",
         "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
         "mutants": [
           {
@@ -2037,7 +2037,7 @@
             "mutated_line": "self.0 as f64 % (KIB as f64)",
             "outcome": "tests_failed",
             "failing_test": "core_tests::as_unit_conversions",
-            "equivalence_review": "not equivalent: as_kib returns the remainder instead of the quotient for any size of at least 1 KiB."
+            "equivalence_review": "not equivalent: as_kib returns the remainder instead of the quotient for any size of at least 1 KiB; the quickcheck property alloc_tests::string_round_trip is skipped because it fails on some random inputs with or without the edit (1 of 5 replays on rustc 1.97.0), and it never calls the changed method"
           }
         ]
       },
@@ -2074,7 +2074,7 @@
       "truth": {
         "state": "discriminated",
         "method": "runtime_mutant_kill",
-        "test_command": "cargo test",
+        "test_command": "cargo test -- --skip alloc_tests::string_round_trip",
         "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
         "mutants": [
           {
@@ -2082,7 +2082,7 @@
             "mutated_line": "self.0 as f64 % (MB as f64)",
             "outcome": "tests_failed",
             "failing_test": "core_tests::as_unit_conversions",
-            "equivalence_review": "not equivalent: as_mb returns the remainder instead of the quotient for any size of at least 1 MB."
+            "equivalence_review": "not equivalent: as_mb returns the remainder instead of the quotient for any size of at least 1 MB; the quickcheck property alloc_tests::string_round_trip is skipped because it fails on some random inputs with or without the edit (1 of 5 replays on rustc 1.97.0), and it never calls the changed method"
           }
         ]
       },
@@ -2119,7 +2119,7 @@
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
-        "test_command": "cargo test",
+        "test_command": "cargo test -- --skip alloc_tests::string_round_trip",
         "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
         "mutants": [
           {
@@ -2127,7 +2127,7 @@
             "mutated_line": "self.0 as f64 % (KB as f64)",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: as_kb returns the remainder instead of the quotient, e.g. 2000 B gives 0.0 instead of 2.0."
+            "equivalence_review": "not equivalent: as_kb returns the remainder instead of the quotient, e.g. 2000 B gives 0.0 instead of 2.0; the quickcheck property alloc_tests::string_round_trip is skipped because it fails on some random inputs with or without the edit (1 of 5 replays on rustc 1.97.0), and it never calls the changed method"
           }
         ]
       },
@@ -2163,7 +2163,7 @@
       "truth": {
         "state": "not_discriminated",
         "method": "runtime_mutant_kill",
-        "test_command": "cargo test",
+        "test_command": "cargo test -- --skip alloc_tests::string_round_trip",
         "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
         "mutants": [
           {
@@ -2171,7 +2171,7 @@
             "mutated_line": "self.0 as f64 % (MIB as f64)",
             "outcome": "tests_passed",
             "failing_test": null,
-            "equivalence_review": "not equivalent: as_mib returns the remainder instead of the quotient for any size of at least 1 MiB."
+            "equivalence_review": "not equivalent: as_mib returns the remainder instead of the quotient for any size of at least 1 MiB; the quickcheck property alloc_tests::string_round_trip is skipped because it fails on some random inputs with or without the edit (1 of 5 replays on rustc 1.97.0), and it never calls the changed method"
           }
         ]
       },
