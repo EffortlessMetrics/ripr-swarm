@@ -1,0 +1,80 @@
+/// Receives audit events.
+pub trait Sink {
+    fn emit(&mut self, event: &str);
+}
+
+/// Keeps every event it receives, in order.
+#[derive(Debug, Default)]
+pub struct Recorder {
+    pub events: Vec<String>,
+}
+
+impl Sink for Recorder {
+    fn emit(&mut self, event: &str) {
+        self.events.push(event.to_string());
+    }
+}
+
+/// Remembers recently read account names.
+#[derive(Debug, Default)]
+pub struct Cache {
+    names: Vec<String>,
+}
+
+impl Cache {
+    pub fn remember(&mut self, account: &str) {
+        self.names.push(account.to_string());
+    }
+
+    pub fn evict(&mut self, account: &str) {
+        self.names.retain(|name| name != account);
+    }
+
+    pub fn contains(&self, account: &str) -> bool {
+        self.names.iter().any(|name| name == account)
+    }
+}
+
+/// Moves `amount` between accounts and reports the move to `sink`.
+pub fn transfer(sink: &mut impl Sink, from: &str, to: &str, amount: i64) -> bool {
+    if amount <= 0 {
+        return false;
+    }
+    sink.emit(&format!("transfer {from}->{to} {amount}"));
+    true
+}
+
+/// Closes an account and forgets it.
+pub fn close(sink: &mut impl Sink, cache: &mut Cache, account: &str) -> bool {
+    cache.evict(account);
+    sink.emit(&format!("close {account}"));
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_reports_the_move() {
+        let mut sink = Recorder::default();
+        assert!(transfer(&mut sink, "a", "b", 5));
+        assert_eq!(sink.events, vec!["transfer a->b 5".to_string()]);
+    }
+
+    #[test]
+    fn transfer_refuses_a_non_positive_amount() {
+        let mut sink = Recorder::default();
+        assert!(!transfer(&mut sink, "a", "b", 0));
+        assert!(sink.events.is_empty());
+    }
+
+    #[test]
+    fn close_reports_the_account() {
+        let mut sink = Recorder::default();
+        let mut cache = Cache::default();
+        cache.remember("a");
+        assert!(close(&mut sink, &mut cache, "a"));
+        assert_eq!(sink.events, vec!["close a".to_string()]);
+    }
+}
