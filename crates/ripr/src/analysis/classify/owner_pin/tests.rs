@@ -304,6 +304,32 @@ fn inherent_method_needs_a_receiver_of_its_own_type() {
 }
 
 #[test]
+fn an_inline_constructor_types_the_receiver_like_a_binding() {
+    // bytesize's `assert_eq!(ByteSize::b(3).as_whole_units(2), None)`.
+    let lib = "pub struct Stack {\n    items: Vec<u32>,\n}\n\nimpl Stack {\n    pub fn new() -> Self {\n        Stack { items: Vec::new() }\n    }\n\n    pub fn with(n: u32) -> Stack {\n        Stack { items: vec![n] }\n    }\n\n    pub fn depth(&self) -> usize {\n        self.items.len() + 1\n    }\n}\n";
+    let changed = "self.items.len() + 1";
+    for (call, admitted) in [
+        ("Stack::new().depth()", 1),
+        ("Stack::with(3).depth()", 1),
+        // A constructor ripr cannot see returns some other type.
+        ("Stack::items_of(3).depth()", 0),
+        ("Vec::<u32>::new().depth()", 0),
+        // Something chained after the owner call is not its return value.
+        ("Stack::new().depth().pow(2)", 0),
+        ("Stack::new().clone().depth()", 0),
+    ] {
+        let tests = format!(
+            "use demo::Stack;\n\n#[test]\nfn depth_counts() {{\n    assert_eq!({call}, 1);\n}}\n"
+        );
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "depth", changed);
+        assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(admitted_texts(&index, &pin).len(), admitted, "{call}");
+    }
+}
+
+#[test]
 fn bare_call_names_only_a_module_level_function() {
     // B2: `decode(..)` in a test names the free function, so an associated
     // `Codec::decode` owner never takes a bare call.
@@ -355,6 +381,45 @@ fn bare_call_is_defeated_by_another_free_function_or_a_local_binding() {
 fn gate(body: &str, changed: &str) -> Option<ReturnPathGate> {
     let at = body.rfind(changed.trim_end_matches(';')).unwrap_or(0);
     return_path_gate(body, changed, body[..at].matches('\n').count())
+}
+
+#[test]
+fn an_early_return_is_pinned_when_it_is_the_only_source_of_its_value() {
+    // bytesize's `as_whole_units`: the one `return None` is the only `None`.
+    assert!(matches!(
+        gate(
+            "fn f(&self, unit: u64) -> Option<u64> {\n    if unit == 0 || self.0 % unit != 0 {\n        return None;\n    }\n    Some(self.0 / unit)\n}",
+            "return None;"
+        ),
+        Some(ReturnPathGate::Exact("None"))
+    ));
+    assert!(matches!(
+        gate(
+            "fn f(x: i32) -> Result<i32, E> {\n    if x < 0 {\n        return Err(E::Negative);\n    }\n    if x == 0 {\n        return Ok(0);\n    }\n    Ok(x * 2)\n}",
+            "return Err(E::Negative);"
+        ),
+        Some(ReturnPathGate::Head("Err"))
+    ));
+    for body in [
+        // A second `return None` is another source of `None`.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    if x == 2 {\n        return None;\n    }\n    Some(x)\n}",
+        // `?` can produce `None` too.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    Some(g(x)?)\n}",
+        // The tail can produce `None`.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    if x > 2 { Some(x) } else { None }\n}",
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    lookup(x)\n}",
+        // A `return` inside a closure leaves only the closure.
+        "fn f(x: u64) -> Option<u64> {\n    let c = || {\n        return None;\n    };\n    Some(x)\n}",
+        // A macro may hide a `return`.
+        "fn f(x: u64) -> Option<u64> {\n    if x == 1 {\n        return None;\n    }\n    bail_if!(x);\n    Some(x)\n}",
+    ] {
+        let changed = "return None;";
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
 }
 
 #[test]

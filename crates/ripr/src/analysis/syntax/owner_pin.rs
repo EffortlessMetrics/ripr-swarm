@@ -713,6 +713,27 @@ fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
     candidates
 }
 
+/// Whether every `return` in `item` (one function's text) leaves that
+/// function: the text parses cleanly and no `return` sits inside a closure
+/// or an `async` block, where it would end only that inner body.
+pub(crate) fn returns_leave_the_function(item: &str) -> bool {
+    parse_clean_source_file(item).is_some_and(|parse| {
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter(|node| ast::ReturnExpr::can_cast(node.kind()))
+            .all(|node| {
+                !node.ancestors().any(|parent| {
+                    ast::ClosureExpr::can_cast(parent.kind())
+                        || ast::BlockExpr::cast(parent).is_some_and(|block| {
+                            block.async_token().is_some() || block.const_token().is_some()
+                        })
+                })
+            })
+    })
+}
+
 pub(crate) fn local_empty_macro_names(source: &str) -> BTreeSet<String> {
     parse_clean_source_file(source)
         .map(|parse| {
