@@ -531,8 +531,9 @@ enum LocationJoin {
 /// mutant is not scored against a call seam that merely shares its line.
 /// Seams without a span (match-arm seams, or snapshots older than
 /// `repo-exposure-json` 0.4) on the mutant's line keep the file/line join
-/// unless an innermost containing span is confined to that line, in which
-/// case the two cannot be ordered and stay ambiguous. A mutant without a
+/// when every innermost containing span starts on an earlier line; a
+/// containing span starting on the mutant's line cannot be ordered against
+/// them, so both stay ambiguous. A mutant without a
 /// column keeps the file/line join over every seam on its line.
 fn location_join(
     static_seams: &[StaticSeamRecord],
@@ -583,13 +584,17 @@ fn location_join(
         })
         .collect::<Vec<_>>();
     if !line_only.is_empty() {
-        // A span-less seam (a match arm) on the mutant's line covers at most
-        // that line, so an innermost span reaching past the line encloses it
-        // and the span-less seam keeps its file/line join. A span confined to
-        // the line cannot be ordered against it, so both stay ambiguous.
+        // A span-less seam (a match arm) is recorded somewhere on the
+        // mutant's line. An innermost span that starts on an earlier line
+        // encloses the start of that line, so the span-less seam is the
+        // narrower target and keeps its file/line join. A span starting on
+        // the mutant's line may sit inside the arm or around it, so the two
+        // cannot be ordered and stay ambiguous.
         let mutant_line = mutant_span.start.0;
-        let confined = |range: &SeamRange| range.0.0 == mutant_line && range.1.0 == mutant_line;
-        if !innermost.iter().any(|(_, range)| confined(range)) {
+        if innermost
+            .iter()
+            .all(|(_, ((start_line, _), _))| *start_line < mutant_line)
+        {
             return file_line_join(&line_only);
         }
         let mut tied = innermost.iter().map(|(idx, _)| *idx).collect::<Vec<_>>();
@@ -1692,19 +1697,38 @@ mod tests {
             spanned_runtime("m-arm", "src/lib.rs", (3, 9), (3, 20)),
             spanned_runtime("m-pred", "src/lib.rs", (8, 24), (8, 26)),
         ];
+        // `Some(v) => Ok(v + compute(\n x,\n))`: a multi-line span starting on
+        // the arm's line may sit inside the arm, so it ties with it.
+        let mut nested_arm = static_seam("arm-c", "ungripped", "src/lib.rs", 12);
+        nested_arm.seam_kind = "match_arm".to_string();
+        let mut static_seams = static_seams;
+        static_seams.push(spanned_seam("ret", "src/lib.rs", (12, 20), (14, 3)));
+        static_seams.push(nested_arm);
+        let mut runtime_mutants = runtime_mutants;
+        runtime_mutants.push(spanned_runtime(
+            "m-nested",
+            "src/lib.rs",
+            (12, 24),
+            (12, 25),
+        ));
 
         let report = build_mutation_calibration_report(static_seams, runtime_mutants);
 
         assert_eq!(report.matched.len(), 1, "{report:?}");
         assert_eq!(report.matched[0].seam.seam_id, "arm");
         assert_eq!(report.matched[0].join_method, "file_line");
-        assert_eq!(report.ambiguous_file_line.len(), 1);
-        let tied = report.ambiguous_file_line[0]
-            .candidates
+        let tied = report
+            .ambiguous_file_line
             .iter()
-            .map(|seam| seam.seam_id.as_str())
+            .map(|record| {
+                record
+                    .candidates
+                    .iter()
+                    .map(|seam| seam.seam_id.as_str())
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
-        assert_eq!(tied, vec!["pred", "arm-b"]);
+        assert_eq!(tied, vec![vec!["pred", "arm-b"], vec!["ret", "arm-c"]]);
     }
 
     #[test]

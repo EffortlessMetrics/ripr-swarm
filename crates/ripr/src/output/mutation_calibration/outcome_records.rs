@@ -445,7 +445,9 @@ mod tests {
    "function": {"span": {"start": {"line": 1, "column": 1}, "end": {"line": 9, "column": 2}}},
    "span": {"start": {"line": 3, "column": 7}, "end": {"line": 3, "column": 8}}, "summary": "MissedMutant"},
   {"name": "src/a.rs:4:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
-   "span": {"start": {"line": 4, "column": 7}, "end": {"line": 4, "column": 2}}, "summary": "MissedMutant"}
+   "span": {"start": {"line": 4, "column": 7}, "end": {"line": 4, "column": 2}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:5:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 5, "column": 7}, "end": {"line": 5}}, "summary": "MissedMutant"}
 ]"#,
         )?;
 
@@ -464,6 +466,7 @@ mod tests {
             "the mutant span, not function.span"
         );
         assert_eq!(span_of(4), Some(None), "an inverted end drops the span");
+        assert_eq!(span_of(5), Some(None), "a partial end drops the span");
         Ok(())
     }
 

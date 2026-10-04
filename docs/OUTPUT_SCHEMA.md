@@ -16928,8 +16928,9 @@ Field contract:
 - `metrics.matched_total` — runtime records joined to a static seam.
 - `metrics.ambiguous_file_line_total` — runtime records that matched multiple
   static seams and were therefore not assigned to a single seam: several
-  span-less seams on the record's line, or several innermost seam spans that
-  tie (identical or partially overlapping ranges).
+  span-less seams on the record's line, several innermost seam spans that tie
+  (identical or partially overlapping ranges), or an innermost containing span
+  that starts on the record's line next to a seam without a span.
 - `metrics.unmatched_mutants_total` — runtime records that could not be joined
   by `seam_id`, span containment, or file/line. This includes mutants on a line
   whose spanned seams do not contain them.
@@ -16974,8 +16975,9 @@ Field contract:
   normalized path and line match exactly one seam without a span. A spanned
   seam that does not contain the mutated range is never joined to it, even on
   the same line. A seam without a span on the mutant's line (a match arm) keeps
-  its `file_line` join when every innermost containing span reaches past that
-  line; when a containing span is confined to the line, both are ambiguous. Runtime records without a column join by file and line over
+  its `file_line` join when every innermost containing span starts on an
+  earlier line; when a containing span starts on the mutant's line, both are
+  ambiguous. Runtime records without a column join by file and line over
   every seam on the line.
 - `matches[].static.column`, `end_line`, `end_column` and
   `matches[].runtime.column`, `end_line`, `end_column` — 1-based character
@@ -16993,8 +16995,8 @@ Field contract:
   contradiction for the static claim.
 - `ambiguous_file_line_matches[]` — runtime records that matched multiple
   static seams: several seams without a span on the record's line, several
-  innermost containing seam spans that tie, or a containing span confined to
-  the line next to a seam without a span. These records are intentionally not
+  innermost containing seam spans that tie, or a containing span that starts
+  on the record's line next to a seam without a span. These records are intentionally not
   assigned to `matches[]` without a stronger seam/probe ID.
 - `ambiguous_file_line_matches[].confidence_label` — always
   `ambiguous_runtime_join`; ambiguous joins do not raise or lower confidence for

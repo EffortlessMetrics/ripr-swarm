@@ -751,7 +751,8 @@ fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> V
 
 /// An ambiguous calibration record whose runtime mutant carries a column and
 /// whose candidates all carry the same seam span is a span tie: the mutated
-/// range lies inside every candidate (the join only ties containing seams),
+/// range lies inside every spanned candidate (a tie that includes a seam
+/// without a span fails the shared-span check below and is never scored),
 /// typically a predicate seam that is also the function's return value. When
 /// every candidate makes the same grip claim, the mutant's outcome tests that
 /// one claim, so the tie is scored against the candidate whose kind is most
