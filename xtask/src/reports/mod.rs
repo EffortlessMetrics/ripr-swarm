@@ -2,6 +2,7 @@ mod agentic_bench;
 mod annotations;
 mod back_sync;
 mod badges;
+mod bench_agent_surfaces;
 mod blind_journey;
 mod blind_journey_execute;
 mod bun;
@@ -24,6 +25,7 @@ mod merge_queue;
 mod metrics;
 mod module_health;
 mod mutation;
+mod mutation_spot_check;
 mod operator;
 mod orchestration;
 mod perl_migration;
@@ -94,6 +96,7 @@ pub(crate) use badges::{
     badge_artifacts, badge_basis, check_badge_diff_policy, check_badge_endpoints,
     repo_badge_artifacts, ripr_plus, update_badge_endpoints,
 };
+pub(crate) use bench_agent_surfaces::bench_agent_surfaces;
 pub(crate) use blind_journey::{
     assess_blind_journey_fixture_corpus, blind_journey_contract_report,
 };
@@ -139,6 +142,7 @@ pub(crate) use mutation::{
     mutation_calibration_report_markdown, parse_mutation_calibration_args,
     parse_mutation_outcomes_json, read_mutation_input_json,
 };
+pub(crate) use mutation_spot_check::mutation_spot_check;
 pub(crate) use operator::operator_cockpit_report;
 pub(crate) use orchestration::{
     assess_orchestration_fixture_corpus, orchestration_scorecard_report,
