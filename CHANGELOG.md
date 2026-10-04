@@ -11,6 +11,13 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust analysis: a test-local identifier that contains an error lexeme in
+  operand position (`error_count`) no longer confirms a changed `?` error
+  path as `exposed`. The operand twin stays `weakly_exposed` with
+  `observation_unverified`, matching the #4748 message twin. Trailing error
+  observer tokens (`Err`, `unwrap_err`, `last_error`, `ParseError`) still
+  confirm. (#5255)
+
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
   commands they print, so `--root .` no longer yields a command that fails
