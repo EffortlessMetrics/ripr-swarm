@@ -314,9 +314,7 @@ pub(crate) fn load_issue_lifecycle_contract_plan_control_corpus(
         ));
     }
     if corpus.rows.is_empty() {
-        return Err(
-            "issue lifecycle contract plan control corpus must not be empty".to_string(),
-        );
+        return Err("issue lifecycle contract plan control corpus must not be empty".to_string());
     }
     let present: BTreeSet<&str> = corpus
         .rows
@@ -1260,8 +1258,7 @@ mod tests {
             return Err("the contract plan must disclose its omitted acceptance rows".to_string());
         }
         let projection = build_contract_plan_projection(row);
-        if projection.draft_spec_identity.as_deref()
-            != Some(contract.draft_spec_identity.as_str())
+        if projection.draft_spec_identity.as_deref() != Some(contract.draft_spec_identity.as_str())
         {
             return Err("the projection must retain the draft spec identity".to_string());
         }
@@ -1720,8 +1717,8 @@ mod tests {
     }
 
     #[test]
-    fn issue_lifecycle_contract_plan_pilot_missing_required_control_rejected()
-    -> Result<(), String> {
+    fn issue_lifecycle_contract_plan_pilot_missing_required_control_rejected() -> Result<(), String>
+    {
         let path = contract_plan_root().join("controls.json");
         let body = fs::read_to_string(&path)
             .map_err(|error| format!("read committed controls: {error}"))?;
