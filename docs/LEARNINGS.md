@@ -9,7 +9,10 @@ A machine-only route that human `ripr help` does not name is undiscoverable.
 `json_support` is the catalog's own authority: if `ripr help --json` parses
 and emits the document, `cmd:help` cannot report `json_support: false` or
 claim it prints text only. Pin the default-screen `More:` line, the
-`--all` header, and the projected catalog row together.
+`--all` header, and the projected catalog row together. Naming that
+route next to "global flags accepted in any position" is a second
+honesty hole: `help --json` rejects `-v`/`--verbose`. Qualify the
+adjacent claim with the same usage phrase the parser already emits.
 
 ## 2026-10-03: Windows `where` is not a PATH probe (#5103)
 

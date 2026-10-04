@@ -548,6 +548,17 @@ mod tests {
         if !header.contains("ripr help --json") {
             return Err("the help --all header should name the machine catalog".to_string());
         }
+        if !header.contains("this route accepts no other arguments") {
+            return Err(
+                "the help --all header should name the machine catalog's strict grammar".to_string(),
+            );
+        }
+        if !header.contains("except on ripr help --json") {
+            return Err(
+                "the help --all global-flags paragraph should except the machine catalog route"
+                    .to_string(),
+            );
+        }
         Ok(())
     }
 
