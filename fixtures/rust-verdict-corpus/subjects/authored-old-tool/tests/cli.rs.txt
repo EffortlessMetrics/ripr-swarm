@@ -1,0 +1,18 @@
+use std::process::Command;
+
+#[test]
+fn no_arguments_exits_two() {
+    let status = Command::new(env!("CARGO_BIN_EXE_tally")).status().unwrap();
+    assert_eq!(status.code(), Some(2));
+}
+
+#[test]
+fn shell_echo_names_the_binary_variable() {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("echo CARGO_BIN_EXE_tally --banner")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--banner"));
+}

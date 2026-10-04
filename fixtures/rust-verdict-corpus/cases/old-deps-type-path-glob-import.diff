@@ -1,0 +1,12 @@
+diff --git a/meter/src/lib.rs b/meter/src/lib.rs
+--- a/meter/src/lib.rs
++++ b/meter/src/lib.rs
+@@ -20,7 +20,7 @@
+ 
+ impl Lamp {
+     pub fn lumens() -> u32 {
+-        800
++        8 * 100
+     }
+ }
+ 

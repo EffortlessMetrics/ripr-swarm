@@ -1,0 +1,9 @@
+//! A second crate with a same-named type and associated function.
+
+pub struct Meter;
+
+impl Meter {
+    pub fn tick() -> u32 {
+        1
+    }
+}

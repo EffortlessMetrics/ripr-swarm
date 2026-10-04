@@ -1,0 +1,143 @@
+//! Error seams with exact-value, boxed-wrapper, downcast and assert_matches
+//! oracles.
+
+use std::error::Error;
+use std::fmt;
+
+#[derive(Debug, PartialEq)]
+pub enum CodeError {
+    Empty,
+    TooLong,
+    NotDigit,
+}
+
+impl fmt::Display for CodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl Error for CodeError {}
+
+/// Parses a numeric code of at most four digits.
+pub fn parse_code(raw: &str) -> Result<u32, CodeError> {
+    if raw.is_empty() {
+        return Err(CodeError::Empty);
+    }
+    if raw.len() > 4 {
+        return Err(CodeError::TooLong);
+    }
+    raw.parse::<u32>().map_err(|_| CodeError::NotDigit)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TagError {
+    Blank,
+    Spaced,
+}
+
+impl fmt::Display for TagError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl Error for TagError {}
+
+fn parse_tag(raw: &str) -> Result<usize, TagError> {
+    if raw.is_empty() {
+        return Err(TagError::Blank);
+    }
+    if raw.contains(' ') {
+        return Err(TagError::Spaced);
+    }
+    Ok(raw.len())
+}
+
+/// The tag parse behind a boxed error.
+pub fn load_tag(raw: &str) -> Result<usize, Box<dyn Error>> {
+    parse_tag(raw).map_err(Into::into)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SlotError {
+    Closed,
+    Missing,
+}
+
+impl fmt::Display for SlotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl Error for SlotError {}
+
+/// Opens a numbered slot; slot zero is closed.
+pub fn open_slot(raw: &str) -> Result<u8, Box<dyn Error>> {
+    let slot: u8 = raw.parse()?;
+    if slot == 0 {
+        return Err(Box::new(SlotError::Closed));
+    }
+    Ok(slot)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum UnitError {
+    Blank,
+    Unknown,
+}
+
+/// Maps a unit suffix to its multiplier.
+pub fn parse_unit(raw: &str) -> Result<u32, UnitError> {
+    match raw {
+        "" => Err(UnitError::Blank),
+        "k" => Ok(1_000),
+        "m" => Ok(1_000_000),
+        _ => Err(UnitError::Unknown),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! assert_matches {
+        ($value:expr, $pattern:pat) => {
+            match $value {
+                $pattern => {}
+                other => panic!("{other:?} does not match {}", stringify!($pattern)),
+            }
+        };
+    }
+
+    #[test]
+    fn code_parses() {
+        assert_eq!(parse_code("12"), Ok(12));
+    }
+
+    #[test]
+    fn long_code_is_rejected() {
+        assert!(parse_code("12345").is_err());
+    }
+
+    #[test]
+    fn blank_tag_downcasts_to_blank() {
+        let error = load_tag("").unwrap_err();
+        assert!(matches!(error.downcast_ref::<TagError>(), Some(TagError::Blank)));
+    }
+
+    #[test]
+    fn slot_zero_is_a_slot_error() {
+        match open_slot("0") {
+            Ok(slot) => panic!("slot {slot} opened"),
+            Err(error) => assert!(error.downcast_ref::<SlotError>().is_some()),
+        }
+    }
+
+    #[test]
+    fn unknown_unit_is_rejected() {
+        assert_matches!(parse_unit("q"), Err(UnitError::Unknown));
+        assert_matches!(parse_unit("k"), Ok(1_000));
+    }
+}

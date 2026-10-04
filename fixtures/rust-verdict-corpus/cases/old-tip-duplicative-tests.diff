@@ -1,0 +1,12 @@
+diff --git a/src/fees.rs b/src/fees.rs
+--- a/src/fees.rs
++++ b/src/fees.rs
+@@ -17,7 +17,7 @@
+ 
+ /// A fifteen percent tip.
+ pub fn tip(amount: u64) -> u64 {
+-    amount * 15 / 100
++    amount * 3 / 20
+ }
+ 
+ /// Cents rounded to the nearest whole unit of 100.

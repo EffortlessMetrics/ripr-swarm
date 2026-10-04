@@ -1,0 +1,12 @@
+diff --git a/src/main.rs b/src/main.rs
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -6,7 +6,7 @@
+ }
+ 
+ fn banner_width() -> usize {
+-    40
++    41
+ }
+ 
+ fn main() {

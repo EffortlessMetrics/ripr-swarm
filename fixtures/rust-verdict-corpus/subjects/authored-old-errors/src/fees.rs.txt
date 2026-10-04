@@ -1,0 +1,67 @@
+//! Fees tested through call-expression inputs, duplicative tests, a
+//! self-equality and a formatting-only edit.
+
+/// A flat surcharge on orders of at least 1000.
+pub fn surcharge(amount: u64) -> u64 {
+    if amount >= 1000 {
+        25
+    } else {
+        0
+    }
+}
+
+/// Net after a twenty percent deduction.
+pub fn net(gross: u64) -> u64 {
+    gross - gross / 5
+}
+
+/// A fifteen percent tip.
+pub fn tip(amount: u64) -> u64 {
+    amount * 15 / 100
+}
+
+/// Cents rounded to the nearest whole unit of 100.
+pub fn rounded(cents: u64) -> u64 {
+    (cents+50)/100*100
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn big_order() -> u64 {
+        1000
+    }
+
+    fn small_order() -> u64 {
+        999
+    }
+
+    #[test]
+    fn surcharge_starts_at_a_big_order() {
+        assert_eq!(surcharge(big_order()), 25);
+        assert_eq!(surcharge(small_order()), 0);
+    }
+
+    #[test]
+    fn net_is_stable() {
+        let value = net(100);
+        assert_eq!(value, value);
+    }
+
+    #[test]
+    fn tip_on_two_hundred() {
+        assert_eq!(tip(200), 30);
+    }
+
+    #[test]
+    fn tip_on_two_hundred_again() {
+        assert_eq!(tip(200), 30);
+    }
+
+    #[test]
+    fn rounding_halves_up() {
+        assert_eq!(rounded(150), 200);
+        assert_eq!(rounded(149), 100);
+    }
+}

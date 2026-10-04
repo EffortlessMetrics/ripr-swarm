@@ -1,0 +1,63 @@
+//! A builder whose default the test overrides, and a constant read through an
+//! environment lookup.
+
+pub struct Retry {
+    pub attempts: u32,
+    pub delay_ms: u64,
+}
+
+pub struct RetryBuilder {
+    attempts: u32,
+    delay_ms: u64,
+}
+
+impl RetryBuilder {
+    pub fn new() -> Self {
+        RetryBuilder { attempts: 3, delay_ms: 100 }
+    }
+
+    pub fn attempts(mut self, attempts: u32) -> Self {
+        self.attempts = attempts;
+        self
+    }
+
+    pub fn build(self) -> Retry {
+        Retry {
+            attempts: self.attempts,
+            delay_ms: self.delay_ms,
+        }
+    }
+}
+
+impl Default for RetryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub const DEFAULT_PAGE_SIZE: usize = 50;
+
+fn lookup(key: &str) -> Option<usize> {
+    std::env::var(key).ok()?.parse().ok()
+}
+
+/// The page size, from `OLD_ERRORS_PAGE_SIZE` when set.
+pub fn page_size() -> usize {
+    lookup("OLD_ERRORS_PAGE_SIZE").unwrap_or(DEFAULT_PAGE_SIZE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn override_sets_attempts() {
+        let retry = RetryBuilder::new().attempts(5).build();
+        assert_eq!(retry.attempts, 5);
+    }
+
+    #[test]
+    fn page_size_defaults_to_fifty() {
+        assert_eq!(page_size(), 50);
+    }
+}

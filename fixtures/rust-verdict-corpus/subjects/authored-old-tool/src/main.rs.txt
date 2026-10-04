@@ -1,0 +1,20 @@
+//! The tally command: exits with the usage code without arguments and prints
+//! a banner on request.
+
+fn usage_exit_code() -> i32 {
+    2
+}
+
+fn banner_width() -> usize {
+    40
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--banner") {
+        println!("{}", "=".repeat(banner_width()));
+    }
+    if args.is_empty() {
+        std::process::exit(usage_exit_code());
+    }
+}

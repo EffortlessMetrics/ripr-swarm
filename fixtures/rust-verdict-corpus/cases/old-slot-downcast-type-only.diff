@@ -1,0 +1,12 @@
+diff --git a/src/errors.rs b/src/errors.rs
+--- a/src/errors.rs
++++ b/src/errors.rs
+@@ -77,7 +77,7 @@
+ pub fn open_slot(raw: &str) -> Result<u8, Box<dyn Error>> {
+     let slot: u8 = raw.parse()?;
+     if slot == 0 {
+-        return Err(Box::new(SlotError::Closed));
++        return Err(Box::new(SlotError::Missing));
+     }
+     Ok(slot)
+ }
