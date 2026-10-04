@@ -196,6 +196,7 @@ fn required_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a 
 struct RepoRun {
     name: String,
     revision: String,
+    diffs_checked: usize,
     exposure_run_status: Option<String>,
     cargo_mutants_version: Option<String>,
     metrics: Value,
@@ -264,6 +265,7 @@ fn spot_check_repo(
     };
     let outcomes = read_mutants_out("outcomes.json")?;
     let mutant_records = read_mutants_out("mutants.json")?;
+    let diffs_checked = require_mutants_match_checkout(name, checkout, &revision, &mutant_records)?;
 
     let calibration = run_text(
         &path_arg(binary),
@@ -286,6 +288,7 @@ fn spot_check_repo(
     Ok(RepoRun {
         name: name.to_string(),
         revision,
+        diffs_checked,
         exposure_run_status: exposure_json
             .get("run_status")
             .and_then(Value::as_str)
@@ -297,6 +300,82 @@ fn spot_check_repo(
         metrics: calibration.get("metrics").cloned().unwrap_or(Value::Null),
         pairs: classify_matches(&calibration, &exposure_json, &mutant_records),
     })
+}
+
+/// cargo-mutants records no source revision, so a supplied `mutants.out` from
+/// another commit would join stale outcomes to this checkout's seams. Every
+/// mutant diff carries the original lines it replaced; they must still match
+/// the checkout, or nothing from this directory is scored.
+fn require_mutants_match_checkout(
+    name: &str,
+    checkout: &Path,
+    revision: &str,
+    mutant_records: &Value,
+) -> Result<usize, String> {
+    let records = mutant_records.as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let mut sources: BTreeMap<String, Option<Vec<String>>> = BTreeMap::new();
+    let mut checked = 0;
+    let mut stale = Vec::new();
+    for record in records {
+        let (Some(file), Some(diff)) = (
+            record.get("file").and_then(Value::as_str),
+            record.get("diff").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let lines = sources.entry(file.to_string()).or_insert_with(|| {
+            fs::read_to_string(checkout.join(file))
+                .ok()
+                .map(|text| text.lines().map(str::to_string).collect())
+        });
+        checked += 1;
+        if let Some(line) = first_stale_line(diff, lines.as_deref()) {
+            stale.push(format!("{file}:{line}"));
+        }
+    }
+    if stale.is_empty() {
+        return Ok(checked);
+    }
+    Err(format!(
+        "mutants.out for `{name}` does not match the checkout at {revision}: {} of {checked} mutant diffs no longer apply (first at {}). Check out the revision cargo-mutants ran on, or re-run cargo mutants on this one.",
+        stale.len(),
+        stale[0]
+    ))
+}
+
+/// Returns the first source line where a mutant diff's context or removed
+/// lines differ from `source`, or `None` when the whole diff still applies.
+fn first_stale_line(diff: &str, source: Option<&[String]>) -> Option<usize> {
+    let Some(source) = source else {
+        return Some(0);
+    };
+    let mut cursor: Option<usize> = None;
+    for line in diff.lines() {
+        if let Some(header) = line.strip_prefix("@@ -") {
+            let start = header
+                .split([',', ' '])
+                .next()
+                .and_then(|value| value.parse::<usize>().ok());
+            match start {
+                Some(start) => cursor = Some(start),
+                None => return Some(0),
+            }
+            continue;
+        }
+        let Some(current) = cursor else {
+            continue;
+        };
+        let original = match line.chars().next() {
+            Some(' ') | Some('-') => line.get(1..).unwrap_or_default(),
+            None => "",
+            Some(_) => continue,
+        };
+        if source.get(current.wrapping_sub(1)).map(String::as_str) != Some(original) {
+            return Some(current);
+        }
+        cursor = Some(current + 1);
+    }
+    None
 }
 
 /// A checkout under this workspace inherits its Cargo workspace, so neither
@@ -638,6 +717,7 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
         "repos": repos.iter().map(|repo| json!({
             "name": repo.name,
             "revision": repo.revision,
+            "mutant_diffs_checked_against_revision": repo.diffs_checked,
             "exposure_run_status": repo.exposure_run_status,
             "cargo_mutants_version": repo.cargo_mutants_version,
             "calibration_metrics": repo.metrics,
@@ -780,6 +860,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mutant_diffs_must_match_the_checkout_lines_they_replaced() {
+        let diff = "--- src/a.rs\n+++ replace > with < in f\n@@ -2,3 +2,3 @@\n fn f(a: u8) -> bool {\n-    a > 1\n+    a < 1\n }\n";
+        let source = |body: &str| -> Vec<String> {
+            ["// header", "fn f(a: u8) -> bool {", body, "}"]
+                .iter()
+                .map(|line| line.to_string())
+                .collect()
+        };
+        assert_eq!(first_stale_line(diff, Some(&source("    a > 1"))), None);
+        assert_eq!(first_stale_line(diff, Some(&source("    a >= 1"))), Some(3));
+        assert_eq!(
+            first_stale_line(diff, Some(&source("    a > 1")[..2])),
+            Some(3)
+        );
+        assert_eq!(first_stale_line(diff, None), Some(0));
+    }
+
+    #[test]
     fn repo_names_cannot_escape_the_scratch_directory() -> Result<(), String> {
         let (name, _) = parse_named_path("semver=../corpus/semver", "--repo")?;
         assert_eq!(name, "semver");
@@ -915,6 +1013,7 @@ mod tests {
         let repo = RepoRun {
             name: "demo".to_string(),
             revision: "abc".to_string(),
+            diffs_checked: 4,
             exposure_run_status: None,
             cargo_mutants_version: Some("27.1.0".to_string()),
             metrics: Value::Null,
