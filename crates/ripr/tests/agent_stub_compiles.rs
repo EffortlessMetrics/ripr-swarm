@@ -148,6 +148,12 @@ pub fn early(x: u32) -> u32 {
     if x > 40 { 1 } else { 0 }
 }
 
+#[cfg(all(test, feature = "slow"))]
+mod slow_tests {
+    #[test]
+    fn smoke() {}
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -212,6 +218,16 @@ impl<T: Copy> Wrap<T> {
     }
 }
 
+pub struct Local;
+
+const _: () = {
+    impl Local {
+        pub fn hidden(&self, n: u8) -> u8 {
+            if n > 11 { n } else { 0 }
+        }
+    }
+};
+
 #[cfg(test)]
 mod more_tests {
     #[test]
@@ -258,7 +274,9 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
     ]
     .map(|(needle, expect)| (FIXTURE, needle, expect));
     let cases_5471 = [
-        // Two inline test modules: the nearest one after the owner.
+        // Two plain inline test modules: the nearest one after the owner.
+        // The nearer `cfg(all(test, feature = "slow"))` module is skipped;
+        // a stub there would not run in this plain test build.
         ("x > 40", Expect::StopsAtRiprTodo),
         // `impl<'a> Parser<'a>` with a `&mut self` method.
         ("end > start", Expect::StopsAtRiprTodo),
@@ -267,6 +285,8 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // A field of the struct literal the owner returns.
         ("minor: self.minor + 1", Expect::StopsAtRiprTodo),
         ("n > 3 { n }", Expect::Refused("owner_generic_impl")),
+        // An impl inside a `const _` block cannot be named from a test module.
+        ("n > 11", Expect::Refused("owner_unsupported")),
     ]
     .map(|(needle, expect)| (FIXTURE_5471, needle, expect));
     for (fixture, needle, expect) in cases.into_iter().chain(cases_5471) {
