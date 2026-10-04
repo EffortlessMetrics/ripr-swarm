@@ -11,6 +11,7 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). Messages only (#5340).
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal
