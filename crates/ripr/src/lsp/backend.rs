@@ -4508,11 +4508,28 @@ impl Backend {
         // diagnostics AND from `hidden_gaps` (#4418) are disclosed as their
         // own additive list (#5276): `status: "ok"` with all-zero counts
         // must never be the only word about a live finding.
+        // The `*_unknown` findings the actionable profile withholds from
+        // diagnostics AND from `hidden_gaps` (#4418) are disclosed as their
+        // own additive list (#5276): `status: "ok"` with all-zero counts
+        // must never be the only word about a live finding. A member of a
+        // mixed canonical group counts only when the group itself is not
+        // published; a published group already represents its members.
         let withheld_unknown = if snapshot.diagnostic_profile == LspDiagnosticProfile::Actionable {
-            super::diagnostics::canonical_finding_groups(&snapshot.findings)
+            super::diagnostics::canonical_group_members(&snapshot.findings)
                 .into_iter()
-                .map(|(primary, _)| primary)
-                .filter(finding_is_withheld_unknown)
+                .filter(|(primary, _)| {
+                    !super::diagnostics::finding_is_visible_in_profile(
+                        LspDiagnosticProfile::Actionable,
+                        primary,
+                    )
+                })
+                .flat_map(|(_, members)| {
+                    members
+                        .into_iter()
+                        .filter(|finding| finding_is_withheld_unknown(finding))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -5547,6 +5564,16 @@ impl Backend {
                 .iter()
                 .map(|entry| entry.uri.clone()),
         );
+        // #5276 (PR #5452 review): a workspace whose served set is empty
+        // because the profile withheld every finding has no documents to
+        // report and may have no previous result ids, so the withholding
+        // disclosure cannot ride on the per-document loop. Name it once per
+        // workspace report instead.
+        if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
+            self.client
+                .log_message(MessageType::WARNING, disclosure)
+                .await;
+        }
         let mut items = Vec::with_capacity(uris.len());
         // Serve the stored delivery selection (#1973). Disclose a partial
         // delivery state once per workspace report rather than once per
@@ -5581,11 +5608,6 @@ impl Backend {
             }
             if !disclosed {
                 if let Some(disclosure) = pull_delivery_disclosure(&snapshot) {
-                    self.client
-                        .log_message(MessageType::WARNING, disclosure)
-                        .await;
-                }
-                if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
                     self.client
                         .log_message(MessageType::WARNING, disclosure)
                         .await;
@@ -6205,7 +6227,10 @@ fn diagnostic_profile_full_recovery_route() -> &'static str {
 }
 
 /// Clone-free count/class summary of the `*_unknown` findings the
-/// actionable profile withholds. `None` when there is no snapshot; a
+/// actionable profile withholds. A finding counts as withheld only when its
+/// canonical group is not visible under the profile: an unknown member of a
+/// published mixed-class group is represented by that published diagnostic,
+/// not withheld (PR #5452 review). `None` when there is no snapshot; a
 /// non-actionable profile withholds nothing, so it summarizes as a zero
 /// count with no classes.
 fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&'static str>)> {
@@ -6214,10 +6239,18 @@ fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&
     }
     let mut count = 0usize;
     let mut classes = std::collections::BTreeSet::new();
-    for finding in &snapshot.findings {
-        if finding_is_withheld_unknown(finding) {
-            count += 1;
-            classes.insert(finding.class.as_str());
+    for (primary, members) in super::diagnostics::canonical_group_members(&snapshot.findings) {
+        if super::diagnostics::finding_is_visible_in_profile(
+            LspDiagnosticProfile::Actionable,
+            primary,
+        ) {
+            continue;
+        }
+        for finding in members {
+            if finding_is_withheld_unknown(finding) {
+                count += 1;
+                classes.insert(finding.class.as_str());
+            }
         }
     }
     Some((count, classes.into_iter().collect()))
@@ -7368,8 +7401,14 @@ mod top_limitation_selection_tests {
         let repo_root = PathBuf::from("C:").join("repo");
         let mut unknown = crate::lsp::tests::sample_finding();
         unknown.class = crate::domain::ExposureClass::StaticUnknown;
-        let mut snapshot = snapshot_for_outcome(incomplete_outcome(1)?, None);
-        snapshot.findings = vec![unknown];
+        // A member of an unpublished canonical group counts too: the group's
+        // unknown-class primary is not visible, so neither member is served
+        // anywhere (PR #5452 review).
+        let mut grouped_unknown = unknown.clone();
+        grouped_unknown.id = "probe:pricing:99:predicate".to_string();
+        grouped_unknown.canonical_gap = Some(crate::lsp::tests::sample_canonical_gap());
+        let mut snapshot = snapshot_for_outcome(incomplete_outcome(2)?, None);
+        snapshot.findings = vec![unknown, grouped_unknown];
         snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
         let health = AnalysisHealth {
             state: AnalysisAttemptState::Succeeded,
@@ -7385,7 +7424,7 @@ mod top_limitation_selection_tests {
             Some(std::sync::Arc::new(snapshot));
         let payload = backend.analysis_status_payload_for_health(&health);
         let withheld = &payload["withheld_findings"];
-        assert_eq!(withheld["count"], 1, "{payload:#}");
+        assert_eq!(withheld["count"], 2, "{payload:#}");
         assert_eq!(withheld["classes"], serde_json::json!(["static_unknown"]));
         assert!(
             withheld["recovery_route"]
@@ -11037,6 +11076,14 @@ mod list_actionable_items_tests {
         let mut grouped_second = grouped_first.clone();
         grouped_second.id = "probe:pricing:97:predicate".to_string();
         grouped_second.probe.location.line = 97;
+        // An unknown-class member inside the same unpublished canonical
+        // group: it is represented by no published diagnostic (the group is
+        // not visible), so it must be disclosed as withheld too (PR #5452
+        // review).
+        let mut mixed_unknown = grouped_first.clone();
+        mixed_unknown.id = "probe:pricing:98:predicate".to_string();
+        mixed_unknown.probe.location.line = 98;
+        mixed_unknown.class = crate::domain::ExposureClass::StaticUnknown;
         let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
         snapshot.findings = vec![
             hidden,
@@ -11045,6 +11092,7 @@ mod list_actionable_items_tests {
             unknown,
             grouped_first,
             grouped_second,
+            mixed_unknown,
         ];
         snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
         let harness = handler_harness()?;
@@ -11090,22 +11138,27 @@ mod list_actionable_items_tests {
                 "class": "weakly_exposed",
             })
         );
-        // #5276: the withheld static_unknown finding is disclosed in its own
-        // additive list with the full-profile escape hatch — still never as
-        // a gap, and never as a diagnostic.
-        assert_eq!(response["withheld_unknown_count"], 1, "{response:#}");
+        // #5276: the withheld static_unknown findings are disclosed in their
+        // own additive list with the full-profile escape hatch — still never
+        // as a gap, and never as a diagnostic. The withheld set counts group
+        // members too: the raw `:94` finding plus the `:98` member of the
+        // unpublished canonical group (PR #5452 review).
+        assert_eq!(response["withheld_unknown_count"], 2, "{response:#}");
         assert_eq!(
             response["withheld_unknown_truncated"], false,
             "{response:#}"
         );
+        // Group order follows the canonical-group key order: the mixed
+        // canonical group sorts before the raw finding's own group.
+        let withheld_ids: Vec<&str> = response["withheld_unknown_findings"]
+            .as_array()
+            .ok_or("withheld_unknown_findings is not an array")?
+            .iter()
+            .map(|item| item["finding_id"].as_str().unwrap_or_default())
+            .collect();
         assert_eq!(
-            response["withheld_unknown_findings"],
-            serde_json::json!([{
-                "finding_id": "probe:pricing:94:predicate",
-                "file": "src/pricing.rs",
-                "line": 88,
-                "class": "static_unknown",
-            }]),
+            withheld_ids,
+            vec!["probe:pricing:98:predicate", "probe:pricing:94:predicate"],
             "{response:#}"
         );
         assert!(
