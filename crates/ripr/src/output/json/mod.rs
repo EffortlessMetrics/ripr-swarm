@@ -160,6 +160,7 @@ mod tests {
             oracle_strength: OracleStrength::Strong,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         });
 
         let mut out = String::new();
@@ -499,6 +500,7 @@ mod tests {
             oracle_strength: OracleStrength::Strong,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -634,6 +636,7 @@ mod tests {
             oracle_strength: OracleStrength::Strong,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
         let output = CheckOutput {
             harness_projections: Vec::new(),
@@ -808,6 +811,7 @@ mod tests {
                 oracle_strength: OracleStrength::Weak,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             },
             RelatedTest {
                 name: "strict_check".to_string(),
@@ -818,6 +822,7 @@ mod tests {
                 oracle_strength: OracleStrength::Strong,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             },
         ];
 
@@ -868,6 +873,7 @@ mod tests {
                 oracle_strength: OracleStrength::Strong,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             })
             .collect();
         let mut out = String::new();
@@ -897,6 +903,7 @@ mod tests {
                 oracle_strength: OracleStrength::Strong,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             })
             .collect();
         let mut out = String::new();
@@ -959,6 +966,7 @@ mod tests {
                 oracle_strength: OracleStrength::Weak,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             })
             .collect();
         let mut out = String::new();
@@ -987,6 +995,7 @@ mod tests {
                 oracle_strength: OracleStrength::Weak,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             })
             .collect();
         assert_eq!(finding.related_tests_total(), 2);
@@ -1031,6 +1040,7 @@ mod tests {
                     oracle_strength: OracleStrength::Weak,
                     relation_reason: None,
                     relation_confidence: None,
+                    miss: None,
                 })
                 .collect();
             finding.related_tests_matched_total = Some(count);
@@ -1071,6 +1081,7 @@ mod tests {
                 oracle_strength: OracleStrength::Weak,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             })
             .collect();
         finding.related_tests_matched_total = Some(9);
@@ -1447,6 +1458,7 @@ mod tests {
             oracle_strength: OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);

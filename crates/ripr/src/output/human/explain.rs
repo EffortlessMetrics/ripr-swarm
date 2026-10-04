@@ -1,0 +1,163 @@
+//! The section `ripr explain` adds after the finding block (#5356).
+//!
+//! `check --format human-full` shows a window of the evidence. `explain` is
+//! the drill-in, so it lists every retained test ripr examined with what it
+//! concluded about each one, says what a test would need to change the
+//! verdict, and spells out each stop reason.
+
+use crate::domain::{ExposureClass, Finding, RelatedTestMiss, StopReason};
+use crate::output::path::display_path;
+use crate::output::related_test_miss::{checked_assertion_text, related_test_miss_reason};
+
+pub(crate) fn render_verdict_explanation(finding: &Finding) -> String {
+    let mut out = String::from("\nWhy this verdict\n");
+    let total = finding.related_tests_total();
+    if finding.related_tests.is_empty() {
+        out.push_str("  ripr found no test related to this change.\n");
+    } else {
+        out.push_str(&format!("  Tests examined: {total}\n"));
+        for test in &finding.related_tests {
+            let verdict =
+                match related_test_miss_reason(test, &finding.activation.missing_discriminators) {
+                    Some(why) => format!("misses: {why}"),
+                    None => match &test.oracle {
+                        Some(_) => format!(
+                            "{} {} oracle",
+                            test.oracle_strength.as_str(),
+                            test.oracle_kind.as_str().replace('_', " ")
+                        ),
+                        None => "no oracle row".to_string(),
+                    },
+                };
+            out.push_str(&format!(
+                "  - {}:{} {}: {verdict}\n",
+                display_path(&test.file),
+                test.line,
+                test.name
+            ));
+            if let Some(oracle) = &test.oracle {
+                out.push_str(&format!(
+                    "      checked: {}\n",
+                    checked_assertion_text(oracle)
+                ));
+            }
+        }
+        if total > finding.related_tests.len() {
+            out.push_str(&format!(
+                "  ({} more examined; ripr keeps the {} most closely related)\n",
+                total - finding.related_tests.len(),
+                finding.related_tests.len()
+            ));
+        }
+    }
+    let needs = verdict_changers(finding);
+    if !needs.is_empty() {
+        out.push_str("  To change the verdict, a test needs to:\n");
+        for need in needs {
+            out.push_str(&format!("  - {need}\n"));
+        }
+    }
+    if !finding.stop_reasons.is_empty() {
+        out.push_str("  Stop reasons:\n");
+        for reason in &finding.stop_reasons {
+            out.push_str(&format!(
+                "  - {}: {}\n",
+                reason.as_str(),
+                stop_reason_meaning(reason)
+            ));
+        }
+    }
+    out
+}
+
+/// What a test would have to do for ripr to see a discriminator, one line per
+/// distinct miss. Only gap classes get this list: for `exposed` there is
+/// nothing to change, and for the unknown classes ripr has not established
+/// what is missing.
+fn verdict_changers(finding: &Finding) -> Vec<String> {
+    if !matches!(
+        finding.class,
+        ExposureClass::NoStaticPath
+            | ExposureClass::ReachableUnrevealed
+            | ExposureClass::WeaklyExposed
+    ) {
+        return Vec::new();
+    }
+    let owner = finding
+        .probe
+        .owner
+        .as_ref()
+        .and_then(|owner| owner.0.rsplit("::").next().map(str::to_string))
+        .filter(|name| !name.is_empty())
+        .map_or_else(
+            || "the changed code".to_string(),
+            |name| format!("`{name}`"),
+        );
+    let mut needs: Vec<String> = Vec::new();
+    let mut push = |need: String| {
+        if !needs.contains(&need) {
+            needs.push(need);
+        }
+    };
+    if finding.related_tests.is_empty() {
+        push(format!("call {owner} and assert on its result"));
+    }
+    for test in &finding.related_tests {
+        let Some(miss) = test.miss else { continue };
+        push(match miss {
+            RelatedTestMiss::NoCallPath => format!("call {owner}, directly or through a helper"),
+            RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
+                format!("assert on what {owner} returns or changes")
+            }
+            RelatedTestMiss::AssertionNotCredited => {
+                "use a plain, always-run `assert_eq!`/`assert!` ripr can resolve".to_string()
+            }
+            RelatedTestMiss::ObservationUnconfirmed => {
+                "assert on the changed value itself, by name".to_string()
+            }
+            RelatedTestMiss::WeakAssertion => {
+                "assert the exact value, not only success or presence".to_string()
+            }
+            // The input need is added once below, from the finding itself.
+            RelatedTestMiss::MissingInput => continue,
+        });
+    }
+    // A missing discriminator is a need whether or not any listed test got
+    // far enough to be judged on its input.
+    if let Some(fact) = finding.activation.missing_discriminators.first() {
+        push(format!("use an input that reaches `{}`", fact.value));
+    }
+    needs
+}
+
+fn stop_reason_meaning(reason: &StopReason) -> &'static str {
+    match reason {
+        StopReason::MaxDepthReached => "the call walk hit its depth limit before reaching a test",
+        StopReason::ExternalCrateBoundary => {
+            "the path leaves this workspace; ripr does not follow it"
+        }
+        StopReason::DynamicDispatchUnresolved => {
+            "the path goes through a trait object or generic call ripr cannot resolve"
+        }
+        StopReason::ProcMacroOpaque => "a procedural macro hides the code ripr would need to read",
+        StopReason::FixtureOpaque => "a test fixture builds the input in a way ripr cannot read",
+        StopReason::FeatureUnknown => "a cfg or feature gate may change whether the code runs",
+        StopReason::AsyncBoundaryOpaque => {
+            "the path crosses an async boundary ripr does not follow"
+        }
+        StopReason::NoChangedRustLine => "the diff changed no Rust line ripr can probe",
+        StopReason::InfectionEvidenceUnknown => {
+            "ripr could not tell whether a test input changes this value"
+        }
+        StopReason::PropagationEvidenceUnknown => {
+            "ripr could not trace the changed value to anything a test observes"
+        }
+        StopReason::StaticProbeUnknown => "ripr has no probe shape for this kind of change",
+        StopReason::TransitiveReachUnresolved => {
+            "a test may reach this through a chain of internal calls ripr could not finish walking"
+        }
+        StopReason::MacroReachUnresolved => {
+            "a test may reach this through a macro ripr does not expand"
+        }
+    }
+}

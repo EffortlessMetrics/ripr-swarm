@@ -1618,6 +1618,7 @@ mod tests {
                 oracle: Some("expect(result).toBe(50)".to_string()),
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             });
         }
         finding
@@ -1673,6 +1674,7 @@ mod tests {
             oracle_strength: OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         }];
         finding.language = Some(LanguageId::Python);
         finding.language_status = Some(LanguageStatus::Preview);
@@ -1758,6 +1760,7 @@ mod tests {
             oracle_strength: OracleStrength::Weak,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         }];
         finding.language = Some(LanguageId::Perl);
         finding.language_status = Some(LanguageStatus::Preview);

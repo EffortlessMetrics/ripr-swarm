@@ -267,6 +267,11 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str) -> Result<Value, Str
                 "oracle_strength": test.oracle_strength.as_str(),
                 "relation_reason": test.relation_reason.map(|reason| reason.as_str()),
                 "relation_confidence": test.relation_confidence.map(|confidence| confidence.as_str()),
+                "miss": test.miss.map(|miss| miss.as_str()),
+                "why": crate::output::related_test_miss::related_test_miss_reason(
+                    test,
+                    &finding.activation.missing_discriminators,
+                ),
             })
         })
         .collect::<Vec<_>>();
@@ -469,6 +474,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             oracle_strength: crate::domain::OracleStrength::Strong,
             relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
+            miss: None,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),

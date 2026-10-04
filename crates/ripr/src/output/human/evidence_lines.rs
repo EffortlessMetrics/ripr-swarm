@@ -52,6 +52,27 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
+        if let Some(why) = crate::output::related_test_miss::related_test_miss_reason(
+            test,
+            &finding.activation.missing_discriminators,
+        ) {
+            // #5344: a test that misses says why, then shows the assertion
+            // it was judged by, so the claim can be checked in the source.
+            let mut line = format!(
+                "related test {}:{} {} misses: {why}",
+                display_path(&test.file),
+                test.line,
+                test.name,
+            );
+            if let Some(oracle) = &test.oracle {
+                line.push_str(&format!(
+                    "; checked `{}`",
+                    crate::output::related_test_miss::checked_assertion_text(oracle)
+                ));
+            }
+            lines.push(line);
+            continue;
+        }
         let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
             "related test {}:{} {} uses {} {} oracle",

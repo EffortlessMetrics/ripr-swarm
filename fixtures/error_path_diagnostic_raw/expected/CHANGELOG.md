@@ -17,3 +17,16 @@ Updated:
 unchanged blank context line from diff.patch (hunk7→6). The old/new SHA-256
 values exactly match the producer's raw-diff hashing; all other JSON fields and
 human outputs are unchanged. Full golden and independent honesty checks rerun.
+
+## Pending — error_path_diagnostic_raw (2)
+
+Reason:
+RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_raw --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

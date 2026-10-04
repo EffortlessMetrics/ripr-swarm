@@ -1008,6 +1008,25 @@ The evidence-first fields are additive in schema `0.2`:
   `opaque`. `direct_owner_call` → `high`; `assertion_target_affinity`,
   `owner_named_test`, `same_test_file` → `medium`; `weak_token_substring`,
   `same_module`, `helper_owner_call` → `low`; other static signals → `opaque`.
+- `related_tests[].miss` and `related_tests[].why` — (optional, additive,
+  #5344) why this test would not notice the changed behavior being wrong.
+  `miss` is a controlled `related_test_miss` value; `why` is one short
+  sentence for people. Both are omitted when the analyzer established no
+  miss, for example for an `exposed` finding's catching test or under the
+  unknown classes. `no_call_path`: linked by name or file location only, no
+  call to the changed code. `no_assertion`: the test has no assertion ripr
+  recognizes. `assertion_not_observing`: the test asserts, but none of its
+  assertions observe the changed value; `oracle` then carries the first
+  assertion as checked text and `oracle_strength` is `none`.
+  `assertion_not_credited`: an assertion exists but ripr could not establish
+  that it runs as the standard macro. `weak_assertion`: the matched oracle is
+  weak or smoke-only. `missing_input`: the oracle observes the behavior but no
+  input reaches the first `missing_discriminators` value.
+  `observation_unconfirmed`: the oracle has the right shape but its text never
+  names the changed expression (`observation_unverified`). Tests are listed
+  even when they supply no oracle, so `related_tests_total` counts every
+  examined test; a test that supplies an oracle always ranks ahead of one
+  listed only as `assertion_not_observing`.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -2144,6 +2163,16 @@ while `call_effect` remains the fallback for other observable calls.
 - `witness_unavailable`
 - `identity_unnameable`
 - `budget_overflow`
+
+`related_test_miss` values:
+
+- `no_call_path`
+- `no_assertion`
+- `assertion_not_observing`
+- `assertion_not_credited`
+- `weak_assertion`
+- `missing_input`
+- `observation_unconfirmed`
 
 ## Badge Output
 

@@ -11,6 +11,18 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Gap findings name every related test ripr examined and say why each one
+  misses the change: no call path, no assertion, an assertion that does not
+  observe the changed value, an assertion ripr could not credit, a weak
+  assertion, a missing boundary input, or an assertion that never names the
+  changed expression. A finding no longer says "Related tests were found", or
+  reports `reach: yes`, while listing none (#5344, #5329). JSON, the context
+  packet and MCP carry `related_tests[].miss` and `why`; LSP hover shows the
+  reason and diagnostics link the examined tests. `ripr explain` adds a "Why
+  this verdict" section: each examined test with the assertion it was judged
+  by, what a test would need to change the verdict, and what each stop reason
+  means (#5356). No verdict changes.
+
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal

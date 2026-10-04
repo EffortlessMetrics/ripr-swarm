@@ -257,6 +257,7 @@ mod tests {
                 oracle_strength: OracleStrength::Weak,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             },
             RelatedTest {
                 name: "rejects_boundary_in_other_fixture".to_string(),
@@ -267,6 +268,7 @@ mod tests {
                 oracle_strength: OracleStrength::Weak,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             },
         ];
 
@@ -316,6 +318,7 @@ mod tests {
             oracle_strength: OracleStrength::Strong,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
         let mut finding = sample_finding();
         finding.class = ExposureClass::WeaklyExposed;
@@ -363,6 +366,7 @@ mod tests {
             oracle_strength: OracleStrength::Strong,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         };
         let mut finding = sample_finding();
         finding.class = ExposureClass::WeaklyExposed;

@@ -333,6 +333,68 @@ pub struct RelatedTest {
     /// Confidence that this test grips the changed behavior. `None` when
     /// `relation_reason` is `None`. Derived from `relation_reason` when set.
     pub relation_confidence: Option<crate::domain::RelationConfidence>,
+    /// Why this test does not catch the changed behavior, when ripr can say.
+    /// `None` for a test whose oracle supports the finding's class, and for
+    /// findings from producers that do not record it. Evidence only: no
+    /// classification decision reads this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss: Option<RelatedTestMiss>,
+}
+
+impl RelatedTest {
+    /// True for a test ripr examined whose assertions it matched against the
+    /// changed behavior and found none that apply. Such a test is listed as
+    /// evidence, but it supplied no oracle row, so gates that ask "did any
+    /// related test survive oracle matching" must skip it.
+    pub fn is_unmatched(&self) -> bool {
+        matches!(self.miss, Some(RelatedTestMiss::AssertionNotObserving))
+    }
+}
+
+/// Why one examined test would not notice the changed behavior being wrong.
+///
+/// Each value names a concrete, checkable fact about the test so a reader can
+/// open it and agree or disagree. Registered in `policy/output_contracts.txt`
+/// and documented in `docs/OUTPUT_SCHEMA.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelatedTestMiss {
+    /// Linked by name or file location only; no call from the test to the
+    /// changed code was found.
+    NoCallPath,
+    /// The test contains no assertion ripr recognizes.
+    NoAssertion,
+    /// The test asserts, but none of its assertions observe the changed value,
+    /// error, field, or effect.
+    AssertionNotObserving,
+    /// The test has an assertion ripr declined to credit because it could not
+    /// establish that the assertion runs or what the macro binds to.
+    AssertionNotCredited,
+    /// The assertion observes the behavior only weakly (for example
+    /// `is_ok()` or a smoke check), so it cannot tell the old value from the
+    /// new one.
+    WeakAssertion,
+    /// The assertion observes the behavior, but no test input reaches the
+    /// value that separates the old behavior from the new one.
+    MissingInput,
+    /// The assertion has the right shape, but its text never names the
+    /// changed expression, so ripr cannot confirm it observes this change
+    /// rather than a sibling value.
+    ObservationUnconfirmed,
+}
+
+impl RelatedTestMiss {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoCallPath => "no_call_path",
+            Self::NoAssertion => "no_assertion",
+            Self::AssertionNotObserving => "assertion_not_observing",
+            Self::AssertionNotCredited => "assertion_not_credited",
+            Self::WeakAssertion => "weak_assertion",
+            Self::MissingInput => "missing_input",
+            Self::ObservationUnconfirmed => "observation_unconfirmed",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -486,6 +548,15 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
 ];
 
 impl Finding {
+    /// Related tests that supplied an oracle row or a refusal, skipping tests
+    /// listed only as examined misses (see [`RelatedTest::is_unmatched`]).
+    /// Gates that predate #5344 asked whether this set was empty.
+    pub fn oracle_related_tests(&self) -> impl Iterator<Item = &RelatedTest> {
+        self.related_tests
+            .iter()
+            .filter(|test| !test.is_unmatched())
+    }
+
     /// Public count projection without changing retained evidence or selection.
     pub fn related_tests_total(&self) -> usize {
         self.related_tests_matched_total

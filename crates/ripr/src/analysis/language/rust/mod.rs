@@ -822,7 +822,7 @@ fn apply_rust_no_static_path_limit(
     property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
 ) {
     if !(finding.class == ExposureClass::NoStaticPath
-        && finding.related_tests.is_empty()
+        && finding.oracle_related_tests().next().is_none()
         && finding.static_limit_kind.is_none())
     {
         return;
@@ -6163,6 +6163,7 @@ fn absent_delimiter_boundary_returns_head() {
             oracle_strength: OracleStrength::None,
             relation_reason: None,
             relation_confidence: None,
+            miss: None,
         }];
 
         let rust_owner = FunctionSummary {

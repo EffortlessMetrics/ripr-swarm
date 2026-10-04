@@ -80,6 +80,24 @@ pub(in crate::analysis) fn build_finding(
         ));
     }
 
+    // `reveal` names this downgrade in the stage summary; the same token is
+    // how `ClassifiedProbeEvidence` recognizes it.
+    let observation_unverified = evidence
+        .ripr
+        .reveal
+        .discriminate
+        .summary
+        .contains("(observation_unverified)");
+    let mut related_tests = evidence.related_tests;
+    if !exact_oracle_covers_direct_sink {
+        annotate_related_test_misses(
+            &mut related_tests,
+            &class,
+            &evidence.activation,
+            observation_unverified,
+        );
+    }
+
     Finding {
         id: context.probe.id.0.clone(),
         canonical_gap: None,
@@ -93,7 +111,7 @@ pub(in crate::analysis) fn build_finding(
         activation: evidence.activation,
         stop_reasons,
         related_tests_matched_total: Some(evidence.related_tests_matched_total),
-        related_tests: evidence.related_tests,
+        related_tests,
         recommended_next_step,
         // Language metadata is populated by the per-language adapter
         // (e.g. `analysis::language::RustAdapter::analyze_diff`) after
@@ -110,6 +128,47 @@ pub(in crate::analysis) fn build_finding(
         // evidence; this constructor has none, so the disposition stays the
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+    }
+}
+
+/// Say why each listed test misses, for the classes where ripr reports a gap.
+///
+/// `reveal` already marks tests that supplied no oracle row. This pass covers
+/// tests whose oracle row was matched but cannot carry the finding: under
+/// `no_static_path` no related test is tied to the owner by a call; under a
+/// gap class a weak or smoke oracle cannot tell the values apart, and an
+/// oracle that does observe still misses when no input reaches the missing
+/// discriminator value, and an oracle whose text never names the changed
+/// expression (`observation_unverified`) is not confirmed to observe it.
+/// `exposed` and the unknown classes are left alone: ripr does not claim a
+/// miss it has not established.
+fn annotate_related_test_misses(
+    related_tests: &mut [RelatedTest],
+    class: &ExposureClass,
+    activation: &ActivationEvidence,
+    observation_unverified: bool,
+) {
+    for test in related_tests.iter_mut().filter(|test| test.miss.is_none()) {
+        test.miss = match class {
+            ExposureClass::NoStaticPath => Some(RelatedTestMiss::NoCallPath),
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed => {
+                if test.oracle.is_none() {
+                    None
+                } else if matches!(
+                    test.oracle_strength,
+                    OracleStrength::Weak | OracleStrength::Smoke
+                ) {
+                    Some(RelatedTestMiss::WeakAssertion)
+                } else if !activation.missing_discriminators.is_empty() {
+                    Some(RelatedTestMiss::MissingInput)
+                } else if observation_unverified {
+                    Some(RelatedTestMiss::ObservationUnconfirmed)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
     }
 }
 
@@ -386,6 +445,7 @@ mod tests {
             oracle_strength: strength,
             relation_reason: Some(RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
+            miss: None,
         }
     }
 

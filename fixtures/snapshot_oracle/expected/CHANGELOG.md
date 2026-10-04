@@ -333,3 +333,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — snapshot_oracle (7)
+
+Reason:
+RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
+
+Command:
+`cargo xtask goldens bless snapshot_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

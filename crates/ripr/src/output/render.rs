@@ -1224,6 +1224,7 @@ mod tests {
                 oracle_strength: OracleStrength::Weak,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             }],
             recommended_next_step: Some("add stronger assertion".to_string()),
             language: None,
