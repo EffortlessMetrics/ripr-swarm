@@ -1111,6 +1111,8 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
     replay::write_pr_fixture(&repo)?;
     replay::write_pr_fixture(&decoy)?;
     let canonical_repo = repo.canonicalize()?;
+    // A local `origin` lets the fetch half of the missing-base hint execute.
+    replay::git(&repo, &["remote", "add", "origin", "."])?;
     let unsafe_ref = "topic;touch injected-marker";
 
     // (label, base ref, head ref, id of the preflight check that recovers)
@@ -1185,8 +1187,7 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
                     fetch.starts_with("git fetch origin -- "),
                     "{label}: fetch does not end option parsing before the branch: {fetch}"
                 );
-                replay::git(&repo, &["remote", "add", "origin", "."]).ok();
-                let run = replay::bash(
+                replay::bash(
                     &foreign,
                     &format!(
                         "git -C '{}' {}",
@@ -1195,7 +1196,6 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
                     ),
                     &[],
                 )?;
-                drop(run);
                 assert!(
                     !foreign.join("injected-marker").exists()
                         && !repo.join("injected-marker").exists(),
