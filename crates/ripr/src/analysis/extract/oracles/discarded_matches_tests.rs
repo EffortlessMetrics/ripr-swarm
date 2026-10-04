@@ -103,9 +103,15 @@ fn discarded_matchers_cannot_supply_an_unrelated_observers_pattern() -> Result<(
         }
     }
     let body = "let expected_match = matches!(\nvalue,\n2); unrelated.unwrap();";
-    for multiline in [
-        extract_assertions(body, 10),
-        extract_line_scanned_oracles(body, 10),
+    // The parser's supplemental line scanner admits fallible helpers, not
+    // bare unwraps. Challenge each producer with an observer it actually owns.
+    let helper_body = "let expected_match = matches!(\nvalue,\n2); ensure!(unrelated.is_ok());";
+    for (multiline, observer_text) in [
+        (extract_assertions(body, 10), "unrelated.unwrap();"),
+        (
+            extract_line_scanned_oracles(helper_body, 10),
+            "ensure!(unrelated.is_ok());",
+        ),
     ] {
         let [fact] = multiline.as_slice() else {
             return Err(format!(
@@ -113,10 +119,12 @@ fn discarded_matchers_cannot_supply_an_unrelated_observers_pattern() -> Result<(
             ));
         };
         if fact.line != 12
-            || fact.text != "unrelated.unwrap();"
+            || fact.text != observer_text
             || fact.kind != OracleKind::SmokeOnly
             || fact.strength != OracleStrength::Smoke
-            || fact.observed_tokens != ["unrelated"]
+            || !fact.observed_tokens.contains(&"unrelated".to_string())
+            || fact.observed_tokens.contains(&"value".to_string())
+            || fact.observed_tokens.contains(&"expected_match".to_string())
         {
             return Err(format!(
                 "surviving observer lost its actual line or grip: {fact:?}"
