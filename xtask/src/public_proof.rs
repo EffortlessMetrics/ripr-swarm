@@ -150,6 +150,7 @@ struct Receipts {
     first_previous: Value,
     first_current: Value,
     agent: Value,
+    install: Value,
     corpus: Value,
 }
 
@@ -162,6 +163,7 @@ fn load(root: &Path) -> Result<Receipts, String> {
         first_previous: receipt("first-run-previous.json")?,
         first_current: receipt("first-run-current.json")?,
         agent: receipt("agent-as-user.json")?,
+        install: receipt("install.json")?,
         corpus: read_json(&root.join(CORPUS_MANIFEST))?,
     })
 }
@@ -498,6 +500,17 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
                 "mutation spot check",
             )
         }
+        "ci.install_seconds" => {
+            let value = items(&r.install, "metrics")
+                .iter()
+                .find(|m| text(m, "id") == id)
+                .and_then(|m| field(m, "value").as_f64());
+            value.map(|value| Derived {
+                value: Some(value),
+                trend: "first receipt".to_string(),
+                basis: "install receipt".to_string(),
+            })
+        }
         "first_run.unknown_verdicts"
         | "first_run.friction_events"
         | "first_run.failed_steps"
@@ -623,7 +636,7 @@ fn render(root: &Path) -> Result<String, String> {
     mutation_section(&mut page, &r.mutation)?;
     verdict_section(&mut page, &r.verdicts)?;
     speed_section(&mut page, &r.dx)?;
-    first_run_section(&mut page, &r.first_previous, &r.first_current);
+    first_run_section(&mut page, &r.first_previous, &r.first_current, &r.install);
     agent_section(&mut page, &r.agent);
     corpus_section(&mut page, &r)?;
     boundaries(&mut page, &r);
@@ -689,6 +702,12 @@ fn header(page: &mut Page, r: &Receipts) {
             "An agent using only ripr's help to close a real test gap".to_string(),
             text(&r.agent, "source"),
             text(&r.agent, "evidence"),
+        ],
+        vec![
+            "`metrics/public-proof/install.json`".to_string(),
+            "Time to install a prebuilt release".to_string(),
+            text(&r.install, "source"),
+            "one cloud container, not hosted CI".to_string(),
         ],
         vec![
             format!("`{CORPUS_MANIFEST}`"),
@@ -1191,13 +1210,13 @@ fn friction_summary(receipt: &Value) -> Vec<String> {
         .collect()
 }
 
-fn first_run_section(page: &mut Page, previous: &Value, current: &Value) {
+fn first_run_section(page: &mut Page, previous: &Value, current: &Value, install: &Value) {
     let before = short_version(&text(previous, "ripr"));
     let after = short_version(&text(current, "ripr"));
     page.line("## First run");
     page.blank();
     page.line(
-        "A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. Install is not timed in these receipts, so time from a fresh machine to the first result is not on this page."
+        "A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. Install is timed in its own receipt, shown at the end of this section."
     );
     page.blank();
     let mut verdict_rows = Vec::new();
@@ -1264,6 +1283,10 @@ fn first_run_section(page: &mut Page, previous: &Value, current: &Value) {
         }
         page.blank();
     }
+    page.line("Install, from its own receipt:");
+    page.blank();
+    page.line(format!("> {}", text(install, "evidence")));
+    page.blank();
 }
 
 fn agent_section(page: &mut Page, agent: &Value) {

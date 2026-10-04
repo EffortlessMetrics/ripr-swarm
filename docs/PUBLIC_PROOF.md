@@ -16,11 +16,12 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, current build | ripr 0.11.0 (a7a089e) | 3 crates |
 | `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (PR #5293); ripr 0.11.0 a7a089e |
+| `metrics/public-proof/install.json` | Time to install a prebuilt release | install | one cloud container, not hosted CI |
 | `benchmarks/rust_corpus/manifest.json` | Pinned corpus the scoreboards draw from | corpus 2026-10-04.4 | read directly |
 
 ## Scoreboard
 
-22 bars. ripr meets 6, is below the bar on 13, and has not measured 3. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements.
+22 bars. ripr meets 7, is below the bar on 13, and has not measured 2. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements.
 
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
@@ -30,7 +31,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | Speed and memory | Warm `ripr check` peak memory | **1187 MB** | <= 512 MB | below the bar | +13 MB since a7a089e (was 1174 MB) |
 | CI adoption | Lines in the workflow `ripr init --ci github` writes | **1154 lines** | <= 150 lines | below the bar | -1220 lines since a7a089e (was 2374 lines) |
 | CI adoption | Generated workflow can only get ripr by compiling it (1 = yes) | no | <= no | meets the bar | -yes since a7a089e (was yes) |
-| CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
+| CI adoption | Time for the generated workflow to have ripr on PATH | 0.97 s | <= 30 s | meets the bar | first receipt |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 findings** | <= 0 findings | below the bar | unchanged since a7a089e (1 findings) |
 | Trust | Wrong verdicts on the hand-checked verdict corpus | **30.4%** | <= 5.0% | below the bar | first receipt |
@@ -49,7 +50,6 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 
 Not measured, and why:
 
-- `ci.install_seconds`: needs a hosted run of the generated workflow; the prebuilt-install path landed with #5236 but no instrument times it yet
 - `trust.judged_panel_false_actionable`: metrics/rust-judged-behavior-panel/calibration-scorecard.json candidates.false_actionable: denominator is 0, no eligible cases yet
 - `first_run.time_to_first_useful_result_s`: no --ingest file supplied for `ingest:first-run`
 
@@ -172,7 +172,7 @@ Measured on the pinned corpus repositories at the revisions in the receipt, with
 
 ## First run
 
-A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. Install is not timed in these receipts, so time from a fresh machine to the first result is not on this page.
+A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. Install is timed in its own receipt, shown at the end of this section.
 
 | Crate | Verdict, ripr 0.10.0 | Verdict, ripr 0.11.0 (a7a089e) | Workflow lines, ripr 0.10.0 | Workflow lines, ripr 0.11.0 (a7a089e) |
 | --- | --- | --- | --- | --- |
@@ -201,6 +201,10 @@ Friction flagged on ripr 0.11.0 (a7a089e):
 
 - generated workflow is 2374 lines, over the 1500-line review budget (x3)
 - 1 stderr line(s) beyond progress, first: ripr: lexical fallback was used for 1 Rust file(s): benches/bench.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes.
+
+Install, from its own receipt:
+
+> install thread, 2026-10-04: prebuilt ripr 0.10.0 (12.9 MB archive) on linux x86-64 gnu in the cloud container; download + .sha256 + sha256sum -c + extract + ripr --version; runs 0.97 s, 0.60 s, 0.75 s (worst kept). Network-dependent, one runner class, not hosted CI. Compiling from source took 128 s (0.10 release) and 640 s (0.11 dev from git).
 
 ## An agent using only ripr's help
 
