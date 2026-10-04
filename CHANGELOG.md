@@ -119,7 +119,8 @@ are scoped or reviewed.
   repair card is still chosen from the committed diff. With no change, or when the diff
   cannot be loaded, the ranking is unchanged; `pilot-summary.json` adds a
   `current_change` object whose `state` keeps `no_change` and `unavailable`
-  apart (#1169).
+  apart. `RIPR_GIT_TIMEOUT` bounds these git calls as it does for `ripr
+  check`; an invalid value fails pilot before analysis (#1169).
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
