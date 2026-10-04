@@ -80,8 +80,9 @@ are scoped or reviewed.
   per `check`); the wait now backs off from 1 ms to the same 50 ms ceiling.
   The progress heartbeat thread is woken on the terminal stage instead of
   finishing its 50 ms tick, `pilot` renders each `repo-exposure.json` seam
-  once instead of once per pass (subject, hash, write) when the rendered
-  seams fit 64 MiB, and pilot ranking computes each seam's rank key once.
+  once instead of once per pass (subject, hash, write) for the first 64 MiB
+  of rendered seams (only seams past that are rendered per pass), and pilot
+  ranking computes each seam's rank key once.
   Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
   bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.08/0.04/0.05 s,
   `check --format json` 0.36/0.36/0.46 s -> 0.09/0.06/0.05 s, `explain`

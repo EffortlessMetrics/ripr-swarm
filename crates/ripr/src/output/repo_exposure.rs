@@ -229,7 +229,7 @@ pub(crate) fn write_repo_exposure_json<W: io::Write>(
         },
         None,
         None,
-        None,
+        &SeamJsons::new(classified, 0),
         out,
     )
 }
@@ -248,10 +248,8 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     out: &mut W,
 ) -> Result<(), String> {
     let placeholder = repo_exposure_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
-    let prerendered =
-        render_seam_jsons_within_budget(classified, PRERENDERED_SEAM_JSON_BUDGET_BYTES);
-    let prerendered = prerendered.as_deref();
-    let source_subject = repo_exposure_source_subject(classified, &context.root, prerendered);
+    let seams = SeamJsons::new(classified, PRERENDERED_SEAM_JSON_BUDGET_BYTES);
+    let source_subject = repo_exposure_source_subject(&seams, &context.root);
     let mut hasher = Sha256Writer::new();
     let disclosures = RepoExposureJsonDisclosures {
         ts_guidance,
@@ -264,7 +262,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         disclosures,
         Some(&placeholder),
         source_subject.as_ref(),
-        prerendered,
+        &seams,
         &mut hasher,
     )
     .map_err(|err| format!("hash repo exposure JSON failed: {err}"))?;
@@ -277,7 +275,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         disclosures,
         Some(&metadata),
         source_subject.as_ref(),
-        prerendered,
+        &seams,
         out,
     )
     .map_err(|err| format!("write repo exposure JSON failed: {err}"))
@@ -310,29 +308,60 @@ pub(crate) fn render_repo_exposure_json_with_context(
 /// and write passes of [`write_repo_exposure_json_with_context`] render each
 /// seam once (#5348). Rendering every seam three times (a third of a warm
 /// `ripr pilot` per pass on a 900-seam crate) was the price of the
-/// bounded-memory streaming writer; below this budget the rendered entries
-/// are kept and reused, above it the writer streams as before.
+/// bounded-memory streaming writer; entries that fit this budget are kept and
+/// reused, and only the entries past it are rendered again per pass.
 const PRERENDERED_SEAM_JSON_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
-/// Each seam's `seams[]` entry rendered once, in order, or `None` when the
-/// total would exceed `budget_bytes` (the caller then renders per pass).
-fn render_seam_jsons_within_budget(
-    classified: &[ClassifiedSeam],
-    budget_bytes: usize,
-) -> Option<Vec<String>> {
-    let canonical_gaps = canonical_gap_identities(classified);
-    let mut total = 0usize;
-    let mut rendered = Vec::with_capacity(classified.len());
-    for entry in classified {
-        let mut seam_json = String::new();
-        push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
-        total = total.saturating_add(seam_json.len());
-        if total > budget_bytes {
-            return None;
+/// The `seams[]` entries for one repo-exposure write: the canonical gap
+/// identities computed once, and the longest prefix of entries whose rendered
+/// total fits the budget, kept for every pass. Entries past the prefix are
+/// rendered on demand, so an artifact over the budget pays only for its
+/// remainder, never for a discarded prefix.
+struct SeamJsons<'a> {
+    classified: &'a [ClassifiedSeam],
+    canonical_gaps: BTreeMap<crate::analysis::seams::SeamId, CanonicalGapIdentity>,
+    prefix: Vec<String>,
+}
+
+impl<'a> SeamJsons<'a> {
+    fn new(classified: &'a [ClassifiedSeam], budget_bytes: usize) -> Self {
+        let canonical_gaps = canonical_gap_identities(classified);
+        let mut prefix = Vec::new();
+        let mut total = 0usize;
+        for entry in classified {
+            let seam_json = render_seam_json(entry, &canonical_gaps);
+            total = total.saturating_add(seam_json.len());
+            if total > budget_bytes {
+                break;
+            }
+            prefix.push(seam_json);
         }
-        rendered.push(seam_json);
+        Self {
+            classified,
+            canonical_gaps,
+            prefix,
+        }
     }
-    Some(rendered)
+
+    /// Hand `idx`'s entry to `use_json`, from the prefix when it holds one.
+    fn with_entry<R>(&self, idx: usize, use_json: impl FnOnce(&str) -> R) -> R {
+        match self.prefix.get(idx) {
+            Some(seam_json) => use_json(seam_json),
+            None => use_json(&render_seam_json(
+                &self.classified[idx],
+                &self.canonical_gaps,
+            )),
+        }
+    }
+}
+
+fn render_seam_json(
+    entry: &ClassifiedSeam,
+    canonical_gaps: &BTreeMap<crate::analysis::seams::SeamId, CanonicalGapIdentity>,
+) -> String {
+    let mut seam_json = String::new();
+    push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
+    seam_json
 }
 
 /// #4544: the content digests of every workspace file the seam entries name,
@@ -341,9 +370,8 @@ fn render_seam_jsons_within_budget(
 /// itself. `None` when no seam names a file or a file cannot be read, so the
 /// derived reports disclose `unverifiable_subject` instead of a partial stamp.
 fn repo_exposure_source_subject(
-    classified: &[ClassifiedSeam],
+    seams: &SeamJsons<'_>,
     root: &std::path::Path,
-    prerendered: Option<&[String]>,
 ) -> Option<serde_json::Value> {
     let mut files = std::collections::BTreeSet::new();
     let mut collect = |seam_json: &str| -> Option<()> {
@@ -351,20 +379,8 @@ fn repo_exposure_source_subject(
         crate::output::gap_source_subject::named_files_in_value(root, &seam, &mut files);
         Some(())
     };
-    match prerendered {
-        Some(seam_jsons) => {
-            for seam_json in seam_jsons {
-                collect(seam_json)?;
-            }
-        }
-        None => {
-            let canonical_gaps = canonical_gap_identities(classified);
-            for entry in classified {
-                let mut seam_json = String::new();
-                push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
-                collect(&seam_json)?;
-            }
-        }
+    for idx in 0..seams.classified.len() {
+        seams.with_entry(idx, &mut collect)?;
     }
     if files.is_empty() {
         return None;
@@ -389,7 +405,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
     disclosures: RepoExposureJsonDisclosures<'_>,
     artifact: Option<&serde_json::Value>,
     source_subject: Option<&serde_json::Value>,
-    prerendered: Option<&[String]>,
+    seams: &SeamJsons<'_>,
     out: &mut W,
 ) -> io::Result<()> {
     let RepoExposureJsonDisclosures {
@@ -398,8 +414,6 @@ fn write_repo_exposure_json_document<W: io::Write>(
         generated_skip,
     } = disclosures;
     let metrics = ExposureMetrics::from(classified);
-    // Only seams without a prerendered entry need gap identities.
-    let canonical_gaps = std::cell::OnceCell::new();
 
     writeln!(out, "{{")?;
     writeln!(
@@ -627,20 +641,11 @@ fn write_repo_exposure_json_document<W: io::Write>(
     writeln!(out, "  }},")?;
 
     write!(out, "  \"seams\": [")?;
-    for (idx, entry) in classified.iter().enumerate() {
+    for idx in 0..classified.len() {
         if idx == 0 {
             writeln!(out)?;
         }
-        match prerendered.and_then(|seam_jsons| seam_jsons.get(idx)) {
-            Some(seam_json) => out.write_all(seam_json.as_bytes())?,
-            None => {
-                let mut seam_json = String::new();
-                let canonical_gaps =
-                    canonical_gaps.get_or_init(|| canonical_gap_identities(classified));
-                push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
-                out.write_all(seam_json.as_bytes())?;
-            }
-        }
+        seams.with_entry(idx, |seam_json| out.write_all(seam_json.as_bytes()))?;
         if idx + 1 != classified.len() {
             writeln!(out, ",")?;
         } else {
@@ -1328,11 +1333,14 @@ mod tests {
     }
 
     /// #5348: the writer renders each seam once and reuses it across the
-    /// subject, hash and write passes when it fits the budget, and streams
-    /// otherwise. Both paths must emit the same bytes, and the budget must
-    /// be a real bound. Negative experiments: dropping the `total >
-    /// budget_bytes` check makes the zero/one-byte budgets return `Some`;
-    /// writing `seam_jsons[0]` for every index breaks byte equality.
+    /// subject, hash and write passes for the prefix that fits the budget,
+    /// and renders only the entries past it per pass. Every budget must emit
+    /// the same bytes, and the budget must be a real bound on the kept
+    /// prefix. Negative experiments: dropping the `total > budget_bytes`
+    /// check keeps all three entries under the smaller budgets; serving
+    /// `prefix[0]` for every index breaks byte equality; discarding the
+    /// prefix on overflow (the pre-review shape) makes the just-over-budget
+    /// prefix empty instead of two entries.
     #[test]
     fn prerendered_seam_json_matches_streamed_document_and_respects_budget() {
         let classified = vec![
@@ -1345,7 +1353,7 @@ mod tests {
             python_guidance: None,
             generated_skip: None,
         };
-        let document = |prerendered: Option<&[String]>| -> Result<Vec<u8>, String> {
+        let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();
             write_repo_exposure_json_document(
                 &classified,
@@ -1353,31 +1361,38 @@ mod tests {
                 disclosures,
                 None,
                 None,
-                prerendered,
+                &SeamJsons::new(&classified, budget),
                 &mut out,
             )
             .map_err(|err| err.to_string())?;
             Ok(out)
         };
-        let rendered = render_seam_jsons_within_budget(&classified, usize::MAX);
-        assert_eq!(rendered.as_ref().map(Vec::len), Some(classified.len()));
-        let rendered = rendered.unwrap_or_default();
+        let all = SeamJsons::new(&classified, usize::MAX).prefix;
+        assert_eq!(all.len(), classified.len());
         assert!(
-            rendered.windows(2).all(|pair| pair[0] != pair[1]),
+            all.windows(2).all(|pair| pair[0] != pair[1]),
             "fixture seams must render distinct entries"
         );
-        assert_eq!(document(Some(&rendered)), document(None));
+        let total: usize = all.iter().map(String::len).sum();
+        let last = all.last().map_or(0, String::len);
 
-        let total: usize = rendered.iter().map(String::len).sum();
+        // The kept prefix is the longest run of entries within the budget.
+        assert_eq!(SeamJsons::new(&classified, total).prefix, all);
         assert_eq!(
-            render_seam_jsons_within_budget(&classified, total),
-            Some(rendered)
+            SeamJsons::new(&classified, total - 1).prefix,
+            all[..all.len() - 1].to_vec()
         );
         assert_eq!(
-            render_seam_jsons_within_budget(&classified, total - 1),
-            None
+            SeamJsons::new(&classified, total - last).prefix.len(),
+            all.len() - 1
         );
-        assert_eq!(render_seam_jsons_within_budget(&classified, 0), None);
+        assert!(SeamJsons::new(&classified, 0).prefix.is_empty());
+
+        // Full, partial and empty prefixes all write the same document.
+        let streamed = document(0);
+        assert_eq!(document(usize::MAX), streamed);
+        assert_eq!(document(total - 1), streamed);
+        assert_eq!(document(all[0].len()), streamed);
     }
 
     fn ts_guidance(ts_file_count: usize) -> TsFullRepoGuidance {
