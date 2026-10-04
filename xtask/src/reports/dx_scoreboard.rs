@@ -541,7 +541,12 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
 /// - unknown verdicts: cases whose verdict is a `*_unknown` class.
 pub(crate) fn first_run_to_input(value: &Value) -> Result<Value, String> {
     let setup = value["setup"].as_array().map(Vec::as_slice).unwrap_or(&[]);
-    let cases = value["cases"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    // An empty array is the install-failed walk; a missing or non-array value
+    // is a malformed receipt and must not pass as one.
+    let cases = value["cases"]
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or("first_run.v1 receipt needs a cases array")?;
     let install_steps: Vec<&Value> = setup
         .iter()
         .filter(|step| {

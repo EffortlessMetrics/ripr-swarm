@@ -567,6 +567,16 @@ fn first_run_receipt_counts_install_through_first_successful_check() -> Result<(
         Some(("first_run.install_seconds", SampleOutcome::Incomplete(20.0)))
     );
 
+    // A receipt with an install step but no `cases` array is malformed, not
+    // an install-failed walk.
+    let no_cases = json!({
+        "schema_version": "first_run.v1",
+        "ripr": "r",
+        "setup": [{"step": "install_published", "secs": 20.0, "exit": 0, "friction": []}],
+    });
+    let rejected = parse_ingest(&no_cases, &config).err();
+    assert!(rejected.is_some_and(|e| e.contains("cases array")));
+
     // No install step and no cases is still rejected.
     let empty = json!({"schema_version": "first_run.v1", "ripr": "r", "setup": [], "cases": []});
     let rejected = parse_ingest(&empty, &config).err();
