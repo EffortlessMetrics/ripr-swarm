@@ -56,6 +56,9 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             crate::ripr_debug_binary()
         }
     };
+    for (name, checkout) in &options.repos {
+        reject_checkout_inside_workspace(name, checkout)?;
+    }
     let scratch = PathBuf::from(SCRATCH);
     fs::create_dir_all(&scratch)
         .map_err(|err| format!("create spot-check scratch {}: {err}", scratch.display()))?;
@@ -274,6 +277,27 @@ fn spot_check_repo(
     })
 }
 
+/// A checkout under this workspace inherits its Cargo workspace, so neither
+/// the baseline build nor ripr's root resolution would see the crate alone.
+fn reject_checkout_inside_workspace(name: &str, checkout: &Path) -> Result<(), String> {
+    let checkout = fs::canonicalize(checkout).map_err(|err| {
+        format!(
+            "--repo {name}: cannot resolve {}: {err}",
+            checkout.display()
+        )
+    })?;
+    let workspace = std::env::current_dir()
+        .and_then(fs::canonicalize)
+        .map_err(|err| format!("resolve current directory: {err}"))?;
+    if checkout.starts_with(&workspace) {
+        return Err(format!(
+            "--repo {name}: {} is inside this workspace; clone spot-check repos outside it",
+            checkout.display()
+        ));
+    }
+    Ok(())
+}
+
 fn run_cargo_mutants(
     scratch: &Path,
     name: &str,
@@ -284,6 +308,17 @@ fn run_cargo_mutants(
     let _ = fs::remove_dir_all(&output_root);
     fs::create_dir_all(&output_root)
         .map_err(|err| format!("create {}: {err}", output_root.display()))?;
+    // The repository's `.cargo/config.toml` forces TMPDIR into this
+    // workspace's `target/`. cargo-mutants copies the crate under TMPDIR, and
+    // a copy inside this workspace fails its baseline build with "believes
+    // it's in a workspace when it's not". Put the copies beside the checkout.
+    let temp_root = checkout
+        .parent()
+        .unwrap_or(checkout)
+        .join(format!(".ripr-spot-check-tmp-{name}"));
+    fs::create_dir_all(&temp_root)
+        .map_err(|err| format!("create {}: {err}", temp_root.display()))?;
+    let temp_dir = path_arg(&temp_root);
     let output = capture_output_with_timeout(
         "cargo",
         &[
@@ -298,10 +333,16 @@ fn run_cargo_mutants(
             options.mutant_timeout_secs.to_string(),
             "--no-shuffle".to_string(),
         ],
-        &[],
+        &[
+            ("TMPDIR", &temp_dir),
+            ("TMP", &temp_dir),
+            ("TEMP", &temp_dir),
+        ],
         MUTANTS_TIMEOUT,
         "cargo mutants for spot check",
-    )?;
+    );
+    let _ = fs::remove_dir_all(&temp_root);
+    let output = output?;
     // cargo-mutants exits 2 when mutants were missed and 3 when some timed
     // out; both are results. Any other non-zero exit (1 usage, 4 baseline
     // failure) means there is no outcome set to score.
