@@ -107,11 +107,17 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
+                // #5312: `after` is the canonical shape span, so `before`
+                // must be the same span of the removed line; a full
+                // `if ... {` line beside a bare predicate misreads as a
+                // structural change.
+                let before = nearby_removed_line(shape.start_line, &canonical_text, changed)
+                    .map(|removed| project_removed_onto_span(&removed, text, &canonical_text));
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
                     shape.family,
-                    nearby_removed_line(shape.start_line, &canonical_text, changed),
+                    before,
                     Some(canonical_text.clone()),
                 );
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
@@ -313,6 +319,32 @@ fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
     } else {
         parser_expression.to_string()
     }
+}
+
+/// Project a paired removed line onto the span the canonical probe text
+/// occupies in its added line (#5312). When the added line frames the
+/// canonical text with a prefix and suffix (`if `/` {`, `let x = f(`/`);`)
+/// and the removed line carries the same framing, `before` keeps only the
+/// framed span so it reads against `after` like for like. Any other shape
+/// (different framing, multi-line canonical text, no framing at all) keeps
+/// the removed line whole rather than guessing a span.
+fn project_removed_onto_span(removed: &str, added_line: &str, canonical_text: &str) -> String {
+    let added_line = added_line.trim();
+    let removed = removed.trim();
+    let Some(start) = added_line.find(canonical_text) else {
+        return removed.to_string();
+    };
+    let prefix = &added_line[..start];
+    let suffix = &added_line[start + canonical_text.len()..];
+    if prefix.is_empty() && suffix.is_empty() {
+        return removed.to_string();
+    }
+    removed
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(suffix))
+        .map(str::trim)
+        .filter(|span| !span.is_empty())
+        .map_or_else(|| removed.to_string(), str::to_string)
 }
 
 fn parser_span_for_canonical_shape(
@@ -902,6 +934,90 @@ mod tests {
                 .expected_sinks
                 .iter()
                 .any(|sink| sink == "branch result")
+        );
+    }
+
+    #[test]
+    fn canonical_predicate_probe_before_and_after_share_one_span() {
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "if amount >= threshold {".to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "if amount > threshold {".to_string(),
+            }],
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId("pricing::discounted_total".to_string()),
+                        name: "discounted_total".to_string(),
+                        file: path.clone(),
+                        start_line: 1,
+                        end_line: 5,
+                        body: "fn discounted_total() { if amount >= threshold {} }".to_string(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        source_role: FunctionSourceRole::Production,
+                        attrs: vec![],
+                        impl_attrs: Vec::new(),
+                        nested_fn_names: Vec::new(),
+                        let_bindings: Vec::new(),
+                        item: Default::default(),
+                        impl_context: Default::default(),
+                    }],
+                    probe_shapes: vec![ProbeShapeFact {
+                        start_line: 3,
+                        end_line: 3,
+                        start_byte: 3,
+                        kind: PROBE_SHAPE_PREDICATE.to_string(),
+                        text: "amount >= threshold".to_string(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        // #5312: the canonical shape is the bare predicate, so `before` is
+        // the same span of the removed line, not the whole `if ... {` line.
+        assert_eq!(probes.len(), 1);
+        assert_eq!(probes[0].after, Some("amount >= threshold".to_string()));
+        assert_eq!(probes[0].before, Some("amount > threshold".to_string()));
+    }
+
+    #[test]
+    fn removed_line_projects_onto_span_only_with_matching_framing() {
+        assert_eq!(
+            project_removed_onto_span("let x = f(a > b);", "let x = f(a >= b);", "a >= b"),
+            "a > b"
+        );
+        // Different framing keeps the removed line whole.
+        assert_eq!(
+            project_removed_onto_span("while a > b {", "if a >= b {", "a >= b"),
+            "while a > b {"
+        );
+        // Unframed canonical text (the whole line) keeps the removed line.
+        assert_eq!(
+            project_removed_onto_span("let _ = a();", "let _ = b();", "let _ = b();"),
+            "let _ = a();"
+        );
+        // Canonical text absent from the added line keeps the removed line.
+        assert_eq!(
+            project_removed_onto_span("if a > b {", "if a >= b {", "a >=\n b"),
+            "if a > b {"
         );
     }
 

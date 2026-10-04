@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — property_macro_unrelated_package (2)
+
+Reason:
+RIPR-SPEC-0122 #5312: human-full before: shows the same canonical span as after (the removed line is projected onto the probe expression span); classifications, stages, JSON, and ids unchanged
+
+Command:
+`cargo xtask goldens bless property_macro_unrelated_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

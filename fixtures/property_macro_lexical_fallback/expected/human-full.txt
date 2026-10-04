@@ -12,7 +12,7 @@ WARNING fixtures/property_macro_lexical_fallback/input/src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
-  before: if amount > discount_threshold {
+  before: amount > discount_threshold
   after:  amount >= discount_threshold
 
 Probe

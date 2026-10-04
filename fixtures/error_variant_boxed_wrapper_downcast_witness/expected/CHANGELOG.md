@@ -266,3 +266,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (20)
+
+Reason:
+RIPR-SPEC-0122 #5312: human-full before: shows the same canonical span as after (the removed line is projected onto the probe expression span); classifications, stages, JSON, and ids unchanged
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

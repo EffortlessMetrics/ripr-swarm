@@ -11,7 +11,7 @@ WARNING fixtures/oracle_confirmation_mixed/input/src/lib.rs:2
   id: probe:src_lib.rs:call_deletion:ed1574df
 
 Changed
-  before: record_effect(&mut Vec::new());
+  before: record_effect(&mut Vec::new())
   after:  record_effect(rows)
 
 Probe

@@ -699,3 +699,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_gap (13)
+
+Reason:
+RIPR-SPEC-0122 #5312: human-full before: shows the same canonical span as after (the removed line is projected onto the probe expression span); classifications, stages, JSON, and ids unchanged
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

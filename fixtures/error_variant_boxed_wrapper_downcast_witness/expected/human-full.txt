@@ -11,7 +11,7 @@ INFO fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:45
   id: probe:src_lib.rs:error_path:5c979117
 
 Changed
-  before: return Err(ParseSummaryError::ParserInit);
+  before: return Err(ParseSummaryError::ParserInit)
   after:  return Err(ParseSummaryError::MalformedSource)
 
 Probe
@@ -44,7 +44,7 @@ INFO fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:45
   id: probe:src_lib.rs:return_value:f573bd5d
 
 Changed
-  before: return Err(ParseSummaryError::ParserInit);
+  before: return Err(ParseSummaryError::ParserInit)
   after:  return Err(ParseSummaryError::MalformedSource)
 
 Probe
@@ -77,7 +77,7 @@ INFO fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:48
   id: probe:src_lib.rs:error_path:5c979117.2
 
 Changed
-  before: return Err(ParseSummaryError::ParserInit);
+  before: return Err(ParseSummaryError::ParserInit)
   after:  return Err(ParseSummaryError::MalformedSource)
 
 Probe
@@ -110,7 +110,7 @@ INFO fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs:48
   id: probe:src_lib.rs:return_value:f573bd5d.2
 
 Changed
-  before: return Err(ParseSummaryError::ParserInit);
+  before: return Err(ParseSummaryError::ParserInit)
   after:  return Err(ParseSummaryError::MalformedSource)
 
 Probe
