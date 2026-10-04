@@ -14,7 +14,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | corpus 2026-10-04.4 | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
-| `metrics/public-proof/first-run-current.json` | New-developer walk, current build | ripr 0.11.0 (a7a089e) | 3 crates |
+| `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
 | `metrics/public-proof/agent-as-user.json` | An agent using only ripr's help to close a real test gap | agent-as-user | docs/AGENT_AS_USER_RUNS.md (PR #5293); ripr 0.11.0 a7a089e |
 | `metrics/public-proof/install.json` | Time to install a prebuilt release | install | one cloud container, not hosted CI |
 | `metrics/public-proof/corpus-manifest.json` | Pinned corpus the scoreboards draw from | corpus 2026-10-04.5 | copy of the pinned manifest |

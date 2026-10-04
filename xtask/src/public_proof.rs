@@ -444,8 +444,11 @@ fn first_run_value(id: &str, receipt: &Value) -> Option<f64> {
         "first_run.over_budget_steps" => count(
             steps
                 .iter()
-                .flat_map(|s| friction_of(s))
-                .filter(|f| f.as_str().is_some_and(|t| t.contains("budget")))
+                .filter(|s| {
+                    friction_of(s)
+                        .iter()
+                        .any(|f| f.as_str().is_some_and(|t| t.contains("budget")))
+                })
                 .count(),
         ),
         "first_run.walk_secs" => items(receipt, "cases")
@@ -607,6 +610,9 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         };
         if status == Status::NotMeasured {
             basis = text(metric, "reason");
+            if text(metric, "status") == "failed" {
+                basis = format!("instrument failed: {basis}");
+            }
         }
         out.push(Bar {
             board: board_name(&text(metric, "board")).to_string(),
@@ -730,7 +736,7 @@ fn header(page: &mut Page, r: &Receipts) -> Result<(), String> {
         ],
         vec![
             "`metrics/public-proof/first-run-current.json`".to_string(),
-            "New-developer walk, current build".to_string(),
+            "New-developer walk, later build".to_string(),
             short_version(&req_str(&r.first_current, "ripr", "first-run-current")?),
             format!(
                 "{} crates",
