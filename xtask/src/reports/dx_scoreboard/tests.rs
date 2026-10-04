@@ -560,7 +560,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             {"pairings": {"seam_precise": 2}, "calibration_metrics": {"mutants_total": 86}},
             {"pairings": {"seam_precise": 170}, "calibration_metrics": {"mutants_total": 1659}},
         ],
-        "pilot_top_recommendations": {"scored": 39, "precision": 0.385, "by_tier": {"seam": {"confirmed": 2, "refuted": 5}, "owner": {"confirmed": 13, "refuted": 19}}},
+        "pilot_top_recommendations": {"scored": 39, "precision": 0.385, "by_tier": {"seam": {"confirmed": 2, "refuted": 5}, "owner": {"confirmed": 13, "refuted": 19}}, "repos": [{"name": "semver"}, {"name": "humantime"}]},
     });
     let input = mutation_spot_check_to_input(&receipt)?;
     let value = |id: &str| {
@@ -585,7 +585,9 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     });
     assert_eq!(
         pilot_evidence,
-        Some("39 pilot recommendations scored (seam 2/7, line 0/0, owner 13/32)")
+        Some(
+            "39 pilot recommendations scored (seam 2/7, line 0/0, owner 13/32) over semver, humantime"
+        )
     );
 
     let evidence = |input: &Value| input["evidence"].as_str().unwrap_or_default().to_string();

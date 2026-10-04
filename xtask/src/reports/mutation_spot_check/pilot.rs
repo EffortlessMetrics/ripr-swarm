@@ -5,8 +5,8 @@
 //! `PILOT_MAX_SEAMS` recommendations against the same cargo-mutants outcomes
 //! the verdict scoring uses:
 //!
-//! - `seam`: on a predicate or return seam, viable operator mutants of the
-//!   seam's own expression on its line. Any missed mutant confirms the
+//! - `seam`: on a predicate or return seam whose expression occurs once on
+//!   its line, viable operator mutants that start inside that expression. Any missed mutant confirms the
 //!   recommendation; all caught refutes it.
 //! - `line`: with no such mutant, viable non-`FnValue` mutants that start on
 //!   the recommended line. Coarser: one can belong to another expression.
@@ -28,6 +28,21 @@ use std::path::Path;
 pub(super) const PILOT_MAX_SEAMS: usize = 10;
 
 pub(super) const CLAIM_BOUNDARY: &str = "A pilot recommendation is confirmed when a viable operator mutant of its predicate or return expression was missed (with none, a viable mutant on its line; with none there either, a whole-body mutant of its innermost function), refuted when every such mutant was caught, and unscored otherwise. Precision is confirmed over confirmed plus refuted, for the recorded revisions and cargo-mutants versions only.";
+
+/// The 1-based column range `[start, end)` of `expression` on `line`, in
+/// characters as cargo-mutants reports them, when it occurs exactly once.
+fn expression_columns(line: &str, expression: &str) -> Option<(u64, u64)> {
+    if expression.is_empty() {
+        return None;
+    }
+    let mut occurrences = line.match_indices(expression);
+    let (byte, _) = occurrences.next()?;
+    if occurrences.next().is_some() {
+        return None;
+    }
+    let start = line[..byte].chars().count() as u64 + 1;
+    Some((start, start + expression.chars().count() as u64))
+}
 
 /// Run `ripr pilot` on `checkout` and return its ranked top seams.
 pub(super) fn pilot_top_seams(
@@ -82,6 +97,7 @@ struct Outcome<'a> {
     genre: &'a str,
     file: &'a str,
     line: u64,
+    column: u64,
     function_span: Option<(u64, u64)>,
     whole_body: bool,
     missed: bool,
@@ -124,6 +140,10 @@ fn viable_outcomes<'a>(mutants: &'a Value, outcomes: &'a Value) -> Vec<Outcome<'
                 genre,
                 file: mutant.get("file")?.as_str()?,
                 line: mutant.pointer("/span/start/line")?.as_u64()?,
+                column: mutant
+                    .pointer("/span/start/column")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
                 function_span: span("start").zip(span("end")),
                 whole_body: genre == "FnValue",
                 missed,
@@ -135,15 +155,18 @@ fn viable_outcomes<'a>(mutants: &'a Value, outcomes: &'a Value) -> Vec<Outcome<'
 /// Judge each recommendation, in pilot's rank order.
 ///
 /// `expressions` maps seam id to the seam's source expression (from the repo
-/// exposure JSON). On a predicate or return seam, operator mutants of that
-/// expression form the `seam` tier and decide alone, so a mutant of another
-/// expression on the same line cannot grade the seam. Otherwise the coarser
-/// `line` tier, then the `owner` tier, applies.
+/// exposure JSON) and `source_line` returns a checkout line's text. On a
+/// predicate or return seam whose expression occurs exactly once on its line,
+/// operator mutants that start inside that occurrence form the `seam` tier and
+/// decide alone, so a mutant of another expression on the same line, even one
+/// with the same operator, cannot grade the seam. Otherwise the coarser `line`
+/// tier, then the `owner` tier, applies.
 pub(super) fn judge_recommendations(
     top: &[Value],
     mutants: &Value,
     outcomes: &Value,
     expressions: &BTreeMap<&str, &str>,
+    source_line: &dyn Fn(&str, u64) -> Option<String>,
 ) -> Vec<Value> {
     let viable = viable_outcomes(mutants, outcomes);
     top.iter()
@@ -162,10 +185,15 @@ pub(super) fn judge_recommendations(
                 .and_then(|id| expressions.get(id))
                 .copied()
                 .unwrap_or("");
+            let columns =
+                source_line(file, line).and_then(|text| expression_columns(&text, expression));
             let precise = on_line
                 .iter()
                 .copied()
-                .filter(|o| super::pairing_for(o.genre, o.name, kind, expression) == "seam_precise")
+                .filter(|o| {
+                    columns.is_some_and(|(start, end)| (start..end).contains(&o.column))
+                        && super::pairing_for(o.genre, o.name, kind, expression) == "seam_precise"
+                })
                 .collect::<Vec<_>>();
             let (tier, joined) = if !precise.is_empty() {
                 ("seam", precise)
@@ -323,11 +351,17 @@ mod tests {
     use super::*;
 
     fn mutant(name: &str, line: u64, genre: &str, function: (u64, u64)) -> Value {
+        // Operator mutant names carry their column (`src/a.rs:3:22: ...`).
+        let column = name
+            .split(':')
+            .nth(2)
+            .and_then(|column| column.parse::<u64>().ok())
+            .unwrap_or(1);
         json!({
             "name": name,
             "file": "src/a.rs",
             "genre": genre,
-            "span": {"start": {"line": line, "column": 1}, "end": {"line": line, "column": 9}},
+            "span": {"start": {"line": line, "column": column}, "end": {"line": line, "column": column + 1}},
             "function": {"span": {"start": {"line": function.0}, "end": {"line": function.1}}},
         })
     }
@@ -359,6 +393,7 @@ mod tests {
             &mutants,
             &outcomes,
             &BTreeMap::new(),
+            &|_, _| None,
         );
         let verdicts = judged
             .iter()
@@ -379,35 +414,53 @@ mod tests {
 
     #[test]
     fn seam_expression_mutants_decide_over_other_expressions_on_the_line() {
-        // `let y = x + 1; x > 0` on one line: the missed `+` mutant belongs
-        // to another expression, so the caught `>` mutant refutes the
-        // predicate seam.
+        // Line 3 is `    let a = x > 0; if y > 0 {`: the `>` at column 15
+        // belongs to `x > 0`, the `>` at column 25 to the `y > 0` seam. The
+        // missed mutant of the other expression must not confirm the seam.
+        let text = "    let a = x > 0; if y > 0 {";
+        assert_eq!(text.find("y > 0").map(|byte| byte + 1), Some(23));
         let mutants = json!([
             mutant(
-                "src/a.rs:3:13: replace + with - in gate",
+                "src/a.rs:3:15: replace > with >= in gate",
                 3,
                 "BinaryOperator",
                 (1, 9)
             ),
             mutant(
-                "src/a.rs:3:22: replace > with >= in gate",
+                "src/a.rs:3:25: replace > with >= in gate",
                 3,
                 "BinaryOperator",
                 (1, 9)
             ),
         ]);
         let outcomes = json!({"outcomes": [
-            outcome("src/a.rs:3:13: replace + with - in gate", "MissedMutant"),
-            outcome("src/a.rs:3:22: replace > with >= in gate", "CaughtMutant"),
+            outcome("src/a.rs:3:15: replace > with >= in gate", "MissedMutant"),
+            outcome("src/a.rs:3:25: replace > with >= in gate", "CaughtMutant"),
         ]});
         let mut predicate = seam(3);
         predicate["kind"] = json!("predicate_boundary");
-        let expressions = BTreeMap::from([("s3", "x > 0")]);
-        let judged = judge_recommendations(&[predicate.clone()], &mutants, &outcomes, &expressions);
+        let source =
+            |file: &str, line: u64| (file == "src/a.rs" && line == 3).then(|| text.to_string());
+        let expressions = BTreeMap::from([("s3", "y > 0")]);
+        let judged = judge_recommendations(
+            std::slice::from_ref(&predicate),
+            &mutants,
+            &outcomes,
+            &expressions,
+            &source,
+        );
         assert_eq!(judged[0]["verdict"], "refuted");
         assert_eq!(judged[0]["tier"], "seam");
-        // Without the expression the coarse line tier still reads both.
-        let judged = judge_recommendations(&[predicate], &mutants, &outcomes, &BTreeMap::new());
+        // An expression that occurs twice on the line cannot be located, so
+        // the coarse line tier reads both mutants.
+        let twice = BTreeMap::from([("s3", "> 0")]);
+        let judged = judge_recommendations(
+            std::slice::from_ref(&predicate),
+            &mutants,
+            &outcomes,
+            &twice,
+            &source,
+        );
         assert_eq!(judged[0]["verdict"], "confirmed");
         assert_eq!(judged[0]["tier"], "line");
     }
@@ -427,6 +480,7 @@ mod tests {
             &mutants,
             &outcomes,
             &BTreeMap::new(),
+            &|_, _| None,
         );
         let verdicts = judged
             .iter()

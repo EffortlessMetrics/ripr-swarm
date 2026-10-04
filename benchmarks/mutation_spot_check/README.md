@@ -81,7 +81,7 @@ recommendation is the first error a developer meets. A recommendation is:
 
 | Verdict | Rule |
 | --- | --- |
-| confirmed | on a predicate or return seam, a viable operator mutant of the seam's own expression was missed (`seam` tier); with none, a viable non-`FnValue` mutant on the recommended line was missed (`line` tier, coarse: it can belong to another expression on that line); with none on the line, a whole-body (`FnValue`) mutant of the innermost function containing the line was missed (`owner` tier) |
+| confirmed | on a predicate or return seam whose expression occurs once on its line, a viable operator mutant starting inside that expression was missed (`seam` tier); with none, a viable non-`FnValue` mutant on the recommended line was missed (`line` tier, coarse: it can belong to another expression on that line); with none on the line, a whole-body (`FnValue`) mutant of the innermost function containing the line was missed (`owner` tier) |
 | refuted | every such mutant was caught |
 | unscored | no tier has a caught or missed mutant |
 

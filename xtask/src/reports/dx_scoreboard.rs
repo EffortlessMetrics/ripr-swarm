@@ -922,6 +922,22 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
     }))
 }
 
+/// The repositories a pilot precision covers, so a row measured over a
+/// different population than its baseline says so in its evidence.
+fn pilot_repos(pilot: &Value) -> String {
+    let names = pilot["repos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|repo| repo["name"].as_str())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        "unrecorded repositories".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
 /// Scored pilot recommendations per judge tier, so the scoreboard row shows
 /// how much of its precision rests on the coarse `line` and `owner` tiers.
 fn pilot_tier_split(pilot: &Value) -> String {
@@ -1042,8 +1058,9 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             "id": "trust.pilot_top_recommendation_precision",
             "value": precision,
             "evidence": format!(
-                "{scored} pilot recommendations scored ({})",
-                pilot_tier_split(pilot)
+                "{scored} pilot recommendations scored ({}) over {}",
+                pilot_tier_split(pilot),
+                pilot_repos(pilot)
             ),
         }));
     }

@@ -404,6 +404,14 @@ fn spot_check_repo(
                 &mutant_records,
                 &outcomes,
                 &seam_expressions(&exposure_json),
+                &|file, line| {
+                    let index = usize::try_from(line).ok()?.checked_sub(1)?;
+                    std::fs::read_to_string(checkout.join(file))
+                        .ok()?
+                        .lines()
+                        .nth(index)
+                        .map(str::to_string)
+                },
             )
         }),
     })
