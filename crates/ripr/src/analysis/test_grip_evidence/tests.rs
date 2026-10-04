@@ -2674,8 +2674,11 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
     if rayon::current_thread_index().is_some() {
         return Err("the caller must not be a rayon worker".into());
     }
+    // Build the context outside both scopes: a cancelled token fails the
+    // context build, which would return nothing before any worker runs.
+    let pass = EvidencePass::new(&index);
     let live = AnalysisCancellationToken::new();
-    let completed = cancellation::with_token(&live, || evidence_for_seams(&seams, &index));
+    let completed = cancellation::with_token(&live, || pass.evidence_for(&seams));
     if completed.len() != seams.len() {
         return Err("a live token must not drop seams".into());
     }
@@ -2683,7 +2686,7 @@ fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String
     cancelled.cancel(AnalysisAbortKind::Cancelled);
     // Workers that did not inherit the token would see no cancellation and
     // evaluate every seam.
-    let evidence = cancellation::with_token(&cancelled, || evidence_for_seams(&seams, &index));
+    let evidence = cancellation::with_token(&cancelled, || pass.evidence_for(&seams));
     if !evidence.is_empty() {
         return Err(format!(
             "cancelled pass evaluated {} seams on rayon workers",
