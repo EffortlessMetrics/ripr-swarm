@@ -70,7 +70,7 @@ fn direct_job_name<'a>(source: &'a str, job: &str) -> Option<&'a str> {
         if !in_jobs {
             continue;
         }
-        if !line.starts_with(' ') {
+        if !line.is_empty() && !line.starts_with(' ') {
             break;
         }
 
