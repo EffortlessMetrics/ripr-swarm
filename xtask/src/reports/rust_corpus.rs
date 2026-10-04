@@ -573,7 +573,7 @@ fn fetch(manifest: &Manifest, options: &Options) -> Result<(), String> {
         .map_err(|err| format!("create corpus root {}: {err}", options.root.display()))?;
     let mut entries = Vec::new();
     let mut failures = Vec::new();
-    for repo in repos {
+    for repo in &repos {
         let dir = options.root.join(&repo.id);
         let timeout = options
             .timeout
@@ -606,6 +606,21 @@ fn fetch(manifest: &Manifest, options: &Options) -> Result<(), String> {
             }
         }
     }
+    // A partial fetch (--repo, or a smaller tier) keeps the entries an earlier
+    // fetch recorded for other repos, so consumers reading the index for paths
+    // do not lose them. Entries from another corpus version are dropped.
+    let index_path = options.root.join(INDEX_FILE);
+    // A repo that failed this time drops its old entry: its checkout may be gone.
+    let attempted: BTreeSet<&str> = repos.iter().map(|repo| repo.id.as_str()).collect();
+    let kept = previous_index_entries(&index_path, &manifest.corpus_version)
+        .into_iter()
+        .filter(|entry| {
+            entry["id"]
+                .as_str()
+                .is_some_and(|id| !attempted.contains(id))
+        });
+    entries.extend(kept);
+    entries.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     let index = json!({
         "schema_version": INDEX_SCHEMA_VERSION,
         "corpus_version": manifest.corpus_version,
@@ -613,7 +628,6 @@ fn fetch(manifest: &Manifest, options: &Options) -> Result<(), String> {
         "repos": entries,
         "failed": failures,
     });
-    let index_path = options.root.join(INDEX_FILE);
     let rendered = serde_json::to_string_pretty(&index)
         .map_err(|err| format!("render corpus index: {err}"))?;
     fs::write(&index_path, format!("{rendered}\n"))
@@ -656,8 +670,14 @@ fn smoke(manifest: &Manifest, options: &Options) -> Result<(), String> {
         let dir = options.root.join(&repo.id);
         // ripr reads the working tree, so a tracked edit left by another lane
         // would be measured under the pinned repository's name.
-        if !is_clean_pinned_checkout(repo, &dir, timeout) {
-            rows.push(json!({"id": repo.id, "tier": repo.tier, "profile": repo.profile.class, "status": "not_fetched"}));
+        if let Some(problem) = checkout_problem(repo, &dir, timeout) {
+            rows.push(json!({
+                "id": repo.id,
+                "tier": repo.tier,
+                "profile": repo.profile.class,
+                "status": "not_fetched",
+                "reason": format!("{problem}; run `cargo xtask rust-corpus fetch --allow-network --repo {}`", repo.id),
+            }));
             continue;
         }
         let args = vec![
@@ -669,13 +689,26 @@ fn smoke(manifest: &Manifest, options: &Options) -> Result<(), String> {
             "--format".to_string(),
             "json".to_string(),
         ];
-        let output = capture_output_with_timeout(
+        let output = match capture_output_with_timeout(
             &ripr_text,
             &args,
             &[],
             timeout,
             &format!("rust-corpus smoke ripr check for `{}`", repo.id),
-        )?;
+        ) {
+            Ok(output) => output,
+            Err(err) => {
+                eprintln!("rust-corpus smoke: {} spawn_failed: {err}", repo.id);
+                rows.push(json!({
+                    "id": repo.id,
+                    "tier": repo.tier,
+                    "profile": repo.profile.class,
+                    "status": "spawn_failed",
+                    "reason": err,
+                }));
+                continue;
+            }
+        };
         let row = smoke_row(
             repo,
             &output.stdout,
@@ -781,6 +814,20 @@ fn smoke_markdown(receipt: &Value) -> String {
             cell(&row["findings"]),
         ));
     }
+    let reasons: Vec<String> = receipt["repos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            row["reason"]
+                .as_str()
+                .map(|reason| format!("- {}: {reason}\n", cell(&row["id"])))
+        })
+        .collect();
+    if !reasons.is_empty() {
+        out.push_str("\nNot run:\n\n");
+        out.push_str(&reasons.concat());
+    }
     out
 }
 
@@ -793,6 +840,18 @@ fn materialize(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<bool, 
     // build's target/ do not count, so a built checkout is still reused.
     if is_clean_pinned_checkout(repo, dir, timeout) {
         return Ok(true);
+    }
+    // Only a directory this command could have created may be replaced: an
+    // empty one, or a git checkout whose origin is this repo's URL. Anything
+    // else under --root (a user's own clone, notes, another project) is left
+    // alone and the fetch for this repo is refused.
+    if dir.exists() && !is_replaceable_checkout(repo, dir, timeout) {
+        return Err(format!(
+            "{} exists and is not an empty directory or a corpus checkout of {}; \
+             refusing to replace it. Move or delete it yourself, or pass a different --root",
+            dir.display(),
+            repo.url
+        ));
     }
     if dir.exists() {
         fs::remove_dir_all(dir)
@@ -823,17 +882,55 @@ fn materialize(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<bool, 
     Ok(false)
 }
 
+fn previous_index_entries(index_path: &Path, corpus_version: &str) -> Vec<Value> {
+    let Ok(text) = fs::read_to_string(index_path) else {
+        return Vec::new();
+    };
+    let Ok(previous) = serde_json::from_str::<Value>(&text) else {
+        return Vec::new();
+    };
+    if previous["schema_version"] != INDEX_SCHEMA_VERSION
+        || previous["corpus_version"] != corpus_version
+    {
+        return Vec::new();
+    }
+    previous["repos"].as_array().cloned().unwrap_or_default()
+}
+
+fn is_replaceable_checkout(repo: &RepoEntry, dir: &Path, timeout: Duration) -> bool {
+    let empty = fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_none());
+    empty
+        || (dir.join(".git").exists()
+            && git(dir, &["config", "--get", "remote.origin.url"], timeout)
+                .is_ok_and(|origin| origin == repo.url))
+}
+
+/// Why a checkout is not usable as the pinned subject, or `None` when it is.
+fn checkout_problem(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Option<String> {
+    if !dir.exists() {
+        return Some("checkout missing".to_string());
+    }
+    if !dir.join(".git").exists() {
+        return Some("not a git checkout".to_string());
+    }
+    if let Err(err) = verify_pins(repo, dir, timeout) {
+        return Some(err);
+    }
+    match git(
+        dir,
+        &["status", "--porcelain", "--untracked-files=no"],
+        timeout,
+    ) {
+        Ok(status) if status.is_empty() => None,
+        Ok(_) => Some("tracked files are modified".to_string()),
+        Err(err) => Some(err),
+    }
+}
+
 /// A checkout counts as the pinned subject only when both pins match and no
 /// tracked file is modified.
 fn is_clean_pinned_checkout(repo: &RepoEntry, dir: &Path, timeout: Duration) -> bool {
-    dir.join(".git").exists()
-        && verify_pins(repo, dir, timeout).is_ok()
-        && git(
-            dir,
-            &["status", "--porcelain", "--untracked-files=no"],
-            timeout,
-        )
-        .is_ok_and(|status| status.is_empty())
+    checkout_problem(repo, dir, timeout).is_none()
 }
 
 fn verify_pins(repo: &RepoEntry, dir: &Path, timeout: Duration) -> Result<(), String> {
@@ -1179,6 +1276,60 @@ mod tests {
         let row = smoke_row(&repo, "{}", Some(0), false, Duration::from_millis(5));
         assert_eq!(row["status"], "no_summary");
         Ok(())
+    }
+
+    #[test]
+    fn fetch_only_replaces_empty_dirs_or_its_own_checkouts() -> Result<(), String> {
+        let repo = fixture_repo()?;
+        let timeout = Duration::from_secs(30);
+        let root = crate::tests::temp_dir("rust-corpus-ownership");
+        let dir = root.join(&repo.id);
+
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        assert!(is_replaceable_checkout(&repo, &dir, timeout));
+
+        fs::write(dir.join("notes.txt"), "mine").map_err(|err| err.to_string())?;
+        assert!(!is_replaceable_checkout(&repo, &dir, timeout));
+        let refused = materialize(&repo, &dir, timeout);
+        assert_eq!(
+            refused
+                .as_ref()
+                .map_err(|err| err.contains("refusing to replace it")),
+            Err(true)
+        );
+        assert!(dir.join("notes.txt").exists(), "user file must survive");
+
+        git(&dir, &["init", "--quiet"], timeout)?;
+        git(
+            &dir,
+            &["remote", "add", "origin", "https://github.com/someone/else"],
+            timeout,
+        )?;
+        assert!(!is_replaceable_checkout(&repo, &dir, timeout));
+        git(&dir, &["remote", "set-url", "origin", &repo.url], timeout)?;
+        assert!(is_replaceable_checkout(&repo, &dir, timeout));
+        assert_eq!(
+            checkout_problem(&repo, &root.join("absent"), timeout).as_deref(),
+            Some("checkout missing")
+        );
+
+        fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn previous_index_entries_only_carry_the_same_corpus_version() -> Result<(), String> {
+        let root = crate::tests::temp_dir("rust-corpus-index");
+        let path = root.join(INDEX_FILE);
+        assert!(previous_index_entries(&path, "v1").is_empty());
+        let index = json!({
+            "schema_version": INDEX_SCHEMA_VERSION,
+            "corpus_version": "v1",
+            "repos": [{"id": "serde"}],
+        });
+        fs::write(&path, index.to_string()).map_err(|err| err.to_string())?;
+        assert_eq!(previous_index_entries(&path, "v1").len(), 1);
+        assert!(previous_index_entries(&path, "v2").is_empty());
+        fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 
     #[test]

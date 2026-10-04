@@ -36,7 +36,12 @@ two pinned commits per repository (`git fetch --depth 2 <sha>`), verifies
 HEAD and its first parent against the manifest. It reuses an existing
 checkout only when the pins match and no tracked file is modified, so a
 lane that edited a checkout gets the pinned state back on the next fetch.
-Untracked build output does not force a refetch. `--repo <id>` selects individual repositories. Fetching is opt-in
+Untracked build output does not force a refetch. `fetch` replaces only an
+empty directory or a git checkout whose `origin` is that repository's URL. It
+refuses to touch anything else under `--root`, such as your own clone, so
+pointing `--root` at an existing source tree is safe. `--repo <id>` selects
+individual repositories, and a partial fetch keeps the index entries an earlier
+fetch of the same `corpus_version` recorded for other repositories. Fetching is opt-in
 network and never runs on the default CI path. `cargo xtask rust-corpus check`
 is the offline manifest validator, and the committed manifest is also checked
 by an xtask unit test.
@@ -46,7 +51,9 @@ repo and writes `target/ripr/reports/rust-corpus-smoke.{json,md}` with run
 status, exit code, wall time, and finding counts per repo and profile class.
 A missing or modified checkout, a timeout, unparseable output, a non-zero
 exit, a missing summary, or a fail-closed run status makes the receipt
-`inconclusive`. The receipt says nothing about
+`inconclusive`, and each row that did not run records the reason and the
+next step. `smoke` exits 0 whenever it writes a receipt, so gate on the
+receipt's `status`, not the exit code. The receipt says nothing about
 whether the verdicts are correct, and it does not measure memory.
 
 ## Tiers
@@ -126,6 +133,8 @@ role, or profile is a new `corpus_version`, so results recorded against an
 earlier version stay attributable. Apply the manifest's `selection_rule`
 when choosing a pin: the most recent first-parent commit whose diff changes
 1 to 12 non-test `.rs` files and 6 to 400 Rust lines, preferring behavior
-fixes over chores. Archived repositories pin their last qualifying change.
+fixes over chores. `check` enforces the line bound exactly. The recorded file
+count includes test files, so `check` enforces only a looser 1 to 40 file
+bound; the non-test file limit is a selection judgment. Archived repositories pin their last qualifying change.
 Run `cargo xtask rust-corpus check`, then `fetch` the changed entries. The
 fetch fails if the commit or its first parent does not match the pins.
