@@ -1104,6 +1104,10 @@ impl PacketRun {
     /// a temporary file so a failed render never leaves an empty JSON
     /// artifact for later stages or the upload.
     fn agent_loop(&mut self, seam: &str) -> StageResult {
+        // `--step` can run this stage without the preparation stage, so it
+        // creates both output directories itself.
+        self.mkdir("target/ripr/workflow")?;
+        self.mkdir("target/ripr/agent")?;
         self.ripr(&args(&[
             "agent",
             "start",
@@ -2093,6 +2097,11 @@ mod tests {
             r#"{"top_actionable_seams":[{"seam_id":"seam-9"}]}"#,
         )
         .map_err(|err| err.to_string())?;
+        // The recorded `agent start` writes nothing, so seed the brief it
+        // would have written; the stage copies it for the editor.
+        fs::create_dir_all(root.join("target/ripr/workflow")).map_err(|err| err.to_string())?;
+        fs::write(root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT), "brief")
+            .map_err(|err| err.to_string())?;
         let mut run = PacketRun {
             root: root.clone(),
             exe: PathBuf::from("ripr"),
@@ -2104,12 +2113,15 @@ mod tests {
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         run.all_stages();
+        let packet_copied = root.join(EDITOR_AGENT_PACKET_ARTIFACT).is_file();
+        let brief_copied = root.join(EDITOR_AGENT_BRIEF_ARTIFACT).is_file();
         let _ = fs::remove_dir_all(&root);
         let commands = run
             .recorded
             .take()
             .map(std::cell::RefCell::into_inner)
             .unwrap_or_default();
+        assert!(packet_copied && brief_copied, "{commands:?}");
         assert!(
             commands.iter().any(|line| line
                 == "ripr agent start --root . --seam-id seam-9 --out target/ripr/workflow"),
