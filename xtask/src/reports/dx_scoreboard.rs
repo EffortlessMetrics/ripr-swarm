@@ -1468,6 +1468,25 @@ fn completed_repo_values(r: &Value) -> Vec<(String, f64)> {
         .collect()
 }
 
+/// Repositories that completed in this run but not in the baseline. They have
+/// no comparable baseline value, so they are listed rather than dropped.
+fn recovered_repos(row: &Value, base_row: &Value) -> Vec<String> {
+    let completed_base = completed_repo_values(base_row);
+    let base_repos: Vec<&str> = base_row["samples"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["repo"].as_str())
+        .collect();
+    completed_repo_values(row)
+        .into_iter()
+        .map(|(repo, _)| repo)
+        .filter(|repo| {
+            base_repos.contains(&repo.as_str()) && !completed_base.iter().any(|(id, _)| id == repo)
+        })
+        .collect()
+}
+
 /// Repositories that did not complete in this run although their baseline
 /// sample did not stop short either: a repository that completed, or one with
 /// no completed baseline sample (new to the corpus, or unmeasured then).
@@ -1624,16 +1643,18 @@ pub(crate) fn compare_with_baseline(
             Vec::new(),
         ),
     };
+    let recovered = recovered_repos(row, base_row);
     let Some((base, current)) = values else {
         return json!({
             "comparable": false,
             "value": base_row["value"],
-            "reason": if new_repos.is_empty() {
+            "reason": if new_repos.is_empty() && recovered.is_empty() {
                 "baseline or current value is missing"
             } else {
-                "no repository measured in both reports"
+                "no repository completed in both reports"
             },
             "new_repos": new_repos,
+            "recovered_repos": recovered,
         });
     };
     let allowed = allowed_worsening(def, base);
@@ -1648,6 +1669,7 @@ pub(crate) fn compare_with_baseline(
         "regressed_repos": by_repo,
         "new_repos": new_repos,
         "missing_repos": missing,
+        "recovered_repos": recovered,
     })
 }
 

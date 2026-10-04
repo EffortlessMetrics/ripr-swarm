@@ -1386,7 +1386,8 @@ fn a_repo_that_starts_completing_again_is_not_a_time_regression() -> Result<(), 
     // The baseline's fail-closed sample records 0 ms; recovery must not be
     // compared against that placeholder.
     let base = smoke_receipt(&[("a", "analyzed", 900), ("c", "diff_scope_oversized", 40)]);
-    let current = smoke_receipt(&[("a", "analyzed", 900), ("c", "analyzed", 801)]);
+    // c recovers slower than a, so it would also be the compared worst.
+    let current = smoke_receipt(&[("a", "analyzed", 900), ("c", "analyzed", 4000)]);
     let report = corpus_gate(&base, &current)?;
     assert_eq!(
         report["gate"]["status"].as_str(),
@@ -1394,8 +1395,18 @@ fn a_repo_that_starts_completing_again_is_not_a_time_regression() -> Result<(), 
         "{}",
         report["gate"]
     );
+    let row = report["metrics"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|r| r["id"] == "corpus.check_ms"))
+        .ok_or("corpus.check_ms row missing")?;
+    assert_eq!(
+        row["baseline"]["recovered_repos"],
+        json!(["c"]),
+        "{}",
+        row["baseline"]
+    );
     // A repository that completed in both runs still regresses on time.
-    let slower = smoke_receipt(&[("a", "analyzed", 9000), ("c", "analyzed", 801)]);
+    let slower = smoke_receipt(&[("a", "analyzed", 9000), ("c", "analyzed", 4000)]);
     let report = corpus_gate(&base, &slower)?;
     assert_eq!(
         report["gate"]["status"].as_str(),
