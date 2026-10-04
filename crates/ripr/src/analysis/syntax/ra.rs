@@ -134,6 +134,179 @@ pub(crate) fn parser_oracles_for_function(
     Some(oracles)
 }
 
+/// Module scope of a file's functions, keyed by (fn-token line, name) as
+/// function and test facts record them.
+#[derive(Debug, Default)]
+pub(crate) struct ModuleItemScopes {
+    /// Every fn that is a direct item of the file or of an inline
+    /// `mod name { .. }`, mapped to the line span of its innermost inline
+    /// module (`None` at the file's top level). A fn nested in another fn's
+    /// body, or an associated fn, is absent: it is not visible module-wide.
+    pub(crate) item_fns: BTreeMap<(usize, String), Option<(usize, usize)>>,
+    /// Fns whose body holds a `use` item, which may shadow a module item.
+    pub(crate) fns_with_local_use: std::collections::BTreeSet<(usize, String)>,
+    /// Fns whose code may not run when called: an `async fn` (the call
+    /// only builds a future) or a body holding a closure or `async` block.
+    pub(crate) fns_with_deferred_code: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn calls as a parsed single-segment free function
+    /// (`check(..)`), outside macro arguments, strings, comments, closures,
+    /// `async` blocks and nested `fn` items.
+    pub(crate) direct_calls: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
+    /// Fns carrying a `cfg` or `cfg_attr` attribute anywhere in their
+    /// syntax (outer, inner `#![..]`, or on a statement), whitespace
+    /// ignored: such a fn may not be the one that compiles.
+    pub(crate) fns_with_cfg: std::collections::BTreeSet<(usize, String)>,
+    /// Names each fn binds inside itself: every identifier pattern
+    /// (parameters, `let`, `for`, `if let`, closure and match bindings)
+    /// and every named node in its body (`const`, `static`, nested `fn`,
+    /// tuple `struct`, enum variant, macro, and so on).
+    pub(crate) bound_names: BTreeMap<(usize, String), std::collections::BTreeSet<String>>,
+}
+
+/// The module scopes of `text`'s functions. `None` when the file does not
+/// parse cleanly, so a caller that needs module scope fails closed.
+pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {
+    let parse = parse_clean_source_file(text)?;
+    let line_index = LineIndex::new(text);
+    let mut scopes = ModuleItemScopes::default();
+    for function in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+    {
+        let (Some(name), Some(fn_token)) = (function.name(), function.fn_token()) else {
+            continue;
+        };
+        let key = (
+            line_index.line(fn_token.text_range().start()),
+            name.text().to_string(),
+        );
+        if function
+            .syntax()
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attribute| {
+                let compact: String = attribute
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect();
+                compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
+            })
+        {
+            scopes.fns_with_cfg.insert(key.clone());
+        }
+        let bound = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| {
+                ast::AnyHasName::cast(node)
+                    .and_then(|named| named.name())
+                    .map(|name| name.text().to_string())
+            })
+            .collect();
+        scopes.bound_names.insert(key.clone(), bound);
+        if let Some(body) = function.body() {
+            if body
+                .syntax()
+                .descendants()
+                .any(|node| ast::Use::can_cast(node.kind()))
+            {
+                scopes.fns_with_local_use.insert(key.clone());
+            }
+            if function.async_token().is_some()
+                || body.syntax().descendants().any(|node| {
+                    ast::ClosureExpr::can_cast(node.kind())
+                        || ast::BlockExpr::cast(node)
+                            .is_some_and(|block| block.async_token().is_some())
+                })
+            {
+                scopes.fns_with_deferred_code.insert(key.clone());
+            }
+            let called = body
+                .syntax()
+                .descendants()
+                .filter_map(ast::CallExpr::cast)
+                // A call inside a closure, `async` block or nested `fn` may
+                // never run.
+                .filter(|call| {
+                    !call
+                        .syntax()
+                        .ancestors()
+                        .take_while(|node| node != body.syntax())
+                        .any(|node| {
+                            ast::ClosureExpr::can_cast(node.kind())
+                                || ast::Fn::can_cast(node.kind())
+                                || ast::BlockExpr::cast(node)
+                                    .is_some_and(|block| block.async_token().is_some())
+                        })
+                })
+                .filter_map(|call| match call.expr()? {
+                    ast::Expr::PathExpr(path) => {
+                        let path = path.path()?;
+                        if path.qualifier().is_some() {
+                            return None;
+                        }
+                        Some(path.segment()?.name_ref()?.text().to_string())
+                    }
+                    _ => None,
+                })
+                .collect();
+            scopes.direct_calls.insert(key.clone(), called);
+        }
+        let Some(parent) = function.syntax().parent() else {
+            continue;
+        };
+        let module = match parent.kind() {
+            ra_ap_syntax::SyntaxKind::SOURCE_FILE => None,
+            ra_ap_syntax::SyntaxKind::ITEM_LIST => {
+                match parent.parent().and_then(ast::Module::cast) {
+                    Some(module) => {
+                        let range = module.syntax().text_range();
+                        Some((
+                            line_index.line(range.start()),
+                            line_index.line_for_range_end(range.end()),
+                        ))
+                    }
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+        scopes.item_fns.insert(key, module);
+    }
+    Some(scopes)
+}
+
+/// How many times the first `fn` item in `fn_text` binds `name`: every
+/// named node inside it (parameter and `let`/`for`/`if let`/closure/match
+/// identifier patterns, nested items), the fn's own name excluded. `None`
+/// when the text does not parse cleanly or holds no `fn`, so a caller that
+/// needs an exact binding count fails closed. Identifiers bound inside a
+/// macro invocation's token tree are not parsed patterns and are not
+/// counted here; callers keep a lexical scan for those.
+pub(crate) fn fn_name_binding_count(fn_text: &str, name: &str) -> Option<usize> {
+    let parse = parse_clean_source_file(fn_text)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    Some(
+        function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+            .filter(|bound| bound.text() == name)
+            .count(),
+    )
+}
+
 pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
     let (_, arguments) = expression.split_once('!')?;
     let arguments = arguments.trim();
@@ -186,8 +359,12 @@ impl RustSyntaxAdapter for RaRustSyntaxAdapter {
         summarize_file_with_parser(path, text)
     }
 
-    fn changed_nodes(&self, facts: &FileFacts, ranges: &[TextRange]) -> Vec<SyntaxNodeFact> {
-        owner_changed_nodes(facts, ranges)
+    fn changed_nodes(
+        &self,
+        functions: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
+        ranges: &[TextRange],
+    ) -> Vec<SyntaxNodeFact> {
+        owner_changed_nodes(functions, ranges)
     }
 }
 
@@ -767,6 +944,10 @@ pub(crate) struct GovernedCfgTestModule {
     pub(crate) body_start: Option<usize>,
     pub(crate) close_brace_start: Option<usize>,
     pub(crate) is_inline: bool,
+    /// Every outer and inner attribute on the module is known to be enabled
+    /// in a plain `cargo test` build. `false` covers feature, target and
+    /// other gates whose state ripr does not assume.
+    pub(crate) enabled_in_test_build: bool,
 }
 
 /// Parser-owned inventory of governed `cfg(test)` modules in one source file.
@@ -776,7 +957,31 @@ pub(crate) struct GovernedCfgTestModule {
 /// guessing from line text.
 pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgTestModule>> {
     let parse = parse_clean_source_file(source)?;
+    Some(governed_cfg_test_modules_in(&parse.tree()))
+}
+
+/// Module facts new-test-target admission reads from one source file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InlineUnitModuleLayout {
+    /// [`governed_cfg_test_modules`] for the file.
+    pub(crate) modules: Vec<GovernedCfgTestModule>,
+    /// Every function's enclosing non-cfg-test module names, keyed by start
+    /// line, as [`production_owner_module_path`] answers one line at a time.
+    pub(crate) owner_module_paths: BTreeMap<usize, Vec<String>>,
+}
+
+/// [`InlineUnitModuleLayout`] from one parse of `source`. `None` when the
+/// file is not parser-valid.
+pub(crate) fn inline_unit_module_layout(source: &str) -> Option<InlineUnitModuleLayout> {
+    let parse = parse_clean_source_file(source)?;
     let file = parse.tree();
+    Some(InlineUnitModuleLayout {
+        modules: governed_cfg_test_modules_in(&file),
+        owner_module_paths: production_owner_module_paths_in(&file, &LineIndex::new(source)),
+    })
+}
+
+fn governed_cfg_test_modules_in(file: &ast::SourceFile) -> Vec<GovernedCfgTestModule> {
     let mut modules = Vec::new();
     for module in file.syntax().descendants().filter_map(ast::Module::cast) {
         if module
@@ -798,6 +1003,18 @@ pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgT
         };
         let parent_modules = ancestor_module_names(&module);
         let item_start = usize::from(module.syntax().text_range().start());
+        let enabled_in_test_build = module
+            .attrs()
+            .chain(
+                module
+                    .item_list()
+                    .into_iter()
+                    .flat_map(|items| items.attrs()),
+            )
+            .all(|attr| {
+                cfg_predicates::attribute_test_build_availability(&attr.syntax().text().to_string())
+                    == Some(true)
+            });
         match module.item_list() {
             Some(items) => {
                 let Some(open) = items.l_curly_token() else {
@@ -813,6 +1030,7 @@ pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgT
                     body_start: Some(usize::from(open.text_range().end())),
                     close_brace_start: Some(usize::from(close.text_range().start())),
                     is_inline: true,
+                    enabled_in_test_build,
                 });
             }
             None => modules.push(GovernedCfgTestModule {
@@ -822,6 +1040,7 @@ pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgT
                 body_start: None,
                 close_brace_start: None,
                 is_inline: false,
+                enabled_in_test_build,
             }),
         }
     }
@@ -831,44 +1050,54 @@ pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgT
             .then(left.name.cmp(&right.name))
             .then(left.item_start.cmp(&right.item_start))
     });
-    Some(modules)
+    modules
 }
 
 /// Enclosing module names of the production function on `start_line`, excluding
 /// cfg-test modules. `None` when the file does not parse or the function is
 /// missing.
+#[cfg(test)]
 pub(crate) fn production_owner_module_path(source: &str, start_line: usize) -> Option<Vec<String>> {
     let parse = parse_clean_source_file(source)?;
-    let line_index = LineIndex::new(source);
-    parse.tree().syntax().descendants().find_map(|node| {
-        let function = ast::Fn::cast(node)?;
+    production_owner_module_paths_in(&parse.tree(), &LineIndex::new(source)).remove(&start_line)
+}
+
+/// Enclosing non-cfg-test module names of every function, keyed by start
+/// line. When two functions start on one line, the first in source order
+/// wins, matching a preorder search for that line.
+fn production_owner_module_paths_in(
+    file: &ast::SourceFile,
+    line_index: &LineIndex,
+) -> BTreeMap<usize, Vec<String>> {
+    let mut paths = BTreeMap::new();
+    for function in file.syntax().descendants().filter_map(ast::Fn::cast) {
         let line = function
             .fn_token()
             .map(|token| line_index.line(token.text_range().start()))
             .unwrap_or_else(|| line_index.line(function.syntax().text_range().start()));
-        if line != start_line {
-            return None;
-        }
-        let mut modules = Vec::new();
-        for module in function
-            .syntax()
-            .ancestors()
-            .skip(1)
-            .filter_map(ast::Module::cast)
-        {
-            if module_attributes_require_test(&module) {
-                continue;
+        paths.entry(line).or_insert_with(|| {
+            let mut modules = Vec::new();
+            for module in function
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .filter_map(ast::Module::cast)
+            {
+                if module_attributes_require_test(&module) {
+                    continue;
+                }
+                if let Some(name) = module.name() {
+                    modules.push(name.text().to_string());
+                }
             }
-            if let Some(name) = module.name() {
-                modules.push(name.text().to_string());
-            }
-        }
-        modules.reverse();
-        Some(modules)
-    })
+            modules.reverse();
+            modules
+        });
+    }
+    paths
 }
 
-fn module_attributes_require_test(module: &ast::Module) -> bool {
+pub(super) fn module_attributes_require_test(module: &ast::Module) -> bool {
     cfg_predicates::attributes_require_test(
         module.attrs().map(|attr| attr.syntax().text().to_string()),
     )
@@ -1569,13 +1798,12 @@ pub(super) fn slice_macro_call_text(text: &str, start: TextSize, end: TextSize) 
 }
 
 fn owner_changed_nodes(
-    facts: &crate::analysis::facts::FileFacts,
+    functions: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
     ranges: &[TextRange],
 ) -> Vec<SyntaxNodeFact> {
     let mut nodes = Vec::new();
     for range in ranges {
-        let mut owners = facts
-            .functions
+        let mut owners = functions
             .iter()
             .filter(|function| {
                 ranges_overlap(
@@ -2102,21 +2330,22 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             end_column: 80,
         }];
 
+        let facts = crate::analysis::facts::FileFacts {
+            path: std::path::PathBuf::from("nonexistent.rs"),
+            functions: vec![],
+            tests: vec![],
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            probe_shapes: vec![],
+            used_lexical_fallback: false,
+            module_declarations: Vec::new(),
+            unresolved_property_macros: Vec::new(),
+            role_provenance: Default::default(),
+            source: String::new(),
+        };
         let nodes = adapter.changed_nodes(
-            &crate::analysis::facts::FileFacts {
-                path: std::path::PathBuf::from("nonexistent.rs"),
-                functions: vec![],
-                tests: vec![],
-                calls: vec![],
-                returns: vec![],
-                literals: vec![],
-                probe_shapes: vec![],
-                used_lexical_fallback: false,
-                module_declarations: Vec::new(),
-                unresolved_property_macros: Vec::new(),
-                role_provenance: Default::default(),
-                source: String::new(),
-            },
+            crate::analysis::facts::FactSlice::from_slice(&facts.functions),
             &ranges,
         );
 

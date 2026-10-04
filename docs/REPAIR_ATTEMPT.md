@@ -234,6 +234,14 @@ A terminal attempt's after phase does not run again. Rerunning it is refused wit
 
 The after phase also retains the terminal static result under the attempt directory (`artifacts/agent-receipt.json` and the `agent_verify` document it was built from), bound by role, path, byte count, and SHA-256 in `attempt.json` as `terminal_artifacts`. Those files are the surviving authority for that attempt. `target/ripr/reports/agent-receipt.json` remains a one-slot compatibility projection of the latest finish; replacing, deleting, or corrupting it must not erase an earlier attempt's retained result. `ripr agent status` prefers the attempt-local receipt. Legacy manifests without `terminal_artifacts` still read the compatibility file: an exact matching receipt is used, and a receipt bound to another attempt stays `unconfirmed` with `receipt.superseded_by` because that earlier outcome cannot be reconstructed.
 
+## Discovery and resume (`ripr agent status --attempt <id>`, RIPR-SPEC-0217, #4798)
+
+`ripr agent status` is the attempt-first discovery and resume surface. Without `--attempt` it enumerates every manifest in the resolved store (RIPR-SPEC-0195), validates each row independently, and selects a next command only when that choice is unambiguous; several active attempts are never resolved by newest, first, same seam, or most recently modified. One refused row poisons the whole listing: the inventory names it in `warnings[]`, withholds every candidate, and selects no next command until the row is repaired or removed — while exact `--attempt` selection of a valid row in the same store still reads that row alone. With `--attempt <id>` a fresh process selects exactly one attempt and reads one typed state from repository artifacts alone: the manifest's operational state, the status class (`awaiting_edit`, `prepared`, `finished_current`, `finished_historical`, `stale`, `incomparable`, `failed`, `limited`, `corrupt_or_unavailable`, `legacy_compatibility_only`), a `current`/`historical`/`unknown` currentness posture derived from `HEAD`, and one exact next or recovery action.
+
+The class is never stronger than the receipt the attempt retained. `finished_current` requires a digest-bound attempt-local receipt whose reading shows the gap closed at the current `HEAD`; a moved `HEAD` downgrades the same retained result to `finished_historical`, which stays readable but is never presented as current proof. Missing, tampered, or unbound attempt-local terminal evidence reads `corrupt_or_unavailable` and never falls back to another attempt's compatibility receipt. Legacy manifests without `terminal_artifacts` read `legacy_compatibility_only`: the one-slot compatibility projection is exactly the strength they earned. A missing or malformed selected manifest is also typed `corrupt_or_unavailable` naming the refused artifact, so one bad row cannot hide or strengthen the store's other rows.
+
+Status is read-only on both surfaces: inspecting an attempt cannot finish, restart, rewrite, or delete it, and a resumed attempt receives no stronger state than its receipt shows. Human Markdown and normalized JSON derive from one DTO, so both surfaces agree and reordered directory traversal produces byte-stable output. See `docs/OUTPUT_SCHEMA.md` ("Exact attempt selection") for the field contract.
+
 ## Compatibility outputs
 
 The composed after command still writes the established projections:
@@ -289,3 +297,39 @@ RIPR does not select “the latest” attempt, reconstruct an attempt from mutab
 ## Boundary
 
 A repair attempt prepares and verifies evidence. RIPR does not author or apply the focused test edit, call an external model provider, run mutation testing, prove test adequacy or correctness, authorize merge, or turn static evidence into runtime proof.
+
+### Inline-only repositories are out of repair scope (#5210)
+
+Bounded repair authorizes whole files only, and only files matching the
+test-surface path convention (`tests`/`test` components, `*_test` and
+`*_tests` Rust/Python names, `test_*.py`, TypeScript test files): a
+production file that matches the convention is eligible as a whole-file
+target, and inline `#[cfg(test)]` modules in a file that does not match
+never qualify it. A repository whose only tests are inline in
+non-test-surface files can never start a bounded repair, on any surface.
+This is a permanent scope boundary, not a missing feature queued behind
+other work: the repair workflow consumes only file-level cage authority
+(#3163) and does not integrate the existing inline-module region cage
+(`edit_cage/inline_test_region`, RIPR-SPEC-0181). Refusals stay loud and
+typed on every surface; no surface promises what another refuses:
+
+- CLI: `ripr agent repair --phase before` refuses with `has no test file
+  ripr can route a repair to` and names the packet field below;
+- MCP: `ripr_prepare_repair` returns `repair_packet_ready: false` with
+  ineligibility `fix_site_not_test_surface` once the earlier gates
+  (candidate actionability, discriminator, static limits, established
+  fix site) pass, and creates nothing; earlier gates keep their own
+  refusal reasons;
+- pilot: the summary ranks seams for inspection by hand with no repair
+  start, and the focused-test line names the missing test target;
+- packet: `recommended_test.file` is `"not_applicable"` when no target
+  was proposed; an inline-module proposal instead names the production
+  file with target kind `NewInlineTestModule` and a demoted
+  inspection-only task. Both states carry an empty
+  `allowed_edit_surface` with the seam's production file under
+  `forbidden_files`.
+
+To gain a repair target, add the focused test as a separate test-surface
+file (a `tests/` path or `*_test.rs` name) in the crate that owns the
+seam, then rerun pilot. Until then, inspect the ranked seams by hand:
+they are still worth reading, just not repairable through RIPR.

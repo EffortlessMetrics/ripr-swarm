@@ -52,9 +52,9 @@ fn index_from_files_at_stamp(
     let mut index = RustIndex::default();
     for (path, source) in files {
         let facts = adapter.summarize_file(path, source)?;
-        index.tests.extend(facts.tests.iter().cloned());
-        index.functions.extend(facts.functions.iter().cloned());
-        index.files.insert(path.clone(), facts);
+        index.extend_tests(facts.tests.iter().cloned());
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path.clone(), facts);
     }
     let fixture_root = claim_index_fixture_root(stamp)?;
     fs::write(
@@ -69,9 +69,12 @@ fn index_from_files_at_stamp(
         }
         fs::write(full, source).map_err(|error| error.to_string())?;
     }
-    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         &fixture_root,
-        &index.files,
+        index
+            .files()
+            .iter()
+            .map(|(path, facts)| (path, facts.data().source.as_str())),
     ));
     Ok(FixtureIndex {
         index,
@@ -210,7 +213,7 @@ fn simultaneous_same_stamp_indexes_keep_distinct_live_target_authority() -> Resu
             .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
             .ok_or_else(|| "fixture lost its predicate seam".to_string())?;
         let test = fixture
-            .tests
+            .tests()
             .iter()
             .find(|test| test.name == "score_boundary")
             .ok_or_else(|| "fixture lost its indexed test".to_string())?;
@@ -253,7 +256,7 @@ fn simultaneous_same_stamp_indexes_keep_distinct_live_target_authority() -> Resu
         .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
         .ok_or_else(|| "stale fixture lost its indexed seam".to_string())?;
     let test = second
-        .tests
+        .tests()
         .iter()
         .find(|test| test.name == "score_boundary")
         .ok_or_else(|| "stale fixture lost its indexed test".to_string())?;
@@ -392,7 +395,7 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
             return Err(format!("current target `{}` was rejected", test.name));
         }
     }
-    let cache = context.source_digest_cache.borrow();
+    let cache = memo(&context.source_digest_cache);
     if cache.len() != 1 || cache.get(file.as_path()) != Some(&authority_digest) {
         return Err(format!(
             "expected one memoized digest equal to the authority digest, got {cache:?}"
@@ -401,10 +404,7 @@ fn production_target_evidence_hashes_each_test_file_once_per_context() -> Result
     drop(cache);
     // Reuse, not just presence: a poisoned memo entry must decide the next
     // validation, so a lookup that recomputes the digest would be caught.
-    context
-        .source_digest_cache
-        .borrow_mut()
-        .insert(file.as_path(), "sha256:poisoned".to_string());
+    memo(&context.source_digest_cache).insert(file.as_path(), "sha256:poisoned".to_string());
     if test_target_evidence(&context, &seam, related[0], RelationReason::DirectOwnerCall).is_some()
     {
         return Err("validation recomputed the digest instead of reusing the memo".to_string());
@@ -486,7 +486,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
     let (mut index, seam, source) = authority_fixture_target(&root)?;
     let file = PathBuf::from("src/lib.rs");
     let test = index
-        .files
+        .files()
         .get(&file)
         .and_then(|facts| facts.tests.first())
         .cloned()
@@ -574,7 +574,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
         .ok_or_else(|| "missing file authority".to_string())?
         .package_identity = original_package;
     let duplicate = index
-        .files
+        .files()
         .get(&file)
         .and_then(|facts| {
             facts
@@ -584,12 +584,11 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
                 .cloned()
         })
         .ok_or_else(|| "missing test function".to_string())?;
-    index
-        .files
-        .get_mut(&file)
-        .ok_or_else(|| "missing file facts".to_string())?
-        .functions
-        .push(duplicate);
+    let mut facts = index
+        .owned_file(&file)
+        .ok_or_else(|| "missing file facts".to_string())?;
+    facts.functions.push(duplicate);
+    index.insert_file_only(file.clone(), facts);
     if target_for_index(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
         return Err("duplicate target identity was accepted".to_string());
     }
@@ -1040,9 +1039,12 @@ fn call_arguments_uses_identifier_boundary_for_callee_name() {
     );
 }
 
+/// The evidence phases ride the shared trace-line owner (#5213), so these
+/// assert the *evidence* phase labels reach the wire in that one shape rather
+/// than pinning a second copy of the format.
 #[test]
 fn latency_trace_line_uses_repo_exposure_trace_shape() {
-    let line = latency_trace_line(
+    let line = crate::analysis::resource_cost::latency_trace_line(
         "evidence_for_seams_progress",
         "processed_500_of_12337",
         Duration::from_millis(42),
@@ -1056,7 +1058,11 @@ fn latency_trace_line_uses_repo_exposure_trace_shape() {
 
 #[test]
 fn latency_trace_line_can_report_evidence_context_start() {
-    let line = latency_trace_line("evidence_context", "start_seams_12337", Duration::ZERO);
+    let line = crate::analysis::resource_cost::latency_trace_line(
+        "evidence_context",
+        "start_seams_12337",
+        Duration::ZERO,
+    );
 
     assert_eq!(
         line,
@@ -2597,6 +2603,106 @@ fn import_only_mentions_owner() {
     Ok(())
 }
 
+fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub struct Quote { pub amount: i32, pub tier: u8 }
+
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+pub fn quote(amount: i32) -> Quote {
+    Quote { amount, tier: if amount > 500 { 2 } else { 1 } }
+}
+
+pub fn parse(value: &str) -> Result<i32, String> {
+    if value.is_empty() { return Err("empty".to_string()); }
+    value.parse::<i32>().map_err(|err| err.to_string())
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+#[test]
+fn quote_tier() {
+    let q = quote(600);
+    assert!(q.tier > 0);
+}
+#[test]
+fn parse_rejects_empty() {
+    assert!(parse("").is_err());
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    if seams.len() < 4 {
+        return Err(format!(
+            "fixture should yield several seams, got {}",
+            seams.len()
+        ));
+    }
+    Ok((index, seams))
+}
+
+#[test]
+fn evidence_pass_output_is_identical_on_one_and_many_threads() -> Result<(), String> {
+    let (index, seams) = parallel_evidence_fixture()?;
+    let run = |threads: usize| -> Result<String, String> {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .map_err(|err| format!("pool: {err}"))?;
+        let evidence = pool.install(|| evidence_for_seams(&seams, &index));
+        serde_json::to_string(&evidence).map_err(|err| format!("encode: {err}"))
+    };
+    let serial = run(1)?;
+    let parallel = run(4)?;
+    if serial != parallel {
+        return Err("parallel evidence differs from the single-thread pass".into());
+    }
+    if serial.matches("seam_id").count() != seams.len() {
+        return Err("every seam must produce evidence".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_pass_workers_inherit_the_callers_cancellation() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    let (index, seams) = parallel_evidence_fixture()?;
+    // The test thread is not a rayon worker, so the parallel pass injects
+    // every seam into the global pool and none of them runs on the thread
+    // that holds the token. That is the production shape: callers install
+    // the token on their own thread before analysis.
+    if rayon::current_thread_index().is_some() {
+        return Err("the caller must not be a rayon worker".into());
+    }
+    // Build the context outside both scopes: a cancelled token fails the
+    // context build, which would return nothing before any worker runs.
+    let pass = EvidencePass::new(&index);
+    let live = AnalysisCancellationToken::new();
+    let completed = cancellation::with_token(&live, || pass.evidence_for(&seams));
+    if completed.len() != seams.len() {
+        return Err("a live token must not drop seams".into());
+    }
+    let cancelled = AnalysisCancellationToken::new();
+    cancelled.cancel(AnalysisAbortKind::Cancelled);
+    // Workers that did not inherit the token would see no cancellation and
+    // evaluate every seam.
+    let evidence = cancellation::with_token(&cancelled, || pass.evidence_for(&seams));
+    if !evidence.is_empty() {
+        return Err(format!(
+            "cancelled pass evaluated {} seams on rayon workers",
+            evidence.len()
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn given_compact_evidence_when_direct_owner_call_reaches_error_seam_then_activation_is_yes()
 -> Result<(), String> {
@@ -3518,7 +3624,7 @@ mod tests {
     assert_eq!(
         inline_target.symbol_id,
         inline_index
-            .files
+            .files()
             .get(&prod)
             .and_then(|file| {
                 file.functions
@@ -3603,7 +3709,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         let_bindings: Vec::new(),
     };
     let mut index = RustIndex::default();
-    index.files.insert(
+    index.insert_file_only(
         file.clone(),
         crate::analysis::facts::FileFacts {
             path: file.clone(),
@@ -5517,7 +5623,7 @@ mod nested {
         .as_ref()
         .ok_or_else(|| "nested pipeline relation lost its indexed test target".to_string())?;
     let nested_function = index
-        .tests
+        .tests()
         .iter()
         .find(|test| test.name == "nested_module_test_observes_pipeline_target")
         .ok_or_else(|| "nested test must be indexed".to_string())?;
@@ -6978,7 +7084,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         ("exercise_after", "gamma"),
     ] {
         let function = index
-            .functions
+            .functions()
             .iter()
             .find(|function| {
                 function.name == helper
@@ -7024,7 +7130,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         ("exercise_after", "calculate", "pipeline"),
     ] {
         let function = index
-            .functions
+            .functions()
             .iter()
             .find(|function| {
                 function.name == helper
@@ -7092,7 +7198,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         "pipeline helper relation lost its indexed test target after presence check".to_string()
     })?;
     let pipeline_function = index
-        .functions
+        .functions()
         .iter()
         .find(|function| {
             function.source_role.is_evidence_role()
@@ -7144,7 +7250,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         "report helper relation lost its indexed test target after presence check".to_string()
     })?;
     let report_function = index
-        .functions
+        .functions()
         .iter()
         .find(|function| {
             function.source_role.is_evidence_role()
@@ -11148,8 +11254,8 @@ fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_
              owner={owner_fn:?} owner_stem_norm={:?} owner_stem_native={:?} \
              test_stem_norm={:?} test_stem_native={:?}",
             evidence.related_tests,
-            index.files.keys().collect::<Vec<_>>(),
-            index.tests.len(),
+            index.files().keys().collect::<Vec<_>>(),
+            index.tests().len(),
             context.tests_by_file_stem.keys().collect::<Vec<_>>(),
             predicate.file(),
             predicate.display_line(),
@@ -11590,7 +11696,7 @@ fn given_affinity_union_past_the_limit_then_tests_asserting_more_target_tokens_w
         .collect::<Vec<_>>();
     assert_eq!(
         affinity.len(),
-        crowded_relation_limit(index.tests.len()),
+        crowded_relation_limit(index.tests().len()),
         "{affinity:?}"
     );
     assert!(
@@ -13536,7 +13642,7 @@ fn given_unresolved_identifier_arg_when_extracting_values_then_no_observed_value
 #[test]
 fn same_file_test_helper_call_counts_as_owner_call_evidence() {
     let file = PathBuf::from("src/pricing.rs");
-    let index = RustIndex {
+    let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![FunctionSummary {
                 id: crate::domain::SymbolId("src/pricing.rs::discounted_total".to_string()),
                 name: "discounted_total".to_string(),
@@ -13600,8 +13706,8 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
             }],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
     let context = CompactGripContext::new(&index);
 
@@ -14156,9 +14262,9 @@ fn index_from_edition2021_diagnostics_workspace(
     let mut index = RustIndex::default();
     for (path, source) in files {
         let facts = adapter.summarize_file(path, source)?;
-        index.tests.extend(facts.tests.iter().cloned());
-        index.functions.extend(facts.functions.iter().cloned());
-        index.files.insert(path.clone(), facts);
+        index.extend_tests(facts.tests.iter().cloned());
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path.clone(), facts);
     }
     let fixture_root = claim_index_fixture_root(stamp)?;
     fs::write(
@@ -14192,9 +14298,12 @@ fn index_from_edition2021_diagnostics_workspace(
         }
         fs::write(full, source).map_err(|error| error.to_string())?;
     }
-    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         &fixture_root,
-        &index.files,
+        index
+            .files()
+            .iter()
+            .map(|(path, facts)| (path, facts.data().source.as_str())),
     ));
     Ok(FixtureIndex {
         index,
@@ -14895,13 +15004,13 @@ mod tests {
     assert_eq!(helper_relation.oracle_strength, OracleStrength::Weak);
     assert!(
         !index
-            .tests
+            .tests()
             .iter()
             .any(|test| test.name == "exercise_device_labels"),
         "a plain helper must not become an executable TestFact selector"
     );
     assert!(
-        index.functions.iter().any(|function| {
+        index.functions().iter().any(|function| {
             function.name == "exercise_device_labels"
                 && function.source_role == FunctionSourceRole::CfgTestModule
         }),
@@ -14952,7 +15061,7 @@ mod other {
     let index = index_from_files(&[(source, source_src)])?;
     assert_eq!(
         index
-            .tests
+            .tests()
             .iter()
             .filter(|test| test.name == "exercise_device_labels")
             .count(),
@@ -14961,7 +15070,7 @@ mod other {
     );
     assert_eq!(
         index
-            .functions
+            .functions()
             .iter()
             .filter(|function| function.name == "exercise_device_labels")
             .count(),
@@ -15222,7 +15331,7 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
         ("exercise_tail", "compute_alpha", "alpha"),
     ] {
         let function = index
-            .functions
+            .functions()
             .iter()
             .find(|function| function.name == helper && function.file == support)
             .ok_or_else(|| format!("missing helper identity {helper}"))?;
@@ -15304,7 +15413,7 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
         .as_ref()
         .ok_or_else(|| "nested helper relation lost its indexed test target".to_string())?;
     let test_function = index
-        .functions
+        .functions()
         .iter()
         .find(|function| {
             function.source_role.is_evidence_role()
@@ -15399,7 +15508,7 @@ pub fn exercise_tail() -> String {
         .collect::<BTreeSet<_>>();
     let owners_for = |helper: &str| -> Result<BTreeSet<String>, String> {
         let function = index
-            .functions
+            .functions()
             .iter()
             .find(|function| function.name == helper && function.file == support)
             .ok_or_else(|| format!("missing helper identity {helper}"))?;
@@ -16560,7 +16669,7 @@ fn duplicate_evidence_function_identity_invalidates_target() -> Result<(), Strin
     let mut case = refresh_plan_case(WEAK_SINGLE_BINDING_REFRESH_TEST)?;
     route_must_be_ready(&case)?;
     let file = PathBuf::from("src/diagnostics.rs");
-    let Some(facts) = case.index.files.get_mut(&file) else {
+    let Some(mut facts) = case.index.owned_file(&file) else {
         return Err("lost indexed file facts".to_string());
     };
     let Some(function) = facts.functions.iter().find(|function| {
@@ -16571,7 +16680,8 @@ fn duplicate_evidence_function_identity_invalidates_target() -> Result<(), Strin
     };
     let duplicate = function.clone();
     facts.functions.push(duplicate.clone());
-    case.index.functions.push(duplicate);
+    case.index.insert_file_only(file, facts);
+    case.index.push_function(duplicate);
     let evidence = evidence_for_seam(&case.seam, &case.index);
     let classified = ClassifiedSeam {
         seam: case.seam.clone(),
@@ -16666,5 +16776,261 @@ fn observes_items() {
         "the sibling collection must not count as the collection sink: {:?}",
         wrong.propagate
     );
+    Ok(())
+}
+
+/// #5411: the reach stage and grip class for the `amount > 100` seam in
+/// `src/lib.rs`, given the crate's sources.
+fn unresolved_reach_case(files: &[(&str, &str)]) -> Result<(StageEvidence, SeamGripClass), String> {
+    let files: Vec<(PathBuf, &str)> = files
+        .iter()
+        .map(|(path, source)| (PathBuf::from(path), *source))
+        .collect();
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|s| {
+            s.kind() == SeamKind::PredicateBoundary && s.expression().contains("amount > 100")
+        })
+        .ok_or_else(|| format!("`amount > 100` seam present in {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.related_tests.is_empty(),
+        "fixture must leave the seam without related tests: {:?}",
+        evidence.related_tests
+    );
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    Ok((evidence.reach, class))
+}
+
+#[test]
+fn seam_reached_by_no_test_path_stays_ungripped() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub fn total(n: u32) -> u32 { n + 1 }\n\
+             fn surcharge(amount: u32) -> bool { amount > 100 }\n",
+        ),
+        (
+            "tests/total.rs",
+            "#[test] fn totals() { assert_eq!(ripr_fixture::total(1), 2); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub fn checkout(amount: u32) -> u32 { if surcharge(amount) { amount + 5 } else { amount } }\n\
+             fn surcharge(amount: u32) -> bool { amount > 100 }\n",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { let total = ripr_fixture::checkout(150); assert_eq!(total, 155); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach
+            .summary
+            .contains("rust_integration_public_api_path_unresolved")
+            && reach
+                .summary
+                .contains("`checks_out` (tests/checkout.rs:1) calls `checkout`"),
+        "the limit and its witness are named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn trait_method_of_a_type_tests_use_is_opaque_not_ungripped() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Display for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn renders() { assert_eq!(Amount(150).to_string(), \"large\"); }\n",
+        ),
+        // Sorts first but only names the type; the witness prefers the test
+        // that builds a value of it.
+        (
+            "tests/a_autotrait.rs",
+            "fn assert_send<T: Send>() {}\n\
+             #[test] fn send() { assert_send::<ripr_fixture::Amount>(); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("(trait dispatch)")
+            && reach.summary.contains("trait method of `Amount`")
+            && reach
+                .summary
+                .contains("test `renders` (tests/amount.rs:2) uses `Amount`"),
+        "the limit and its witness are named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn trait_method_of_a_type_no_test_reaches_stays_ungripped() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub fn total(n: u32) -> u32 { n + 1 }\n\
+             pub struct Amount(pub u32);\n\
+             impl std::fmt::Display for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/total.rs",
+            "#[test] fn totals() { assert_eq!(ripr_fixture::total(1), 2); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn helper_run_only_through_trait_dispatch_is_opaque_not_ungripped() -> Result<(), String> {
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Display for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     f.write_str(label(self.0))\n\
+                 }\n\
+             }\n\
+             fn label(amount: u32) -> &'static str { if amount > 100 { \"large\" } else { \"small\" } }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn renders() { assert_eq!(Amount(150).to_string(), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("(trait dispatch)")
+            && reach
+                .summary
+                .contains("`label` may run from `fmt` (src/lib.rs:3)"),
+        "the dispatch root is named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(), String> {
+    // No test or test-reached body names `Inner`; `Outer::fmt` delegates to it.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "#[derive(Default)]\n\
+             struct Inner(u32);\n\
+             impl std::fmt::Display for Inner {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             #[derive(Default)]\n\
+             pub struct Outer { inner: Inner }\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     self.inner.fmt(f)\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::Outer;\n\
+             #[test] fn renders() { assert_eq!(Outer::default().to_string(), \"small\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("(trait dispatch)")
+            && reach
+                .summary
+                .contains("`fmt` may run from `fmt` (src/lib.rs:12), a trait method of `Outer`"),
+        "the delegating root is named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+/// Pilot accuracy (mutation spot check, humantime `item_plural`): a boundary
+/// reached only through trait dispatch has no observed activation value. The
+/// boundary hint stays as guidance, but the seam is `activation_unknown`, not
+/// a `weakly_gripped` gap pilot would rank first. Real mutants were caught.
+#[test]
+fn boundary_with_unobserved_activation_is_activation_unknown_and_keeps_its_hint()
+-> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let source = r#"
+use std::fmt;
+pub struct Plural(pub u64);
+fn suffix(value: u64) -> &'static str {
+    if value > 1 { "s" } else { "" }
+}
+impl fmt::Display for Plural {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "item{}", suffix(self.0))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::Plural;
+    #[test]
+    fn plural_suffix() {
+        assert_eq!(Plural(3).to_string(), "items");
+    }
+}
+"#;
+    let index = index_from_files(&[(path.clone(), source)])?;
+    let seams = inventory_seams_from_index(&[path], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "boundary seam must be inventoried".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    if evidence.activate.state != StageState::Unknown
+        || evidence.missing_discriminators.is_empty()
+        || class != SeamGripClass::ActivationUnknown
+    {
+        return Err(format!(
+            "unobserved activation must keep the hint but not grade a weak grip: class={class:?}, activate={:?}, missing={:?}",
+            evidence.activate.state, evidence.missing_discriminators
+        ));
+    }
     Ok(())
 }

@@ -27,7 +27,7 @@ pub(super) fn apply_rust_value_propagation_limit(
 ) {
     if finding.class != ExposureClass::StaticUnknown
         || finding.static_limit_kind.is_some()
-        || finding.related_tests.is_empty()
+        || finding.oracle_related_tests().next().is_none()
     {
         return;
     }
@@ -46,7 +46,7 @@ pub(super) fn apply_rust_value_propagation_limit(
         return;
     };
     let Some(owner) = index
-        .functions
+        .functions()
         .iter()
         .find(|function| &function.id == owner_id)
     else {
@@ -535,6 +535,7 @@ mod tests {
                 oracle_strength: OracleStrength::None,
                 relation_reason: None,
                 relation_confidence: None,
+                miss: None,
             }],
             recommended_next_step: None,
             language: None,
@@ -577,10 +578,10 @@ mod tests {
             "    let end = input.rfind(delim).map_or(0, |idx| idx);\n",
             "    if end == start { return 1; }\n",
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner_function("src/lib.rs::split", "split", body)],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         let mut named = static_unknown_finding(expression, "src/lib.rs::split");
         let probe = named.probe.clone();
@@ -616,10 +617,10 @@ mod tests {
             "    let end = input.rfind(delim).map_or(0, |idx| idx);\n",
             "    if end == start { return 1; }\n",
         );
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner_function("src/lib.rs::split", "split", body)],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         let mut no_tests = static_unknown_finding(expression, "src/lib.rs::split");
         no_tests.related_tests.clear();

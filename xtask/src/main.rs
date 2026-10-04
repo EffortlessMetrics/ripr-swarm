@@ -34,12 +34,15 @@ mod driver;
 mod evidence_audit;
 mod evidence_promotion;
 mod evidence_quality;
+mod first_run;
 mod fixture_contracts;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod identity_registry;
+mod issue_lifecycle_attempt;
+mod issue_lifecycle_intake;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
@@ -5375,19 +5378,7 @@ fn rust_conversion_candidates_json(
 fn check_executable_files_impl() -> Result<(), String> {
     let allowlist = read_path_allowlist_optional("policy/executable_allowlist.txt")?;
     let output = run_output("git", &["ls-files", "--stage"])?;
-    let mut violations = Vec::new();
-
-    for line in output.lines() {
-        let Some((mode, path)) = parse_git_stage_line(line) else {
-            continue;
-        };
-        let normalized = normalize_slashes(path);
-        if mode == "100755" && !allowlist.contains(&normalized) {
-            violations.push(format!(
-                "checked-in executable file is not allowlisted: {normalized}\n  preferred: use cargo xtask instead of executable scripts"
-            ));
-        }
-    }
+    let violations = executable_file_violations(&allowlist, &output);
 
     finish_policy_report(
         PolicyReportSpec {
@@ -5399,12 +5390,59 @@ fn check_executable_files_impl() -> Result<(), String> {
                 "Remove the executable bit from ordinary files.",
                 "Move script behavior into xtask.",
                 "If an executable file is truly required, add a reviewed allowlist entry.",
+                "If an allowlist path is missing or no longer mode 100755, remove the entry.",
             ],
             rerun_command: "cargo xtask check-executable-files",
             exception_template: Some("policy/executable_allowlist.txt entry:\npath/to/file"),
         },
         &violations,
     )
+}
+
+fn executable_file_violations(
+    allowlist: &BTreeSet<String>,
+    git_ls_files_stage: &str,
+) -> Vec<String> {
+    let mut staged_modes = BTreeMap::new();
+    let mut violations = Vec::new();
+
+    for line in git_ls_files_stage.lines() {
+        let Some((mode, path)) = parse_git_stage_line(line) else {
+            continue;
+        };
+        let normalized = normalize_slashes(path);
+        staged_modes.insert(normalized.clone(), mode);
+        if mode == "100755" && !allowlist.contains(&normalized) {
+            violations.push(format!(
+                "checked-in executable file is not allowlisted: {normalized}\n  preferred: use cargo xtask instead of executable scripts"
+            ));
+        }
+    }
+
+    violations.extend(executable_allowlist_stale_row_violations(
+        allowlist,
+        &staged_modes,
+    ));
+    violations
+}
+
+fn executable_allowlist_stale_row_violations(
+    allowlist: &BTreeSet<String>,
+    staged_modes: &BTreeMap<String, &str>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for path in allowlist {
+        match staged_modes.get(path).copied() {
+            Some("100755") => {}
+            Some(mode) => violations.push(format!(
+                "{path} allowlist entry is stale: mode is {mode}, expected 100755; remove the entry"
+            )),
+            None => violations.push(format!(
+                "{path} allowlist entry is stale: path is not in git ls-files --stage; remove the entry"
+            )),
+        }
+    }
+    violations
 }
 
 fn check_workflows_impl() -> Result<(), String> {
@@ -5891,23 +5929,22 @@ fn routed_rust_workflow_contract_violations(
 /// How Routed Rust Small treats one GitHub event after reading the workflow YAML.
 ///
 /// The workflow file is the authority. This classifier inspects `on.pull_request.types`
-/// and the route-job `if:` so a missing filter cannot be hidden behind a hardcoded
-/// desired policy (#4380).
+/// so a re-added Draft or label event cannot be hidden behind a hardcoded
+/// desired policy (#4380, #4986).
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoutedRustEventRoute {
     LaunchFullGate,
-    IgnoreWithoutRequiredResult,
     WorkflowNotTriggered,
 }
 
-const ROUTED_RUST_PROOF_ACTIONS_SNIPPET: &str =
-    r#"contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)"#;
-const ROUTED_RUST_FULL_CI_LABELED_SNIPPET: &str =
-    "github.event.action == 'labeled' && github.event.label.name == 'full-ci'";
-const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
 const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
-const ROUTED_RUST_SYNCHRONIZE_CANCEL_SNIPPET: &str = "cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}";
+const ROUTED_RUST_READY_EVENT: &str = "ready_for_review";
+const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
+const ROUTED_RUST_READY_CANCEL_SNIPPET: &str =
+    "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
+const ROUTED_RUST_DRAFT_GUARD_SNIPPET: &str = "github.event.pull_request.draft";
 
 fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
     workflow.lines().map(str::trim).find_map(|line| {
@@ -5926,78 +5963,12 @@ fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
     })
 }
 
-fn routed_rust_job_if_text(workflow: &str, job: &str) -> String {
-    let job_header = format!("{job}:");
-    let mut in_block = false;
-    let mut in_if = false;
-    let mut text = String::new();
-    for line in workflow.lines() {
-        let job_level_key = line.starts_with("  ")
-            && !line.starts_with("   ")
-            && line.trim_end().ends_with(':')
-            && !line.trim_start().starts_with('-');
-        if job_level_key {
-            if in_block {
-                break;
-            }
-            in_block = line.trim() == job_header;
-            in_if = false;
-            continue;
-        }
-        if in_block && !line.is_empty() && !line.starts_with(' ') {
-            break;
-        }
-        if !in_block {
-            continue;
-        }
-        if in_if {
-            let indent = line.len() - line.trim_start().len();
-            if !line.trim().is_empty() && indent <= 4 {
-                in_if = false;
-            } else {
-                if !line.trim().is_empty() && !line.trim_start().starts_with('#') {
-                    text.push(' ');
-                    text.push_str(line.trim());
-                }
-                continue;
-            }
-        }
-        if line.starts_with("    if:") && !line.starts_with("     ") {
-            let rest = line.trim().trim_start_matches("if:").trim();
-            if rest == "|" || rest == ">" || rest == "|-" || rest == ">-" {
-                in_if = true;
-            } else {
-                text.push_str(rest);
-            }
-        }
-    }
-    text
-}
-
-fn routed_rust_job_has_proof_event_if(workflow: &str, job: &str) -> bool {
-    let if_text = routed_rust_job_if_text(workflow, job);
-    if_text.contains(ROUTED_RUST_PROOF_ACTIONS_SNIPPET)
-        && if_text.contains(ROUTED_RUST_FULL_CI_LABELED_SNIPPET)
-}
-
-#[cfg(test)]
-fn routed_rust_proof_event(event_name: &str, action: Option<&str>, label: Option<&str>) -> bool {
-    if event_name != "pull_request" {
-        return true;
-    }
-    match action {
-        Some("opened" | "synchronize" | "reopened") => true,
-        Some("labeled") if label == Some("full-ci") => true,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 fn routed_rust_event_route(
     workflow: &str,
     event_name: &str,
     action: Option<&str>,
-    label: Option<&str>,
+    _label: Option<&str>,
 ) -> RoutedRustEventRoute {
     if event_name == "pull_request" {
         let action = action.unwrap_or("");
@@ -6006,17 +5977,21 @@ fn routed_rust_event_route(
         {
             return RoutedRustEventRoute::WorkflowNotTriggered;
         }
-        if !routed_rust_proof_event(event_name, Some(action), label) {
-            if routed_rust_job_has_proof_event_if(workflow, "route") {
-                return RoutedRustEventRoute::IgnoreWithoutRequiredResult;
-            }
-            return RoutedRustEventRoute::LaunchFullGate;
-        }
     }
     RoutedRustEventRoute::LaunchFullGate
 }
 
-fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
+/// Enforce the Ready-only pull-request admission law declared by
+/// `.github/workflows/routed-rust.yml` (#4986).
+///
+/// The native Draft -> Ready transition is the sole pull-request qualification
+/// request. A skipped required job reports success, so this validator fails
+/// closed on every path that could resurrect Draft or label participation in
+/// the protected required context. The old label-event law (opened /
+/// synchronize / reopened / labeled admission, the ignored-label pseudo-result,
+/// and the synchronize-only cancellation) is rejected here as the actual
+/// failure mode instead of being mandated.
+fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
     let has_pull_request_trigger = workflow
         .lines()
         .map(str::trim)
@@ -6026,58 +6001,48 @@ fn routed_rust_label_event_contract_violations(workflow: &str) -> Vec<String> {
     }
     let Some(types) = routed_rust_pull_request_types(workflow) else {
         return vec![
-            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so opened/synchronize/reopened and full-ci labeled events still launch".to_string(),
+            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the Ready-only admission contract is auditable (#4986)".to_string(),
         ];
     };
     let mut violations = Vec::new();
-    for required in ["opened", "synchronize", "reopened", "labeled"] {
-        if !types.iter().any(|value| value == required) {
-            violations.push(format!(
-                ".github/workflows/routed-rust.yml pull_request types must keep `{required}` so ordinary proof events still launch the required Rust or docs gate"
-            ));
-        }
+    let ready_only = [ROUTED_RUST_READY_EVENT];
+    let unexpected: Vec<&str> = types
+        .iter()
+        .map(String::as_str)
+        .filter(|value| !ready_only.contains(value))
+        .collect();
+    if !unexpected.is_empty() || types.len() != ready_only.len() {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml pull_request types must be exactly `[{ROUTED_RUST_READY_EVENT}]`; unexpected activity types: {unexpected:?}. The Draft -> Ready transition is the sole pull-request qualification request and every other pull_request activity type must stay withheld (#4986)"
+        ));
     }
-    if types.iter().any(|value| value == "unlabeled") {
+    if !workflow.contains(ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must not subscribe to unlabeled pull_request events; an unrelated label removal must not launch a full Rust gate (#4380)".to_string(),
+            ".github/workflows/routed-rust.yml must keep the event-qualified concurrency group `${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}` so push and manual work cannot replace each other (#4986)".to_string(),
         );
     }
-    if !workflow.contains(ROUTED_RUST_SYNCHRONIZE_CANCEL_SNIPPET) {
+    if !workflow.contains(ROUTED_RUST_READY_CANCEL_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must keep synchronize-only cancel-in-progress; do not flip cancellation globally for label events (#4380)".to_string(),
+            ".github/workflows/routed-rust.yml must keep `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` so a second Ready transition replaces the prior admission attempt without cancelling push or manual runs (#4986)".to_string(),
         );
     }
-    if !workflow.contains("-label-ignore")
-        || !workflow.contains(
-            "github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-label-ignore'",
-        )
-    {
+    if workflow.contains(ROUTED_RUST_DRAFT_GUARD_SNIPPET) {
         violations.push(
-            ".github/workflows/routed-rust.yml must put unrelated labeled events in a distinct `-label-ignore` concurrency group so they cannot replace a pending synchronize proof".to_string(),
+            ".github/workflows/routed-rust.yml must not gate jobs on `github.event.pull_request.draft`; a skipped required job reports success, so job guards cannot distinguish withheld context from proof (#4986)".to_string(),
         );
     }
-    for job in ["route", "detect-docs-only"] {
-        if !routed_rust_job_has_proof_event_if(workflow, job) {
-            violations.push(format!(
-                ".github/workflows/routed-rust.yml job `{job}` must launch only on opened/synchronize/reopened or full-ci labeled events"
-            ));
-        }
+    if workflow.contains(ROUTED_RUST_IGNORED_LABEL_RESULT_NAME) {
+        violations.push(
+            ".github/workflows/routed-rust.yml must not post the retired `Ripr Rust Small Ignored Label Event` pseudo-result; the required context is either earned by an exact Ready-head run or absent (#4986)".to_string(),
+        );
     }
+    let required_name_line = format!("name: {ROUTED_RUST_REQUIRED_RESULT_NAME}");
     if !routed_rust_job_block_any(workflow, "result", |line| {
-        line.contains(ROUTED_RUST_IGNORED_LABEL_RESULT_NAME)
-            && line.contains(ROUTED_RUST_REQUIRED_RESULT_NAME)
+        line.trim() == required_name_line.as_str()
     }) {
-        violations.push(
-            ".github/workflows/routed-rust.yml result job must post `Ripr Rust Small Ignored Label Event` instead of the required result on unrelated labeled events".to_string(),
-        );
-    }
-    if !routed_rust_job_block_any(workflow, "result", |line| {
-        line.contains(r#"[ "$EVENT_ACTION" = "unlabeled" ]"#)
-            && line.contains(r#"[ "$LABEL_NAME" != "full-ci" ]"#)
-    }) {
-        violations.push(
-            ".github/workflows/routed-rust.yml result job must short-circuit unlabeled and non-full-ci labeled events without manufacturing a required green result".to_string(),
-        );
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml result job must post the static `{ROUTED_RUST_REQUIRED_RESULT_NAME}` context on every run; a conditional or renamed result can hide Draft or label activity from branch protection (#4986)"
+        ));
     }
     violations
 }
@@ -6432,7 +6397,7 @@ fn routed_rust_workflow_contract_violations_with_reusable(
         }
     }
 
-    violations.extend(routed_rust_label_event_contract_violations(workflow));
+    violations.extend(routed_rust_ready_event_contract_violations(workflow));
 
     violations.sort();
     violations.dedup();
@@ -10753,6 +10718,8 @@ struct RepoExposureLatencyRun {
     trace: Vec<RepoExposureLatencyTrace>,
     file_fact_cache: Option<RepoExposureFileFactCache>,
     file_fact_cache_limitation: Option<String>,
+    resource_cost: Option<RepoExposureResourceCost>,
+    resource_cost_limitation: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -10783,6 +10750,59 @@ struct RepoExposureLatencyTrace {
     phase: String,
     status: String,
     duration_ms: u128,
+}
+
+/// Prefix of the analyzer's end-of-run resource-cost receipt (#5213). The
+/// receipt rides the same opt-in trace switch as the phase lines above.
+const REPO_EXPOSURE_RESOURCE_COST_PREFIX: &str = "ripr_resource_cost_receipt ";
+
+/// The analyzer's own process cost: CPU time and peak resident memory, either
+/// observed on the analyzer's host or explicitly unavailable with a named
+/// reason. Independent mirror of the producer's wire shape rather than a
+/// reuse, so a drift between producer and consumer fails this parse instead of
+/// being silently accepted by shared code.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepoExposureResourceCost {
+    schema_version: String,
+    /// Attribution: the numbers belong to the analyzed `ripr` process, not to
+    /// this harness.
+    observer: String,
+    observer_pid: u32,
+    host_os: String,
+    host_arch: String,
+    cpu: RepoExposureCpuCost,
+    peak_resident_bytes: RepoExposureMeasurement,
+}
+
+/// CPU time split into user and kernel. Observed or not at all, so a partial
+/// CPU reading can never reach the report as a complete one.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+// A receipt that adds a number to the unavailable arm is a producer defect, not
+// a new field to accept: refusing it keeps a zero from reading as an
+// observation this consumer then renders.
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum RepoExposureCpuCost {
+    Observed {
+        source_unit: String,
+        source_unit_per_second: u64,
+        user_source: u64,
+        system_source: u64,
+        user_ms: u64,
+        system_ms: u64,
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+/// One resource number. `Observed` carries the value; `Unavailable` carries a
+/// reason and never a zero standing in for an absent observation.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum RepoExposureMeasurement {
+    Observed { value: u64 },
+    Unavailable { reason: String },
 }
 
 /// Write a bounded repo exposure latency report without changing the
@@ -10843,6 +10863,8 @@ where
             trace: Vec::new(),
             file_fact_cache: None,
             file_fact_cache_limitation: Some("format_skipped".to_string()),
+            resource_cost: None,
+            resource_cost_limitation: Some("format_skipped".to_string()),
         });
     }
 
@@ -10906,6 +10928,8 @@ fn repo_exposure_latency_run_from_output(
     };
     let (file_fact_cache, file_fact_cache_limitation) =
         repo_exposure_file_fact_cache_from_stderr(&output.stderr);
+    let (resource_cost, resource_cost_limitation) =
+        repo_exposure_resource_cost_from_stderr(&output.stderr);
     RepoExposureLatencyRun {
         format: format.to_string(),
         status: status.to_string(),
@@ -10916,7 +10940,36 @@ fn repo_exposure_latency_run_from_output(
         trace: repo_exposure_latency_trace(&output.stderr),
         file_fact_cache,
         file_fact_cache_limitation,
+        resource_cost,
+        resource_cost_limitation,
     }
+}
+
+fn repo_exposure_resource_cost_from_stderr(
+    stderr: &str,
+) -> (Option<RepoExposureResourceCost>, Option<String>) {
+    let mut records = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(REPO_EXPOSURE_RESOURCE_COST_PREFIX));
+    let Some(record) = records.next() else {
+        return (None, Some("resource_cost_receipt_not_observed".to_string()));
+    };
+    if records.next().is_some() {
+        return (None, Some("duplicate_resource_cost_receipt".to_string()));
+    }
+    let Ok(cost) = serde_json::from_str::<RepoExposureResourceCost>(record) else {
+        return (None, Some("malformed_resource_cost_receipt".to_string()));
+    };
+    // The producer owns these identities. A receipt that misattributes its
+    // cost, or that claims a schema this consumer does not know, is not
+    // usable evidence even when it parses.
+    if cost.schema_version != "0.1"
+        || cost.observer != "ripr_process_self"
+        || cost.observer_pid == 0
+    {
+        return (None, Some("invalid_resource_cost_receipt".to_string()));
+    }
+    (Some(cost), None)
 }
 
 fn repo_exposure_file_fact_cache_from_stderr(
@@ -11005,7 +11058,10 @@ fn repo_exposure_latency_trace(stderr: &str) -> Vec<RepoExposureLatencyTrace> {
 fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
     let mut body = String::new();
     body.push_str("{\n");
-    body.push_str("  \"schema_version\": \"0.2\",\n");
+    // 0.3 adds the analyzer's own `resource_cost` block (#5213). The bump is
+    // because the JSON gained fields a 0.2 reader does not know; nothing in
+    // the 0.2 shape changed.
+    body.push_str("  \"schema_version\": \"0.3\",\n");
     body.push_str("  \"tool\": \"ripr\",\n");
     body.push_str("  \"report\": \"repo-exposure-latency\",\n");
     body.push_str(&format!(
@@ -11045,6 +11101,17 @@ fn repo_exposure_latency_json(report: &RepoExposureLatencyReport) -> String {
         }
         body.push_str(",\n      \"file_fact_cache_limitation\": ");
         match &run.file_fact_cache_limitation {
+            Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n");
+        body.push_str("      \"resource_cost\": ");
+        match &run.resource_cost {
+            Some(cost) => body.push_str(&serde_json::json!(cost).to_string()),
+            None => body.push_str("null"),
+        }
+        body.push_str(",\n      \"resource_cost_limitation\": ");
+        match &run.resource_cost_limitation {
             Some(limitation) => body.push_str(&serde_json::json!(limitation).to_string()),
             None => body.push_str("null"),
         }
@@ -11111,6 +11178,66 @@ fn repo_exposure_latency_markdown(report: &RepoExposureLatencyReport) -> String 
                 ));
             }
             body.push('\n');
+        }
+    }
+    body.push_str("\n## Analyzer Resource Cost\n\n");
+    body.push_str(
+        "Measured by the analyzed `ripr` process about itself, not by this \
+         harness. CPU time and peak resident memory are reported only when the \
+         host offers a safe per-process source; otherwise the named unavailable \
+         state is reported and no zero is inferred.\n\n",
+    );
+    for run in &report.runs {
+        body.push_str(&format!("### `{}`\n\n", run.format));
+        let Some(cost) = &run.resource_cost else {
+            body.push_str(&format!(
+                "Unavailable: `{}`. No zero CPU or memory figures are inferred.\n\n",
+                run.resource_cost_limitation.as_deref().unwrap_or("unknown")
+            ));
+            continue;
+        };
+        body.push_str(&format!(
+            "Observed on `{}`/`{}`; observer `{}` (pid `{}`).\n\n",
+            latency_markdown_cell(&cost.host_os),
+            latency_markdown_cell(&cost.host_arch),
+            latency_markdown_cell(&cost.observer),
+            cost.observer_pid
+        ));
+        match &cost.cpu {
+            RepoExposureCpuCost::Observed {
+                source_unit,
+                source_unit_per_second,
+                user_source,
+                system_source,
+                user_ms,
+                system_ms,
+            } => {
+                body.push_str(&format!(
+                    "CPU: user {} ms ({} source units), system {} ms ({} source units); \
+                     source unit `{}` at {} per second.\n\n",
+                    user_ms,
+                    user_source,
+                    system_ms,
+                    system_source,
+                    source_unit,
+                    source_unit_per_second
+                ));
+            }
+            RepoExposureCpuCost::Unavailable { reason } => {
+                body.push_str(&format!(
+                    "CPU unavailable: `{}`. No zero CPU time is inferred.\n\n",
+                    latency_markdown_cell(reason)
+                ));
+            }
+        }
+        match &cost.peak_resident_bytes {
+            RepoExposureMeasurement::Observed { value } => {
+                body.push_str(&format!("Peak resident: {} bytes.\n\n", value))
+            }
+            RepoExposureMeasurement::Unavailable { reason } => body.push_str(&format!(
+                "Peak resident unavailable: `{}`. No zero memory figure is inferred.\n\n",
+                latency_markdown_cell(reason)
+            )),
         }
     }
     body.push_str("\n## File Fact Cache\n\n");
@@ -13527,13 +13654,17 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 9] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 10] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
         "crates/ripr/src/analysis/source_role_corpus.rs",
         "crates/ripr/src/analysis/mod.rs",
         "crates/ripr/src/analysis/language/rust/mod.rs",
+        // RIPR-SPEC-0118: a transitive witness from an integration test names
+        // the public-API path limit. Moved here from `language/rust/mod.rs`
+        // so `ripr check` and seam reach (#5411) share one mapping.
+        "crates/ripr/src/analysis/classify/transitive_reach.rs",
         // #4775: consulted unchanged lexical-fallback files that live under
         // `tests/**` are test evidence even when the lexical scanner extracted
         // no TestFact. The layout authority stays `is_test_file`; this module
@@ -14020,6 +14151,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "stop_reason"
             | "value_context"
             | "oracle_alignment"
+            | "related_test_miss"
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind" => {
@@ -21018,8 +21150,16 @@ fn read_path_allowlist(path: &str) -> Result<BTreeSet<String>, String> {
 }
 
 fn read_count_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
-    let mut allowed = BTreeMap::new();
     let text = read_text_lossy(Path::new(path))?;
+    parse_count_allowlist(path, &text)
+}
+
+fn parse_count_allowlist(
+    path: &str,
+    text: &str,
+) -> Result<BTreeMap<(String, String), usize>, String> {
+    let mut allowed = BTreeMap::new();
+    let mut first_line = BTreeMap::new();
     for (line_number, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -21035,17 +21175,30 @@ fn read_count_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>,
         let max_count = parts[2]
             .parse::<usize>()
             .map_err(|err| format!("{path}:{} invalid max_count: {err}", line_number + 1))?;
-        allowed.insert(
-            (normalize_slashes(parts[0]), parts[1].to_string()),
+        insert_unique_count_allowlist_row(
+            &mut allowed,
+            &mut first_line,
+            path,
+            line_number + 1,
+            parts[0],
+            parts[1],
             max_count,
-        );
+        )?;
     }
     Ok(allowed)
 }
 
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
-    let mut allowed = BTreeMap::new();
     let text = read_text_lossy(Path::new(path))?;
+    parse_count_policy_allowlist(path, &text)
+}
+
+fn parse_count_policy_allowlist(
+    path: &str,
+    text: &str,
+) -> Result<BTreeMap<(String, String), usize>, String> {
+    let mut allowed = BTreeMap::new();
+    let mut first_line = BTreeMap::new();
     for (line_number, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -21071,12 +21224,37 @@ fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), 
         let max_count = parts[2]
             .parse::<usize>()
             .map_err(|err| format!("{path}:{} invalid max_count: {err}", line_number + 1))?;
-        allowed.insert(
-            (normalize_slashes(parts[0]), parts[1].to_string()),
+        insert_unique_count_allowlist_row(
+            &mut allowed,
+            &mut first_line,
+            path,
+            line_number + 1,
+            parts[0],
+            parts[1],
             max_count,
-        );
+        )?;
     }
     Ok(allowed)
+}
+
+fn insert_unique_count_allowlist_row(
+    allowed: &mut BTreeMap<(String, String), usize>,
+    first_line: &mut BTreeMap<(String, String), usize>,
+    source_path: &str,
+    line_number: usize,
+    row_path: &str,
+    pattern: &str,
+    max_count: usize,
+) -> Result<(), String> {
+    let key = (normalize_slashes(row_path), pattern.to_string());
+    if let Some(&first) = first_line.get(&key) {
+        return Err(format!(
+            "{source_path}:{line_number} path|pattern `{row_path}|{pattern}` is duplicated (first declared near line {first})"
+        ));
+    }
+    first_line.insert(key.clone(), line_number);
+    allowed.insert(key, max_count);
+    Ok(())
 }
 
 fn read_local_context_allowlist(path: &str) -> Result<Vec<LocalContextAllow>, String> {

@@ -1,9 +1,8 @@
 use super::*;
 use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
-use ra_ap_syntax::{Parse, SourceFile};
-use std::cell::{OnceCell, RefCell};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
@@ -20,16 +19,45 @@ pub(crate) struct CompactGripContext<'a> {
         BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_file_stem: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_import_token: BTreeMap<String, Vec<usize>>,
+    /// Indexed-function counts by exact name, built once per context (#5201).
+    /// Per-seam `OwnerContext` resolution reads this instead of scanning
+    /// `index.functions` per seam.
+    function_name_counts: BTreeMap<String, usize>,
     name_module_candidates: NameModuleCandidateIndex,
-    owner_named_cache: RefCell<BTreeMap<String, Vec<usize>>>,
-    same_module_cache: RefCell<BTreeMap<String, Vec<usize>>>,
+    owner_named_cache: Mutex<BTreeMap<String, Vec<usize>>>,
+    same_module_cache: Mutex<BTreeMap<String, Vec<usize>>>,
     pub(in crate::analysis::test_grip_evidence) source_digest_cache:
-        RefCell<BTreeMap<&'a Path, String>>,
+        Mutex<BTreeMap<&'a Path, String>>,
     /// Per test file: evidence-role function indices grouped by start line,
     /// built on first use. See [`Self::unique_evidence_function`].
-    evidence_functions_by_line_cache: RefCell<BTreeMap<&'a Path, BTreeMap<usize, Vec<usize>>>>,
-    /// Run-scoped parser reuse for owner-result binding inspection.
-    parsed_sources: RefCell<BTreeMap<&'a Path, Option<Parse<SourceFile>>>>,
+    evidence_functions_by_line_cache: Mutex<BTreeMap<&'a Path, BTreeMap<usize, Vec<usize>>>>,
+    /// Run-scoped parser reuse for owner-result binding inspection: the
+    /// parse, its line index, and its test-function lookup, built once per
+    /// file instead of once per seam and related test.
+    parsed_sources: Mutex<BTreeMap<&'a Path, Option<Arc<ParsedTestFile>>>>,
+    /// Per production file: the parser-backed module layout new-test-target
+    /// admission reads. File-bounded and small, so it survives windows.
+    pub(in crate::analysis::test_grip_evidence) inline_unit_layouts:
+        crate::analysis::new_test_target::InlineUnitLayoutMemo,
+    /// Per seam file: functions sorted for owner lookup. Every seam resolves
+    /// its owner several times, and the plain lookup scans the whole file's
+    /// function list each time, so a 200k-function file spent 27% of cold
+    /// pilot there. File-bounded, so it survives windows.
+    owner_lookups: Mutex<BTreeMap<PathBuf, Option<Arc<rust_index::FileOwnerLookup<'a>>>>>,
+    /// Per owner file: fixture-shaped function names. The set depends only
+    /// on the file, but every seam re-filtered its file's whole function
+    /// list and searched each body for `#[fixture]`.
+    fixture_names: Mutex<BTreeMap<&'a Path, Arc<BTreeSet<String>>>>,
+    /// Bounded transitive-reach facts (RIPR-SPEC-0114/0118), shared with
+    /// `ripr check`. The call graph builds on first use, so a run whose
+    /// seams all have related tests never pays for it.
+    pub(in crate::analysis::test_grip_evidence) transitive_reach:
+        crate::analysis::classify::TransitiveReachIndex<'a>,
+    /// Built on first use; see [`Self::type_mentions`].
+    type_mentions: OnceLock<crate::analysis::test_grip_evidence::reach_limit::TypeMentionIndex>,
+    /// Per owner id: the unresolved-reach summary, or `None` when the
+    /// `no` reach is established. Seams share owners.
+    unresolved_reach: Mutex<BTreeMap<String, Option<String>>>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -126,7 +154,7 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) code_lines: Vec<String>,
     /// Per-test facts; build through [`CompactTest::value_facts`] so the
     /// whole-file part comes from `file_value_scan`, never a fresh scan.
-    value_facts: OnceCell<ValueEnvFacts>,
+    value_facts: OnceLock<ValueEnvFacts>,
     /// Shared by every test in the same file.
     pub(in crate::analysis::test_grip_evidence) file_value_scan: Arc<OnceLock<FileValueScan>>,
 }
@@ -147,6 +175,12 @@ impl CompactTest<'_> {
     }
 }
 
+/// Lock a memo. Every memo holds keyed, deterministic results, so a panic
+/// on another worker cannot leave a wrong entry behind; recover the map.
+pub(in crate::analysis::test_grip_evidence) fn memo<T>(memo: &Mutex<T>) -> MutexGuard<'_, T> {
+    memo.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Opt-in phase timing keeps large-workspace context preparation attributable.
 fn context_build_phase<T>(name: &str, work: impl FnOnce() -> T) -> T {
     let started = Instant::now();
@@ -156,11 +190,30 @@ fn context_build_phase<T>(name: &str, work: impl FnOnce() -> T) -> T {
     result
 }
 
+fn count_functions_by_name(index: &RustIndex) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for function in index.functions().iter() {
+        *counts.entry(function.name.clone()).or_default() += 1;
+    }
+    counts
+}
+
 impl<'a> CompactGripContext<'a> {
     pub(crate) fn clear_window_memos(&self) {
-        self.owner_named_cache.borrow_mut().clear();
-        self.same_module_cache.borrow_mut().clear();
-        self.parsed_sources.borrow_mut().clear();
+        memo(&self.owner_named_cache).clear();
+        memo(&self.same_module_cache).clear();
+        memo(&self.parsed_sources).clear();
+    }
+
+    /// Number of indexed functions with exactly `name`; 0 for unknown or
+    /// empty names. Precomputed once per context instead of scanning
+    /// `index.functions` per seam (#5201).
+    pub(super) fn function_name_count(&self, name: &str) -> usize {
+        if name.is_empty() {
+            0
+        } else {
+            self.function_name_counts.get(name).copied().unwrap_or(0)
+        }
     }
 
     pub(crate) fn new(index: &'a RustIndex) -> Self {
@@ -249,6 +302,9 @@ impl<'a> CompactGripContext<'a> {
                 test_scoped_function_names_by_file(index)
             });
         checkpoint()?;
+        let function_name_counts =
+            context_build_phase("function_name_counts", || count_functions_by_name(index));
+        checkpoint()?;
         let helper_owner_lookup = HelperOwnerCallLookup {
             helpers: &helper_owner_calls_by_file,
             unique_helpers: &unambiguous_test_helper_owner_calls_by_name,
@@ -261,7 +317,7 @@ impl<'a> CompactGripContext<'a> {
         let tests_started = Instant::now();
         trace_latency_phase("evidence_context_tests", "start", Duration::ZERO);
         let tests: Vec<CompactTest<'a>> = index
-            .tests
+            .tests()
             .iter()
             .enumerate()
             .map(|(test_index, test)| {
@@ -387,7 +443,7 @@ impl<'a> CompactGripContext<'a> {
                     target_affinity_owner_call_names,
                     ambiguous_target_affinity_owner_call_names,
                     code_lines,
-                    value_facts: OnceCell::new(),
+                    value_facts: OnceLock::new(),
                     file_value_scan: Arc::clone(
                         file_value_scans.entry(test.file.as_path()).or_default(),
                     ),
@@ -418,13 +474,45 @@ impl<'a> CompactGripContext<'a> {
             tests_by_assertion_token,
             tests_by_file_stem,
             tests_by_import_token,
+            function_name_counts,
             name_module_candidates,
-            owner_named_cache: RefCell::new(BTreeMap::new()),
-            same_module_cache: RefCell::new(BTreeMap::new()),
-            source_digest_cache: RefCell::new(BTreeMap::new()),
-            evidence_functions_by_line_cache: RefCell::new(BTreeMap::new()),
-            parsed_sources: RefCell::new(BTreeMap::new()),
+            owner_named_cache: Mutex::new(BTreeMap::new()),
+            same_module_cache: Mutex::new(BTreeMap::new()),
+            source_digest_cache: Mutex::new(BTreeMap::new()),
+            evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
+            parsed_sources: Mutex::new(BTreeMap::new()),
+            inline_unit_layouts: Default::default(),
+            owner_lookups: Mutex::new(BTreeMap::new()),
+            fixture_names: Mutex::new(BTreeMap::new()),
+            transitive_reach: crate::analysis::classify::TransitiveReachIndex::new(index),
+            type_mentions: OnceLock::new(),
+            unresolved_reach: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Identifier mentions by tests and test-reached production code, for
+    /// the trait-dispatch reach check (#5411).
+    pub(in crate::analysis::test_grip_evidence) fn type_mentions(
+        &self,
+    ) -> &crate::analysis::test_grip_evidence::reach_limit::TypeMentionIndex {
+        self.type_mentions.get_or_init(|| {
+            crate::analysis::test_grip_evidence::reach_limit::TypeMentionIndex::build(self)
+        })
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn unresolved_reach_cached(
+        &self,
+        owner_id: &str,
+    ) -> Option<Option<String>> {
+        memo(&self.unresolved_reach).get(owner_id).cloned()
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn cache_unresolved_reach(
+        &self,
+        owner_id: String,
+        summary: Option<String>,
+    ) {
+        memo(&self.unresolved_reach).insert(owner_id, summary);
     }
 
     /// The single evidence-role function in `path` named `name` that starts
@@ -442,8 +530,8 @@ impl<'a> CompactGripContext<'a> {
         name: &str,
         start_line: usize,
     ) -> Option<&'a FunctionSummary> {
-        let (path, facts) = self.index.files.get_key_value(path)?;
-        let mut cache = self.evidence_functions_by_line_cache.borrow_mut();
+        let (path, facts) = self.index.files().get_key_value(path)?;
+        let mut cache = memo(&self.evidence_functions_by_line_cache);
         let by_line = cache.entry(path.as_path()).or_insert_with(|| {
             let mut by_line: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
             for (position, function) in facts.functions.iter().enumerate() {
@@ -474,42 +562,78 @@ impl<'a> CompactGripContext<'a> {
         &self,
         path: &Path,
     ) -> Option<String> {
-        let (path, facts) = self.index.files.get_key_value(path)?;
-        if let Some(digest) = self.source_digest_cache.borrow().get(path.as_path()) {
+        let (path, facts) = self.index.files().get_key_value(path)?;
+        if let Some(digest) = memo(&self.source_digest_cache).get(path.as_path()) {
             return Some(digest.clone());
         }
         let digest = crate::analysis::facts::source_digest(facts.source.as_bytes());
-        self.source_digest_cache
-            .borrow_mut()
-            .insert(path.as_path(), digest.clone());
+        memo(&self.source_digest_cache).insert(path.as_path(), digest.clone());
         Some(digest)
     }
 
-    /// Parser-backed source for `path`, or `None` on lexical fallback or
-    /// parse refusal. Cached once per file for the life of this context.
-    pub(in crate::analysis::test_grip_evidence) fn parsed_source(
+    /// Parser-backed layout for `path`, or `None` on lexical fallback or
+    /// parse refusal. Cached once per file until the next window boundary.
+    pub(in crate::analysis::test_grip_evidence) fn parsed_test_file(
         &self,
         path: &Path,
-    ) -> Option<Parse<SourceFile>> {
-        let (path, facts) = self.index.files.get_key_value(path)?;
+    ) -> Option<Arc<ParsedTestFile>> {
+        let (path, facts) = self.index.files().get_key_value(path)?;
         if facts.used_lexical_fallback {
             return None;
         }
-        if let Some(cached) = self.parsed_sources.borrow().get(path.as_path()) {
+        if let Some(cached) = memo(&self.parsed_sources).get(path.as_path()) {
             return cached.clone();
         }
-        let parsed = parse_clean_source_file(&facts.source);
-        self.parsed_sources
-            .borrow_mut()
-            .insert(path.as_path(), parsed.clone());
+        let parsed = parse_clean_source_file(&facts.source)
+            .map(|parse| Arc::new(ParsedTestFile::new(parse, &facts.source)));
+        memo(&self.parsed_sources).insert(path.as_path(), parsed.clone());
         parsed
+    }
+
+    /// Innermost indexed function containing `line` of `file`; the same
+    /// answer as [`rust_index::find_owner_function`], from a per-file sorted
+    /// lookup built once.
+    pub(in crate::analysis::test_grip_evidence) fn owner_function(
+        &self,
+        file: &Path,
+        line: usize,
+    ) -> Option<&'a FunctionSummary> {
+        let cached = memo(&self.owner_lookups).get(file).cloned();
+        let lookup = match cached {
+            Some(lookup) => lookup,
+            None => {
+                let lookup = rust_index::find_file_facts(self.index, file).map(|facts| {
+                    Arc::new(rust_index::FileOwnerLookup::new(facts.functions.iter()))
+                });
+                memo(&self.owner_lookups).insert(file.to_path_buf(), lookup.clone());
+                lookup
+            }
+        };
+        lookup?.owner(line)
+    }
+
+    /// Fixture-shaped function names of an indexed owner file, built once
+    /// per file. Empty when `file` is not an exact index key.
+    pub(super) fn fixture_names_for_owner_file(&self, file: &'a Path) -> Arc<BTreeSet<String>> {
+        if let Some(names) = memo(&self.fixture_names).get(file) {
+            return names.clone();
+        }
+        let names = Arc::new(
+            self.index
+                .files()
+                .get(file)
+                .map(super::fixture_names_for_owner_file)
+                .unwrap_or_default(),
+        );
+        memo(&self.fixture_names).insert(file, names.clone());
+        names
     }
 
     pub(super) fn owner_named_indices(&self, owner_name_lower: &str) -> Vec<usize> {
         if owner_name_lower.is_empty() {
             return Vec::new();
         }
-        if let Some(indices) = self.owner_named_cache.borrow().get(owner_name_lower) {
+        if let Some(indices) = memo(&self.owner_named_cache).get(owner_name_lower) {
             return indices.clone();
         }
         let indices = self
@@ -518,9 +642,7 @@ impl<'a> CompactGripContext<'a> {
             .into_iter()
             .filter(|&index| self.tests[index].name_lower.contains(owner_name_lower))
             .collect::<Vec<_>>();
-        self.owner_named_cache
-            .borrow_mut()
-            .insert(owner_name_lower.to_string(), indices.clone());
+        memo(&self.owner_named_cache).insert(owner_name_lower.to_string(), indices.clone());
         indices
     }
 
@@ -528,7 +650,7 @@ impl<'a> CompactGripContext<'a> {
         if owner_module.is_empty() {
             return Vec::new();
         }
-        if let Some(indices) = self.same_module_cache.borrow().get(owner_module) {
+        if let Some(indices) = memo(&self.same_module_cache).get(owner_module) {
             return indices.clone();
         }
         let indices = self
@@ -555,9 +677,7 @@ impl<'a> CompactGripContext<'a> {
         } else {
             indices
         };
-        self.same_module_cache
-            .borrow_mut()
-            .insert(owner_module.to_string(), indices.clone());
+        memo(&self.same_module_cache).insert(owner_module.to_string(), indices.clone());
         indices
     }
 }
@@ -574,12 +694,6 @@ mod candidate_index_tests {
         let path = PathBuf::from("src/lib.rs");
         let facts = RaRustSyntaxAdapter
             .summarize_file(&path, "#[test] fn sample() { assert_eq!(1, 1); }")?;
-        let mut index = RustIndex {
-            tests: facts.tests.clone(),
-            functions: facts.functions.clone(),
-            ..RustIndex::default()
-        };
-        index.files.insert(path, facts);
         let large_ordinary = "    let ordinary = 1;\n".repeat(4096);
         for body in [
             large_ordinary.as_str(),
@@ -592,10 +706,17 @@ mod candidate_index_tests {
             "use café;\r\nmodule::café();\r\nordinary();",
             "use unfinished\n\"unterminated::owner\nmodule::visible();",
         ] {
-            let Some(test) = index.tests.first_mut() else {
+            let mut tests = facts.tests.clone();
+            let Some(test) = tests.first_mut() else {
                 return Err("fixture must contain a parsed test".to_string());
             };
             test.body = body.to_string();
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                tests,
+                functions: facts.functions.clone(),
+                ..Default::default()
+            });
+            index.insert_file_only(path.clone(), facts.clone());
             let full_lines = body
                 .lines()
                 .map(strip_comments_and_strings)
@@ -674,13 +795,13 @@ fn value() -> i32 { 1 }
 #[test] fn second() { assert_eq!(value(), 1); }
 "#,
         )?;
-        let mut index = RustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: facts.tests.clone(),
             functions: facts.functions.clone(),
-            ..RustIndex::default()
-        };
-        index.files.insert(path, facts);
-        if index.tests.len() != 2 {
+            ..Default::default()
+        });
+        index.insert_file_only(path, facts);
+        if index.tests().len() != 2 {
             return Err("context fixture must admit exactly two parsed tests".to_string());
         }
         let ordinary = CompactGripContext::new(&index);
@@ -714,6 +835,118 @@ fn value() -> i32 { 1 }
                 "context test loops completed instead of observing their first expired budget"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn function_name_counts_match_independent_full_scan() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let fact_a = RaRustSyntaxAdapter
+            .summarize_file(&PathBuf::from("src/a.rs"), "fn dup() -> i32 { 1 }\n")?;
+        let fact_b = RaRustSyntaxAdapter.summarize_file(
+            &PathBuf::from("src/b.rs"),
+            "fn dup() -> i32 { 2 }\nfn solo() -> i32 { 3 }\n",
+        )?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: [fact_a.tests.clone(), fact_b.tests.clone()].concat(),
+            functions: [fact_a.functions.clone(), fact_b.functions.clone()].concat(),
+            ..Default::default()
+        });
+        index.insert_file_only(PathBuf::from("src/a.rs"), fact_a);
+        index.insert_file_only(PathBuf::from("src/b.rs"), fact_b);
+        let context = CompactGripContext::new(&index);
+        for function in index.functions().iter() {
+            let expected = index
+                .functions()
+                .iter()
+                .filter(|candidate| candidate.name == function.name)
+                .count();
+            let actual = context.function_name_count(&function.name);
+            if actual != expected {
+                return Err(format!(
+                    "name count mismatch for {}: {actual} != {expected}",
+                    function.name
+                ));
+            }
+        }
+        if context.function_name_count("missing") != 0 {
+            return Err("unknown name must count 0".to_string());
+        }
+        if context.function_name_count("") != 0 {
+            return Err("empty name must count 0".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn owner_and_fixture_memos_match_the_per_seam_scans() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // Nested functions, two functions on one line, a fixture by name, a
+        // body holding a `#[fixture]` item, and lines outside any function.
+        let source = "\
+fn outer() -> i32 {
+    fn inner() -> i32 { 1 }
+    inner()
+}
+fn a() {} fn b() {}
+
+fn make_quote() -> i32 { 2 }
+fn rates() {
+    #[fixture]
+    fn rate() -> i32 { 3 }
+}
+";
+        let path = PathBuf::from("src/a.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            ..Default::default()
+        });
+        index.insert_file_only(path.clone(), facts);
+        let context = CompactGripContext::new(&index);
+        let line_count = source.lines().count() + 2;
+        for round in 0..2 {
+            for line in 0..=line_count {
+                let expected = rust_index::find_owner_function(&index, &path, line)
+                    .map(|function| (&function.name, function.start_line));
+                let actual = context
+                    .owner_function(&path, line)
+                    .map(|function| (&function.name, function.start_line));
+                if actual != expected {
+                    return Err(format!(
+                        "round {round} line {line}: {actual:?} != {expected:?}"
+                    ));
+                }
+            }
+        }
+        if context.owner_function(&path, 2).map(|f| f.name.as_str()) != Some("inner") {
+            return Err("the innermost function must own a nested line".to_string());
+        }
+        if context
+            .owner_function(Path::new("src/missing.rs"), 1)
+            .is_some()
+        {
+            return Err("an unindexed file has no owner".to_string());
+        }
+        let Some(facts) = index.files().get(path.as_path()) else {
+            return Err("fixture file must be indexed".to_string());
+        };
+        let expected = super::super::fixture_names_for_owner_file(facts);
+        for _ in 0..2 {
+            let actual = context.fixture_names_for_owner_file(path.as_path());
+            if *actual != expected {
+                return Err(format!("fixture names {actual:?} != {expected:?}"));
+            }
+        }
+        if !expected.contains("make_quote") || !expected.contains("rates") {
+            return Err(format!("both fixture shapes must be found: {expected:?}"));
+        }
+        if !context
+            .fixture_names_for_owner_file(Path::new("src/missing.rs"))
+            .is_empty()
+        {
+            return Err("an unindexed file has no fixtures".to_string());
         }
         Ok(())
     }
@@ -1022,7 +1255,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
     let owner_names_by_module_path = production_owner_names_by_module_path(index);
     let production_owner_names = production_owner_names(index);
     let actual_tests = actual_test_keys(index);
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !actual_tests.contains(&ActualTestKey {
             file: &function.file,
             name: &function.name,
@@ -1273,7 +1506,7 @@ fn target_affinity_production_owner_call_sets_by_package(
     let owner_names_by_package_and_module_path =
         production_owner_names_by_package_and_module_path(index);
     let mut by_package: BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(package) = package_scope(&function.file) else {
@@ -1316,7 +1549,7 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_
     let owner_names_by_package_and_module_path =
         production_owner_names_by_package_and_module_path(index);
     let mut by_module_path: HelperOwnerCallsByModulePath = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(module_path) = module_path_for_index(index, &function.file) else {
@@ -1516,7 +1749,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_module_
     index: &RustIndex,
 ) -> OwnerNamesByModulePath {
     let mut by_module_path: OwnerNamesByModulePath = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(module_path) = module_path_for_index(index, &function.file) else {
@@ -1534,7 +1767,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_package
     index: &RustIndex,
 ) -> OwnerNamesByPackageAndModulePath {
     let mut by_package: OwnerNamesByPackageAndModulePath = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(package) = package_scope(&function.file) else {
@@ -1557,7 +1790,7 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases_by_file(
     index: &RustIndex,
 ) -> ModuleImportAliasesByFile {
     index
-        .files
+        .files()
         .iter()
         .filter_map(|(file, facts)| {
             let aliases = module_import_aliases(&facts.source);
@@ -1570,7 +1803,7 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases_by
     index: &RustIndex,
 ) -> ScopedDirectFunctionImportAliasesByFile {
     index
-        .files
+        .files()
         .iter()
         .filter_map(|(file, facts)| {
             let aliases = direct_function_import_aliases(&facts.source);
@@ -1585,7 +1818,7 @@ pub(in crate::analysis::test_grip_evidence) fn direct_helper_import_aliases_by_f
 ) -> DirectFunctionImportAliasesByFile {
     let allowed_module_paths = qualified_helpers.keys().cloned().collect::<BTreeSet<_>>();
     index
-        .files
+        .files()
         .iter()
         .filter_map(|(file, facts)| {
             let aliases = direct_helper_import_aliases(&facts.source, &allowed_module_paths);
@@ -2103,7 +2336,7 @@ pub(in crate::analysis::test_grip_evidence) fn unambiguous_production_owner_name
     index: &RustIndex,
 ) -> ProductionOwnerNamesByPackage {
     let mut counts_by_package: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
     }) {
         let Some(package) = package_scope(&function.file) else {
@@ -2135,7 +2368,7 @@ pub(in crate::analysis::test_grip_evidence) fn local_function_names_by_file(
     // excluding them would misread a helper's call to a sibling test-module
     // function as a potential owner call.
     let actual_tests = actual_test_keys(index);
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         !actual_tests.contains(&ActualTestKey {
             file: &function.file,
             name: &function.name,
@@ -2169,7 +2402,7 @@ struct ActualTestKey<'a> {
 
 fn actual_test_keys(index: &RustIndex) -> BTreeSet<ActualTestKey<'_>> {
     index
-        .tests
+        .tests()
         .iter()
         .map(|test| ActualTestKey {
             file: test.file.as_path(),
@@ -2188,7 +2421,7 @@ pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_fil
     index: &RustIndex,
 ) -> BTreeMap<PathBuf, BTreeSet<String>> {
     let mut names_by_file: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
+    for function in index.functions().iter().filter(|function| {
         function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file)
     }) {
         if let Some(names) = names_by_file.get_mut(&function.file) {
@@ -2207,7 +2440,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names(
     index: &RustIndex,
 ) -> BTreeSet<String> {
     index
-        .functions
+        .functions()
         .iter()
         .filter(|function| {
             !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
@@ -3062,7 +3295,7 @@ mod tests {
     fn wrapper() {}
 }
 "#;
-        let index = RustIndex {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             files: BTreeMap::from([(
                 file.clone(),
                 FileFacts {
@@ -3073,8 +3306,8 @@ mod tests {
                 },
             )]),
             functions: vec![production, evidence_shadow],
-            ..RustIndex::default()
-        };
+            ..Default::default()
+        });
 
         let scoped = test_scoped_function_names_by_file(&index);
         let scoped_names = scoped.get(&file);

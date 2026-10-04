@@ -22,6 +22,8 @@ pub(crate) mod agent_card;
 mod agent_dispatch;
 #[path = "commands/agent_gap_packet.rs"]
 mod agent_gap_packet;
+#[path = "commands/agent_stub.rs"]
+pub(crate) mod agent_stub;
 #[path = "commands/cache.rs"]
 mod cache_command;
 #[path = "commands/config.rs"]
@@ -107,6 +109,11 @@ fn maybe_append_jsonl(path: Option<&Path>, record: &str) -> Result<(), String> {
 #[path = "commands/baseline.rs"]
 mod baseline;
 pub(super) use baseline::baseline;
+
+#[path = "commands/ci_packet.rs"]
+mod ci_packet;
+#[path = "commands/ci_summary.rs"]
+mod ci_summary;
 
 #[path = "commands/check.rs"]
 mod check;
@@ -486,17 +493,19 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
     }
     let Some((subcommand, rest)) = args.split_first() else {
         return Err(
-            "reports requires subcommand `index`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+            "reports requires subcommand `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
                 .to_string(),
         );
     };
     match subcommand.as_str() {
         "index" => report_packet_index(rest),
+        "ci-packet" => ci_packet::ci_packet(rest),
+        "ci-summary" => ci_summary::ci_summary(rest),
         "gap-ledger" => gap_decision_ledger(rest),
         "ts-limitations" => typescript_limitations(rest),
         "ts-false-actionable" => typescript_false_actionable(rest),
         _ => Err(format!(
-            "unknown reports subcommand {subcommand:?}; expected `index`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+            "unknown reports subcommand {subcommand:?}; expected `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
         )),
     }
 }
@@ -526,13 +535,31 @@ fn report_packet_index(args: &[String]) -> Result<(), String> {
 
 fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     let options = parse_gap_decision_ledger_options(args)?;
+    // A root that is not a directory cannot be analyzed, whether or not the
+    // source reads: refuse (exit 2 per docs/EXIT_CODES.md) before writing a
+    // ledger and exiting 0 as if the run succeeded.
+    if !Path::new(&options.root).is_dir() {
+        return Err(format!(
+            "reports gap-ledger --root {} is not a directory; pass the repository root with --root",
+            options.root
+        ));
+    }
     let records_path = ledger_source_path(options.source.path())?;
+    // An unreadable source means the command could not complete for the same
+    // reason: refuse before writing a `blocked` ledger.
+    let records_json = read_optional_text_for_report(options.source.label(), options.source.path())
+        .map_err(|error| {
+            format!(
+                "{error}; generate it first (for example `ripr pilot --root {}`) or pass the correct path",
+                crate::agent::loop_commands::shell_arg(&options.root)
+            )
+        })?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
         root: options.root,
         generated_at: gap_decision_ledger_generated_at()?,
         source_kind: options.source.kind(),
         records_path,
-        records_json: read_optional_text_for_report(options.source.label(), options.source.path()),
+        records_json: Ok(records_json),
     };
     let selected_root = PathBuf::from(&input.root);
     let mut report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
@@ -2947,12 +2974,17 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // the same values resolve here (flag or config).
     let mut from_artifact: Option<PathBuf> = None;
     let mut base_explicitly_provided = false;
+    // `--worktree` matches `ripr check --worktree`: the finding may come
+    // from uncommitted edits the committed-history diff never sees.
+    let mut worktree = false;
+    let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
                 input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicitly_provided = true;
             }
             "--base" => {
                 i += 1;
@@ -2967,6 +2999,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 i += 1;
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
+            "--worktree" => worktree = true,
             "--mode" => {
                 i += 1;
                 input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
@@ -3019,11 +3052,28 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("explain"));
     }
-    let selector = selector.ok_or_else(|| {
-        "missing finding selector; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `ripr check --json` to list finding ids".to_string()
-    })?;
+    worktree_scope_conflict(
+        "explain",
+        worktree,
+        input.diff_file.is_some(),
+        from_artifact.is_some(),
+    )?;
+    if selector.is_none() && !worktree {
+        return Err(missing_selector_error(
+            "missing finding selector",
+            "ripr check --json",
+        ));
+    }
+    resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
+    let Some(selector) = selector else {
+        return Err(missing_selector_error(
+            "missing finding selector",
+            &app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree)
+                .list_command(),
+        ));
+    };
     let asserted_base = if base_explicitly_provided {
         input.base.clone()
     } else {
@@ -3049,10 +3099,57 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 &selector,
                 &config,
                 explicit.mode,
+                worktree,
             )?
         }
     };
     println!("{rendered}");
+    Ok(())
+}
+
+/// The selector-less `explain`/`context` error. `listing` lists finding ids
+/// for the same scope: a `--worktree` run names a worktree-scoped listing,
+/// since plain `ripr check --json` omits findings only uncommitted edits
+/// produce.
+pub(super) fn missing_selector_error(what: &str, listing: &str) -> String {
+    format!(
+        "{what}; pass a finding id (e.g. `probe:src_lib.rs:error_path:abc123`) or `file:line`. Run `{listing}` to list finding ids"
+    )
+}
+
+/// A `--worktree` drill-in without `--root` resolves the implicit project
+/// root the same way `ripr check --worktree` does, so a manual invocation
+/// from a project subdirectory analyzes the scope that listed the finding.
+/// An explicit `--root` is kept as given.
+pub(super) fn resolve_worktree_root(
+    input: &mut CheckInput,
+    worktree: bool,
+    root_explicitly_provided: bool,
+) -> Result<(), String> {
+    if worktree && !root_explicitly_provided {
+        check::resolve_implicit_workspace_root(input)?;
+    }
+    Ok(())
+}
+
+/// `--worktree` is its own diff source, like in `ripr check`: it cannot sit
+/// beside `--diff`, and an artifact from `--from` already fixes the scope.
+pub(super) fn worktree_scope_conflict(
+    command: &str,
+    worktree: bool,
+    diff_file: bool,
+    from_artifact: bool,
+) -> Result<(), String> {
+    if worktree && diff_file {
+        return Err(format!(
+            "{command} --worktree cannot be combined with --diff"
+        ));
+    }
+    if worktree && from_artifact {
+        return Err(format!(
+            "{command} --worktree cannot be combined with --from: the artifact already records the diff it was written from"
+        ));
+    }
     Ok(())
 }
 
@@ -3116,11 +3213,6 @@ pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
-    use crate::output::first_pr::{
-        MANUAL_RECEIPT_LABEL, MANUAL_VERIFY_LABEL, RECEIPT_AFTER_VERIFY_LABEL,
-        REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP, VERIFY_AFTER_EDIT_LABEL,
-    };
 
     pub(super) fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -3192,10 +3284,7 @@ mod tests {
     struct GeneratedWorkflowSmokeFixture<'a> {
         commands: &'a [&'a str],
         artifact_paths: &'a [&'a str],
-        summary_sections: &'a [&'a str],
-        non_blocking_steps: &'a [&'a str],
-        gate_conditional_steps: &'a [&'a str],
-        optional_sarif_steps: &'a [&'a str],
+        yaml_advisory_steps: &'a [&'a str],
         forbidden_fragments: &'a [&'a str],
     }
 
@@ -3218,7 +3307,6 @@ mod tests {
                 "policy operations",
                 "policy history",
                 "policy promote",
-                "policy preview-promote",
                 "assistant-loop proof",
                 "assistant-loop health",
                 "first-action",
@@ -3267,16 +3355,12 @@ mod tests {
                 "target/ripr/reports/policy-operations.md",
                 "target/ripr/reports/policy-history.json",
                 "target/ripr/reports/policy-history.md",
-                "target/ripr/reports/policy-promotion-visible-only.json",
                 "target/ripr/reports/policy-promotion-visible-only.md",
-                "target/ripr/reports/policy-promotion-acknowledgeable.json",
                 "target/ripr/reports/policy-promotion-acknowledgeable.md",
-                "target/ripr/reports/policy-promotion-baseline-check.json",
                 "target/ripr/reports/policy-promotion-baseline-check.md",
-                "target/ripr/reports/policy-promotion-calibrated-gate.json",
                 "target/ripr/reports/policy-promotion-calibrated-gate.md",
-                "target/ripr/reports/preview-promotion-${language}-${class_label//_/-}.json",
-                "target/ripr/reports/preview-promotion-${language}-${class_label//_/-}.md",
+                "target/ripr/reports/preview-promotion-{language}-boundary-gap.json",
+                "target/ripr/reports/preview-promotion-{language}-boundary-gap.md",
                 "target/ripr/reports/preview-promotion-typescript-boundary-gap.md",
                 "target/ripr/reports/preview-promotion-python-boundary-gap.md",
                 "target/ripr/reports/test-oracle-assistant-proof.json",
@@ -3287,7 +3371,6 @@ mod tests {
                 "target/ripr/reports/first-useful-action.md",
                 "target/ripr/reports/pr-review-front-panel.json",
                 "target/ripr/reports/pr-review-front-panel.md",
-                "target/ripr/reports/start-here.json",
                 "target/ripr/reports/start-here.md",
                 "target/ripr/reports/index.json",
                 "target/ripr/reports/index.md",
@@ -3297,93 +3380,15 @@ mod tests {
                 "target/ripr/review/comment-publish-plan.md",
                 "target/ci/labels.json",
             ],
-            summary_sections: &[
-                "## RIPR advisory summary",
-                "### Start here",
-                "#### First-run status",
-                "### Language preview grouping",
-                "### PR review summary",
-                "#### PR review at a glance",
-                "### Recommended next test",
-                "#### Recommended next test at a glance",
-                "### Top recommendation",
-                "### Agent review packet",
-                "### Artifact packet",
-                "### Uploaded review artifacts",
-                "#### Uploaded artifacts at a glance",
-                "### Gate decision",
-                "#### Gate decision at a glance",
-                "### Baseline debt delta",
-                "#### Baseline debt movement",
-                "### RIPR Zero status",
-                "#### RIPR Zero at a glance",
-                "### PR evidence ledger",
-                "#### PR movement at a glance",
-                "### Policy readiness",
-                "#### Policy readiness at a glance",
-                "### Policy operations",
-                "#### Policy operations at a glance",
-                "### Policy history",
-                "#### Policy history at a glance",
-                "### Policy promotion packets",
-                "### Preview promotion packets",
-                "### Waiver aging",
-                "#### Waiver aging at a glance",
-                "### Suppression health",
-                "#### Suppression health at a glance",
-                "### Test-oracle assistant proof",
-                "#### Assistant proof at a glance",
-                "### Agent proof status",
-                "#### Agent proof status at a glance",
-                "### SARIF and badge status",
-                "### PR guidance annotations",
-                "### PR inline comments",
-                "### Known limits",
-            ],
-            non_blocking_steps: &[
-                "Generate RIPR pilot packet",
-                "Prepare RIPR editor-agent artifacts",
-                "Generate RIPR agent loop artifacts",
-                "Render RIPR repo badge artifacts",
-                "Render RIPR baseline debt delta",
-                "Render RIPR Zero status",
-                "Render RIPR PR evidence ledger",
-                "Render RIPR waiver aging",
-                "Render RIPR suppression health",
-                "Render RIPR policy readiness",
-                "Render RIPR policy operations",
-                "Render RIPR policy history",
-                "Render RIPR policy promotion packets",
-                "Render RIPR preview promotion packets",
-                "Render RIPR test-oracle assistant proof",
-                "Render RIPR assistant loop health",
-                "Render RIPR first useful action",
-                "Render RIPR PR review front panel",
-                "Render RIPR report packet index",
-                "Render RIPR LLM work-loop summaries",
+            // The steps left in YAML; the packet's own steps keep their
+            // continue-on-error semantics in `ci_packet::stage_table`.
+            yaml_advisory_steps: &[
                 "Capture existing RIPR inline comments",
-                "Plan RIPR inline comments",
                 "Publish RIPR inline comments",
-                "Capture RIPR gate labels",
-                "Emit RIPR PR guidance annotations",
-                "Check RIPR advisory artifacts",
                 "Add RIPR advisory summary",
                 "Upload RIPR report artifacts",
                 // Upload infra is not analysis authority (#2009 review): a
                 // CodeQL flake must not fail a gate the analysis passed.
-                "Upload RIPR diff findings",
-                "Upload RIPR repo seams",
-            ],
-            // Gate-critical analysis producers (#2009): advisory by default
-            // but blocking when the operator opted into a blocking gate.
-            gate_conditional_steps: &[
-                "Run RIPR PR guidance report",
-                "Render RIPR diff SARIF",
-                "Render RIPR repo seam SARIF",
-            ],
-            optional_sarif_steps: &[
-                "Render RIPR diff SARIF",
-                "Render RIPR repo seam SARIF",
                 "Upload RIPR diff findings",
                 "Upload RIPR repo seams",
             ],
@@ -3499,7 +3504,7 @@ mod tests {
         assert_eq!(
             reports(&args(&["unknown"])),
             Err(
-                "unknown reports subcommand \"unknown\"; expected `index`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+                "unknown reports subcommand \"unknown\"; expected `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
                     .to_string()
             )
         );
@@ -5586,6 +5591,65 @@ language = "rust"
     }
 
     #[test]
+    fn policy_suppression_health_rejects_missing_root_without_writing() -> Result<(), String> {
+        let dir = unique_command_test_dir("suppression-health-no-root");
+        let out = dir.join("suppression-health.json");
+        let out_md = dir.join("suppression-health.md");
+        let missing = dir.join("does-not-exist");
+
+        let err = policy(&args(&[
+            "suppression-health",
+            "--root",
+            &missing.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .err()
+        .ok_or_else(|| "missing --root must fail".to_string())?;
+
+        assert!(err.contains("cannot be read"), "{err}");
+        assert!(err.contains("does-not-exist"), "{err}");
+        assert!(
+            !out.exists() && !out_md.exists(),
+            "no report may be written"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policy_suppression_health_rejects_file_root_without_writing() -> Result<(), String> {
+        let dir = unique_command_test_dir("suppression-health-file-root");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create suppression dir: {err}"))?;
+        let root_file = dir.join("root-file");
+        std::fs::write(&root_file, "not a directory")
+            .map_err(|err| format!("write root file: {err}"))?;
+        let out = dir.join("suppression-health.json");
+        let out_md = dir.join("suppression-health.md");
+
+        let result = policy(&args(&[
+            "suppression-health",
+            "--root",
+            &root_file.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]));
+        let reports_written = out.exists() || out_md.exists();
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove suppression dir: {err}"))?;
+
+        let err = result
+            .err()
+            .ok_or_else(|| "file --root must fail".to_string())?;
+        assert!(err.contains("is not a directory"), "{err}");
+        assert!(err.contains("root-file"), "{err}");
+        assert!(!reports_written, "no report may be written");
+        Ok(())
+    }
+
+    #[test]
     fn pr_evidence_ledger_parses_option_surface() {
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[
@@ -6474,7 +6538,7 @@ language = "rust"
             crate::config::CheckInputExplicit::default(),
         );
         let output = crate::app::check_workspace_with_config(input, &config)?;
-        let rendered = crate::output::json::render_with_config(&output, &config);
+        let rendered = crate::output::json::render_with_config(&output, &config, None);
         serde_json::from_str(&rendered).map_err(|err| format!("check JSON did not parse: {err}"))
     }
 
@@ -6576,7 +6640,10 @@ language = "rust"
             packet["canonical_gap_id"].as_str(),
             "receipt must bind to the packet's canonical gap id"
         );
-        assert_eq!(options.verify_command, "jest tests/discount.test.ts");
+        assert_eq!(
+            options.verify_command,
+            "npx --no-install jest tests/discount.test.ts"
+        );
         assert_eq!(
             Some(options.verify_command.as_str()),
             packet["verify_command"].as_str(),
@@ -6868,7 +6935,7 @@ language = "rust"
         );
         assert_eq!(
             init(&args(&["--ci", "gitlab"])),
-            Err("unknown init --ci provider \"gitlab\"".to_string())
+            Err("unknown init --ci provider \"gitlab\". Accepted: github.".to_string())
         );
     }
 
@@ -6935,8 +7002,14 @@ language = "rust"
             gate_help.contains("--baseline PATH"),
             "gate help no longer declares --baseline as a PATH:\n{gate_help}"
         );
+        let (packet, _) = ci_packet::recorded_full_packet()?;
         assert!(
-            workflow.contains("--baseline \"$RIPR_GATE_BASELINE\""),
+            include_str!("commands/ci_packet.rs")
+                .contains("settings.gate_baseline = var(\"RIPR_GATE_BASELINE\");")
+                && packet
+                    .lines()
+                    .any(|line| line.starts_with("ripr gate evaluate ")
+                        && line.ends_with(" --baseline .ripr/gate-baseline.json")),
             "generated workflow no longer passes RIPR_GATE_BASELINE to --baseline"
         );
         let baseline = generated_workflow_env_comment(&workflow, "RIPR_GATE_BASELINE")?;
@@ -7015,11 +7088,9 @@ language = "rust"
     }
 
     #[test]
-    fn init_generated_github_workflow_is_advisory() {
+    fn init_generated_github_workflow_is_advisory() -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
-        assert!(workflow.contains(
-            "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}"
-        ));
+        let (packet, _) = ci_packet::recorded_full_packet()?;
         assert!(workflow.contains("github/codeql-action/upload-sarif@v4"));
         assert!(workflow.contains("actions/upload-artifact@v7"));
         assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
@@ -7027,614 +7098,271 @@ language = "rust"
         assert!(workflow.contains("RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}"));
         assert!(workflow.contains("RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}"));
         assert!(workflow.contains("pull-requests: write"));
-        assert!(workflow.contains("--format sarif"));
-        assert!(workflow.contains("--format repo-sarif"));
-        assert!(workflow.contains("--format repo-badge-json"));
-        assert!(workflow.contains("ripr pilot"));
-        assert!(workflow.contains("ripr agent start"));
-        assert!(workflow.contains("ripr agent packet"));
-        assert!(workflow.contains("ripr agent status"));
-        assert!(workflow.contains("ripr agent review-summary"));
-        assert!(workflow.contains("target/ripr/workflow/agent-packet.json"));
-        assert!(workflow.contains("target/ripr/workflow/agent-brief.json"));
-        assert!(workflow.contains("target/ripr/workflow/agent-verify.json"));
-        assert!(workflow.contains("target/ripr/reports/agent-receipt.json"));
-        assert!(workflow.contains("target/ripr/workflow/agent-status.json"));
-        assert!(workflow.contains("target/ripr/workflow/agent-status.md"));
-        assert!(workflow.contains("target/ripr/workflow/agent-review-summary.json"));
-        assert!(workflow.contains("target/ripr/workflow/agent-review-summary.md"));
-        assert!(workflow.contains("target/ripr/agent/agent-packet.json"));
-        assert!(workflow.contains("target/ripr/agent/agent-brief.json"));
-        assert!(workflow.contains("target/ripr/reports/gate-decision.json"));
-        assert!(workflow.contains("target/ripr/reports/gate-decision.md"));
-        assert!(workflow.contains("target/ripr/reports/baseline-debt-delta.json"));
-        assert!(workflow.contains("target/ripr/reports/baseline-debt-delta.md"));
-        assert!(workflow.contains("target/ripr/reports/ripr-zero-status.json"));
-        assert!(workflow.contains("target/ripr/reports/ripr-zero-status.md"));
-        assert!(workflow.contains("target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(workflow.contains("target/ripr/reports/pr-evidence-ledger.md"));
-        assert!(workflow.contains("target/ripr/reports/waiver-aging.json"));
-        assert!(workflow.contains("target/ripr/reports/waiver-aging.md"));
-        assert!(workflow.contains("target/ripr/reports/suppression-health.json"));
-        assert!(workflow.contains("target/ripr/reports/suppression-health.md"));
-        assert!(workflow.contains("target/ripr/reports/policy-readiness.json"));
-        assert!(workflow.contains("target/ripr/reports/policy-readiness.md"));
-        assert!(workflow.contains("target/ripr/reports/policy-operations.json"));
-        assert!(workflow.contains("target/ripr/reports/policy-operations.md"));
-        assert!(workflow.contains("target/ripr/reports/policy-history.json"));
-        assert!(workflow.contains("target/ripr/reports/policy-history.md"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-visible-only.json"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-visible-only.md"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-acknowledgeable.json"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-acknowledgeable.md"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-baseline-check.json"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-baseline-check.md"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-calibrated-gate.json"));
-        assert!(workflow.contains("target/ripr/reports/policy-promotion-calibrated-gate.md"));
-        assert!(workflow.contains(
-            "target/ripr/reports/preview-promotion-${language}-${class_label//_/-}.json"
-        ));
+        assert!(workflow.contains("run: ripr reports ci-packet --root ."));
+        // The gate's advisory switch lives in the packet now: a gate input
+        // failure blocks only under a blocking RIPR_GATE_MODE (#2009).
         assert!(
-            workflow.contains(
-                "target/ripr/reports/preview-promotion-${language}-${class_label//_/-}.md"
-            )
+            include_str!("commands/ci_packet.rs")
+                .contains("self.gate_mode.is_empty() || self.gate_mode == \"visible-only\"")
         );
-        assert!(
-            workflow.contains("target/ripr/reports/preview-promotion-typescript-boundary-gap.md")
-        );
-        assert!(workflow.contains("target/ripr/reports/preview-promotion-python-boundary-gap.md"));
-        assert!(workflow.contains("target/ripr/reports/test-oracle-assistant-proof.json"));
-        assert!(workflow.contains("target/ripr/reports/test-oracle-assistant-proof.md"));
-        assert!(workflow.contains("target/ripr/reports/assistant-loop-health.json"));
-        assert!(workflow.contains("target/ripr/reports/assistant-loop-health.md"));
-        assert!(workflow.contains("target/ripr/reports/gap-decision-ledger.json"));
-        assert!(workflow.contains("target/ripr/reports/gap-decision-ledger.md"));
-        assert!(workflow.contains("target/ripr/reports/first-useful-action.json"));
-        assert!(workflow.contains("target/ripr/reports/first-useful-action.md"));
-        assert!(workflow.contains("target/ripr/reports/pr-review-front-panel.json"));
-        assert!(workflow.contains("target/ripr/reports/pr-review-front-panel.md"));
-        assert!(workflow.contains("target/ripr/reports/start-here.json"));
-        assert!(workflow.contains("target/ripr/reports/start-here.md"));
-        assert!(workflow.contains("target/ripr/reports/index.json"));
-        assert!(workflow.contains("target/ripr/reports/index.md"));
-        assert!(workflow.contains("target/ci/labels.json"));
-        assert!(workflow.contains("target/ripr/review/comments.json"));
-        assert!(workflow.contains("target/ripr/pr/check.json"));
-        assert!(workflow.contains("ripr check \\"));
-        assert!(workflow.contains("--check-output target/ripr/pr/check.json"));
-        assert!(workflow.contains("target/ripr/review/existing-comments.json"));
-        assert!(workflow.contains("target/ripr/review/comment-publish-plan.json"));
-        assert!(workflow.contains("target/ripr/review/comment-publish-plan.md"));
-        assert!(workflow.contains("target/ripr/review"));
-        assert!(workflow.contains("target/ci"));
+        for command in [
+            "--format sarif",
+            "--format repo-sarif",
+            "--format repo-badge-json",
+            "ripr pilot",
+            "ripr agent start",
+            "ripr agent packet",
+            "ripr agent status",
+            "ripr agent review-summary",
+            "ripr check --root . --base origin/main --format json > target/ripr/pr/check.json",
+            "--check-output target/ripr/pr/check.json",
+        ] {
+            assert!(
+                packet.contains(command),
+                "packet runs no `{command}`:\n{packet}"
+            );
+        }
         assert!(workflow.contains("name: Capture existing RIPR inline comments"));
-        assert!(workflow.contains("name: Plan RIPR inline comments"));
         assert!(workflow.contains("name: Publish RIPR inline comments"));
-        assert!(workflow.contains("name: Capture RIPR gate labels"));
-        assert!(workflow.contains("name: Evaluate RIPR gate decision"));
-        assert!(workflow.contains("name: Render RIPR baseline debt delta"));
-        assert!(workflow.contains("name: Emit RIPR PR guidance annotations"));
-        assert!(workflow.contains("name: Render RIPR waiver aging"));
-        assert!(workflow.contains("name: Render RIPR suppression health"));
-        assert!(workflow.contains("name: Render RIPR policy readiness"));
-        assert!(workflow.contains("name: Render RIPR policy operations"));
-        assert!(workflow.contains("name: Render RIPR policy history"));
-        assert!(workflow.contains("name: Render RIPR policy promotion packets"));
-        assert!(workflow.contains("name: Render RIPR preview promotion packets"));
-        assert!(workflow.contains("name: Render RIPR test-oracle assistant proof"));
-        assert!(workflow.contains("name: Render RIPR assistant loop health"));
-        assert!(workflow.contains("name: Render RIPR first useful action"));
-        assert!(workflow.contains("name: Render RIPR PR review front panel"));
-        assert!(workflow.contains("name: Render RIPR first-pr start-here"));
-        assert!(workflow.contains("name: Render RIPR report packet index"));
-        assert!(workflow.contains("def escape_data:"));
-        assert!(workflow.contains("def escape_property:"));
-        assert!(!workflow.contains("@tsv"));
-        assert!(!workflow.contains("escape_github_property()"));
-        assert!(workflow.contains(
-            r#"::warning file=\(.placement.path | escape_property),line=\(.placement.line | tostring | escape_property)"#
-        ));
-        assert!(workflow.contains("title=RIPR targeted test guidance::"));
         assert!(workflow.contains("name: Add RIPR advisory summary"));
-        assert!(workflow.contains("## RIPR advisory summary"));
-        assert!(workflow.contains("### Start here"));
-        assert!(workflow.contains("#### First-run status"));
-        assert!(workflow.contains("Changed behavior"));
-        assert!(workflow.contains("Current evidence strength"));
-        assert!(workflow.contains("Missing discriminator"));
-        assert!(workflow.contains("Focused proof intent"));
-        assert!(workflow.contains("### Language preview grouping"));
-        assert!(workflow.contains("### PR review summary"));
-        assert!(workflow.contains("#### PR review at a glance"));
-        assert!(workflow.contains("### Recommended next test"));
-        assert!(workflow.contains("#### Recommended next test at a glance"));
-        assert!(workflow.contains("### Top recommendation"));
-        assert!(workflow.contains("### Artifact packet"));
-        assert!(workflow.contains("### Uploaded review artifacts"));
-        assert!(workflow.contains("#### Uploaded artifacts at a glance"));
-        assert!(workflow.contains("### Gate decision"));
-        assert!(workflow.contains("#### Gate decision at a glance"));
-        assert!(workflow.contains("### Baseline debt delta"));
-        assert!(workflow.contains("#### Baseline debt movement"));
-        assert!(workflow.contains("### RIPR Zero status"));
-        assert!(workflow.contains("#### RIPR Zero at a glance"));
-        assert!(workflow.contains("### PR evidence ledger"));
-        assert!(workflow.contains("#### PR movement at a glance"));
-        assert!(workflow.contains("### Policy readiness"));
-        assert!(workflow.contains("#### Policy readiness at a glance"));
-        assert!(workflow.contains("### Policy operations"));
-        assert!(workflow.contains("#### Policy operations at a glance"));
-        assert!(workflow.contains("### Policy history"));
-        assert!(workflow.contains("#### Policy history at a glance"));
-        assert!(workflow.contains("### Policy promotion packets"));
-        assert!(workflow.contains("### Preview promotion packets"));
-        assert!(workflow.contains("### Waiver aging"));
-        assert!(workflow.contains("#### Waiver aging at a glance"));
-        assert!(workflow.contains("### Suppression health"));
-        assert!(workflow.contains("#### Suppression health at a glance"));
-        assert!(workflow.contains("### Test-oracle assistant proof"));
-        assert!(workflow.contains("#### Assistant proof at a glance"));
-        assert!(workflow.contains("### Agent proof status"));
-        assert!(workflow.contains("#### Agent proof status at a glance"));
-        assert!(workflow.contains("markdown_inline()"));
-        assert!(workflow.contains("Active PR labels"));
-        assert!(workflow.contains("Applied waiver label"));
-        assert!(workflow.contains("Baseline artifact"));
-        assert!(workflow.contains("Recommendation calibration"));
-        assert!(workflow.contains("Mutation calibration"));
-        assert!(workflow.contains("Blocking reason"));
-        assert!(workflow.contains("Gate artifacts"));
-        assert!(workflow.contains("Baseline delta artifacts"));
-        assert!(workflow.contains("Policy readiness artifacts"));
-        assert!(workflow.contains("Policy operations artifacts"));
-        assert!(workflow.contains("Policy history artifacts"));
-        assert!(workflow.contains("Promotion packet artifacts"));
-        assert!(workflow.contains("Preview promotion artifacts"));
-        assert!(workflow.contains("Waiver-aging artifacts"));
-        assert!(workflow.contains("Suppression-health artifacts"));
-        assert!(workflow.contains("Proof artifacts"));
-        assert!(workflow.contains("Action artifacts"));
-        assert!(workflow.contains("Front-panel artifacts"));
-        assert!(workflow.contains("Index artifacts"));
-        assert!(workflow.contains("### SARIF and badge status"));
-        assert!(workflow.contains("### PR guidance annotations"));
-        assert!(workflow.contains("### PR inline comments"));
-        assert!(workflow.contains("### Known limits"));
-        assert!(workflow.contains("Inline comments are disabled by default"));
+        // The annotation program moved into the packet; parity with the
+        // retired jq is pinned by the replay suite.
+        assert!(!workflow.contains("def escape_data:"));
+        assert!(!workflow.contains("::warning file="));
         assert!(!workflow.contains("fail-on-new-warning"));
         assert!(!workflow.contains("pull_request_target"));
         assert!(!workflow.contains("RIPR_GATE_MODE: \"acknowledgeable\""));
         assert!(!workflow.contains("RIPR_GATE_MODE: \"baseline-check\""));
         assert!(!workflow.contains("RIPR_GATE_MODE: \"calibrated-gate\""));
+        Ok(())
     }
 
     #[test]
-    fn init_generated_github_workflow_never_auto_refreshes_baseline() {
+    fn init_generated_github_workflow_never_auto_refreshes_baseline() -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
-        let baseline_delta = workflow_step(&workflow, "Render RIPR baseline debt delta");
-        assert!(baseline_delta.contains("ripr baseline diff"));
-        assert!(baseline_delta.contains("continue-on-error: true"));
-        assert!(!workflow.contains("ripr baseline update"));
-        assert!(!workflow.contains("--remove-resolved"));
-        assert!(!workflow.contains("--adopt-new"));
-        assert!(!workflow.contains("--out .ripr/gate-baseline.json"));
+        let (packet, _) = ci_packet::recorded_full_packet()?;
+        assert!(packet.contains("ripr baseline diff --baseline .ripr/gate-baseline.json"));
+        for surface in [workflow.as_str(), packet.as_str()] {
+            assert!(!surface.contains("ripr baseline update"));
+            assert!(!surface.contains("--remove-resolved"));
+            assert!(!surface.contains("--adopt-new"));
+            assert!(!surface.contains("--out .ripr/gate-baseline.json"));
+        }
+        Ok(())
     }
 
     #[test]
-    fn init_generated_github_workflow_uploads_reports_and_makes_sarif_optional() {
+    fn init_generated_github_workflow_uploads_reports_and_makes_sarif_optional()
+    -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
         assert!(workflow.contains("name: RIPR advisory reports"));
-        assert!(workflow.contains("target/ripr/pilot"));
-        assert!(workflow.contains("target/ripr/agent"));
-        assert!(workflow.contains("target/ripr/workflow"));
-        assert!(workflow.contains("target/ripr/reports"));
-        assert!(workflow.contains("target/ripr/review"));
-        assert!(workflow.contains("target/ci"));
+        for path in [
+            "target/ripr/pilot",
+            "target/ripr/agent",
+            "target/ripr/workflow",
+            "target/ripr/reports",
+            "target/ripr/review",
+            "target/ci",
+        ] {
+            assert!(workflow.contains(path), "upload misses {path}");
+        }
         assert!(workflow.contains("name: ripr-reports"));
-        assert!(workflow.contains("RIPR_TOP_SEAM_ID"));
-        assert!(workflow.contains(".top_actionable_seams[0].seam_id"));
-        assert!(!workflow.contains(".top_seams[0].seam_id"));
         // An adopter repository has no xtask; the workflow must not call it.
         assert!(!workflow.contains("cargo xtask"));
-        assert!(workflow.contains("cat target/ripr/pilot/pilot-summary.md"));
-        assert!(workflow.contains("cat target/ripr/workflow/agent-review-summary.md"));
-        assert!(workflow.contains("repo-ripr-badge.json"));
-        assert!(workflow.contains("repo-ripr-badge-shields.json"));
-        assert!(workflow.contains(".summary.comments // 0"));
-        assert!(workflow.contains(".summary.summary_only // 0"));
-        assert!(workflow.contains(".summary.suppressed // 0"));
-        assert!(workflow.contains(".summary.unknown_confidence // 0"));
-        assert!(workflow.contains(".inputs.labels // []"));
-        assert!(workflow.contains(".policy.acknowledgement_labels // []"));
-        assert!(workflow.contains(".policy.acknowledgement_label"));
-        assert!(workflow.contains(".inputs.baseline // \"not supplied\""));
-        assert!(workflow.contains(".inputs.recommendation_calibration // \"not supplied\""));
-        assert!(workflow.contains(".inputs.mutation_calibration // \"not supplied\""));
-        assert!(workflow.contains(".evidence.recommendation_calibration.confidence_effect"));
-        assert!(workflow.contains(".evidence.mutation_calibration.confidence_effect"));
-        assert!(workflow.contains(".gate_reason"));
-        assert!(workflow.contains("blocking=\"$(markdown_inline \"$blocking\")\""));
-        assert!(workflow.contains("Counts: blocking=\\`$blocking\\`"));
-        assert!(workflow.contains(".delta.still_present // 0"));
-        assert!(workflow.contains(".delta.resolved // 0"));
-        assert!(workflow.contains(".delta.new_policy_eligible // 0"));
-        assert!(workflow.contains(".delta.acknowledged // 0"));
-        assert!(workflow.contains(".delta.suppressed // 0"));
-        assert!(workflow.contains(".delta.stale_baseline_entry // 0"));
-        assert!(workflow.contains(".delta.invalid_baseline_entry // 0"));
-        assert!(workflow.contains(".delta.missing_current_input // 0"));
-        assert!(workflow.contains(".delta.legacy_fallback_match // 0"));
-        assert!(workflow.contains("legacy_fallback=\\`$legacy_fallback_match\\`"));
-        assert!(workflow.contains("Counts: still_present=\\`$still_present\\`"));
-        assert!(workflow.contains(".movement.new_policy_eligible // 0"));
-        assert!(workflow.contains(".movement.baseline_still_present // 0"));
-        assert!(workflow.contains(".movement.baseline_resolved // 0"));
-        assert!(workflow.contains(".movement.acknowledged // 0"));
-        assert!(workflow.contains(".movement.suppressed // 0"));
-        assert!(workflow.contains(".movement.blocking_candidates // 0"));
-        assert!(workflow.contains(".movement.visible_unresolved // 0"));
-        assert!(workflow.contains(".coverage_grip_frontier.status // \"not_available\""));
-        assert!(workflow.contains(".history.trend // \"not_available\""));
-        assert!(workflow.contains("Counts: new_policy_eligible=\\`$ledger_new_policy_eligible\\`"));
-        // F60-4: counts with no baseline delta or RIPR Zero status behind them
-        // print as not measured, not as zeros.
-        assert!(workflow.contains(".movement.count_source // \"unknown\""));
-        assert!(
-            workflow
-                .contains("gap counts not measured (no baseline debt delta or RIPR Zero status)")
-        );
-        assert!(workflow.contains("sed 's/`/\\\\`/g'"));
-        assert!(workflow.contains("Blocking reason (\\`$blocking\\`): \\`$blocking_reason\\`"));
-        assert!(workflow.contains("Boundary: $limits_note"));
-        assert!(workflow.contains("Pass/fail authority remains \\`ripr gate evaluate\\`"));
-        assert!(workflow.contains("cat target/ripr/reports/pr-evidence-ledger.md"));
-        assert!(workflow.contains("Set `RIPR_GATE_BASELINE`"));
-        assert!(workflow.contains("RIPR_GATE_MODE"));
-        assert!(workflow.contains("RIPR_GATE_BASELINE"));
-        assert!(workflow.contains("RIPR_COMMENT_MODE"));
-        assert!(workflow.contains("existing-comments.raw.json"));
-        assert!(workflow.contains("<!-- ripr:dedupe="));
-        assert!(workflow.contains("--mode \"$RIPR_COMMENT_MODE\""));
-        assert!(workflow.contains("--existing-comments target/ripr/review/existing-comments.json"));
-        assert!(workflow.contains("--token-available"));
-        assert!(workflow.contains("--write-permission"));
-        assert!(workflow.contains("jq -e '.summary.safe_to_publish == true'"));
-        assert!(workflow.contains("gh api --method POST"));
-        assert!(workflow.contains("gh api --method PATCH"));
-        assert!(workflow.contains("assistant-loop proof"));
-        assert!(workflow.contains("first-action"));
-        assert!(workflow.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(workflow.contains("--agent-packet target/ripr/workflow/agent-brief.json"));
-        assert!(workflow.contains("--before target/ripr/workflow/before.repo-exposure.json"));
-        assert!(workflow.contains("--after target/ripr/workflow/after.repo-exposure.json"));
-        assert!(workflow.contains("--receipt target/ripr/reports/agent-receipt.json"));
-        assert!(workflow.contains("--ledger target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(
-            workflow
-                .contains("--coverage-frontier target/ripr/reports/coverage-grip-frontier.json")
-        );
-        assert!(workflow.contains("--gate-decision target/ripr/reports/gate-decision.json"));
-        assert!(workflow.contains("pr-review front-panel"));
-        assert!(workflow.contains("reports index"));
-        assert!(workflow.contains("front_panel_has_input=true"));
-        assert!(workflow.contains("--first-action target/ripr/reports/first-useful-action.json"));
-        assert!(
-            workflow.contains("--assistant-health target/ripr/reports/assistant-loop-health.json")
-        );
-        assert!(workflow.contains("--ledger target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(workflow.contains("--baseline-delta target/ripr/reports/baseline-debt-delta.json"));
-        assert!(workflow.contains("--zero-status target/ripr/reports/ripr-zero-status.json"));
-        assert!(
-            workflow
-                .contains("--mutation-calibration target/ripr/reports/mutation-calibration.json")
-        );
-        assert!(workflow.contains("--receipt target/ripr/reports/agent-receipt.json"));
-        assert!(workflow.contains("ripr \"${gate_args[@]}\""));
-        assert!(workflow.contains("ripr \"${proof_args[@]}\""));
-        assert!(workflow.contains("ripr \"${first_action_args[@]}\""));
-        assert!(workflow.contains("ripr \"${front_panel_args[@]}\""));
-        assert!(workflow.contains("ripr reports index"));
-        assert!(workflow.contains("index_has_input=true"));
-        assert!(workflow.contains("Set `RIPR_GATE_MODE`"));
-        assert!(workflow.contains("No runtime mutation execution is performed"));
         // The RIPR-source-tree-only cockpit step is gone from the adopter
         // workflow (F60-8).
         assert!(!workflow.contains("hashFiles('xtask/src/reports/operator.rs')"));
-        assert!(workflow.contains("if: env.RIPR_UPLOAD_SARIF == 'true'"));
+        assert!(workflow.contains("existing-comments.raw.json"));
+        assert!(workflow.contains("<!-- ripr:dedupe="));
+        assert!(workflow.contains("jq -e '.summary.safe_to_publish == true'"));
+        assert!(workflow.contains("gh api --method POST"));
+        assert!(workflow.contains("gh api --method PATCH"));
         assert!(workflow.contains(
-            "if: env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request'"
+            "env.RIPR_UPLOAD_SARIF == 'true' && hashFiles('target/ripr/reports/ripr-seams.sarif')"
         ));
+        assert!(
+            workflow
+                .contains("env.RIPR_UPLOAD_SARIF == 'true' && github.event_name == 'pull_request'")
+        );
+
+        // With SARIF off, the packet renders none for the upload steps to
+        // find.
+        let root = unique_command_test_dir("ci-packet-sarif-off");
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let (commands, _) = ci_packet::recorded_commands(&root, Default::default());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            !commands.iter().any(|line| line.contains("sarif")),
+            "{commands:?}"
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|line| line.contains("--format repo-badge-json")),
+            "{commands:?}"
+        );
+        Ok(())
     }
 
     #[test]
     fn init_generated_github_workflow_names_cockpit_repair_commands() {
-        let workflow = generated_github_actions_workflow();
-
-        let first_action = workflow_step(&workflow, "Render RIPR first useful action");
-        assert!(first_action.contains(
+        let packet = include_str!("commands/ci_packet.rs");
+        assert!(packet.contains(
             "Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md`"
         ));
-
-        let front_panel = workflow_step(&workflow, "Render RIPR PR review front panel");
-        assert!(front_panel.contains(
+        assert!(packet.contains(
             "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`"
         ));
-
-        let first_pr = workflow_step(&workflow, "Render RIPR first-pr start-here");
-        assert!(first_pr.contains("ripr first-pr"));
-        assert!(first_pr.contains("--gap-ledger target/ripr/reports/gap-decision-ledger.json"));
-        assert!(first_pr.contains("--out-dir target/ripr/reports"));
-
-        let packet_index = workflow_step(&workflow, "Render RIPR report packet index");
-        assert!(packet_index.contains(
-            "Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`."
-        ));
-
-        let summary = workflow_step(&workflow, "Add RIPR advisory summary");
-        assert!(summary.contains("### Start here"));
-        assert!(summary.contains("Open `target/ripr/reports/start-here.md` first when it exists."));
-        assert!(summary.contains(
-            "Then open `target/ripr/reports/index.md` to navigate deeper evidence artifacts."
-        ));
-        assert!(summary.contains(
-            "Safe next action: repair one named gap, regenerate missing or malformed artifacts"
-        ));
-        assert!(summary.contains(
-            "Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence"
-        ));
-        assert!(summary.contains(
-            "Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit."
-        ));
-        assert!(summary.contains(
-            "Preview boundary: preview-limited evidence stays syntax-first and advisory"
-        ));
-        assert!(summary.contains(
-            "Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured."
-        ));
-        assert!(summary.contains("Start-here artifact: `target/ripr/reports/start-here.md`"));
-        assert!(summary.contains(".summary.start_here // \"not_available\""));
-        assert!(summary.contains("Start-here artifact: \\`$start_here_path\\`"));
         assert!(
-            summary.contains("Start-here artifact: `target/ripr/reports/pr-review-front-panel.md`")
+            packet
+                .contains("println!(\"Regenerate command: `ripr {}`.\", regenerate.join(\" \"));")
         );
-        assert!(summary.contains("Start-here artifact: `target/ripr/pilot/pilot-summary.md`"));
-        assert!(summary.contains("#### First-run status"));
-        assert!(summary.contains(".status // \"unknown\""));
-        assert!(summary.contains(".selected.state // \"unknown\""));
-        assert!(summary.contains(".selected.canonical_gap_id // .selected.gap_id"));
-        assert!(summary.contains(".selected.language + \" (\""));
-        assert!(summary.contains(".selected.changed_behavior // \"not_available\""));
-        assert!(summary.contains(".selected.static_evidence_boundary // \"static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\""));
-        assert!(summary.contains(
-            ".selected.missing_discriminator // .selected.repair.suggested_assertion // \"not_available\""
-        ));
-        assert!(summary.contains(
-            ".selected.focused_proof_intent // .selected.repair.suggested_assertion // \"not_available\""
-        ));
-        assert!(summary.contains(".selected.repair.target_file // \"not_available\""));
-        assert!(summary.contains(".selected.repair.related_test // \"not_available\""));
-        assert!(summary.contains(".selected.static_limit_kind"));
-        assert!(summary.contains(".selected.receipt_path // \"not_available\""));
-        assert!(summary.contains(".selected.receipt_state // \"receipt_missing\""));
-        assert!(summary.contains("Canonical gap: \\`$start_gap\\`"));
-        assert!(summary.contains("Language: \\`$start_language\\`"));
-        assert!(summary.contains("Changed behavior: \\`$start_changed\\`"));
-        assert!(summary.contains("Missing discriminator: \\`$start_missing\\`"));
-        assert!(summary.contains("Focused proof intent: \\`$start_focused\\`"));
-        assert!(summary.contains("Boundary: \\`$start_boundary\\`"));
-        assert!(summary.contains("Repair target: \\`$start_target\\`"));
-        assert!(summary.contains("Related test: \\`$start_related\\`"));
-        assert!(summary.contains("Static limit: \\`$start_limit\\`"));
-        // #3906 (F60-3, F60-14): a carried repair start leads the block and
-        // the low-level pair becomes the manual alternative.
-        assert!(summary.contains(".selected.repair_command // empty"));
-        assert!(summary.contains("echo \"- Start repair: \\`$start_repair_command\\`\""));
-        // The labels are the shared first-pr constants, substituted into
-        // the workflow so one owner holds the text.
-        assert!(summary.contains(&format!(
-            "echo '- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}'"
-        )));
-        assert!(summary.contains(&format!("start_verify_label='{MANUAL_VERIFY_LABEL}'")));
-        assert!(summary.contains(&format!("start_verify_label='{VERIFY_AFTER_EDIT_LABEL}'")));
-        assert!(summary.contains(&format!(
-            "start_receipt_label='{RECEIPT_AFTER_VERIFY_LABEL}'"
-        )));
-        assert!(
-            !summary.contains("@RIPR_"),
-            "unsubstituted workflow placeholder"
-        );
-        assert!(summary.contains("- $start_verify_label: \\`$start_verify\\`"));
-        assert!(summary.contains("- $start_receipt_label: \\`$start_receipt\\`"));
-        let lead = summary
-            .find("echo \"- Start repair: \\`$start_repair_command\\`\"")
-            .unwrap_or(usize::MAX);
-        let status = summary
-            .find("echo \"- Status: \\`$start_status\\`\"")
-            .unwrap_or(0);
-        assert!(
-            lead < status,
-            "the repair start must lead the first-run block"
-        );
-        assert!(summary.contains("Receipt path: \\`$start_receipt_path\\`"));
-        assert!(summary.contains("Receipt state: \\`$start_receipt_state\\`"));
-        assert!(summary.contains("Safe next action command: \\`$start_next\\`"));
-        assert!(
-            summary
-                .contains(".selected.repair_command // .selected.next_command // .selected.regeneration_command // \"none\"")
-        );
-        assert!(summary.contains(".action_kind // \"unknown\""));
-        assert!(summary.contains(".commands.context_packet // \"not_available\""));
-        // #3906: the first-action summary surfaces the carried repair start.
-        assert!(summary.contains(".commands.repair // \"not_available\""));
-        assert!(summary.contains("Repair start: \\`$first_repair\\`"));
-        assert!(summary.contains("Repair start: \\`$action_repair\\`"));
-        // #3906 (F60-14): in both first-action blocks the carried repair
-        // start leads, followed by its after phase; verify and receipt are
-        // the manual alternative, else steps after the test edit.
-        for (prefix, status_line) in [
-            ("first", "echo \"- Status: \\`$first_status\\`\""),
-            ("action", "echo \"- Status: \\`$action_status\\`\""),
-        ] {
-            let guard = format!(
-                "if [ \"${prefix}_repair\" != not_available ] && [ \"${prefix}_repair\" != unknown ]; then"
-            );
-            let lead = format!("echo \"- Repair start: \\`${prefix}_repair\\`\"");
-            assert!(summary.contains(&guard), "{prefix} guard");
-            let lead_at = summary.find(&lead).unwrap_or(usize::MAX);
-            let status_at = summary.find(status_line).unwrap_or(0);
-            assert!(lead_at < status_at, "{prefix} repair start must lead");
-            assert!(summary.contains(&format!("{prefix}_verify_label='{MANUAL_VERIFY_LABEL}'")));
-            assert!(summary.contains(&format!("{prefix}_receipt_label='{MANUAL_RECEIPT_LABEL}'")));
-            assert!(summary.contains(&format!(
-                "{prefix}_verify_label='{VERIFY_AFTER_EDIT_LABEL}'"
-            )));
-            assert!(summary.contains(&format!(
-                "{prefix}_receipt_label='{RECEIPT_AFTER_VERIFY_LABEL}'"
-            )));
-            assert!(summary.contains(&format!(
-                "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
-            )));
-        }
-        for prefix in ["panel", "ledger"] {
-            assert!(summary.contains(&format!(
-                "if [ \"${prefix}_repair\" != not_available ] && [ \"${prefix}_repair\" != unknown ]; then\n"
-            )));
-            assert!(summary.contains(&format!("echo \"- Repair start: \\`${prefix}_repair\\`\"")));
-            assert!(summary.contains(&format!("{prefix}_verify_label='{MANUAL_VERIFY_LABEL}'")));
-            assert!(summary.contains(&format!(
-                "echo \"- ${prefix}_verify_label: \\`${prefix}_verify\\`\""
-            )));
-        }
-        assert!(!summary.contains("Verify command: \\`$first_verify\\`"));
-        assert!(!summary.contains("Verify command: \\`$action_verify\\`"));
-        assert!(summary.contains("missing_start_here"));
-        assert!(summary.contains("State: \\`missing_artifact\\`"));
-        assert!(summary.contains(
-            "Safe next action: run \\`ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
-        ));
-        assert!(summary.contains(
-            "start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority"
-        ));
-        assert!(summary.contains(
-            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
-        ));
-        assert!(summary.contains(
-            "Fallback safe next action: run \\`ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md\\`"
-        ));
-        assert!(summary.contains(
-            "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md`"
-        ));
-        assert!(summary.contains(
-            "Regenerate command: `ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md`."
-        ));
     }
 
     #[test]
     fn init_generated_github_workflow_groups_preview_languages_only_when_configured() {
+        // The preview-promotion packets read the typed language config
+        // (#2072), not the human "Enabled languages:" line, and disclose a
+        // config failure instead of claiming "none configured" (#2182
+        // review). The summary's own grouping reads the same enabled set
+        // (`output::ci_summary` tests pin it).
+        let packet = include_str!("commands/ci_packet.rs");
+        let packets = packet
+            .split("fn preview_promotion_packets")
+            .nth(1)
+            .unwrap_or_default();
+        assert!(packets.contains("crate::config::load_for_root(&self.root)"));
+        assert!(packets.contains("Reading the language configuration failed"));
+        assert!(packets.contains(
+            "No TypeScript or Python preview languages are configured; preview promotion packets were not generated."
+        ));
+    }
+
+    #[test]
+    fn init_generated_github_workflow_renders_the_summary_with_one_command() {
         let workflow = generated_github_actions_workflow();
         let summary = workflow_step(&workflow, "Add RIPR advisory summary");
-
-        // The generated workflow consumes the typed doctor JSON surface
-        // (#2072), not the human "Enabled languages:" line.
-        assert!(summary.contains("ripr doctor --root . --json"));
-        assert!(summary.contains("jq -r '.languages | join(\",\")'"));
-        assert!(summary.contains("sed -n '/^typescript$/p; /^python$/p'"));
-        assert!(!summary.contains("sed -n 's/^- Enabled languages: //p'"));
-        assert!(summary.contains("|| true"));
-
-        // The preview-promotion detection site uses the same typed surface
-        // and discloses a doctor failure instead of claiming "none
-        // configured" (#2182 review).
-        let packets = workflow_step(&workflow, "Render RIPR preview promotion packets");
-        assert!(packets.contains("ripr doctor --root . --json"));
-        assert!(packets.contains("jq -r '.languages[]?'"));
-        assert!(!packets.contains("sed -n 's/^- Enabled languages: //p'"));
-        assert!(packets.contains("Language detection via `ripr doctor --json` failed"));
-        assert!(!packets.contains("No TypeScript or Python preview languages are configured; preview promotion packets were not generated.'\n            fi") || packets.contains("if ripr doctor --root . --json > /dev/null 2>&1"));
-        assert!(summary.contains("target/ripr/reports/repo-exposure.json"));
-        assert!(summary.contains("target/ripr/pilot/repo-exposure.json"));
-        assert!(summary.contains(".language_status? != \"preview\""));
-        assert!(summary.contains("configured preview/advisory"));
-        assert!(summary.contains("artifact_entries=\\`$artifact_entries\\`"));
-        assert!(summary.contains("grouped_preview_languages=\"$preview_languages\""));
-        assert!(
-            summary.contains("grouped_preview_languages=\"$grouped_preview_languages javascript\"")
-        );
-        assert!(summary.contains("Grouped preview evidence languages"));
-        assert!(summary.contains("for language in $grouped_preview_languages; do"));
-        assert!(summary.contains("actionability_states"));
-        assert!(summary.contains("actionability_categories"));
-        assert!(summary.contains("repair_packet_ready_entries"));
-        assert!(summary.contains("gate_impact=\\`none\\`"));
+        assert!(summary.contains("        if: always()\n        continue-on-error: true\n"));
         assert!(summary.contains(
-            "preview-language groups are advisory presentation only; \\`ripr gate evaluate\\` remains pass/fail authority"
+            "          RIPR_BASE_REF: ${{ github.base_ref || github.event.repository.default_branch }}\n"
         ));
-
-        let guard = summary
-            .find("if [ -n \"$preview_languages\" ]; then")
-            .unwrap_or(usize::MAX);
-        let grouping = summary
-            .find("echo '### Language preview grouping'")
-            .unwrap_or(usize::MAX);
-        let pr_review = summary
-            .find("echo '### PR review summary'")
-            .unwrap_or(usize::MAX);
-        assert_ne!(guard, usize::MAX, "missing language grouping guard");
-        assert_ne!(grouping, usize::MAX, "missing language grouping heading");
-        assert_ne!(pr_review, usize::MAX, "missing PR review heading");
-        assert!(
-            guard < grouping && grouping < pr_review,
-            "language grouping must stay opt-in and before the PR review summary"
+        assert!(summary.contains(
+            "          ripr reports ci-summary --root . \\\n            --base-ref \"$RIPR_BASE_REF\" \\\n            --upload-sarif \"${RIPR_UPLOAD_SARIF:-}\" \\\n            --gate-baseline \"${RIPR_GATE_BASELINE:-}\" \\\n            --comment-mode \"${RIPR_COMMENT_MODE:-}\" \\\n            >> \"$GITHUB_STEP_SUMMARY\""
+        ), "{summary}");
+        // #5236 review: when the install failed, the step still writes a
+        // summary that says so and where to look, instead of nothing.
+        assert!(summary.contains("          RIPR_INSTALL_OUTCOME: ${{ steps.install.outcome }}\n"));
+        let (guard, render) = summary
+            .split_once("          ripr reports ci-summary")
+            .unwrap_or_default();
+        assert!(guard.contains(
+            "if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ] || ! command -v ripr >/dev/null 2>&1; then"
+        ));
+        assert!(guard.contains("Next: open the Install ripr step log."));
+        // The guard only echoes fixed text; the summary itself is rendered
+        // by the command, not by shell.
+        for retired in ["markdown_inline", "repo_relative", "jq ", "echo "] {
+            assert!(
+                !render.contains(retired) && (retired == "echo " || !guard.contains(retired)),
+                "the summary step still carries `{retired}`"
+            );
+        }
+        assert!(!workflow.contains("markdown_inline()"));
+        // Every flag the step passes is one the command parses.
+        let options = super::ci_summary::parse_ci_summary_options(&[
+            "--root".to_string(),
+            ".".to_string(),
+            "--base-ref".to_string(),
+            "trunk".to_string(),
+            "--upload-sarif".to_string(),
+            String::new(),
+            "--gate-baseline".to_string(),
+            String::new(),
+            "--comment-mode".to_string(),
+            String::new(),
+        ]);
+        assert_eq!(
+            options.map(|options| options.base_ref),
+            Ok("trunk".to_string())
         );
     }
 
     #[test]
-    fn init_generated_github_workflow_matches_smoke_fixture() {
+    fn init_generated_github_workflow_matches_smoke_fixture() -> Result<(), String> {
+        use super::init_workflow::workflow_install_version;
+
         let workflow = generated_github_actions_workflow();
         let fixture = generated_workflow_smoke_fixture();
+        // The analysis steps run inside `ripr reports ci-packet` (#4696). Its
+        // own tests pin every command line a pull request run records and
+        // each step's continue-on-error and always() semantics; this test
+        // pins what is left in YAML and that the two meet.
+        let (packet, failed) = ci_packet::recorded_full_packet()?;
+        assert!(failed.is_empty(), "{failed:?}");
+        let packet_source = include_str!("commands/ci_packet.rs");
+        let surface = format!("{workflow}\n{packet}\n{packet_source}");
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
-        // Install caching (#2008): the install names an exact version, so a
-        // cached binary is reused only when it is that version.
-        // Pinned to a SHA, not the mutable v2 tag (#2190 review).
-        assert!(workflow.contains("Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32"));
-        assert!(!workflow.contains("Swatinem/rust-cache@v2"));
-        assert!(workflow.contains("shared-key: ripr-install"));
+        // The install downloads the prebuilt release binary instead of
+        // compiling ripr, so the job sets up no Rust toolchain or cargo
+        // cache of its own.
+        assert!(!workflow.contains("Swatinem/rust-cache"));
+        assert!(!workflow.contains("dtolnay/rust-toolchain"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("actions/upload-artifact@v7"));
         assert!(workflow.contains("github/codeql-action/upload-sarif@v4"));
-        assert_contains_all(&workflow, "command", fixture.commands);
-        assert_contains_all(&workflow, "artifact path", fixture.artifact_paths);
-        assert_contains_all(&workflow, "summary section", fixture.summary_sections);
+        assert_contains_all(&packet, "command", fixture.commands);
+        assert!(packet_source.contains("\"preview-promote\","));
+        assert_contains_all(&surface, "artifact path", fixture.artifact_paths);
 
         // Workflow hardening: the job token is not persisted into the
         // checkout that PR-controlled code runs in.
         assert!(
             workflow.contains("          fetch-depth: 0\n          persist-credentials: false\n")
         );
-        // Checked-in or cache-restored files under target/ripr and target/ci
-        // are removed after the cache restore and before any RIPR step, so
-        // gate inputs read "when present" come only from this run.
+        // Checked-in files under target/ripr and target/ci are removed before
+        // any RIPR step, so gate inputs read "when present" come only from
+        // this run. The analysis cache is restored outside the checkout, so
+        // the cleanup cannot discard it and the restore cannot land a file
+        // the cleanup was meant to remove.
         let cleanup = workflow_step(&workflow, "Remove checked-in RIPR artifacts");
         assert!(cleanup.contains("run: rm -rf target/ripr target/ci"));
-        let cache_at = workflow.find("Swatinem/rust-cache@").unwrap_or(usize::MAX);
-        let cleanup_at = workflow
-            .find("      - name: Remove checked-in RIPR artifacts")
-            .unwrap_or(0);
+        let install = workflow_step(&workflow, "Install ripr");
         assert!(
-            cache_at < cleanup_at,
-            "cleanup must follow the cache restore"
+            install.contains(r#"echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV""#)
+        );
+        let cache = workflow
+            .split("\n\n")
+            .find(|block| {
+                block.contains(
+                    "      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9\n",
+                )
+            })
+            .unwrap_or_default();
+        assert!(cache.contains("          path: ${{ runner.temp }}/ripr-cache\n"));
+        // The job token has write scopes, so the action is pinned to a SHA.
+        assert!(!workflow.contains("actions/cache@v"));
+        // #5208: the cache key pins the installed version — the generator
+        // itself when released, the latest release when unreleased.
+        assert!(cache.contains(&format!(
+            "          key: ripr-cache-{}-${{{{ runner.os }}}}-",
+            workflow_install_version(env!("CARGO_PKG_VERSION"))
+        )));
+        let cache_at = workflow
+            .find("      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
+            .unwrap_or(usize::MAX);
+        let install_at = workflow.find("      - name: Install ripr").unwrap_or(0);
+        let run_at = workflow.find("      - name: Run RIPR\n").unwrap_or(0);
+        assert!(
+            install_at < cache_at && cache_at < run_at,
+            "the cache restores after the install sets RIPR_CACHE_DIR and before the first analysis"
         );
         assert_step_before(
             &workflow,
             "Remove checked-in RIPR artifacts",
             "Install ripr",
         );
-        assert_step_before(
-            &workflow,
-            "Remove checked-in RIPR artifacts",
-            "Generate RIPR pilot packet",
-        );
+        assert_step_before(&workflow, "Remove checked-in RIPR artifacts", "Run RIPR");
         // Only comments the workflow itself posted count as existing RIPR
         // comments; a marker from another author cannot suppress or be
         // PATCHed.
@@ -7659,61 +7387,19 @@ language = "rust"
         assert!(!publish.contains("jq -r '.dedupe_key' "));
         assert!(!publish.contains(r#"| .dedupe_key' "$publishable""#));
 
-        let prepare = workflow_step(&workflow, "Prepare RIPR editor-agent artifacts");
-        assert!(prepare.contains("RIPR_TOP_SEAM_ID"));
-        // first-pr checks the review cards were built for its base; the
-        // cards use the PR's base, so first-pr must too (F60-8).
-        let first_pr = workflow_step(&workflow, "Render RIPR first-pr start-here");
-        assert!(first_pr.contains(
-            "--base \"origin/${{ github.base_ref || github.event.repository.default_branch }}\""
-        ));
-        assert!(prepare.contains(".top_actionable_seams[0].seam_id"));
-        assert!(
-            !prepare.contains(".top_seams[0].seam_id"),
-            "top seam extraction must use pilot-summary top_actionable_seams"
+        let run = workflow_step(&workflow, "Run RIPR");
+        assert_eq!(
+            run, "      - name: Run RIPR\n        run: ripr reports ci-packet --root .",
+            "the packet step has no condition or continue-on-error: a required \
+             step's failure must fail the job"
         );
-
-        let agent_loop = workflow_step(&workflow, "Generate RIPR agent loop artifacts");
-        assert!(agent_loop.contains("ripr agent start"));
-        assert!(agent_loop.contains("ripr agent packet"));
-        assert!(agent_loop.contains("cp target/ripr/workflow/agent-packet.json"));
-        assert!(agent_loop.contains("cp target/ripr/workflow/agent-brief.json"));
-        // A failed packet render must not leave an empty JSON behind.
-        assert!(agent_loop.contains("> \"$packet_tmp\""));
-        assert!(agent_loop.contains("mv \"$packet_tmp\" target/ripr/workflow/agent-packet.json"));
-        // #3906 (F60-1): before and after would both be this HEAD, so
-        // verify has no movement to compare and exits 2 on every run.
-        // CI writes the before side only; the repair's after phase writes
-        // the rest where the test edit happens.
-        for post_edit in [
-            "ripr check",
-            "ripr agent verify",
-            "ripr agent receipt",
-            "ripr outcome",
-            "after.repo-exposure.json",
-            "analysis-outcome.json",
-            "agent-verify.json",
-            "agent-receipt.json",
-        ] {
-            assert!(
-                !agent_loop.contains(post_edit),
-                "agent-loop step must not run the post-edit step `{post_edit}`:\n{agent_loop}"
-            );
-        }
-
-        let guidance = workflow_step(&workflow, "Run RIPR PR guidance report");
-        assert!(guidance.contains("github.event_name == 'pull_request'"));
-        assert!(guidance.contains("mkdir -p target/ripr/pr target/ripr/review"));
-        assert!(guidance.contains("check_status=0"));
-        assert!(guidance.contains(r#"ripr check \"#));
-        assert!(guidance.contains(r#"--base "origin/${{ github.base_ref }}"#));
-        assert!(guidance.contains("--format json > target/ripr/pr/check.json"));
-        assert!(guidance.contains("|| check_status=$?"));
-        assert!(guidance.contains("target/ripr/pr/check.json"));
-        assert!(guidance.contains("ripr review-comments"));
-        assert!(guidance.contains("--base \"origin/${{ github.base_ref }}\""));
-        assert!(guidance.contains("--head HEAD"));
-        assert!(guidance.contains("--out target/ripr/review/comments.json"));
+        assert_step_before(
+            &workflow,
+            "Capture existing RIPR inline comments",
+            "Run RIPR",
+        );
+        assert_step_before(&workflow, "Run RIPR", "Publish RIPR inline comments");
+        assert_step_before(&workflow, "Run RIPR", "Add RIPR advisory summary");
 
         let existing_comments = workflow_step(&workflow, "Capture existing RIPR inline comments");
         assert!(existing_comments.contains("env.RIPR_COMMENT_MODE != 'off'"));
@@ -7727,30 +7413,8 @@ language = "rust"
             existing_comments
                 .contains("capture(\"<!-- ripr:dedupe=(?<key>.*?)(?: presentation=[^ ]+)? -->\")")
         );
-
-        let comment_plan = workflow_step(&workflow, "Plan RIPR inline comments");
-        assert!(comment_plan.contains("env.RIPR_COMMENT_MODE != 'off'"));
-        assert!(comment_plan.contains("hashFiles('target/ripr/review/comments.json')"));
-        assert!(comment_plan.contains("pr-comments plan"));
-        assert!(comment_plan.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(comment_plan.contains("--mode \"$RIPR_COMMENT_MODE\""));
-        assert!(comment_plan.contains("--event-name \"${{ github.event_name }}\""));
-        assert!(
-            comment_plan.contains("--pull-request \"${{ github.event.pull_request.number }}\"")
-        );
-        assert!(
-            comment_plan
-                .contains("--head-repo \"${{ github.event.pull_request.head.repo.full_name }}\"")
-        );
-        assert!(comment_plan.contains("--base-repo \"${{ github.repository }}\""));
-        assert!(comment_plan.contains("--out target/ripr/review/comment-publish-plan.json"));
-        assert!(comment_plan.contains("--out-md target/ripr/review/comment-publish-plan.md"));
-        assert!(
-            comment_plan.contains("--existing-comments target/ripr/review/existing-comments.json")
-        );
-        assert!(comment_plan.contains("--token-available"));
-        assert!(comment_plan.contains("--no-token"));
-        assert!(comment_plan.contains("--write-permission"));
+        // The capture runs before the guidance exists, so it cannot wait on it.
+        assert!(!existing_comments.contains("hashFiles"));
 
         let publish_comments = workflow_step(&workflow, "Publish RIPR inline comments");
         assert!(publish_comments.contains("env.RIPR_COMMENT_MODE == 'inline'"));
@@ -7763,121 +7427,23 @@ language = "rust"
         assert!(publish_comments.contains("github.event.pull_request.head.sha"));
         assert!(publish_comments.contains("gh api --method POST"));
         assert!(publish_comments.contains("gh api --method PATCH"));
-        assert_step_before(
-            &workflow,
-            "Run RIPR PR guidance report",
-            "Capture existing RIPR inline comments",
-        );
-        assert_step_before(
-            &workflow,
-            "Capture existing RIPR inline comments",
-            "Plan RIPR inline comments",
-        );
-        assert_step_before(
-            &workflow,
-            "Plan RIPR inline comments",
-            "Publish RIPR inline comments",
-        );
-        assert_step_before(
-            &workflow,
-            "Plan RIPR inline comments",
-            "Evaluate RIPR gate decision",
-        );
-        assert_step_before(
-            &workflow,
-            "Capture RIPR gate labels",
-            "Evaluate RIPR gate decision",
-        );
-        assert_step_before(
-            &workflow,
-            "Evaluate RIPR gate decision",
-            "Render RIPR baseline debt delta",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR baseline debt delta",
-            "Render RIPR Zero status",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR Zero status",
-            "Render RIPR PR evidence ledger",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR PR evidence ledger",
-            "Render RIPR waiver aging",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR waiver aging",
-            "Render RIPR suppression health",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR suppression health",
-            "Render RIPR policy readiness",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR policy readiness",
-            "Render RIPR policy operations",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR policy operations",
-            "Render RIPR policy history",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR policy history",
-            "Render RIPR policy promotion packets",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR policy promotion packets",
-            "Render RIPR preview promotion packets",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR preview promotion packets",
-            "Render RIPR test-oracle assistant proof",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR test-oracle assistant proof",
-            "Render RIPR assistant loop health",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR assistant loop health",
-            "Render RIPR first useful action",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR first useful action",
-            "Render RIPR PR review front panel",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR PR review front panel",
-            "Render RIPR report packet index",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR report packet index",
-            "Render RIPR LLM work-loop summaries",
-        );
-        assert_step_before(
-            &workflow,
-            "Render RIPR PR evidence ledger",
-            "Emit RIPR PR guidance annotations",
-        );
-        assert_step_before(
-            &workflow,
-            "Run RIPR PR guidance report",
-            "Add RIPR advisory summary",
-        );
+
+        // The packet writes the plan the publish step reads, and the comment
+        // capture writes the file the plan reads.
+        assert!(packet.contains(
+            "--existing-comments target/ripr/review/existing-comments.json --token-available --write-permission"
+        ));
+        assert!(packet.contains("--out target/ripr/review/comment-publish-plan.json"));
+        // Dependabot runs get a read-only token whatever the permissions say.
+        assert!(packet_source.contains(
+            "settings.actor == \"dependabot[bot]\" || settings.pr_author == \"dependabot[bot]\""
+        ));
+        assert!(packet_source.contains("\"--no-write-permission\""));
+        // first-pr checks the review cards were built for its base; the
+        // cards use the PR's base, so first-pr must too (F60-8).
+        assert!(packet.contains("ripr review-comments --root . --base origin/main --head HEAD"));
+        assert!(packet.contains("ripr first-pr --root . --base origin/main --head HEAD"));
+        assert!(packet_source.contains("\"/top_actionable_seams/0/seam_id\""));
 
         let artifact_upload = workflow_step(&workflow, "Upload RIPR report artifacts");
         assert!(artifact_upload.contains("if-no-files-found: ignore"));
@@ -7895,732 +7461,45 @@ language = "rust"
             );
         }
 
-        let gate = workflow_step(&workflow, "Evaluate RIPR gate decision");
-        assert!(gate.contains("env.RIPR_GATE_MODE != ''"));
-        assert!(gate.contains("hashFiles('target/ripr/review/comments.json')"));
-        assert!(gate.contains("gate evaluate"));
-        assert!(gate.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(gate.contains("--mode \"$RIPR_GATE_MODE\""));
-        assert!(gate.contains("--out target/ripr/reports/gate-decision.json"));
-        assert!(gate.contains("--out-md target/ripr/reports/gate-decision.md"));
-        assert!(gate.contains("--labels-json target/ci/labels.json"));
-        assert!(gate.contains("--sarif-policy target/ripr/reports/sarif-policy.json"));
-        assert!(gate.contains(
-            "--recommendation-calibration target/ripr/reports/recommendation-calibration.json"
-        ));
-        assert!(
-            gate.contains("--mutation-calibration target/ripr/reports/mutation-calibration.json")
-        );
-        assert!(gate.contains("--baseline \"$RIPR_GATE_BASELINE\""));
-        assert!(!gate.contains("continue-on-error: true"));
-
-        let baseline_delta = workflow_step(&workflow, "Render RIPR baseline debt delta");
-        assert!(baseline_delta.contains("always() && env.RIPR_GATE_BASELINE != ''"));
-        assert!(baseline_delta.contains("hashFiles('target/ripr/reports/gate-decision.json')"));
-        assert!(baseline_delta.contains("continue-on-error: true"));
-        assert!(baseline_delta.contains("ripr baseline diff"));
-        assert!(baseline_delta.contains("--baseline \"$RIPR_GATE_BASELINE\""));
-        assert!(baseline_delta.contains("--current target/ripr/reports/gate-decision.json"));
-        assert!(baseline_delta.contains("--out target/ripr/reports/baseline-debt-delta.json"));
-        assert!(baseline_delta.contains("--out-md target/ripr/reports/baseline-debt-delta.md"));
-
-        let zero_status = workflow_step(&workflow, "Render RIPR Zero status");
-        assert!(zero_status.contains("hashFiles('target/ripr/reports/baseline-debt-delta.json')"));
-        assert!(zero_status.contains("continue-on-error: true"));
-        assert!(zero_status.contains("zero status"));
-        assert!(zero_status.contains("--delta target/ripr/reports/baseline-debt-delta.json"));
-        assert!(zero_status.contains("--out target/ripr/reports/ripr-zero-status.json"));
-        assert!(zero_status.contains("--out-md target/ripr/reports/ripr-zero-status.md"));
-        assert!(zero_status.contains("--baseline \"$RIPR_GATE_BASELINE\""));
-        assert!(zero_status.contains("--gate target/ripr/reports/gate-decision.json"));
-        assert!(zero_status.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(zero_status.contains(
-            "--recommendation-calibration target/ripr/reports/recommendation-calibration.json"
-        ));
-
-        let pr_ledger = workflow_step(&workflow, "Render RIPR PR evidence ledger");
-        assert!(pr_ledger.contains("github.event_name == 'pull_request'"));
-        assert!(pr_ledger.contains("hashFiles('target/ripr/review/comments.json')"));
-        assert!(pr_ledger.contains("continue-on-error: true"));
-        assert!(pr_ledger.contains("pr-ledger record"));
-        assert!(pr_ledger.contains("--pr-number \"${{ github.event.pull_request.number }}\""));
-        assert!(pr_ledger.contains("--base \"origin/${{ github.base_ref }}\""));
-        assert!(pr_ledger.contains("--head HEAD"));
-        assert!(pr_ledger.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(pr_ledger.contains("--gate target/ripr/reports/gate-decision.json"));
-        assert!(
-            pr_ledger.contains("--baseline-delta target/ripr/reports/baseline-debt-delta.json")
-        );
-        assert!(pr_ledger.contains("--zero-status target/ripr/reports/ripr-zero-status.json"));
-        assert!(pr_ledger.contains(
-            "--recommendation-calibration target/ripr/reports/recommendation-calibration.json"
-        ));
-        assert!(pr_ledger.contains("--agent-receipt target/ripr/reports/agent-receipt.json"));
-        assert!(pr_ledger.contains("--coverage target/ripr/reports/coverage-summary.json"));
-        assert!(pr_ledger.contains("--history .ripr/pr-evidence-ledger.jsonl"));
-        assert!(!pr_ledger.contains("--out-jsonl"));
-        assert!(pr_ledger.contains("ledger_args+=(--label \"$label\")"));
-        assert!(pr_ledger.contains("ripr \"${ledger_args[@]}\""));
-
-        let waiver_aging = workflow_step(&workflow, "Render RIPR waiver aging");
-        assert!(waiver_aging.contains("hashFiles('target/ripr/reports/pr-evidence-ledger.json')"));
-        assert!(waiver_aging.contains("continue-on-error: true"));
-        assert!(waiver_aging.contains("policy waiver-aging"));
-        assert!(waiver_aging.contains("--root ."));
-        assert!(waiver_aging.contains("--ledger target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(waiver_aging.contains("--out target/ripr/reports/waiver-aging.json"));
-        assert!(waiver_aging.contains("--out-md target/ripr/reports/waiver-aging.md"));
-        assert!(waiver_aging.contains("--history .ripr/pr-evidence-ledger.jsonl"));
-        assert!(waiver_aging.contains("ripr \"${waiver_args[@]}\""));
-
-        let suppression_health = workflow_step(&workflow, "Render RIPR suppression health");
-        assert!(suppression_health.contains("if: always()"));
-        assert!(suppression_health.contains("continue-on-error: true"));
-        assert!(suppression_health.contains("policy suppression-health"));
-        assert!(suppression_health.contains("--root ."));
-        assert!(suppression_health.contains("--out target/ripr/reports/suppression-health.json"));
-        assert!(suppression_health.contains("--out-md target/ripr/reports/suppression-health.md"));
-        assert!(suppression_health.contains("ripr \"${suppression_args[@]}\""));
-
-        let policy_readiness = workflow_step(&workflow, "Render RIPR policy readiness");
-        assert!(policy_readiness.contains("if: always()"));
-        assert!(policy_readiness.contains("continue-on-error: true"));
-        assert!(policy_readiness.contains("policy readiness"));
-        assert!(policy_readiness.contains("--root ."));
-        assert!(policy_readiness.contains("--out target/ripr/reports/policy-readiness.json"));
-        assert!(policy_readiness.contains("--out-md target/ripr/reports/policy-readiness.md"));
-        assert!(
-            policy_readiness.contains("--gate-decision target/ripr/reports/gate-decision.json")
-        );
-        assert!(
-            policy_readiness
-                .contains("--baseline-delta target/ripr/reports/baseline-debt-delta.json")
-        );
-        assert!(policy_readiness.contains(
-            "--recommendation-calibration target/ripr/reports/recommendation-calibration.json"
-        ));
-        assert!(
-            policy_readiness
-                .contains("--mutation-calibration target/ripr/reports/mutation-calibration.json")
-        );
-        assert!(policy_readiness.contains("--waiver-aging target/ripr/reports/waiver-aging.json"));
-        assert!(
-            policy_readiness
-                .contains("--suppression-health target/ripr/reports/suppression-health.json")
-        );
-        assert!(policy_readiness.contains("ripr \"${policy_args[@]}\""));
-
-        let policy_operations = workflow_step(&workflow, "Render RIPR policy operations");
-        assert!(
-            policy_operations.contains("hashFiles('target/ripr/reports/policy-readiness.json')")
-        );
-        assert!(policy_operations.contains("continue-on-error: true"));
-        assert!(policy_operations.contains("policy operations"));
-        assert!(policy_operations.contains("--root ."));
-        assert!(
-            policy_operations
-                .contains("--policy-readiness target/ripr/reports/policy-readiness.json")
-        );
-        assert!(policy_operations.contains("--out target/ripr/reports/policy-operations.json"));
-        assert!(policy_operations.contains("--out-md target/ripr/reports/policy-operations.md"));
-        assert!(policy_operations.contains("--waiver-aging target/ripr/reports/waiver-aging.json"));
-        assert!(
-            policy_operations
-                .contains("--suppression-health target/ripr/reports/suppression-health.json")
-        );
-        assert!(
-            policy_operations
-                .contains("--baseline-delta target/ripr/reports/baseline-debt-delta.json")
-        );
-        assert!(
-            policy_operations.contains("--gate-decision target/ripr/reports/gate-decision.json")
-        );
-        assert!(policy_operations.contains(
-            "--recommendation-calibration target/ripr/reports/recommendation-calibration.json"
-        ));
-        assert!(
-            policy_operations
-                .contains("--mutation-calibration target/ripr/reports/mutation-calibration.json")
-        );
-        assert!(
-            policy_operations.contains("--preview-boundary target/ripr/reports/repo-exposure.json")
-        );
-        assert!(policy_operations.contains("ripr \"${operations_args[@]}\""));
-
-        let policy_history = workflow_step(&workflow, "Render RIPR policy history");
-        assert!(policy_history.contains("hashFiles('target/ripr/reports/policy-operations.json')"));
-        assert!(policy_history.contains("continue-on-error: true"));
-        assert!(policy_history.contains("policy history"));
-        assert!(policy_history.contains("--current target/ripr/reports/policy-operations.json"));
-        assert!(policy_history.contains("--commit \"$(git rev-parse HEAD)\""));
-        assert!(policy_history.contains("--history .ripr/policy-history.jsonl"));
-        assert!(policy_history.contains("--pr-number \"${{ github.event.number }}\""));
-        assert!(policy_history.contains("--out target/ripr/reports/policy-history.json"));
-        assert!(policy_history.contains("--out-md target/ripr/reports/policy-history.md"));
-        assert!(!policy_history.contains("--out-jsonl"));
-        assert!(policy_history.contains("ripr \"${history_args[@]}\""));
-
-        let promotion_packets = workflow_step(&workflow, "Render RIPR policy promotion packets");
-        assert!(
-            promotion_packets.contains("hashFiles('target/ripr/reports/policy-operations.json')")
-        );
-        assert!(promotion_packets.contains("continue-on-error: true"));
-        assert!(promotion_packets.contains(
-            "for target_mode in visible-only acknowledgeable baseline-check calibrated-gate"
-        ));
-        assert!(promotion_packets.contains("policy promote"));
-        assert!(promotion_packets.contains("--to \"$target_mode\""));
-        assert!(
-            promotion_packets.contains("--operations target/ripr/reports/policy-operations.json")
-        );
-        assert!(promotion_packets.contains("--history target/ripr/reports/policy-history.json"));
-        assert!(
-            promotion_packets.contains("target/ripr/reports/policy-promotion-${target_mode}.json")
-        );
-        assert!(promotion_packets.contains("ripr \"${promotion_args[@]}\""));
-
-        let preview_packets = workflow_step(&workflow, "Render RIPR preview promotion packets");
-        assert!(preview_packets.contains("if: always()"));
-        assert!(preview_packets.contains("continue-on-error: true"));
-        assert!(preview_packets.contains("ripr doctor --root ."));
-        assert!(preview_packets.contains("policy preview-promote"));
-        assert!(preview_packets.contains("--language \"$language\""));
-        assert!(preview_packets.contains("--class \"$class_label\""));
-        assert!(preview_packets.contains(
-            "target/ripr/reports/preview-promotion-${language}-${class_label//_/-}.json"
-        ));
-        assert!(
-            preview_packets
-                .contains("--evidence target/ripr/reports/preview-promotion-evidence.json")
-        );
-        assert!(preview_packets.contains("TypeScript or Python preview languages are configured"));
-        assert!(preview_packets.contains("ripr \"${preview_args[@]}\""));
-
-        let assistant_proof = workflow_step(&workflow, "Render RIPR test-oracle assistant proof");
-        assert!(assistant_proof.contains("hashFiles('target/ripr/review/comments.json')"));
-        assert!(assistant_proof.contains("hashFiles('target/ripr/workflow/agent-brief.json')"));
-        assert!(
-            assistant_proof.contains("hashFiles('target/ripr/workflow/before.repo-exposure.json')")
-        );
-        assert!(
-            assistant_proof.contains("hashFiles('target/ripr/workflow/after.repo-exposure.json')")
-        );
-        assert!(assistant_proof.contains("hashFiles('target/ripr/reports/agent-receipt.json')"));
-        assert!(
-            assistant_proof.contains("hashFiles('target/ripr/reports/pr-evidence-ledger.json')")
-        );
-        assert!(assistant_proof.contains("continue-on-error: true"));
-        assert!(assistant_proof.contains("assistant-loop proof"));
-        assert!(assistant_proof.contains("--root ."));
-        assert!(assistant_proof.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(assistant_proof.contains("--agent-packet target/ripr/workflow/agent-brief.json"));
-        assert!(
-            assistant_proof.contains("--before target/ripr/workflow/before.repo-exposure.json")
-        );
-        assert!(assistant_proof.contains("--after target/ripr/workflow/after.repo-exposure.json"));
-        assert!(assistant_proof.contains("--receipt target/ripr/reports/agent-receipt.json"));
-        assert!(assistant_proof.contains("--ledger target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(
-            assistant_proof.contains("--out target/ripr/reports/test-oracle-assistant-proof.json")
-        );
-        assert!(
-            assistant_proof.contains("--out-md target/ripr/reports/test-oracle-assistant-proof.md")
-        );
-        assert!(
-            assistant_proof
-                .contains("--coverage-frontier target/ripr/reports/coverage-grip-frontier.json")
-        );
-        assert!(assistant_proof.contains("--gate-decision target/ripr/reports/gate-decision.json"));
-        assert!(assistant_proof.contains("ripr \"${proof_args[@]}\""));
-
-        let assistant_health = workflow_step(&workflow, "Render RIPR assistant loop health");
-        assert!(
-            assistant_health
-                .contains("hashFiles('target/ripr/reports/test-oracle-assistant-proof.json')")
-        );
-        assert!(assistant_health.contains("continue-on-error: true"));
-        assert!(assistant_health.contains("assistant-loop health"));
-        assert!(assistant_health.contains("--root ."));
-        assert!(
-            assistant_health
-                .contains("--proof target/ripr/reports/test-oracle-assistant-proof.json")
-        );
-        assert!(assistant_health.contains("--out target/ripr/reports/assistant-loop-health.json"));
-        assert!(assistant_health.contains("--out-md target/ripr/reports/assistant-loop-health.md"));
-
-        let gap_ledger = workflow_step(&workflow, "Render RIPR gap decision ledger");
-        assert!(gap_ledger.contains("hashFiles('target/ripr/reports/repo-exposure.json')"));
-        assert!(gap_ledger.contains("continue-on-error: true"));
-        assert!(gap_ledger.contains("reports gap-ledger"));
-        assert!(gap_ledger.contains("--root ."));
-        assert!(gap_ledger.contains("--repo-exposure target/ripr/reports/repo-exposure.json"));
-        assert!(gap_ledger.contains("--out target/ripr/reports/gap-decision-ledger.json"));
-        assert!(gap_ledger.contains("--out-md target/ripr/reports/gap-decision-ledger.md"));
-
-        let first_action = workflow_step(&workflow, "Render RIPR first useful action");
-        assert!(first_action.contains("continue-on-error: true"));
-        assert!(first_action.contains("first-action"));
-        assert!(first_action.contains("--root ."));
-        assert!(first_action.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(
-            first_action
-                .contains("--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json")
-        );
-        assert!(first_action.contains("--ledger target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(
-            first_action.contains("--baseline-delta target/ripr/reports/baseline-debt-delta.json")
-        );
-        assert!(first_action.contains("--receipt target/ripr/reports/agent-receipt.json"));
-        assert!(first_action.contains("--gate-decision target/ripr/reports/gate-decision.json"));
-        assert!(
-            first_action
-                .contains("--coverage-frontier target/ripr/reports/coverage-grip-frontier.json")
-        );
-        assert!(
-            first_action.contains("--editor-context target/ripr/workflow/evidence-context.json")
-        );
-        assert!(first_action.contains("--out target/ripr/reports/first-useful-action.json"));
-        assert!(first_action.contains("--out-md target/ripr/reports/first-useful-action.md"));
-        assert!(first_action.contains("first_action_has_input=true"));
-        assert!(first_action.contains("ripr \"${first_action_args[@]}\""));
-
-        let front_panel = workflow_step(&workflow, "Render RIPR PR review front panel");
-        assert!(front_panel.contains("continue-on-error: true"));
-        assert!(front_panel.contains("pr-review front-panel"));
-        assert!(front_panel.contains("--root ."));
-        assert!(front_panel.contains("--pr-guidance target/ripr/review/comments.json"));
-        assert!(
-            front_panel.contains("--first-action target/ripr/reports/first-useful-action.json")
-        );
-        assert!(
-            front_panel
-                .contains("--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json")
-        );
-        assert!(
-            front_panel
-                .contains("--assistant-health target/ripr/reports/assistant-loop-health.json")
-        );
-        assert!(front_panel.contains("--ledger target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(
-            front_panel.contains("--baseline-delta target/ripr/reports/baseline-debt-delta.json")
-        );
-        assert!(front_panel.contains("--zero-status target/ripr/reports/ripr-zero-status.json"));
-        assert!(front_panel.contains("--gate-decision target/ripr/reports/gate-decision.json"));
-        assert!(front_panel.contains(
-            "--recommendation-calibration target/ripr/reports/recommendation-calibration.json"
-        ));
-        assert!(
-            front_panel
-                .contains("--mutation-calibration target/ripr/reports/mutation-calibration.json")
-        );
-        assert!(
-            front_panel
-                .contains("--coverage-frontier target/ripr/reports/coverage-grip-frontier.json")
-        );
-        assert!(front_panel.contains("--receipt target/ripr/reports/agent-receipt.json"));
-        assert!(front_panel.contains("--out target/ripr/reports/pr-review-front-panel.json"));
-        assert!(front_panel.contains("--out-md target/ripr/reports/pr-review-front-panel.md"));
-        assert!(front_panel.contains("front_panel_has_input=true"));
-        assert!(front_panel.contains("ripr \"${front_panel_args[@]}\""));
-        assert!(front_panel.contains("No RIPR PR review front-panel inputs were available."));
-
-        let first_pr = workflow_step(&workflow, "Render RIPR first-pr start-here");
-        assert!(first_pr.contains("continue-on-error: true"));
-        assert!(first_pr.contains("ripr first-pr"));
-        assert!(first_pr.contains("--root ."));
-        assert!(first_pr.contains("--gap-ledger target/ripr/reports/gap-decision-ledger.json"));
-        assert!(first_pr.contains("--first-action target/ripr/reports/first-useful-action.json"));
-        assert!(first_pr.contains("--review-comments target/ripr/review/comments.json"));
-        assert!(first_pr.contains("--agent-packet target/ripr/workflow/agent-packet.json"));
-        assert!(first_pr.contains("--gate-decision target/ripr/reports/gate-decision.json"));
-        assert!(first_pr.contains("--receipts-dir target/ripr/receipts"));
-        assert!(first_pr.contains("--out-dir target/ripr/reports"));
-
-        let packet_index = workflow_step(&workflow, "Render RIPR report packet index");
-        assert!(packet_index.contains("continue-on-error: true"));
-        assert!(packet_index.contains("reports index"));
-        assert!(packet_index.contains("--reports-dir target/ripr/reports"));
-        assert!(packet_index.contains("--review-dir target/ripr/review"));
-        assert!(packet_index.contains("--receipts-dir target/ripr/receipts"));
-        assert!(packet_index.contains("--workflow-dir target/ripr/workflow"));
-        assert!(packet_index.contains("--agent-dir target/ripr/agent"));
-        assert!(packet_index.contains("--pilot-dir target/ripr/pilot"));
-        assert!(packet_index.contains("--ci-dir target/ci"));
-        assert!(packet_index.contains("--out target/ripr/reports/index.json"));
-        assert!(packet_index.contains("--out-md target/ripr/reports/index.md"));
-        assert!(packet_index.contains("target/ripr/reports/start-here.md"));
-        assert!(packet_index.contains("target/ripr/reports/pr-review-front-panel.md"));
-        assert!(packet_index.contains("target/ripr/review/comments.json"));
-        assert!(packet_index.contains("target/ripr/reports/policy-operations.md"));
-        assert!(packet_index.contains("target/ripr/reports/policy-history.md"));
-        assert!(packet_index.contains("target/ripr/reports/policy-promotion-baseline-check.md"));
-        assert!(
-            packet_index
-                .contains("target/ripr/reports/preview-promotion-typescript-boundary-gap.md")
-        );
-        assert!(packet_index.contains("target/ripr/reports/gate-decision.md"));
-        assert!(packet_index.contains("target/ripr/reports/agent-receipt.json"));
-        assert!(packet_index.contains("index_has_input=true"));
-        assert!(packet_index.contains("No RIPR report-packet index inputs were available."));
-
-        let annotations = workflow_step(&workflow, "Emit RIPR PR guidance annotations");
-        assert!(annotations.contains("hashFiles('target/ripr/review/comments.json')"));
-        assert!(annotations.contains("def escape_data:"));
-        assert!(annotations.contains("def escape_property:"));
-        assert!(!annotations.contains("@tsv"));
-        assert!(!annotations.contains("escape_github_message()"));
-        assert!(annotations.contains("::warning file="));
-
-        let summary = workflow_step(&workflow, "Add RIPR advisory summary");
-        assert!(summary.contains("### PR review summary"));
-        assert!(summary.contains("#### PR review at a glance"));
-        assert!(summary.contains("target/ripr/reports/pr-review-front-panel.json"));
-        assert!(summary.contains("target/ripr/reports/pr-review-front-panel.md"));
-        assert!(summary.contains(".summary.headline // \"not_available\""));
-        assert!(summary.contains(".summary.top_issue_state // \"unknown\""));
-        assert!(summary.contains(".summary.policy_state // \"none\""));
-        assert!(summary.contains(".summary.placement // \"not_available\""));
-        assert!(summary.contains(".summary.movement_state // \"unknown\""));
-        assert!(summary.contains(".summary.coverage_grip_state // \"not_available\""));
-        assert!(summary.contains(".summary.new_policy_eligible // 0"));
-        assert!(summary.contains(".summary.baseline_still_present // 0"));
-        assert!(summary.contains(".summary.baseline_resolved // 0"));
-        assert!(summary.contains(".summary.blocking_candidates // 0"));
-        assert!(summary.contains(".top_issue.missing_discriminator // \"not_available\""));
-        assert!(summary.contains(".top_issue.suggested_test // \"not_available\""));
-        assert!(summary.contains(".top_issue.verify_command // \"not_available\""));
-        assert!(summary.contains(".top_issue.agent_command // \"not_available\""));
-        assert!(summary.contains(".top_issue.receipt.artifact // \"not_available\""));
-        assert!(summary.contains(".policy.mode // \"not_available\""));
-        assert!(summary.contains(".policy.decision // \"not_available\""));
-        assert!(summary.contains("repo_relative < target/ripr/reports/pr-review-front-panel.md"));
-        assert!(summary.contains("PR review summary was not generated"));
-        assert!(summary.contains("### Recommended next test"));
-        assert!(summary.contains("#### Recommended next test at a glance"));
-        assert!(summary.contains("#### First-run status"));
-        assert!(summary.contains("Open `target/ripr/reports/start-here.md` first"));
-        assert!(summary.contains(
-            "Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence"
-        ));
-        assert!(summary.contains(
-            "Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit."
-        ));
-        assert!(summary.contains("Start-here artifact: `target/ripr/reports/start-here.md`"));
-        assert!(summary.contains("start_json=target/ripr/reports/start-here.json"));
-        assert!(summary.contains(".selected.state // \"unknown\""));
-        assert!(summary.contains(".selected.kind // \"none\""));
-        assert!(summary.contains(
-            ".selected.repair.route // .selected.repair.suggested_assertion // \"not_available\""
-        ));
-        assert!(summary.contains(".selected.changed_behavior // \"not_available\""));
-        assert!(summary.contains(".selected.static_evidence_boundary // \"static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\""));
-        assert!(summary.contains(
-            ".selected.missing_discriminator // .selected.repair.suggested_assertion // \"not_available\""
-        ));
-        assert!(summary.contains(
-            ".selected.focused_proof_intent // .selected.repair.suggested_assertion // \"not_available\""
-        ));
-        assert!(summary.contains(".selected.verify_command // \"not_available\""));
-        assert!(summary.contains(".selected.receipt_command // \"not_available\""));
-        assert!(summary.contains(".selected.receipt_path // \"not_available\""));
-        assert!(
-            summary
-                .contains(".selected.repair_command // .selected.next_command // .selected.regeneration_command // \"none\"")
-        );
-        assert!(summary.contains("cat target/ripr/reports/start-here.md"));
-        assert!(summary.contains("Boundary: \\`$start_boundary\\`"));
-        assert!(summary.contains("missing_start_here"));
-        assert!(summary.contains(
-            "ripr first-pr --root . --base origin/${{ github.base_ref || github.event.repository.default_branch }} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json"
-        ));
-        assert!(summary.contains(".summary.start_here // \"not_available\""));
-        assert!(
-            summary.contains("Start-here artifact: `target/ripr/reports/pr-review-front-panel.md`")
-        );
-        assert!(summary.contains("Start-here artifact: `target/ripr/pilot/pilot-summary.md`"));
-        assert!(summary.contains("target/ripr/workflow/agent-packet.json"));
-        assert!(summary.contains("target/ripr/reports/first-useful-action.json"));
-        assert!(summary.contains("target/ripr/reports/first-useful-action.md"));
-        assert!(summary.contains(".action_kind // \"unknown\""));
-        assert!(summary.contains("Safe next action: \\`$first_action_kind\\`"));
-        assert!(summary.contains(".commands.verify // \"not_available\""));
-        assert!(summary.contains(".commands.receipt // \"not_available\""));
-        assert!(summary.contains(".fallback.kind // \"none\""));
-        assert!(summary.contains("repo_relative < target/ripr/reports/first-useful-action.md"));
-        assert!(summary.contains("Recommended next test was not generated"));
-        assert!(summary.contains("cat target/ripr/pilot/pilot-summary.md"));
-        assert!(summary.contains("cat target/ripr/workflow/agent-review-summary.md"));
-        // #3906 (N5): before any test edit the review packet names the
-        // missing receipt as expected and leads with the carried repair
-        // start and its after phase, not the post-edit snapshot loop.
-        let packet = summary
-            .find("echo '### Agent review packet'")
-            .unwrap_or(usize::MAX);
-        let packet_block = summary.get(packet..).unwrap_or_default();
-        let packet_end = packet_block
-            .find("echo '### Artifact packet'")
-            .unwrap_or(packet_block.len());
-        let packet_block = packet_block.get(..packet_end).unwrap_or_default();
-        let receipt = packet_block
-            .find(&format!("echo '- Receipt: {NO_RECEIPT_BEFORE_REPAIR}'"))
-            .unwrap_or(usize::MAX);
-        let start = packet_block
-            .find("echo \"- Start repair: \\`$review_repair_command\\`\"")
-            .unwrap_or(usize::MAX);
-        let after = packet_block
-            .find(&format!(
-                "echo '- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}'"
-            ))
-            .unwrap_or(usize::MAX);
-        let full = packet_block
-            .find("cat target/ripr/workflow/agent-review-summary.md")
-            .unwrap_or(0);
-        assert!(
-            receipt < start && start < after && after < full,
-            "{packet_block}"
-        );
-        assert!(packet_block.contains(".static_movement.state // empty"));
-        assert!(packet_block.contains("[ \"$review_movement\" = missing_artifact ]"));
-        assert!(packet_block.contains(".selected.repair_command // empty"));
-        assert!(summary.contains("### Uploaded review artifacts"));
-        assert!(summary.contains("#### Uploaded artifacts at a glance"));
-        assert!(summary.contains("target/ripr/reports/index.json"));
-        assert!(summary.contains("target/ripr/reports/index.md"));
-        assert!(summary.contains(".summary.entries // 0"));
-        assert!(summary.contains(".summary.available // 0"));
-        assert!(summary.contains(".summary.missing_expected // 0"));
-        assert!(summary.contains(".summary.start_here // \"not_available\""));
-        assert!(summary.contains(".summary.gate_authority // \"not_available\""));
-        assert!(summary.contains(".missing_expected[]?.label"));
-        assert!(summary.contains(".warnings[]?.kind"));
-        assert!(summary.contains("cat target/ripr/reports/index.md"));
-        assert!(summary.contains("Uploaded review artifacts summary was not generated"));
-        assert!(summary.contains("#### Gate decision at a glance"));
-        assert!(summary.contains("markdown_inline()"));
-        assert!(summary.contains("gate_status=\"$(jq -r '.status // \"unknown\"'"));
-        assert!(summary.contains("gate_mode=\"$(jq -r '.mode // \"unknown\"'"));
-        assert!(summary.contains(".summary.blocking // 0"));
-        assert!(summary.contains(".summary.acknowledged // 0"));
-        assert!(summary.contains(".summary.advisory // 0"));
-        assert!(summary.contains(".summary.suppressed // 0"));
-        assert!(summary.contains(".summary.not_applicable // 0"));
-        assert!(summary.contains(".summary.unknown_confidence // 0"));
-        assert!(summary.contains("blocking=\"$(markdown_inline \"$blocking\")\""));
-        assert!(summary.contains("Counts: blocking=\\`$blocking\\`"));
-        assert!(summary.contains("Active PR labels"));
-        assert!(summary.contains("Acknowledgement labels"));
-        assert!(summary.contains("Applied waiver label"));
-        assert!(summary.contains("Baseline artifact"));
-        assert!(summary.contains("Recommendation calibration"));
-        assert!(summary.contains("Mutation calibration"));
-        assert!(summary.contains("Blocking reason (\\`$blocking\\`): \\`$blocking_reason\\`"));
-        assert!(summary.contains("target/ripr/reports/gate-decision.json"));
-        assert!(summary.contains("target/ci/labels.json"));
-        assert!(summary.contains("cat target/ripr/reports/gate-decision.md"));
-        assert!(summary.contains("Gate decision was not run"));
-        assert!(summary.contains("### Baseline debt delta"));
-        assert!(summary.contains("#### Baseline debt movement"));
-        assert!(summary.contains("target/ripr/reports/baseline-debt-delta.json"));
-        assert!(summary.contains("target/ripr/reports/baseline-debt-delta.md"));
-        assert!(summary.contains("cat target/ripr/reports/baseline-debt-delta.md"));
-        assert!(summary.contains(".baseline.path // .inputs.baseline // \"unknown\""));
-        assert!(summary.contains(".delta.still_present // 0"));
-        assert!(summary.contains(".delta.resolved // 0"));
-        assert!(summary.contains(".delta.new_policy_eligible // 0"));
-        assert!(summary.contains(".delta.acknowledged // 0"));
-        assert!(summary.contains(".delta.suppressed // 0"));
-        assert!(summary.contains(".delta.stale_baseline_entry // 0"));
-        assert!(summary.contains(".delta.invalid_baseline_entry // 0"));
-        assert!(summary.contains(".delta.missing_current_input // 0"));
-        assert!(summary.contains("Set `RIPR_GATE_BASELINE`"));
-        assert!(summary.contains("Baseline debt delta was not run"));
-        assert!(summary.contains("Baseline debt delta was not generated"));
-        assert!(summary.contains("### RIPR Zero status"));
-        assert!(summary.contains("#### RIPR Zero at a glance"));
-        assert!(summary.contains("target/ripr/reports/ripr-zero-status.json"));
-        assert!(summary.contains("target/ripr/reports/ripr-zero-status.md"));
-        assert!(summary.contains(".ripr_zero.state // \"unknown\""));
-        assert!(summary.contains(".ripr_zero.visible_unresolved // 0"));
-        assert!(summary.contains(".ripr_zero.new_policy_eligible // 0"));
-        assert!(summary.contains(".ripr_zero.blocking_candidates // 0"));
-        assert!(summary.contains(".baseline.metadata.stale // 0"));
-        assert!(summary.contains(".top_debt_areas[0].area // \"none\""));
-        assert!(summary.contains("cat target/ripr/reports/ripr-zero-status.md"));
-        assert!(summary.contains("RIPR Zero status was not run"));
-        assert!(summary.contains("RIPR Zero status was not generated"));
-        assert!(summary.contains("### PR evidence ledger"));
-        assert!(summary.contains("#### PR movement at a glance"));
-        assert!(summary.contains("target/ripr/reports/pr-evidence-ledger.json"));
-        assert!(summary.contains("target/ripr/reports/pr-evidence-ledger.md"));
-        assert!(summary.contains(".movement.new_policy_eligible // 0"));
-        assert!(summary.contains(".movement.baseline_still_present // 0"));
-        assert!(summary.contains(".movement.baseline_resolved // 0"));
-        assert!(summary.contains(".movement.acknowledged // 0"));
-        assert!(summary.contains(".movement.suppressed // 0"));
-        assert!(summary.contains(".movement.blocking_candidates // 0"));
-        assert!(summary.contains(".movement.visible_unresolved // 0"));
-        assert!(summary.contains(".coverage_grip_frontier.status // \"not_available\""));
-        assert!(summary.contains(".history.trend // \"not_available\""));
-        assert!(summary.contains(".top_repair_route.verify_command // \"not_available\""));
-        assert!(summary.contains(".top_repair_route.agent_command // \"not_available\""));
-        assert!(summary.contains("Pass/fail authority remains \\`ripr gate evaluate\\`"));
-        assert!(summary.contains("cat target/ripr/reports/pr-evidence-ledger.md"));
-        assert!(summary.contains("PR evidence ledger was not generated"));
-        assert!(summary.contains("PR evidence ledger was not run"));
-        assert!(summary.contains("### Policy readiness"));
-        assert!(summary.contains("#### Policy readiness at a glance"));
-        assert!(summary.contains("target/ripr/reports/policy-readiness.json"));
-        assert!(summary.contains("target/ripr/reports/policy-readiness.md"));
-        assert!(summary.contains(".recommended_mode // \"unknown\""));
-        assert!(summary.contains(".blocking_readiness.state // \"unknown\""));
-        assert!(summary.contains(".baseline_health.state // \"unknown\""));
-        assert!(summary.contains(".waiver_health.state // \"unknown\""));
-        assert!(summary.contains(".suppression_health.state // \"unknown\""));
-        assert!(summary.contains(".calibration_health.state // \"unknown\""));
-        assert!(summary.contains(".preview_evidence_boundary.state // \"unknown\""));
-        assert!(summary.contains("advisory readiness projection only"));
-        assert!(summary.contains("cat target/ripr/reports/policy-readiness.md"));
-        assert!(summary.contains("Policy readiness was not generated"));
-        assert!(summary.contains("### Policy operations"));
-        assert!(summary.contains("#### Policy operations at a glance"));
-        assert!(summary.contains("target/ripr/reports/policy-operations.json"));
-        assert!(summary.contains("target/ripr/reports/policy-operations.md"));
-        assert!(summary.contains(".current_policy_ceiling // \"unknown\""));
-        assert!(summary.contains(".recommended_next_action // \"not_available\""));
-        assert!(summary.contains(".safe_to_promote_to // [] | length"));
-        assert!(summary.contains(".not_safe_to_promote_to // [] | length"));
-        assert!(summary.contains(".promotion_blockers // [] | length"));
-        assert!(summary.contains("promotion requires manual review"));
-        assert!(summary.contains("cat target/ripr/reports/policy-operations.md"));
-        assert!(summary.contains("Policy operations was not generated"));
-        assert!(summary.contains("### Policy history"));
-        assert!(summary.contains("#### Policy history at a glance"));
-        assert!(summary.contains("target/ripr/reports/policy-history.json"));
-        assert!(summary.contains("target/ripr/reports/policy-history.md"));
-        assert!(summary.contains(".current.current_policy_ceiling // \"unknown\""));
-        assert!(summary.contains(".history_summary.entries // 0"));
-        assert!(summary.contains(".trend.ceiling.direction // \"unknown\""));
-        assert!(summary.contains(".trend.waiver_count.direction // \"unknown\""));
-        assert!(summary.contains(".trend.preview_boundary_state.direction // \"unknown\""));
-        assert!(
-            summary.contains("never appends to \\`.ripr/policy-history.jsonl\\` automatically")
-        );
-        assert!(summary.contains("cat target/ripr/reports/policy-history.md"));
-        assert!(summary.contains("Policy history was not generated"));
-        assert!(summary.contains("### Policy promotion packets"));
-        assert!(summary.contains("policy-promotion-visible-only.json"));
-        assert!(summary.contains("policy-promotion-acknowledgeable.json"));
-        assert!(summary.contains("policy-promotion-baseline-check.json"));
-        assert!(summary.contains("policy-promotion-calibrated-gate.json"));
-        assert!(summary.contains(".why_or_why_not // \"not_available\""));
-        assert!(summary.contains("packets do not edit \\`ripr.toml\\`"));
-        assert!(summary.contains("Policy promotion packets were not generated"));
-        assert!(summary.contains("cat \"$promotion_md\""));
-        assert!(summary.contains("### Preview promotion packets"));
-        assert!(summary.contains("preview-promotion-*-*.json"));
-        assert!(summary.contains(".candidate_class // \"unknown\""));
-        assert!(summary.contains(".missing_evidence // [] | length"));
-        assert!(summary.contains("preview evidence remains visible and non-gating"));
-        assert!(summary.contains("Preview promotion packets were not generated"));
-        assert!(summary.contains("cat \"$preview_md\""));
-        assert!(summary.contains("### Waiver aging"));
-        assert!(summary.contains("#### Waiver aging at a glance"));
-        assert!(summary.contains("target/ripr/reports/waiver-aging.json"));
-        assert!(summary.contains("target/ripr/reports/waiver-aging.md"));
-        assert!(summary.contains(".summary.waiver_count // 0"));
-        assert!(summary.contains(".summary.identity_count // 0"));
-        assert!(summary.contains(".summary.repeated_seam_count // 0"));
-        assert!(summary.contains(".summary.repeated_file_count // 0"));
-        assert!(summary.contains(".summary.focused_test_candidates // 0"));
-        assert!(summary.contains(".summary.durable_suppression_candidates // 0"));
-        assert!(summary.contains("repeated waiver is a visible signal"));
-        assert!(summary.contains("cat target/ripr/reports/waiver-aging.md"));
-        assert!(summary.contains("Waiver aging was not generated"));
-        assert!(summary.contains("### Suppression health"));
-        assert!(summary.contains("#### Suppression health at a glance"));
-        assert!(summary.contains("target/ripr/reports/suppression-health.json"));
-        assert!(summary.contains("target/ripr/reports/suppression-health.md"));
-        assert!(summary.contains(".summary.suppressions // 0"));
-        assert!(summary.contains(".summary.healthy // 0"));
-        assert!(summary.contains(".summary.missing_owner // 0"));
-        assert!(summary.contains(".summary.missing_reason // 0"));
-        assert!(summary.contains(".summary.stale // 0"));
-        assert!(summary.contains(".summary.overbroad_scope // 0"));
-        assert!(summary.contains(".summary.unknown_selector // 0"));
-        assert!(summary.contains(".summary.preview_without_preview_label // 0"));
-        assert!(summary.contains("suppressions remain visible durable exceptions"));
-        assert!(summary.contains("cat target/ripr/reports/suppression-health.md"));
-        assert!(summary.contains("Suppression health was not generated"));
-        assert!(summary.contains("### Test-oracle assistant proof"));
-        assert!(summary.contains("#### Assistant proof at a glance"));
-        assert!(summary.contains("target/ripr/reports/test-oracle-assistant-proof.json"));
-        assert!(summary.contains("target/ripr/reports/test-oracle-assistant-proof.md"));
-        assert!(summary.contains(".seam.missing_discriminator // \"not_available\""));
-        assert!(summary.contains(".recommendation.placement // \"not_available\""));
-        assert!(summary.contains(".evidence_movement.state // \"unknown\""));
-        assert!(summary.contains(".ci_projection.gate_decision // \"not_supplied\""));
-        assert!(summary.contains(".ci_projection.coverage_frontier // \"not_supplied\""));
-        assert!(summary.contains("cat target/ripr/reports/test-oracle-assistant-proof.md"));
-        assert!(summary.contains("### Agent proof status"));
-        assert!(summary.contains("#### Agent proof status at a glance"));
-        assert!(summary.contains("target/ripr/reports/assistant-loop-health.json"));
-        assert!(summary.contains("target/ripr/reports/assistant-loop-health.md"));
-        assert!(summary.contains(".summary.proofs // 0"));
-        assert!(summary.contains(".summary.complete // 0"));
-        assert!(summary.contains(".summary.partial // 0"));
-        assert!(summary.contains(".summary.missing_required_input // 0"));
-        assert!(summary.contains(".summary.missing_optional_input // 0"));
-        assert!(summary.contains(".summary.improved // 0"));
-        assert!(summary.contains(".summary.unchanged // 0"));
-        assert!(summary.contains(".summary.regressed // 0"));
-        assert!(summary.contains(".summary.unknown_movement // 0"));
-        assert!(summary.contains(".summary.repair_queue // 0"));
-        assert!(summary.contains(".warning_summary[]?"));
-        assert!(summary.contains(".repair_queue[]?.repair_kind"));
-        assert!(summary.contains("cat target/ripr/reports/assistant-loop-health.md"));
-        assert!(summary.contains("advisory static health over proof artifacts"));
-        assert!(summary.contains(".summary.comments // 0"));
-        assert!(summary.contains(".summary.summary_only // 0"));
-        assert!(summary.contains(".summary.suppressed // 0"));
-        assert!(summary.contains("No runtime mutation execution is performed"));
-
-        for step in fixture.non_blocking_steps {
+        for step in fixture.yaml_advisory_steps {
             let block = workflow_step(&workflow, step);
             assert!(
                 block.contains("continue-on-error: true"),
                 "`{step}` must remain advisory/non-blocking"
             );
         }
-
-        for step in fixture.gate_conditional_steps {
-            let block = workflow_step(&workflow, step);
+        for step in ["Upload RIPR diff findings", "Upload RIPR repo seams"] {
             assert!(
-                block.contains(
-                    "continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}"
-                ),
-                "`{step}` must be conditional on RIPR_GATE_MODE, not unconditionally advisory"
-            );
-        }
-
-        let artifact_check = workflow_step(&workflow, "Check RIPR advisory artifacts");
-        assert!(artifact_check.contains("::warning::"));
-        assert!(artifact_check.contains("target/ripr/reports/start-here.md"));
-        assert!(artifact_check.contains("gate-decision.json (RIPR_GATE_MODE is set)"));
-
-        for step in fixture.optional_sarif_steps {
-            let block = workflow_step(&workflow, step);
-            assert!(
-                block.contains("env.RIPR_UPLOAD_SARIF == 'true'"),
+                workflow_step(&workflow, step).contains("env.RIPR_UPLOAD_SARIF == 'true'"),
                 "`{step}` must stay gated by RIPR_UPLOAD_SARIF"
             );
         }
+        // The SARIF renders stay gated by RIPR_UPLOAD_SARIF inside the packet.
+        assert!(packet.contains("--format sarif"));
+        assert!(packet.contains("--format repo-sarif"));
+        assert!(packet_source.contains("let sarif = self.settings.upload_sarif == \"true\";"));
 
+        let artifact_check = packet_source
+            .split("fn check_advisory_artifacts")
+            .nth(1)
+            .unwrap_or_default();
+        assert!(artifact_check.contains("::warning::"));
+        assert!(artifact_check.contains("{GATE_DECISION} (RIPR_GATE_MODE is set)"));
+        assert!(packet_source.contains("No RIPR PR review front-panel inputs were available."));
+        assert!(packet_source.contains("No RIPR report-packet index inputs were available."));
+
+        // #3906 (F60-1): before and after would both be this HEAD, so verify
+        // has no movement to compare and exits 2 on every run. CI writes the
+        // before side only; the repair's after phase writes the rest where
+        // the test edit happens.
         for forbidden in fixture.forbidden_fragments {
             assert!(
-                !workflow.contains(forbidden),
+                !workflow.contains(forbidden) && !packet.contains(forbidden),
                 "generated workflow must not enable `{forbidden}` by default"
             );
         }
+        assert!(!packet.contains("ripr agent verify"));
+        Ok(())
     }
 
     #[test]

@@ -215,7 +215,7 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     None
 }
 
-fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
+pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
     let resolved = resolve_project_root(Path::new(".")).map_err(|error| {
         format!("{error}; pass --root PATH to select the analysis root explicitly")
     })?;
@@ -870,6 +870,23 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         && !format.is_repo_scope()
     {
         output.no_scope_provided = true;
+        // A default base that resolves to HEAD's own commit (for example
+        // `origin/HEAD` tracking the checked-out branch in a clone of a
+        // feature branch) leaves nothing to compare. These two resolutions
+        // run after the diff was loaded, so they are later observations, not
+        // the analyzed snapshot; the hint states them as such and names the
+        // repair.
+        if let Some(base) = output.base.as_deref() {
+            let root = &limited_check_input.root;
+            let timeout = limited_check_input.git_timeout;
+            if let Some(hedge) = default_base_is_head_hedge(
+                base,
+                analysis::resolve_base_commit(root, Some(base), timeout).as_deref(),
+                analysis::resolve_base_commit(root, Some("HEAD"), timeout).as_deref(),
+            ) {
+                eprintln!("{hedge}");
+            }
+        }
     }
     // #2425: when --diff was explicitly provided but produced zero findings
     // on a diff-scoped format, disclose on stderr why the result is empty.
@@ -912,20 +929,19 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         && !format.is_repo_scope();
     if !committed_history_diff {
         output.unanalyzed_working_tree = false;
+        // #5258: the untracked list drives the same disclosure family; a
+        // non-committed-history mode must not inherit it either.
+        output.untracked_working_tree_source_paths.clear();
     }
-    // #4321: a `--worktree` run without `--write-artifact` has no artifact
-    // for drill-in commands to replay (a committed-history replay would
-    // analyze a different diff), so the human surfaces say so and name
-    // `--write-artifact` instead of dropping the block silently.
-    let drill_in = if worktree_explicitly_provided && write_artifact.is_none() {
-        app::FindingDrillIn::WorktreeReplayNeedsArtifact
-    } else {
-        app::FindingDrillIn::Commands(app::finding_navigation(
-            &limited_check_input,
-            write_artifact.as_deref(),
-            explicit.mode,
-        ))
-    };
+    // A `--worktree` run carries `--worktree` into its drill-in commands, so
+    // `explain` and `context` analyze the same uncommitted edits and the
+    // block never needs an artifact to stay executable (#4321).
+    let drill_in = app::FindingDrillIn::Commands(app::finding_navigation_with_worktree(
+        &limited_check_input,
+        write_artifact.as_deref(),
+        explicit.mode,
+        worktree_explicitly_provided,
+    ));
     // #4945: repo seam-driven formats run their walks inside the render arms,
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.
@@ -940,6 +956,23 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         sink.commit_success();
     }
     Ok(())
+}
+
+/// The stderr warning for an empty default-base result when the default base
+/// and HEAD each resolve to the same commit after analysis. It states those
+/// two later observations only; it does not attribute the analyzed range.
+/// `None` unless both commits resolved and are equal.
+fn default_base_is_head_hedge(
+    base: &str,
+    base_commit: Option<&str>,
+    head_commit: Option<&str>,
+) -> Option<String> {
+    match (base_commit, head_commit) {
+        (Some(base_commit), Some(head_commit)) if base_commit == head_commit => Some(format!(
+            "ripr: after analysis, the default base `{base}` and HEAD each resolved to the same commit. This empty result alone is not a clean pass. Pass `--base <ref>` for the branch your change should be compared against (for example `--base origin/main`)."
+        )),
+        _ => None,
+    }
 }
 
 /// The stderr hedge for an explicit `--diff` run that produced zero findings
@@ -1299,6 +1332,26 @@ mod tests {
             .analysis_outcome
             .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
         Ok((output.findings.len(), outcome))
+    }
+
+    #[test]
+    fn default_base_equal_to_head_is_named_and_distinct_commits_stay_silent() {
+        let hedge = default_base_is_head_hedge("origin/feat", Some("abc"), Some("abc"));
+        assert!(
+            hedge
+                .as_deref()
+                .is_some_and(|text| text.contains("`origin/feat`")
+                    && text.contains("each resolved to the same commit")
+                    && text.contains("--base")),
+            "{hedge:?}"
+        );
+        assert_eq!(
+            default_base_is_head_hedge("origin/main", Some("abc"), Some("def")),
+            None
+        );
+        // An unresolved side is never asserted equal.
+        assert_eq!(default_base_is_head_hedge("main", None, None), None);
+        assert_eq!(default_base_is_head_hedge("main", Some("abc"), None), None);
     }
 
     #[test]

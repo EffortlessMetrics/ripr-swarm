@@ -179,8 +179,16 @@ pub(super) struct Backend {
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     refresh_idle: Notify,
+    /// Liveness bound for one server→client request round-trip (#5278,
+    /// `transport_bounds::CLIENT_REQUEST_TIMEOUT`): after the transport read
+    /// loop fuses, a client response can never arrive, so an unbounded await
+    /// would pin a handler task forever and leave the sidecar alive but
+    /// silent. Expiry fails the one request through its ordinary error arm.
+    client_request_timeout: Duration,
     #[cfg(test)]
     consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
+    #[cfg(test)]
+    refresh_publication_barrier: Mutex<Option<RefreshPublicationBarrier>>,
     pub(super) progress: Arc<AnalysisProgressTracker>,
 }
 
@@ -193,6 +201,23 @@ type ConsumedSourceBarrierChannels = (
 #[cfg(test)]
 struct ConsumedSourceBarrier {
     reached: tokio::sync::oneshot::Sender<(u64, AnalysisSnapshot)>,
+    release: tokio::sync::oneshot::Receiver<()>,
+}
+
+#[cfg(test)]
+type RefreshPublicationBarrierChannels = (
+    tokio::sync::oneshot::Receiver<u64>,
+    tokio::sync::oneshot::Sender<()>,
+);
+
+/// Pauses one refresh inside the transition-guarded publication block, after
+/// the terminal currentness check passes and before the first publish (#5202).
+/// Lets a test hold publication mid-flight (while the refresh owns
+/// `workspace_root_transition`) so a concurrent `shutdown` must serialize
+/// behind it.
+#[cfg(test)]
+struct RefreshPublicationBarrier {
+    reached: tokio::sync::oneshot::Sender<u64>,
     release: tokio::sync::oneshot::Receiver<()>,
 }
 
@@ -283,10 +308,44 @@ impl Backend {
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             refresh_idle: Notify::new(),
+            client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
+            #[cfg(test)]
+            refresh_publication_barrier: Mutex::new(None),
             progress: Arc::new(AnalysisProgressTracker::new(client.clone())),
             client,
+        }
+    }
+
+    /// Overrides the server→client request liveness bound (#5278). The
+    /// in-process composition tests shorten it so the uniform mid-session
+    /// exit contract stays fast.
+    pub(super) fn with_client_request_timeout(mut self, timeout: Duration) -> Self {
+        self.client_request_timeout = timeout;
+        self
+    }
+
+    /// One bounded server→client request round-trip (#5278). A client that
+    /// never answers must not pin this handler task forever: after a framing
+    /// violation the transport read loop has fused, so the response can
+    /// never arrive. The expiry surfaces as an ordinary request error
+    /// (`Internal error` naming the liveness bound) so every call site's
+    /// existing failure arm discloses it.
+    async fn bounded_client_request<T>(
+        &self,
+        request: impl std::future::Future<Output = tower_lsp_server::jsonrpc::Result<T>>,
+    ) -> tower_lsp_server::jsonrpc::Result<T> {
+        match tokio::time::timeout(self.client_request_timeout, request).await {
+            Ok(result) => result,
+            Err(_) => Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
+                message: std::borrow::Cow::Owned(format!(
+                    "ripr server-to-client request exceeded its {}s liveness bound; treating the unanswered client as failed (#5278)",
+                    self.client_request_timeout.as_secs()
+                )),
+                data: None,
+            }),
         }
     }
 
@@ -300,7 +359,7 @@ impl Backend {
     ///   and is marked `seams_deferred` (run_status = `"seams_deferred"`).
     ///   This typically completes in 33ms–11s instead of 336s cold.
     ///
-    /// - `false` (explicit `ripr.refreshDiagnostics` command): the full seam
+    /// - `false` (explicit `ripr.refresh` wire command): the full seam
     ///   inventory also runs, transitioning the snapshot to `full` (or
     ///   `limited`/`stale`/`cache_limited` per existing rules) with seam
     ///   diagnostics present.
@@ -417,6 +476,7 @@ impl Backend {
             self.refresh_scheduler
                 .record_attempt_outcome(outcome, attempt_duration);
             self.record_health_outcome(&request, outcome);
+            self.disclose_deadline_exceeded(&request, outcome).await;
             self.publish_analysis_status().await;
             self.end_progress_for_attempt(&request, outcome).await;
             self.log_refresh_attempt_outcome(outcome, attempt_duration)
@@ -653,6 +713,9 @@ impl Backend {
             .await;
             return cancellation_outcome(request);
         }
+        #[cfg(test)]
+        self.wait_refresh_publication_barrier(request.generation)
+            .await;
         if !self.pull_diagnostics_enabled() {
             // Read the stored delivery selection computed at refresh-transaction
             // prepare time (#1973). The push path no longer evaluates the
@@ -823,6 +886,14 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         };
+        // Release the transition guard now that the terminal check, publish,
+        // and commit are done. Everything below is post-commit disclosure:
+        // log notifications plus `workspace/diagnostic/refresh` and code-lens
+        // refresh client round-trips that wait for a client response. Holding
+        // the guard across those round-trips would let an unresponsive client
+        // stall shutdown (which must acquire this guard to reach
+        // `refresh_scheduler.stop()` and the terminal clear) (#5202).
+        drop(_root_transition);
         // Disclose lifted quarantines symmetrically (#1970): the fresh
         // publication (push) or the next pull re-serves the document against
         // the newly analyzed saved content.
@@ -835,7 +906,9 @@ impl Backend {
         }
         if self.pull_diagnostics_enabled()
             && self.diagnostic_refresh_support_enabled()
-            && let Err(error) = self.client.workspace_diagnostic_refresh().await
+            && let Err(error) = self
+                .bounded_client_request(self.client.workspace_diagnostic_refresh())
+                .await
         {
             self.client
                 .log_message(
@@ -956,6 +1029,39 @@ impl Backend {
             .and_then(|mut slot| slot.take());
         if let Some(barrier) = barrier {
             let _ = barrier.reached.send((generation, snapshot.clone()));
+            let _ = barrier.release.await;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn install_refresh_publication_barrier_for_test(
+        &self,
+    ) -> Result<RefreshPublicationBarrierChannels, String> {
+        let (reached, witness) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut slot = self
+            .refresh_publication_barrier
+            .lock()
+            .map_err(|_poisoned_barrier| "refresh-publication barrier lock poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("refresh-publication barrier already installed".to_string());
+        }
+        *slot = Some(RefreshPublicationBarrier {
+            reached,
+            release: released,
+        });
+        Ok((witness, release))
+    }
+
+    #[cfg(test)]
+    async fn wait_refresh_publication_barrier(&self, generation: u64) {
+        let barrier = self
+            .refresh_publication_barrier
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(barrier) = barrier {
+            let _ = barrier.reached.send(generation);
             let _ = barrier.release.await;
         }
     }
@@ -1085,6 +1191,14 @@ impl Backend {
         if self.pull_diagnostics_enabled() {
             return;
         }
+        // A stopped scheduler is shutting down: shutdown publishes the
+        // terminal empty state itself, so a cancelled refresh must not
+        // resurrect the previous diagnostics after that clear (#5202). This
+        // single choke point covers every rollback call site, including the
+        // mid-clear-loop cancellation that bypasses the authority check.
+        if self.refresh_scheduler.is_stopping() {
+            return;
+        }
         let mut uris = previous_diagnostics
             .keys()
             .cloned()
@@ -1211,8 +1325,7 @@ impl Backend {
                 method: "workspace/didChangeWatchedFiles".to_string(),
             };
             if let Err(error) = self
-                .client
-                .unregister_capability(vec![unregistration])
+                .bounded_client_request(self.client.unregister_capability(vec![unregistration]))
                 .await
             {
                 self.client
@@ -1251,7 +1364,10 @@ impl Backend {
             method: "workspace/didChangeWatchedFiles".to_string(),
             register_options: Some(serde_json::json!({ "watchers": watchers })),
         };
-        match self.client.register_capability(vec![registration]).await {
+        match self
+            .bounded_client_request(self.client.register_capability(vec![registration]))
+            .await
+        {
             Ok(()) => watch.registered = true,
             Err(error) => {
                 self.client
@@ -1368,7 +1484,10 @@ impl Backend {
     /// Bare `workspace/codeLens/refresh` send with log-only failure, shared
     /// by the view-changed and view-cleared paths.
     async fn send_code_lens_refresh(&self) {
-        if let Err(error) = self.client.code_lens_refresh().await {
+        if let Err(error) = self
+            .bounded_client_request(self.client.code_lens_refresh())
+            .await
+        {
             self.client
                 .log_message(
                     MessageType::WARNING,
@@ -1444,6 +1563,11 @@ impl Backend {
             health.snapshot_id = Some("snapshot:test".to_string());
             health.last_success_snapshot_id = Some("snapshot:test".to_string());
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn mark_attempt_running_for_test(&self, request: &RefreshRequest) {
+        self.mark_attempt_running(request);
     }
 
     #[cfg(test)]
@@ -1572,6 +1696,10 @@ impl Backend {
         health.reason = Some(request.reason.as_str().to_string());
         health.requested_scope = Some(request.scope.as_str().to_string());
         health.current_input_identity = Some(request.input_identity_id());
+        // A prior attempt's failure (including `deadline_exceeded`) is not
+        // this attempt's outcome. `mark_attempt_queued` already clears it;
+        // the in-loop pending promotion path only calls this method.
+        health.failure = None;
         if health.pending_attempt_id == Some(request.generation) {
             health.pending_attempt_id = None;
             health.pending_reason = None;
@@ -1666,14 +1794,44 @@ impl Backend {
             }
             RefreshAttemptOutcome::Cancelled => health.state = AnalysisAttemptState::Cancelled,
             // A deadline-expired attempt is a fail-closed dropped refresh
-            // (#1972); reuse the existing cancelled health state — no new
-            // run-status or attempt-state string.
+            // (#1972, #5093). Keep `state` on the existing `cancelled`
+            // allowlist so fail-closed clients (including VS Code) still parse
+            // the payload, and distinguish it from a user or superseded cancel
+            // with `failure.kind = deadline_exceeded`.
             RefreshAttemptOutcome::DeadlineExceeded => {
                 health.state = AnalysisAttemptState::Cancelled;
+                health.failure = Some(AnalysisFailure {
+                    kind: AnalysisFailureKind::DeadlineExceeded,
+                    message: bounded_failure_message(&deadline_exceeded_log_message(
+                        refresh_deadline_ms(request.config.refresh_deadline),
+                    )),
+                });
             }
             RefreshAttemptOutcome::Superseded => health.state = AnalysisAttemptState::Superseded,
             RefreshAttemptOutcome::NotStarted => health.state = AnalysisAttemptState::Stopped,
         }
+    }
+
+    /// One bounded `window/logMessage` WARNING on `DeadlineExceeded` (#5093).
+    /// Clients without `window.workDoneProgress` never see the progress-end
+    /// "analysis deadline exceeded" string; this log names the configured
+    /// deadline and the `refreshDeadlineMs` knob. User/superseded cancels
+    /// do not emit it.
+    pub(super) async fn disclose_deadline_exceeded(
+        &self,
+        request: &RefreshRequest,
+        outcome: RefreshAttemptOutcome,
+    ) {
+        if outcome != RefreshAttemptOutcome::DeadlineExceeded {
+            return;
+        }
+        let deadline_ms = refresh_deadline_ms(request.config.refresh_deadline);
+        self.client
+            .log_message(
+                MessageType::WARNING,
+                deadline_exceeded_log_message(deadline_ms),
+            )
+            .await;
     }
 
     async fn publish_analysis_status(&self) {
@@ -1752,6 +1910,18 @@ impl Backend {
         self.disclose_blocked_root(&root).await;
     }
 
+    /// Emit one bounded `window/logMessage` per recognized initialization
+    /// option that was present but ignored (#5092). The session stays up;
+    /// `session_value_sources` already attributes the effective fallback.
+    async fn disclose_ignored_initialization_options(&self) {
+        let Some(config) = self.analysis_config() else {
+            return;
+        };
+        for warning in config.ignored_initialization_option_warnings() {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
+    }
+
     /// The warning always goes to the log; clients without the `riprEditor`
     /// integration also get `window/showMessage`, because `ripr/analysisStatus`
     /// is the only other place the blocked state appears and generic editors
@@ -1808,7 +1978,7 @@ impl Backend {
         }
     }
 
-    fn analysis_status_payload(&self) -> LSPAny {
+    pub(super) fn analysis_status_payload(&self) -> LSPAny {
         let health = self.analysis_health_snapshot();
         self.analysis_status_payload_for_health(&health)
     }
@@ -1827,15 +1997,17 @@ impl Backend {
                         .map(|outcome| outcome.status_payload(value.input_identity_id().as_deref()))
                         .collect::<Vec<_>>(),
                     value.analysis_outcome.clone(),
+                    withheld_unknown_summary(value),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome) = match snapshot_state {
-            Some((identity, components, analysis_outcome)) => {
-                (identity, components, analysis_outcome)
-            }
-            None => (None, Vec::new(), None),
-        };
+        let (snapshot_identity, components, analysis_outcome, withheld_summary) =
+            match snapshot_state {
+                Some((identity, components, analysis_outcome, withheld)) => {
+                    (identity, components, analysis_outcome, withheld)
+                }
+                None => (None, Vec::new(), None, None),
+            };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
             health.current_input_identity.as_deref(),
@@ -1921,6 +2093,12 @@ impl Backend {
             "last_success_age_ms": last_success_age_ms,
             "run_status": health.run_status(),
             "analysis_outcome": analysis_outcome,
+            // Profile-withholding disclosure (#5276): when the actionable
+            // profile withholds live `*_unknown` findings from every
+            // diagnostic/listing surface, this names the count, the classes,
+            // and the `diagnostic_profile = "full"` recovery route, so
+            // `finding_count` and the served listings reconcile on the wire.
+            "withheld_findings": withheld_findings_status_payload(withheld_summary),
             // Typed bounded per-component outcomes for the committed snapshot
             // (#1997, RIPR-SPEC-0141): the single typed authority for
             // optional-component degradation. Empty until a snapshot commits.
@@ -2402,7 +2580,16 @@ impl Backend {
         if next == current {
             return;
         }
+        let previous_warnings = current.ignored_initialization_option_warnings();
+        let new_warnings: Vec<String> = next
+            .ignored_initialization_option_warnings()
+            .into_iter()
+            .filter(|warning| !previous_warnings.contains(warning))
+            .collect();
         self.set_analysis_config(next);
+        for warning in new_warnings {
+            self.client.log_message(MessageType::WARNING, warning).await;
+        }
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
             // configuration remains broken. The stored session override is
@@ -2544,11 +2731,10 @@ impl Backend {
             }
         };
         let result = self
-            .client
-            .configuration(vec![ConfigurationItem {
+            .bounded_client_request(self.client.configuration(vec![ConfigurationItem {
                 scope_uri: Some(scope_uri),
                 section: Some("ripr".to_string()),
-            }])
+            }]))
             .await;
         // Epoch guard: a response for an older epoch is dropped; the queued
         // re-pull for the current epoch owns the disclosed state.
@@ -3754,6 +3940,7 @@ pub(super) struct RefreshLogSummary {
     gap_static_limits: usize,
     gap_artifact_rejections: usize,
     gap_artifact_rejection_kinds: Vec<&'static str>,
+    withheld_unknown: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
 }
@@ -3815,6 +4002,7 @@ impl RefreshLogSummary {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
+            withheld_unknown: withheld_unknown_summary(snapshot).map_or(0, |(count, _)| count),
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
         }
@@ -3972,7 +4160,7 @@ fn refresh_completed_log_message_with_telemetry(
 ) -> String {
     let duration = format_duration(summary.duration);
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -3987,6 +4175,7 @@ fn refresh_completed_log_message_with_telemetry(
         summary.gap_static_limits,
         summary.gap_artifact_rejections,
         summary.gap_artifact_rejection_kinds.join("|"),
+        summary.withheld_unknown,
         summary.enabled_languages,
         summary.enabled_language_names.join("|"),
         summary.files,
@@ -4003,6 +4192,16 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
         "ripr analysis refresh failed after {}: {message}",
         format_duration(duration)
     )
+}
+
+pub(super) fn deadline_exceeded_log_message(deadline_ms: u64) -> String {
+    format!(
+        "ripr: background analysis exceeded the {deadline_ms}ms deadline and was stopped; adjust the 'refreshDeadlineMs' initialization option or editor setting if the workspace requires more time."
+    )
+}
+
+fn refresh_deadline_ms(deadline: Duration) -> u64 {
+    u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// The on-screen config failure notice (#4532): the source-free summary, not
@@ -4378,6 +4577,62 @@ impl Backend {
                 })
             })
             .collect::<Vec<_>>();
+        // The `*_unknown` findings the actionable profile withholds from
+        // diagnostics AND from `hidden_gaps` (#4418) are disclosed as their
+        // own additive list (#5276): `status: "ok"` with all-zero counts
+        // must never be the only word about a live finding.
+        // The `*_unknown` findings the actionable profile withholds from
+        // diagnostics AND from `hidden_gaps` (#4418) are disclosed as their
+        // own additive list (#5276): `status: "ok"` with all-zero counts
+        // must never be the only word about a live finding. A member of a
+        // mixed canonical group counts only when the group itself is not
+        // published; a published group already represents its members.
+        let withheld_unknown = if snapshot.diagnostic_profile == LspDiagnosticProfile::Actionable {
+            super::diagnostics::canonical_group_members(&snapshot.findings)
+                .into_iter()
+                .filter(|(primary, _)| {
+                    !super::diagnostics::finding_is_visible_in_profile(
+                        LspDiagnosticProfile::Actionable,
+                        primary,
+                    )
+                })
+                .flat_map(|(_, members)| {
+                    members
+                        .into_iter()
+                        .filter(|finding| finding_is_withheld_unknown(finding))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let withheld_unknown_items = withheld_unknown
+            .iter()
+            .take(LIST_ACTIONABLE_HIDDEN_MAX)
+            .map(|finding| {
+                serde_json::json!({
+                    "finding_id": finding.id,
+                    "file": display_path(
+                        finding
+                            .probe
+                            .location
+                            .file
+                            .strip_prefix(&snapshot.root)
+                            .unwrap_or(&finding.probe.location.file),
+                    ),
+                    "line": finding.probe.location.line,
+                    "class": finding.class.as_str(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let suppression_disclosure = (!withheld_unknown.is_empty()).then(|| {
+            format!(
+                "{} finding(s) withheld by the actionable diagnostic profile (RIPR-SPEC-0069: missing static evidence is not published as a diagnostic or a gap); {}",
+                withheld_unknown.len(),
+                diagnostic_profile_full_recovery_route()
+            )
+        });
         Ok(Some(serde_json::json!({
             "kind": "actionable_items",
             "status": "ok",
@@ -4396,6 +4651,10 @@ impl Backend {
             "omitted_truncated": result.omitted.len() > LIST_ACTIONABLE_OMITTED_MAX,
             "hidden_gaps": hidden_gaps,
             "hidden_gap_count": hidden.len(),
+            "withheld_unknown_count": withheld_unknown.len(),
+            "withheld_unknown_findings": withheld_unknown_items,
+            "withheld_unknown_truncated": withheld_unknown.len() > LIST_ACTIONABLE_HIDDEN_MAX,
+            "suppression_disclosure": suppression_disclosure,
             "budget_identity": result.snapshot_profile_budget_identity,
             "complete_evidence_identity": result.complete_evidence_identity,
             "continuation_or_inspect_route": result.continuation_or_inspect_route,
@@ -4476,7 +4735,10 @@ impl LanguageServer for Backend {
                     "watchers": workspace_input_watchers()
                 })),
             };
-            if let Err(error) = self.client.register_capability(vec![registration]).await {
+            if let Err(error) = self
+                .bounded_client_request(self.client.register_capability(vec![registration]))
+                .await
+            {
                 self.client
                     .log_message(
                         MessageType::WARNING,
@@ -4487,6 +4749,14 @@ impl LanguageServer for Backend {
         }
         self.diagnostics_input_watch.lock().await.armed = true;
         self.sync_diagnostics_input_watch().await;
+        // Emit ignored-initialization warnings before the first
+        // `workspace/configuration` pull (#5092). A pull-mode client that
+        // never answers must not suppress the bounded disclosure that a
+        // default is in effect; the pull itself is bounded by the #5278
+        // client-request liveness bound, so a non-answering client fails
+        // the pull through the ordinary error arm instead of pinning this
+        // handler task forever.
+        self.disclose_ignored_initialization_options().await;
         // First configuration pull (#2031). This runs in `initialized`, not
         // `initialize`: tower-lsp-server rejects client requests with -32002
         // before the session is initialized.
@@ -4717,8 +4987,12 @@ impl LanguageServer for Backend {
         };
         // 2. Optional full-list reconciliation: a separately versioned
         //    confirmation step, never a substitute for the delta. A client
-        //    that cannot answer keeps the delta-derived state.
-        let queried = self.client.workspace_folders().await.unwrap_or(None);
+        //    that cannot answer keeps the delta-derived state; the round
+        //    trip is bounded by the #5278 client-request liveness bound.
+        let queried = self
+            .bounded_client_request(self.client.workspace_folders())
+            .await
+            .unwrap_or(None);
         // 3. Drop the round-trip when a newer event or transition won the
         //    race, then apply at most one transition derived from the stored
         //    set.
@@ -4849,9 +5123,25 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> LspResult<()> {
         self.trace_inbound("request", "shutdown", None).await;
+        // Serialize the terminal clear with an in-flight refresh publication
+        // (#5202): without the shared transition guard a refresh cancelled by
+        // `stop()` can publish one more batch — or roll back the previous
+        // diagnostics — after these empties, recreating the stale client
+        // state this clear removes. The refresh publication/commit block
+        // holds the same guard, so the clear either precedes the refresh's
+        // terminal check or follows its last publish, never interleaves it.
+        let transition = self.workspace_root_transition.lock().await;
         self.refresh_scheduler.stop();
         self.progress.end_all(AnalysisProgressEnd::Cancelled).await;
-        self.clear_all_diagnostic_uris();
+        // Mirror the root-change path: dropping the tracked URIs without
+        // publishing leaves stale diagnostics in the client (#5202).
+        let uris = self.clear_all_diagnostic_uris();
+        if !self.pull_diagnostics_enabled() {
+            for uri in uris {
+                self.client.publish_diagnostics(uri, Vec::new(), None).await;
+            }
+        }
+        drop(transition);
         self.reset_health_for_input_change();
         self.publish_analysis_status().await;
         self.refresh_idle.notify_waiters();
@@ -5319,6 +5609,11 @@ impl Backend {
                 .log_message(MessageType::WARNING, disclosure)
                 .await;
         }
+        if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
+            self.client
+                .log_message(MessageType::WARNING, disclosure)
+                .await;
+        }
         let diagnostics = snapshot.served_diagnostics_for_uri(&uri);
         Ok(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
@@ -5358,6 +5653,16 @@ impl Backend {
                 .iter()
                 .map(|entry| entry.uri.clone()),
         );
+        // #5276 (PR #5452 review): a workspace whose served set is empty
+        // because the profile withheld every finding has no documents to
+        // report and may have no previous result ids, so the withholding
+        // disclosure cannot ride on the per-document loop. Name it once per
+        // workspace report instead.
+        if let Some(disclosure) = profile_withholding_pull_disclosure(&snapshot) {
+            self.client
+                .log_message(MessageType::WARNING, disclosure)
+                .await;
+        }
         let mut items = Vec::with_capacity(uris.len());
         // Serve the stored delivery selection (#1973). Disclose a partial
         // delivery state once per workspace report rather than once per
@@ -5694,8 +5999,8 @@ impl Backend {
                 .and_then(|value| value.input_identity_id())
                 .or(health.current_input_identity),
             "invalidation_reason": reason,
-            "recovery_route": "ripr.refreshDiagnostics",
-            "recovery_command": "ripr.refreshDiagnostics",
+            "recovery_route": REFRESH_COMMAND,
+            "recovery_command": REFRESH_COMMAND,
             "limits_note": "Static editor evidence only; refresh before using seam context or repair guidance.",
         })
     }
@@ -5987,6 +6292,89 @@ const LIST_ACTIONABLE_OMITTED_MAX: usize = 200;
 /// Most profile-hidden gaps `ripr/listActionableItems` lists;
 /// `hidden_gap_count` still reports the full number.
 const LIST_ACTIONABLE_HIDDEN_MAX: usize = 50;
+
+/// The `*_unknown`-class findings the actionable profile withholds from
+/// every diagnostic and gap-listing surface (RIPR-SPEC-0069; the exclusion
+/// is locked by #4418 — missing static evidence is neither a diagnostic nor
+/// a gap). #5276: they are disclosed, never published, so an agent can tell
+/// "analysis complete, nothing to do" apart from "a finding exists but the
+/// profile withholds it".
+fn finding_is_withheld_unknown(finding: &crate::domain::Finding) -> bool {
+    matches!(
+        finding.class,
+        crate::domain::ExposureClass::StaticUnknown
+            | crate::domain::ExposureClass::InfectionUnknown
+            | crate::domain::ExposureClass::PropagationUnknown
+    ) && finding.is_candidate_actionable()
+}
+
+/// The `diagnostic_profile = "full"` recovery route named wherever profile
+/// withholding is disclosed (#5276). One owner so every agent-facing surface
+/// words the escape hatch identically.
+fn diagnostic_profile_full_recovery_route() -> &'static str {
+    "set the session initialization option {\"ripr\": {\"diagnosticProfile\": \"full\"}} to serve withheld findings on every channel"
+}
+
+/// Clone-free count/class summary of the `*_unknown` findings the
+/// actionable profile withholds. A finding counts as withheld only when its
+/// canonical group is not visible under the profile: an unknown member of a
+/// published mixed-class group is represented by that published diagnostic,
+/// not withheld (PR #5452 review). `None` when there is no snapshot; a
+/// non-actionable profile withholds nothing, so it summarizes as a zero
+/// count with no classes.
+fn withheld_unknown_summary(snapshot: &AnalysisSnapshot) -> Option<(usize, Vec<&'static str>)> {
+    if snapshot.diagnostic_profile != LspDiagnosticProfile::Actionable {
+        return Some((0, Vec::new()));
+    }
+    let mut count = 0usize;
+    let mut classes = std::collections::BTreeSet::new();
+    for (primary, members) in super::diagnostics::canonical_group_members(&snapshot.findings) {
+        if super::diagnostics::finding_is_visible_in_profile(
+            LspDiagnosticProfile::Actionable,
+            primary,
+        ) {
+            continue;
+        }
+        for finding in members {
+            if finding_is_withheld_unknown(finding) {
+                count += 1;
+                classes.insert(finding.class.as_str());
+            }
+        }
+    }
+    Some((count, classes.into_iter().collect()))
+}
+
+/// The status-surface payload for profile withholding (#5276): present with
+/// a zero count when nothing is withheld, and `null` only when no snapshot
+/// exists.
+fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>)>) -> LSPAny {
+    match summary {
+        None => serde_json::Value::Null,
+        Some((0, _)) => {
+            serde_json::json!({ "count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
+        }
+        Some((count, classes)) => serde_json::json!({
+            "count": count,
+            "classes": classes,
+            "recovery_route": diagnostic_profile_full_recovery_route(),
+        }),
+    }
+}
+
+/// Pull-side disclosure naming the profile-withheld `*_unknown` findings
+/// (#5276). A pull that serves zero items must not read as "no findings":
+/// the same one-line disclosure the status and listing surfaces carry names
+/// the withholding and the `full` escape hatch here too.
+fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
+    let (count, _) = withheld_unknown_summary(snapshot)?;
+    (count > 0).then(|| {
+        format!(
+            "ripr withheld {count} finding(s) of the *_unknown classes from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
+            diagnostic_profile_full_recovery_route()
+        )
+    })
+}
 
 fn omitted_diagnostic_reason_name(
     reason: crate::lsp::diagnostic_budget::OmittedDiagnosticReason,
@@ -7087,6 +7475,85 @@ mod top_limitation_selection_tests {
         assert_eq!(
             analysis_status["analysis_outcome"]["kind"],
             "unsupported_input"
+        );
+        Ok(())
+    }
+
+    /// #5276: under the actionable profile a live `static_unknown` finding
+    /// is withheld from every diagnostic/listing surface while
+    /// `analysis_outcome.finding_count` reports it. The status payload must
+    /// name the withholding — count, classes, and the
+    /// `diagnostic_profile = "full"` recovery route — so an agent can tell
+    /// "no findings" from "withheld by profile" on the wire.
+    #[test]
+    fn analysis_status_discloses_withheld_unknown_findings_with_full_route() -> Result<(), String> {
+        let repo_root = PathBuf::from("C:").join("repo");
+        let mut unknown = crate::lsp::tests::sample_finding();
+        unknown.class = crate::domain::ExposureClass::StaticUnknown;
+        // A member of an unpublished canonical group counts too: the group's
+        // unknown-class primary is not visible, so neither member is served
+        // anywhere (PR #5452 review).
+        let mut grouped_unknown = unknown.clone();
+        grouped_unknown.id = "probe:pricing:99:predicate".to_string();
+        grouped_unknown.canonical_gap = Some(crate::lsp::tests::sample_canonical_gap());
+        let mut snapshot = snapshot_for_outcome(incomplete_outcome(2)?, None);
+        snapshot.findings = vec![unknown, grouped_unknown];
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        let health = AnalysisHealth {
+            state: AnalysisAttemptState::Succeeded,
+            snapshot_id: Some("snapshot:lsp-fixture".to_string()),
+            ..AnalysisHealth::default()
+        };
+        let (service, _socket) = LspService::new(|client| Backend::new(client, repo_root.clone()));
+        let backend = service.inner();
+        *backend
+            .latest_analysis
+            .lock()
+            .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
+            Some(std::sync::Arc::new(snapshot));
+        let payload = backend.analysis_status_payload_for_health(&health);
+        let withheld = &payload["withheld_findings"];
+        assert_eq!(withheld["count"], 2, "{payload:#}");
+        assert_eq!(withheld["classes"], serde_json::json!(["static_unknown"]));
+        assert!(
+            withheld["recovery_route"]
+                .as_str()
+                .is_some_and(|route| route.contains("diagnosticProfile")),
+            "the disclosure must name the full-profile escape hatch: {withheld}"
+        );
+
+        // The same findings under the full profile withhold nothing: a
+        // present zero-count entry, no route.
+        let (full_service, _full_socket) =
+            LspService::new(|client| Backend::new(client, repo_root.clone()));
+        let full_backend = full_service.inner();
+        let mut full_snapshot = snapshot_for_outcome(incomplete_outcome(1)?, None);
+        full_snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+        *full_backend
+            .latest_analysis
+            .lock()
+            .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
+            Some(std::sync::Arc::new(full_snapshot));
+        let full_payload = full_backend.analysis_status_payload_for_health(&health);
+        assert_eq!(
+            full_payload["withheld_findings"]["count"], 0,
+            "{full_payload:#}"
+        );
+        assert_eq!(
+            full_payload["withheld_findings"]["recovery_route"],
+            serde_json::Value::Null
+        );
+
+        // No snapshot at all: the disclosure is absent, not zero.
+        let (empty_service, _empty_socket) =
+            LspService::new(|client| Backend::new(client, repo_root));
+        let empty_payload = empty_service
+            .inner()
+            .analysis_status_payload_for_health(&health);
+        assert_eq!(
+            empty_payload["withheld_findings"],
+            serde_json::Value::Null,
+            "{empty_payload:#}"
         );
         Ok(())
     }
@@ -10698,6 +11165,14 @@ mod list_actionable_items_tests {
         let mut grouped_second = grouped_first.clone();
         grouped_second.id = "probe:pricing:97:predicate".to_string();
         grouped_second.probe.location.line = 97;
+        // An unknown-class member inside the same unpublished canonical
+        // group: it is represented by no published diagnostic (the group is
+        // not visible), so it must be disclosed as withheld too (PR #5452
+        // review).
+        let mut mixed_unknown = grouped_first.clone();
+        mixed_unknown.id = "probe:pricing:98:predicate".to_string();
+        mixed_unknown.probe.location.line = 98;
+        mixed_unknown.class = crate::domain::ExposureClass::StaticUnknown;
         let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
         snapshot.findings = vec![
             hidden,
@@ -10706,6 +11181,7 @@ mod list_actionable_items_tests {
             unknown,
             grouped_first,
             grouped_second,
+            mixed_unknown,
         ];
         snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
         let harness = handler_harness()?;
@@ -10751,6 +11227,37 @@ mod list_actionable_items_tests {
                 "class": "weakly_exposed",
             })
         );
+        // #5276: the withheld static_unknown findings are disclosed in their
+        // own additive list with the full-profile escape hatch — still never
+        // as a gap, and never as a diagnostic. The withheld set counts group
+        // members too: the raw `:94` finding plus the `:98` member of the
+        // unpublished canonical group (PR #5452 review).
+        assert_eq!(response["withheld_unknown_count"], 2, "{response:#}");
+        assert_eq!(
+            response["withheld_unknown_truncated"], false,
+            "{response:#}"
+        );
+        // Group order follows the canonical-group key order: the mixed
+        // canonical group sorts before the raw finding's own group.
+        let withheld_ids: Vec<&str> = response["withheld_unknown_findings"]
+            .as_array()
+            .ok_or("withheld_unknown_findings is not an array")?
+            .iter()
+            .map(|item| item["finding_id"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            withheld_ids,
+            vec!["probe:pricing:98:predicate", "probe:pricing:94:predicate"],
+            "{response:#}"
+        );
+        assert!(
+            response["suppression_disclosure"]
+                .as_str()
+                .is_some_and(|text| {
+                    text.contains("withheld") && text.contains("diagnosticProfile")
+                }),
+            "the listing must name the full-profile escape hatch: {response:#}"
+        );
 
         snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
         let full_harness = handler_harness()?;
@@ -10758,6 +11265,47 @@ mod list_actionable_items_tests {
         let full = call_handler(&full_harness)?;
         assert_eq!(full["hidden_gap_count"], 0);
         assert_eq!(full["hidden_gaps"], serde_json::json!([]));
+        // The full profile withholds nothing: the disclosure stays silent.
+        assert_eq!(full["withheld_unknown_count"], 0);
+        assert_eq!(full["withheld_unknown_findings"], serde_json::json!([]));
+        assert_eq!(full["suppression_disclosure"], serde_json::Value::Null);
+        Ok(())
+    }
+
+    /// #5276: the pull channel names profile-withheld `*_unknown` findings
+    /// with the same escape hatch the status and listing surfaces carry, so
+    /// a zero-item pull never reads as "no findings" while one is withheld.
+    #[test]
+    fn profile_withholding_pull_disclosure_names_the_escape_hatch_only_when_withheld()
+    -> Result<(), String> {
+        let mut unknown = crate::lsp::tests::sample_finding();
+        unknown.class = crate::domain::ExposureClass::StaticUnknown;
+        let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+        snapshot.findings = vec![unknown];
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+            .ok_or("a withheld finding must disclose on the pull channel")?;
+        assert!(
+            disclosure.contains("1 finding(s)") && !disclosure.contains("static_unknown"),
+            "the pull disclosure names the count and the profile: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("diagnosticProfile"),
+            "the pull disclosure names the escape hatch: {disclosure}"
+        );
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+        assert_eq!(
+            super::profile_withholding_pull_disclosure(&snapshot),
+            None,
+            "the full profile withholds nothing"
+        );
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+        snapshot.findings.clear();
+        assert_eq!(
+            super::profile_withholding_pull_disclosure(&snapshot),
+            None,
+            "no findings means nothing to disclose"
+        );
         Ok(())
     }
 
@@ -10804,7 +11352,11 @@ mod list_actionable_items_tests {
                 "selected_count",
                 "snapshot_id",
                 "status",
+                "suppression_disclosure",
                 "total_count",
+                "withheld_unknown_count",
+                "withheld_unknown_findings",
+                "withheld_unknown_truncated",
             ]
         );
 

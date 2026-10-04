@@ -22,6 +22,15 @@ pub(crate) use parse::expect_value;
 pub use parse::extract_global_verbose;
 pub(crate) use suggest::unknown_argument;
 
+/// The command completed. Shared by `Ok(())` paths and by the
+/// `help --json` exit contract (`docs/EXIT_CODES.md`).
+pub(crate) const EXIT_COMPLETED: i32 = 0;
+/// The command could not complete. Maps from [`CommandError::Failure`].
+pub(crate) const EXIT_COULD_NOT_COMPLETE: i32 = 2;
+/// The command reached a blocking decision or typed refusal. Maps from
+/// [`CommandError::Decision`].
+pub(crate) const EXIT_DECISION_OR_REFUSAL: i32 = 3;
+
 /// Top-level error of command dispatch, carrying the process exit-code
 /// contract documented in `docs/EXIT_CODES.md`.
 ///
@@ -32,12 +41,12 @@ pub(crate) use suggest::unknown_argument;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     /// The command could not complete: usage, parse, operational, or
-    /// internal error. Maps to exit code 2.
+    /// internal error. Maps to [`EXIT_COULD_NOT_COMPLETE`].
     Failure(String),
     /// The command ran successfully and reached a blocking decision or a
-    /// typed refusal. Maps to exit code 3, so orchestrators can branch on
-    /// `0` (completed), `3` (decision/refusal), and `2` (could not
-    /// complete) without parsing output.
+    /// typed refusal. Maps to [`EXIT_DECISION_OR_REFUSAL`], so orchestrators
+    /// can branch on `0` (completed), `3` (decision/refusal), and `2`
+    /// (could not complete) without parsing output.
     Decision(String),
 }
 
@@ -52,8 +61,8 @@ impl CommandError {
     /// The process exit code this error maps to (2 or 3).
     pub const fn exit_code(&self) -> i32 {
         match self {
-            Self::Failure(_) => 2,
-            Self::Decision(_) => 3,
+            Self::Failure(_) => EXIT_COULD_NOT_COMPLETE,
+            Self::Decision(_) => EXIT_DECISION_OR_REFUSAL,
         }
     }
 }
@@ -81,7 +90,18 @@ use crate::app::repair_attempt::BeforeArtifactSource;
 use std::fs::File;
 use std::path::Path;
 
-pub fn run(mut args: Vec<String>) -> Result<(), CommandError> {
+pub fn run(args: Vec<String>) -> Result<(), CommandError> {
+    let outcome = run_command(args);
+    // #5213: observe this process's own CPU time and peak resident memory
+    // once the command has finished, so the peak covers rendering and
+    // serialization instead of stopping at the analysis boundary. Emits
+    // nothing unless the existing opt-in trace family is enabled, so the
+    // default stdout JSON and default stderr stay byte-identical.
+    crate::analysis::resource_cost::emit_run_resource_cost();
+    outcome
+}
+
+fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: the global --verbose/-v spelling is extracted before command
     // dispatch so it works with any subcommand. #5009: the extraction has
@@ -321,6 +341,11 @@ fn persist_before_repair_attempt(
         "ripr: attempt next command: {}",
         result.manifest.next_command
     );
+    let next_powershell =
+        crate::output::markdown::powershell_text_variant(&result.manifest.next_command);
+    if let Some(form) = &next_powershell {
+        eprintln!("ripr: attempt next command (PowerShell): {form}");
+    }
     print!(
         "{}",
         commands::before_phase_stdout(
@@ -335,6 +360,9 @@ fn persist_before_repair_attempt(
             "Next, after the test edit: {}",
             result.manifest.next_command
         );
+        if let Some(form) = &next_powershell {
+            println!("(PowerShell) {form}");
+        }
     }
     Ok(())
 }
@@ -359,6 +387,21 @@ mod tests {
         std::fs::create_dir_all(&root)
             .map_err(|error| format!("create {} failed: {error}", root.display()))?;
         Ok(root)
+    }
+
+    #[test]
+    fn command_error_exit_codes_are_the_typed_contract() {
+        assert_eq!(
+            CommandError::Failure("could not complete".to_string()).exit_code(),
+            EXIT_COULD_NOT_COMPLETE
+        );
+        assert_eq!(
+            CommandError::Decision("blocked or refused".to_string()).exit_code(),
+            EXIT_DECISION_OR_REFUSAL
+        );
+        assert_eq!(EXIT_COMPLETED, 0);
+        assert_eq!(EXIT_COULD_NOT_COMPLETE, 2);
+        assert_eq!(EXIT_DECISION_OR_REFUSAL, 3);
     }
 
     #[test]

@@ -115,6 +115,14 @@ pub(crate) struct Snapshot {
     pub(crate) snapshot_id: String,
     pub(crate) outcome: AnalysisOutcome,
     pub(crate) items: Vec<GapItem>,
+    /// The committed findings the evidence projections read (`ripr_get_gap`
+    /// and the repair-card witness matcher both bind from this exact set).
+    pub(crate) findings: Vec<crate::domain::Finding>,
+    /// The repair-card producer facts bound when this snapshot committed
+    /// (RIPR-SPEC-0215). Snapshots committed before the card projection
+    /// existed carry `None`; their card reads fail closed with
+    /// `no_snapshot` instead of silently missing the card surface.
+    pub(crate) card_producers: Option<super::repair_card::SnapshotCardProducers>,
     pub(crate) budget: DiagnosticBudget,
     pub(crate) selection: DiagnosticBudgetResult,
 }
@@ -208,6 +216,8 @@ impl Snapshot {
             snapshot_id,
             outcome,
             items,
+            findings: output.findings.clone(),
+            card_producers: None,
             budget,
             selection,
         })
@@ -390,11 +400,11 @@ impl WorkspaceSession {
                 .collect::<Vec<_>>(),
             "continuation": {
                 "tool": "ripr_get_gap",
-                "resource_template": "ripr://gap/{canonical_item_id}",
+                "resource_template": "ripr://gap/{canonical_id}",
             },
             "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred.",
             "limitations": [
-                "summaries do not contain evidence detail; read one item with ripr_get_gap or ripr://gap/{canonical_item_id}",
+                "summaries do not contain evidence detail; read one item with ripr_get_gap or ripr://gap/{canonical_id}",
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
         });
@@ -404,14 +414,14 @@ impl WorkspaceSession {
     /// One canonical item's complete bounded evidence.
     pub(crate) fn get_gap(
         &self,
-        gap_id: &str,
+        canonical_id: &str,
         requested: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
-        let Some(item) = snapshot.item(gap_id) else {
+        let Some(item) = snapshot.item(canonical_id) else {
             return Err(AttemptFailure::new(
                 CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {gap_id} exists in the current snapshot"),
+                format!("no canonical item {canonical_id} exists in the current snapshot"),
                 "list the current canonical ids with ripr_list_gaps, then retry",
             ));
         };
@@ -473,11 +483,11 @@ impl WorkspaceSession {
             },
             "continuation": {
                 "list_tool": "ripr_list_gaps",
-                "item_resource_template": "ripr://gap/{canonical_item_id}",
+                "item_resource_template": "ripr://gap/{canonical_id}",
             },
             "claim_boundary": "Bounded snapshot evidence for one completed analysis. The outcome is typed producer state; a later refresh supersedes this snapshot and its identity.",
             "limitations": [
-                "item entries are identities and locations, not evidence; read one item through ripr_get_gap or ripr://gap/{canonical_item_id}",
+                "item entries are identities and locations, not evidence; read one item through ripr_get_gap or ripr://gap/{canonical_id}",
             ],
         });
         bounded_document(document)
@@ -670,7 +680,12 @@ pub(crate) fn run_check(
             "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository for the full diagnostic",
         )
     })?;
-    Snapshot::from_output(&output, root_identity)
+    let mut snapshot = Snapshot::from_output(&output, root_identity)?;
+    // Bind the repair-card producers inside the same bounded attempt, after
+    // the shared check authority completed: the snapshot commits complete —
+    // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
+    super::repair_card::bind_snapshot_card_producers(root, &mut snapshot)?;
+    Ok(snapshot)
 }
 
 fn overflow_reason_as_str(reason: DiagnosticOverflowReason) -> &'static str {
@@ -790,6 +805,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
             suppression: None,
             partial_scope: None,
         })
@@ -1070,6 +1086,70 @@ mod tests {
                 "equivalent roots must preserve one portable snapshot identity".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_identity_binds_same_length_evidence_with_the_original_digest() -> Result<(), String>
+    {
+        let mut before = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = gaps::test_finding()?;
+        finding.recommended_next_step = Some("assert boundary a".to_string());
+        before.findings.push(finding);
+        let before_snapshot =
+            Snapshot::from_output(&before, Some("root:sha256:test")).map_err(|f| f.detail)?;
+
+        let mut after = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = gaps::test_finding()?;
+        finding.recommended_next_step = Some("assert boundary b".to_string());
+        after.findings.push(finding);
+        let after_snapshot =
+            Snapshot::from_output(&after, Some("root:sha256:test")).map_err(|f| f.detail)?;
+
+        let before_id = before_snapshot.snapshot_id.clone();
+        let after_id = after_snapshot.snapshot_id.clone();
+        let mut lengths = Vec::new();
+        for snapshot in [before_snapshot, after_snapshot] {
+            assert_eq!(
+                snapshot.items.len(),
+                1,
+                "the snapshot must contain evidence"
+            );
+            let mut original_items = snapshot
+                .findings
+                .iter()
+                .map(GapItem::from_finding)
+                .collect::<Result<Vec<_>, _>>()?;
+            for item in &mut original_items {
+                let bytes = serde_json::to_vec(&item.evidence_core).map_err(|e| e.to_string())?;
+                item.evidence_bytes = bytes.len();
+                item.evidence_sha256 = sha256_hex(&bytes);
+                lengths.push(bytes.len());
+            }
+            let original_id = snapshot_identity(&snapshot.outcome, &original_items)?;
+            assert_eq!(snapshot.snapshot_id, original_id);
+
+            let session = WorkspaceSession {
+                in_flight: false,
+                last_good: Some(Arc::new(snapshot)),
+                last_failure: None,
+                repairs: std::collections::BTreeMap::new(),
+                superseded_attempts: std::collections::BTreeMap::new(),
+            };
+            let item = original_items
+                .first()
+                .ok_or_else(|| "the original item oracle must not be empty".to_string())?;
+            let document = session
+                .get_gap(&item.canonical_id, Some(&original_id))
+                .map_err(|f| f.detail)?;
+            assert_eq!(document, item.document(&original_id));
+        }
+        assert_eq!(lengths.len(), 2);
+        assert_eq!(
+            lengths[0], lengths[1],
+            "the changed evidence has equal length"
+        );
+        assert_ne!(before_id, after_id);
         Ok(())
     }
 

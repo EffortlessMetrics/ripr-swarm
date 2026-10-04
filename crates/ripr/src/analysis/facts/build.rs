@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod bounded_batch_tests;
+#[cfg(test)]
 mod incremental_edit_tests;
 
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
@@ -206,132 +208,36 @@ fn build_index_with_file_fact_cache(
     cache: &RepoFileFactCache,
     mut load_known_file_paths: impl FnMut() -> HashSet<PathBuf>,
 ) -> Result<CachedRustIndex, String> {
-    // Only genuine misses need historical paths for invalidation attribution.
-    // All-hit, corrupt-only, empty, and already-cancelled builds must not walk
-    // and decode the entire cache directory just to discard the inventory.
-    // Initialize once during lookup, before this build parses or stores facts.
-    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
-    let mut stats = FileFactCacheStats::default();
-    // One stderr line per build, not one per file: an unusable cache
-    // directory makes every lookup fail the same way, and a line per file
-    // buried the analysis output under hundreds of repeats (#4888).
-    let mut first_corrupt_reason: Option<String> = None;
-
-    // Phase 1 (sequential): cache lookups decide which files need a
-    // fresh parse. Hit/miss/invalidation stats and the corrupt-entry stderr
-    // ordering stay byte-identical to the sequential loop.
-    enum Pending {
-        Ready(super::FileFacts),
-        Parse { key: RepoFileFactCacheKey },
-    }
-    let mut pending: Vec<Pending> = Vec::with_capacity(files.len());
-    for (file, bytes) in files {
-        if let Err(err) = cancellation::checkpoint() {
-            // A cancelled lookup still reports the corrupt entries it found.
-            emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
-            return Err(err);
-        }
-        let key = RepoFileFactCacheKey::new(file, bytes);
-        match cache.load_file_facts(&key) {
-            CacheLoad::Hit(facts) => {
-                stats.hits += 1;
-                pending.push(Pending::Ready(facts));
-            }
-            CacheLoad::Miss => {
-                stats.misses += 1;
-                if known_cached_file_paths
-                    .get_or_insert_with(&mut load_known_file_paths)
-                    .contains(file)
-                {
-                    stats.invalidated_files.insert(file.clone());
-                }
-                pending.push(Pending::Parse { key });
-            }
-            CacheLoad::CorruptIgnored { reason } => {
-                stats.corrupt_ignored += 1;
-                first_corrupt_reason.get_or_insert(reason);
-                pending.push(Pending::Parse { key });
-            }
-        }
-    }
+    let mut accounting = CacheAccounting::default();
+    let batched = insert_cached_file_batches(
+        root,
+        files,
+        adapter,
+        fallback,
+        cache,
+        &mut load_known_file_paths,
+        &mut accounting,
+    );
+    let CacheAccounting {
+        stats,
+        first_corrupt_reason,
+    } = accounting;
+    // Emitted once on every exit after lookup began, before finalization.
+    // A complete build reports the whole-corpus count. An aborted build
+    // reports the entries found in the batches it admitted: later batches
+    // are never looked up, so their entries are not claimed either way.
     emit_corrupt_entries_warning(stats.corrupt_ignored, first_corrupt_reason.as_deref());
-
-    // Phase 2 (parallel): parse cache misses on the rayon pool. Each parse
-    // is independent; collecting an indexed parallel iterator preserves
-    // input order, so results map back to their file positions.
-    let mut parsed: Vec<Option<Result<super::FileFacts, String>>> = Vec::new();
-    parsed.resize_with(files.len(), || None);
-    let parse_positions: Vec<usize> = pending
-        .iter()
-        .enumerate()
-        .filter_map(|(position, entry)| matches!(entry, Pending::Parse { .. }).then_some(position))
-        .collect();
-    let token = cancellation::current_token();
-    for batch in parse_positions.chunks(PARSE_BATCH_FILES) {
-        cancellation::checkpoint()?;
-        let results: Vec<(usize, Result<super::FileFacts, String>)> = batch
-            .par_iter()
-            .map(|&position| {
-                let result = cancellation::with_optional_token(token.as_ref(), || {
-                    cancellation::checkpoint()?;
-                    let (file, bytes) = &files[position];
-                    let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
-                    cancellation::checkpoint()?;
-                    Ok(facts)
-                });
-                (position, result)
-            })
-            .collect();
-        // An already-observed source/worker failure wins in input order.
-        // Do not replace it with a deadline noticed only after joining.
-        if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
-            return Err(error.clone());
-        }
-        cancellation::checkpoint()?;
-        for (position, result) in results {
-            parsed[position] = Some(result);
-        }
-    }
-
-    // Phase 3 (sequential, input order): store fresh facts, then insert.
-    // Mirroring the sequential loop keeps cache stats identical, lets the
-    // first error in input order win, and keeps the per-iteration
-    // checkpoint ordering (error first, then checkpoint) unchanged.
-    let mut index = RustIndex::default();
-    for (position, entry) in pending.into_iter().enumerate() {
-        let (file, bytes) = &files[position];
-        // Recorded on cache hits too, so a warm run discloses the same file.
-        if rust_source_text(bytes).not_utf8 {
-            index.non_utf8_sources.insert(file.clone());
-        }
-        let summary = match entry {
-            Pending::Ready(facts) => facts,
-            Pending::Parse { key } => {
-                let facts = match parsed[position].take() {
-                    Some(result) => result?,
-                    None => {
-                        return Err(format!(
-                            "missing parse result for {}",
-                            root.join(file).display()
-                        ));
-                    }
-                };
-                cancellation::checkpoint()?;
-                match cache.store_file_facts(&key, &facts) {
-                    Ok(()) => stats.stores += 1,
-                    Err(error) => stats.record_store_failure(file.clone(), error),
-                }
-                facts
-            }
-        };
-        cancellation::checkpoint()?;
-        insert_file_summary(&mut index, file.clone(), summary);
-        cancellation::checkpoint()?;
-    }
+    let mut index = batched?;
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
     cancellation::checkpoint()?;
-    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
+        root,
+        index
+            .files()
+            .iter()
+            .map(|(path, facts)| (path, facts.data().source.as_str())),
+    ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
     cancellation::checkpoint()?;
@@ -339,6 +245,186 @@ fn build_index_with_file_fact_cache(
         index,
         file_fact_cache: stats,
     })
+}
+
+/// Cache statistics plus the first corrupt-entry reason, owned by the caller
+/// so they survive an `Err` from the batch loop.
+#[derive(Default)]
+struct CacheAccounting {
+    stats: FileFactCacheStats,
+    // One stderr line per build, not one per file: an unusable cache
+    // directory makes every lookup fail the same way, and a line per file
+    // buried the analysis output under hundreds of repeats (#4888).
+    first_corrupt_reason: Option<String>,
+}
+
+/// Admit, parse, store, and insert one `PARSE_BATCH_FILES` slice at a time
+/// (#5029). Cache-hit facts and parsed misses live outside the canonical
+/// index only for the current batch; every batch temporary is dropped before
+/// the next batch is looked up. The returned index is a prefix-free whole:
+/// any error or cancellation returns `Err`, never a partial index.
+///
+/// Earlier batches' fresh facts may already be stored when a later batch
+/// fails. That matches the per-file, non-transactional cache contract: each
+/// entry is keyed by its own content and remains a valid future hit.
+fn insert_cached_file_batches(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    adapter: &(dyn RustSyntaxAdapter + Send + Sync),
+    fallback: &(dyn RustSyntaxAdapter + Send + Sync),
+    cache: &RepoFileFactCache,
+    load_known_file_paths: &mut impl FnMut() -> HashSet<PathBuf>,
+    accounting: &mut CacheAccounting,
+) -> Result<RustIndex, String> {
+    let CacheAccounting {
+        stats,
+        first_corrupt_reason,
+    } = accounting;
+    enum Pending {
+        Ready(super::FileFacts),
+        Parse { key: RepoFileFactCacheKey },
+    }
+    // Only genuine misses need historical paths for invalidation attribution.
+    // All-hit, corrupt-only, empty, and already-cancelled builds must not walk
+    // and decode the entire cache directory just to discard the inventory.
+    // Initialized once, at the first miss.
+    let mut known_cached_file_paths: Option<HashSet<PathBuf>> = None;
+    let mut index = RustIndex::default();
+    let token = cancellation::current_token();
+    for batch in files.chunks(PARSE_BATCH_FILES) {
+        // Phase 1 (sequential): this batch's cache lookups, in input order.
+        let mut pending: Vec<Pending> = Vec::with_capacity(batch.len());
+        for (file, bytes) in batch {
+            cancellation::checkpoint()?;
+            let key = RepoFileFactCacheKey::new(file, bytes);
+            match cache.load_file_facts(&key) {
+                CacheLoad::Hit(facts) => {
+                    stats.hits += 1;
+                    pending.push(Pending::Ready(facts));
+                }
+                CacheLoad::Miss => {
+                    stats.misses += 1;
+                    if known_cached_file_paths
+                        .get_or_insert_with(&mut *load_known_file_paths)
+                        .contains(file)
+                    {
+                        stats.invalidated_files.insert(file.clone());
+                    }
+                    pending.push(Pending::Parse { key });
+                }
+                CacheLoad::CorruptIgnored { reason } => {
+                    stats.corrupt_ignored += 1;
+                    first_corrupt_reason.get_or_insert(reason);
+                    pending.push(Pending::Parse { key });
+                }
+            }
+        }
+
+        // Phase 2 (parallel): parse only this batch's misses. Each worker
+        // installs the owning request's token. Indexed collection preserves
+        // input order, and an observed source/worker failure wins in input
+        // order before anything from this batch is stored or inserted.
+        let parse_positions: Vec<usize> = pending
+            .iter()
+            .enumerate()
+            .filter_map(|(position, entry)| {
+                matches!(entry, Pending::Parse { .. }).then_some(position)
+            })
+            .collect();
+        let mut parsed: Vec<Option<super::FileFacts>> = Vec::new();
+        parsed.resize_with(batch.len(), || None);
+        if !parse_positions.is_empty() {
+            cancellation::checkpoint()?;
+            let results: Vec<(usize, Result<super::FileFacts, String>)> = parse_positions
+                .par_iter()
+                .map(|&position| {
+                    let result = cancellation::with_optional_token(token.as_ref(), || {
+                        cancellation::checkpoint()?;
+                        let (file, bytes) = &batch[position];
+                        let facts = summarize_loaded_file(file, bytes, adapter, fallback)?;
+                        cancellation::checkpoint()?;
+                        Ok(facts)
+                    });
+                    (position, result)
+                })
+                .collect();
+            // Do not replace an observed failure with a deadline noticed
+            // only after joining.
+            if let Some(error) = results.iter().find_map(|(_, result)| result.as_ref().err()) {
+                return Err(error.clone());
+            }
+            cancellation::checkpoint()?;
+            for (position, result) in results {
+                parsed[position] = Some(result?);
+            }
+        }
+        #[cfg(test)]
+        uninserted_facts::record(
+            pending
+                .iter()
+                .filter(|entry| matches!(entry, Pending::Ready(_)))
+                .count()
+                + parsed.iter().filter(|facts| facts.is_some()).count(),
+        );
+
+        // Phase 3 (sequential, input order): store fresh facts, then insert.
+        // `pending` and `parsed` are consumed here and dropped at the end of
+        // this iteration, before the next batch is admitted.
+        for (position, entry) in pending.into_iter().enumerate() {
+            let (file, bytes) = &batch[position];
+            // Recorded on cache hits too, so a warm run discloses the same file.
+            if rust_source_text(bytes).not_utf8 {
+                index.non_utf8_sources.insert(file.clone());
+            }
+            let summary = match entry {
+                Pending::Ready(facts) => facts,
+                Pending::Parse { key } => {
+                    let Some(facts) = parsed[position].take() else {
+                        return Err(format!(
+                            "missing parse result for {}",
+                            root.join(file).display()
+                        ));
+                    };
+                    cancellation::checkpoint()?;
+                    match cache.store_file_facts(&key, &facts) {
+                        Ok(()) => stats.stores += 1,
+                        Err(error) => stats.record_store_failure(file.clone(), error),
+                    }
+                    facts
+                }
+            };
+            cancellation::checkpoint()?;
+            insert_file_summary(&mut index, file.clone(), summary);
+            cancellation::checkpoint()?;
+        }
+    }
+    Ok(index)
+}
+
+/// Test-only lifetime instrument for #5029: the most `FileFacts` held
+/// outside the canonical index (cache hits plus parsed misses) at the point
+/// just before insertion. A builder that stages the whole corpus before
+/// inserting reports the corpus size; the bounded builder reports at most
+/// one batch.
+#[cfg(test)]
+pub(super) mod uninserted_facts {
+    use std::cell::Cell;
+
+    thread_local! {
+        static HIGH_WATER: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(in crate::analysis::facts) fn record(live: usize) {
+        HIGH_WATER.with(|high| high.set(high.get().max(live)));
+    }
+
+    /// Reset, run `work` on this thread, and return its result with the
+    /// observed high-water mark.
+    pub(in crate::analysis::facts) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        HIGH_WATER.with(|high| high.set(0));
+        let result = work();
+        (result, HIGH_WATER.with(Cell::get))
+    }
 }
 
 fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
@@ -407,7 +493,13 @@ fn build_index_with_adapters(
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
     cancellation::checkpoint()?;
-    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
+        root,
+        index
+            .files()
+            .iter()
+            .map(|(path, facts)| (path, facts.data().source.as_str())),
+    ));
     cancellation::checkpoint()?;
     index.package_names = manifest_package_names(root);
     cancellation::checkpoint()?;
@@ -520,9 +612,7 @@ fn summarize_file_with_adapters(
 }
 
 fn insert_file_summary(index: &mut RustIndex, file: PathBuf, summary: super::FileFacts) {
-    index.tests.extend(summary.tests.clone());
-    index.functions.extend(summary.functions.clone());
-    index.files.insert(file, summary);
+    index.insert_file(file, summary, true);
 }
 
 #[cfg(test)]
@@ -589,13 +679,13 @@ mod tests {
         // lexical facts and the shallow file stays parser-backed.
         let index = build_index(&root, &files)?;
         let deep_facts = index
-            .files
+            .files()
             .get(Path::new("src/deep.rs"))
             .ok_or("deep file missing from index")?;
         assert!(deep_facts.used_lexical_fallback);
-        assert!(index.functions.iter().any(|f| f.name == "deep"));
+        assert!(index.functions().iter().any(|f| f.name == "deep"));
         let lib_facts = index
-            .files
+            .files()
             .get(Path::new("src/lib.rs"))
             .ok_or("lib file missing from index")?;
         assert!(!lib_facts.used_lexical_fallback);
@@ -637,9 +727,9 @@ fn test_add() {
         )?;
 
         let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
-        assert!(!index.functions.is_empty());
-        assert!(!index.tests.is_empty());
-        assert!(index.files.contains_key(&PathBuf::from("src/lib.rs")));
+        assert!(!index.functions().is_empty());
+        assert!(!index.tests().is_empty());
+        assert!(index.files().contains_key(&PathBuf::from("src/lib.rs")));
         Ok(())
     }
 
@@ -735,12 +825,12 @@ fn some_fn() -> i32 {
         )?;
 
         let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
-        let file_facts = index.files.get(&PathBuf::from("src/lib.rs"));
+        let file_facts = index.files().get(&PathBuf::from("src/lib.rs"));
         assert!(file_facts.is_some());
         assert!(file_facts.is_some_and(|facts| !facts.calls.is_empty()));
         assert!(
             index
-                .files
+                .files()
                 .get(&PathBuf::from("src/lib.rs"))
                 .is_some_and(|facts| !facts.returns.is_empty())
         );
@@ -768,7 +858,7 @@ pub fn check(x: i32) -> bool {
         let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
         assert!(
             index
-                .files
+                .files()
                 .get(&PathBuf::from("src/lib.rs"))
                 .is_some_and(|facts| !facts.probe_shapes.is_empty())
         );
@@ -799,7 +889,7 @@ pub fn check(x: i32) -> bool {
 
         fn changed_nodes(
             &self,
-            _facts: &super::super::FileFacts,
+            _facts: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
             _ranges: &[TextRange],
         ) -> Vec<SyntaxNodeFact> {
             Vec::new()
@@ -824,7 +914,7 @@ pub fn check(x: i32) -> bool {
 
         fn changed_nodes(
             &self,
-            _facts: &super::super::FileFacts,
+            _facts: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
             _ranges: &[TextRange],
         ) -> Vec<SyntaxNodeFact> {
             Vec::new()
@@ -845,25 +935,25 @@ pub fn check(x: i32) -> bool {
         )?;
         assert_eq!(
             index
-                .files
+                .files()
                 .get(&PathBuf::from("src/lib.rs"))
-                .map_or("", |facts| facts.source.as_str()),
+                .map_or("", |facts| facts.data().source.as_str()),
             "pub fn fallback() {}\n"
         );
         assert!(
             index
-                .files
+                .files()
                 .get(&PathBuf::from("src/lib.rs"))
                 .is_some_and(|facts| facts.used_lexical_fallback)
         );
         assert!(
             FailingSyntaxAdapter
-                .changed_nodes(&super::super::FileFacts::default(), &[])
+                .changed_nodes(crate::analysis::facts::FactSlice::from_slice(&[]), &[])
                 .is_empty()
         );
         assert!(
             StubSyntaxAdapter
-                .changed_nodes(&super::super::FileFacts::default(), &[])
+                .changed_nodes(crate::analysis::facts::FactSlice::from_slice(&[]), &[])
                 .is_empty()
         );
         Ok(())
@@ -881,14 +971,14 @@ pub fn check(x: i32) -> bool {
         assert_eq!(cold.file_fact_cache.hits, 0);
         assert_eq!(cold.file_fact_cache.misses, 1);
         assert_eq!(cold.file_fact_cache.stores, 1);
-        assert!(cold.index.files.contains_key(&file));
-        assert!(!cold.index.functions.is_empty());
+        assert!(cold.index.files().contains_key(&file));
+        assert!(!cold.index.functions().is_empty());
 
         let warm = build_index_from_loaded_files_with_cache(&root, &files)?;
         assert_eq!(warm.file_fact_cache.hits, 1);
         assert_eq!(warm.file_fact_cache.misses, 0);
         assert_eq!(warm.file_fact_cache.stores, 0);
-        assert_eq!(warm.index.files.get(&file), cold.index.files.get(&file));
+        assert_eq!(warm.index.files().get(&file), cold.index.files().get(&file));
         Ok(())
     }
 
@@ -910,7 +1000,7 @@ pub fn check(x: i32) -> bool {
         assert!(
             changed
                 .index
-                .files
+                .files()
                 .get(&file)
                 .is_some_and(|facts| facts.source.contains("{ 2 }"))
         );
@@ -966,13 +1056,13 @@ pub fn check(x: i32) -> bool {
 
         let index = build_loaded(&fixture, &with_bom)?.index;
         let facts = index
-            .files
+            .files()
             .get(&file)
             .ok_or("bom file missing from index")?;
         assert!(!facts.used_lexical_fallback);
         assert!(!facts.source.starts_with('\u{feff}'));
         let owner = index
-            .functions
+            .functions()
             .iter()
             .find(|function| function.name == "b")
             .ok_or("line-1 owner missing")?;
@@ -991,7 +1081,7 @@ pub fn check(x: i32) -> bool {
         // The same bytes without the mark index to the same facts.
         let fixture = CacheInventoryFixture::new("index_no_bom")?;
         let plain = build_loaded(&fixture, &[(file.clone(), source.to_vec())])?.index;
-        assert_eq!(plain.functions, index.functions);
+        assert_eq!(plain.functions(), index.functions());
         Ok(())
     }
 
@@ -1011,13 +1101,13 @@ pub fn check(x: i32) -> bool {
 
         // Before: the whole build failed with "failed to read ...".
         let cold = build_loaded(&fixture, &files)?;
-        let latin_facts = cold.index.files.get(&latin).ok_or("latin file missing")?;
+        let latin_facts = cold.index.files().get(&latin).ok_or("latin file missing")?;
         assert!(latin_facts.used_lexical_fallback);
-        assert!(cold.index.functions.iter().any(|f| f.name == "l"));
+        assert!(cold.index.functions().iter().any(|f| f.name == "l"));
         assert!(
             !cold
                 .index
-                .files
+                .files()
                 .get(&lib)
                 .ok_or("lib missing")?
                 .used_lexical_fallback
@@ -1116,9 +1206,9 @@ pub fn check(x: i32) -> bool {
         assert_eq!(warm.file_fact_cache.stores, 0);
         assert_eq!(warm.file_fact_cache.store_errors, 0);
         assert!(warm.file_fact_cache.invalidated_files.is_empty());
-        assert_eq!(warm.index.files, cold.index.files);
-        assert_eq!(warm.index.functions, cold.index.functions);
-        assert_eq!(warm.index.tests, cold.index.tests);
+        assert_eq!(warm.index.files(), cold.index.files());
+        assert_eq!(warm.index.functions(), cold.index.functions());
+        assert_eq!(warm.index.tests(), cold.index.tests());
         Ok(())
     }
 
@@ -1146,9 +1236,9 @@ pub fn check(x: i32) -> bool {
         let cold = build()?;
         let declarations = cold
             .index
-            .files
+            .files()
             .values()
-            .flat_map(|facts| facts.module_declarations.iter())
+            .flat_map(|facts| facts.data().module_declarations.iter())
             .map(|declaration| declaration.path_target.clone())
             .collect::<Vec<_>>();
         assert_eq!(
@@ -1166,7 +1256,7 @@ pub fn check(x: i32) -> bool {
         assert_eq!(warm.file_fact_cache.hits, 1);
         assert_eq!(warm.file_fact_cache.misses, 0);
         assert_eq!(warm.file_fact_cache.corrupt_ignored, 0);
-        assert_eq!(warm.index.files, cold.index.files);
+        assert_eq!(warm.index.files(), cold.index.files());
         Ok(())
     }
 
@@ -1229,7 +1319,7 @@ pub fn check(x: i32) -> bool {
                 .invalidated_files
                 .contains(&new_file)
         );
-        assert_eq!(changed.index.files.len(), 4);
+        assert_eq!(changed.index.files().len(), 4);
         Ok(())
     }
 
@@ -1280,9 +1370,9 @@ pub fn check(x: i32) -> bool {
         assert_eq!(recovered.file_fact_cache.stores, 1);
         assert_eq!(recovered.file_fact_cache.store_errors, 0);
         assert!(recovered.file_fact_cache.invalidated_files.is_empty());
-        assert_eq!(recovered.index.files, cold.index.files);
-        assert_eq!(recovered.index.functions, cold.index.functions);
-        assert_eq!(recovered.index.tests, cold.index.tests);
+        assert_eq!(recovered.index.files(), cold.index.files());
+        assert_eq!(recovered.index.functions(), cold.index.functions());
+        assert_eq!(recovered.index.tests(), cold.index.tests());
         assert!(matches!(
             fixture.cache.load_file_facts(&key),
             CacheLoad::Hit(_)
@@ -1306,7 +1396,7 @@ pub fn check(x: i32) -> bool {
             },
         )?;
         assert_eq!(inventory_reads.get(), 0);
-        assert!(empty.index.files.is_empty());
+        assert!(empty.index.files().is_empty());
         assert_eq!(empty.file_fact_cache.hits, 0);
         assert_eq!(empty.file_fact_cache.misses, 0);
         assert_eq!(empty.file_fact_cache.stores, 0);
@@ -1341,7 +1431,7 @@ pub fn check(x: i32) -> bool {
             )
         };
         let cold = build()?;
-        if cold.index.functions.is_empty() || cold.index.tests.is_empty() {
+        if cold.index.functions().is_empty() || cold.index.tests().is_empty() {
             return Err("integrity fixture must produce functions and tests".into());
         }
         let entries = fs::read_dir(fixture.root.join("cache"))?.collect::<Result<Vec<_>, _>>()?;
@@ -1353,7 +1443,8 @@ pub fn check(x: i32) -> bool {
         let mut edited: serde_json::Value = serde_json::from_slice(&original)?;
         fs::write(&entry, serde_json::to_vec(&edited)?)?;
         let reformatted = build()?;
-        if reformatted.file_fact_cache.hits != 1 || reformatted.index.tests != cold.index.tests {
+        if reformatted.file_fact_cache.hits != 1 || reformatted.index.tests() != cold.index.tests()
+        {
             return Err("semantic-preserving JSON formatting must remain a warm hit".into());
         }
         let changed_source_key = RepoFileFactCacheKey::new(
@@ -1402,14 +1493,14 @@ pub fn check(x: i32) -> bool {
             )
             .into());
         }
-        if recovered.index.files != cold.index.files
-            || recovered.index.functions != cold.index.functions
-            || recovered.index.tests != cold.index.tests
+        if recovered.index.files() != cold.index.files()
+            || recovered.index.functions() != cold.index.functions()
+            || recovered.index.tests() != cold.index.tests()
         {
             return Err("recovered complete index must equal cold source truth".into());
         }
         let warm = build()?;
-        if warm.file_fact_cache.hits != 1 || warm.index.tests != cold.index.tests {
+        if warm.file_fact_cache.hits != 1 || warm.index.tests() != cold.index.tests() {
             return Err("corrected entry must warm-hit original evidence".into());
         }
         Ok(())
@@ -1460,7 +1551,7 @@ pub fn check(x: i32) -> bool {
 
     fn non_test_function_names(index: &RustIndex) -> Vec<&str> {
         index
-            .functions
+            .functions()
             .iter()
             .filter(|function| !function.source_role.is_evidence_role())
             .map(|function| function.name.as_str())
@@ -1474,7 +1565,7 @@ pub fn check(x: i32) -> bool {
         write_manifest(&root)?;
         // Spanning two parse batches (batch size 64) proves the ordered
         // collect-then-insert drain reproduces the sequential loop's
-        // per-file extension order of `index.functions` / `index.tests`.
+        // per-file extension order of `index.functions()` / `index.tests()`.
         let mut files = Vec::new();
         for ordinal in 0..70 {
             files.push(write_named_fn_file(&root, &format!("f{ordinal:03}"))?);
@@ -1483,7 +1574,11 @@ pub fn check(x: i32) -> bool {
         let index = build_index(&root, &files)?;
         let expected: Vec<String> = (0..70).map(|ordinal| format!("fn_f{ordinal:03}")).collect();
         assert_eq!(non_test_function_names(&index), expected);
-        let test_names: Vec<&str> = index.tests.iter().map(|test| test.name.as_str()).collect();
+        let test_names: Vec<&str> = index
+            .tests()
+            .iter()
+            .map(|test| test.name.as_str())
+            .collect();
         let expected_tests: Vec<String> = (0..70)
             .map(|ordinal| format!("test_f{ordinal:03}"))
             .collect();
@@ -1504,9 +1599,9 @@ pub fn check(x: i32) -> bool {
         let baseline = build_index(&root, &files)?;
         for _ in 0..3 {
             let rerun = build_index(&root, &files)?;
-            assert_eq!(baseline.tests, rerun.tests);
-            assert_eq!(baseline.functions, rerun.functions);
-            assert_eq!(baseline.files, rerun.files);
+            assert_eq!(baseline.tests(), rerun.tests());
+            assert_eq!(baseline.functions(), rerun.functions());
+            assert_eq!(baseline.files(), rerun.files());
         }
         Ok(())
     }
@@ -1563,7 +1658,7 @@ pub fn check(x: i32) -> bool {
             }
             fn changed_nodes(
                 &self,
-                _: &super::super::FileFacts,
+                _: super::super::FactSlice<'_, super::super::FunctionFact>,
                 _: &[TextRange],
             ) -> Vec<SyntaxNodeFact> {
                 Vec::new()
@@ -1651,7 +1746,7 @@ pub fn check(x: i32) -> bool {
 
             fn changed_nodes(
                 &self,
-                _facts: &super::super::FileFacts,
+                _facts: crate::analysis::facts::FactSlice<'_, crate::analysis::facts::FunctionFact>,
                 _ranges: &[TextRange],
             ) -> Vec<SyntaxNodeFact> {
                 Vec::new()
@@ -1695,9 +1790,9 @@ pub fn check(x: i32) -> bool {
             .collect::<Result<_, Box<dyn Error>>>()?;
         let cached = build_index_from_loaded_files_with_cache(&root, &loaded)?;
 
-        assert_eq!(cached.index.tests, uncached.tests);
-        assert_eq!(cached.index.functions, uncached.functions);
-        assert_eq!(cached.index.files.len(), uncached.files.len());
+        assert_eq!(cached.index.tests(), uncached.tests());
+        assert_eq!(cached.index.functions(), uncached.functions());
+        assert_eq!(cached.index.files().len(), uncached.files().len());
         Ok(())
     }
 
@@ -1733,7 +1828,7 @@ pub fn check(x: i32) -> bool {
             }
             fn changed_nodes(
                 &self,
-                _: &super::super::FileFacts,
+                _: super::super::FactSlice<'_, super::super::FunctionFact>,
                 _: &[TextRange],
             ) -> Vec<SyntaxNodeFact> {
                 Vec::new()

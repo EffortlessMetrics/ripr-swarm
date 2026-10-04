@@ -13,6 +13,7 @@ mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
 mod identity;
+mod intervention_study;
 mod language;
 mod probe;
 mod repair_card;
@@ -68,6 +69,12 @@ pub use identity::{
     REQUIRED_TAXONOMY_KINDS, identity_field_disposition, identity_registry_canonical_json,
     identity_registry_markdown, identity_registry_violations,
 };
+#[cfg(test)]
+pub(crate) use intervention_study::example_preregistered_study;
+pub(crate) use intervention_study::{
+    InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
+    codes as intervention_study_codes,
+};
 pub(crate) use language::PERL_FACT_EXPORTER;
 #[cfg(feature = "lang-perl")]
 pub(crate) use language::perl_fact_packet_guidance;
@@ -76,8 +83,10 @@ pub(crate) use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
     MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
-    SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
+    RelatedTestMiss, SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext,
+    ValueFact,
 };
+pub(crate) use probe::{exact_assertion_fact, input_boundary_fact};
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
     DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,

@@ -16,6 +16,7 @@ pub(crate) mod impacted_evidence;
 mod navigation;
 pub mod pr_evidence;
 mod progress;
+pub use impacted_evidence::run_impacted_evidence_at;
 pub use pr_evidence::reject_pr_evidence_error_packet;
 pub(crate) mod feedback;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
@@ -47,6 +48,7 @@ pub fn qualify_legacy_ripr_plus_receipt(
 }
 mod selector;
 pub(crate) mod temp_diff;
+pub(crate) mod test_stub;
 pub(crate) mod verification_execution;
 
 pub use crate::output::format::OutputFormat;
@@ -85,6 +87,7 @@ pub use check::{
 };
 pub(crate) use context::collect_context_from_artifact;
 pub use context::collect_context_with_config;
+pub(crate) use context::collect_context_with_config_and_worktree;
 pub use context::{collect_context, collect_context_with_input};
 #[cfg(test)]
 pub(crate) use explain::explain_finding_from_artifact;
@@ -94,7 +97,9 @@ pub(crate) use explain::{
     explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_and_navigation_mode,
 };
-pub(crate) use navigation::{FindingDrillIn, FindingNavigation, finding_navigation};
+pub(crate) use navigation::{
+    FindingDrillIn, FindingNavigation, finding_navigation, finding_navigation_with_worktree,
+};
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
     repo_inventory_with_progress,
@@ -281,6 +286,13 @@ pub struct CheckOutput {
     /// evidence. An empty result in this state does NOT mean they are
     /// covered. See RIPR-SPEC-0112.
     pub unanalyzed_working_tree: bool,
+    /// The untracked subset of the unanalyzed working-tree state (#5258):
+    /// routed source/test files that are neither committed nor staged, so
+    /// neither the committed diff nor `--worktree` analyzes them. Lets the
+    /// human/GitHub notes name the real repair (staging) instead of offering
+    /// `--worktree` for files it cannot see. Cleared together with
+    /// `unanalyzed_working_tree` for every non-committed-history mode.
+    pub(crate) untracked_working_tree_source_paths: Vec<String>,
     /// Suppression-policy application outcome (#1441). `Some` only when the
     /// caller passed `--suppression-policy`; findings named here stay in
     /// `findings` (visible, marked suppressed by renderers) while the
@@ -311,6 +323,13 @@ pub(crate) fn render_check_with_config(
     config: &RiprConfig,
 ) -> Result<String, String> {
     output::render::render_check_with_config(output, format, config)
+}
+
+/// Unbounded JSON render for in-process consumers (#5203): the internal
+/// `pr-evidence` input carries the full finding set regardless of
+/// `RIPR_CHECK_FINDINGS_BYTES`. Infallible: no budget parsing, no failure.
+pub(crate) fn render_check_json_unbounded(output: &CheckOutput) -> String {
+    output::render::render_check_json_unbounded(output, &RiprConfig::default())
 }
 
 /// Renders with navigation while reporting repo-scope progress boundaries to

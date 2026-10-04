@@ -3,9 +3,11 @@ pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) mod cfg_predicates;
 mod harness_registry;
 mod includes;
+mod index;
 mod model;
 mod parameterized_tests;
 mod role_composition;
+mod test_helpers;
 mod test_styles;
 
 use std::path::{Path, PathBuf};
@@ -28,10 +30,11 @@ pub fn build_index_with_test_harnesses(
     let mut index = index_phase("index_parse", || build::build_index(root, files))?;
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut index);
-        Ok(())
+        index.refresh_memberships()
     })?;
     index_phase("index_test_styles", || {
-        test_styles::normalize_index_test_styles(&mut index)
+        test_styles::normalize_index_test_styles(&mut index)?;
+        index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
     // recomputes every role from same-file text and would stomp composed
@@ -50,7 +53,29 @@ pub fn build_index_with_test_harnesses(
         harness_registry::apply_registrations(&mut index, root, registrations);
         Ok(())
     })?;
+    // Helper crediting reads final roles, so it runs after every role
+    // authority.
+    index_phase("index_test_helper_credit", || {
+        test_helpers::credit_same_file_assertion_helpers(&mut index);
+        Ok(())
+    })?;
+    index.finalize()?;
     Ok(index)
+}
+
+/// Parsed facts only, through the same file-fact cache: no role
+/// composition, harness registration or helper crediting. For scans that
+/// read call and body facts by name and keep every function and test
+/// whatever its role (the #5320 reach closure).
+pub(crate) fn parse_loaded_files_with_cache(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+) -> Result<RustIndex, String> {
+    let mut cached = index_phase("index_cached_parse", || {
+        build::build_index_from_loaded_files_with_cache(root, files)
+    })?;
+    cached.index.finalize()?;
+    Ok(cached.index)
 }
 
 pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
@@ -63,10 +88,11 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     })?;
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
-        Ok(())
+        cached.index.refresh_memberships()
     })?;
     index_phase("index_test_styles", || {
-        test_styles::normalize_index_test_styles(&mut cached.index)
+        test_styles::normalize_index_test_styles(&mut cached.index)?;
+        cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {
         role_composition::compose_index_source_roles(&mut cached.index, root);
@@ -82,6 +108,13 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
         harness_registry::apply_registrations(&mut cached.index, root, registrations);
         Ok(())
     })?;
+    // Helper crediting reads final roles, so it runs after every role
+    // authority.
+    index_phase("index_test_helper_credit", || {
+        test_helpers::credit_same_file_assertion_helpers(&mut cached.index);
+        Ok(())
+    })?;
+    cached.index.finalize()?;
     Ok(cached)
 }
 
@@ -123,6 +156,9 @@ pub(crate) use harness_registry::validated_file_wide_harness_targets;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
+pub use index::{FactSlice, FileData, FileFactsView};
+#[cfg(test)]
+pub(crate) use model::OwnedRustIndex;
 pub use model::{
     CallFact, FileFacts, FunctionContainer, FunctionFact, FunctionImplContext, FunctionItemFact,
     FunctionSourceRole, FunctionSummary, HarnessLimitationFact, HarnessSelectorCapability,

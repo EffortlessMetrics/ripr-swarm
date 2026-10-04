@@ -1,6 +1,6 @@
 use crate::app::{CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, LanguageId};
+use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily};
 use crate::output::path::display_path;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
@@ -217,8 +217,10 @@ pub(crate) fn render_human_triage(
         // to change something, not to provide a scope.
         HumanTriageState::MissingScope => {
             if let Some(base) = output.base.as_deref() {
+                // "tracked" (#5258): `--worktree` diffs tracked edits only,
+                // so the line must not promise it covers untracked files.
                 out.push_str(&format!(
-                    "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted edits.\n"
+                    "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted tracked edits.\n"
                 ));
             } else {
                 out.push_str(
@@ -229,22 +231,43 @@ pub(crate) fn render_human_triage(
     }
     if let Some(finding) = triage.selected {
         out.push_str(&render_finding_digest_with_config(finding, config));
-        match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                out.push_str("\nNext: drill into the top finding:\n");
-                out.push_str(&format!("  {}\n", navigation.explain_command(&finding.id)));
-                out.push_str(&format!("  {}\n", navigation.context_command(&finding.id)));
+        if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
+            out.push_str("\nNext: drill into the top finding:\n");
+            for command in [
+                navigation.explain_command(&finding.id),
+                navigation.context_command(&finding.id),
+            ] {
+                out.push_str(&format!("  {command}\n"));
+                super::push_powershell_variant(out, "  ", &command);
             }
-            // #4321: a `--worktree` run without `--write-artifact` has no
-            // artifact for sibling commands to replay; say so and name the
-            // route instead of dropping the block silently.
-            Some(FindingDrillIn::WorktreeReplayNeedsArtifact) => {
-                out.push_str(&format!(
-                    "\n{}\n",
-                    FindingDrillIn::worktree_replay_note(&finding.id)
-                ));
+            // #5355: a Rust gap gets the one-step route to a runnable test.
+            if finding.class != ExposureClass::Exposed
+                && matches!(
+                    finding.probe.family,
+                    ProbeFamily::Predicate
+                        | ProbeFamily::ReturnValue
+                        | ProbeFamily::ErrorPath
+                        | ProbeFamily::MatchArm
+                )
+                && finding
+                    .probe
+                    .location
+                    .file
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    == Some("rs")
+            {
+                // `--at` resolves against `--root`, so name the file
+                // relative to it, not as the checkout-relative display path.
+                let location = &finding.probe.location.file;
+                let relative = location.strip_prefix(&output.root).unwrap_or(location);
+                let file = display_path(relative);
+                let command = navigation
+                    .stub_command(file.trim_start_matches("./"), finding.probe.location.line);
+                out.push_str("Write a test for it:\n");
+                out.push_str(&format!("  {command}\n"));
+                super::push_powershell_variant(out, "  ", &command);
             }
-            None => {}
         }
     }
     // #2567: the default human render is the release-facing surface, so it must
@@ -632,7 +655,7 @@ fn triage_rank(finding: &Finding) -> (u8, u8, u8, u8, u8, i32, &std::path::Path,
         preview_rank,
         repair_rank,
         u8::from(finding.canonical_gap.is_none()),
-        u8::from(finding.related_tests.is_empty()),
+        u8::from(finding.oracle_related_tests().next().is_none()),
         u8::from(finding.missing.is_empty()),
         -(finding.confidence * 100.0) as i32,
         finding.probe.location.file.as_path(),

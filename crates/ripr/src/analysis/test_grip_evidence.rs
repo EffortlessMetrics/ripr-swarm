@@ -12,11 +12,12 @@
 //! then stable file/name/line tie-breakers.
 
 mod owner_result_binding;
+mod reach_limit;
 mod related_tests;
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
-    CompactTest, assertion_target_tokens, call_text_contains_named_call, find_owner_function,
+    CompactTest, assertion_target_tokens, call_text_contains_named_call,
     find_related_tests_compact, find_related_tests_with_context, required_discriminator_text,
     sort_related_tests_for_seam, strip_comments_and_strings,
     test_assertion_mentions_any_target_token,
@@ -25,6 +26,7 @@ use related_tests::{
 use super::classify::{assertion_observes_direct_collection, direct_collection_mutation_receiver};
 use super::facts::CallFact;
 use super::new_test_target::{self, NewTestTargetAdmission};
+use super::resource_cost::trace_latency_phase;
 use super::rust_index::{
     self, FunctionSummary, OracleFact, RustIndex, TestSummary, extract_call_facts,
     extract_identifier_tokens,
@@ -37,10 +39,12 @@ use crate::domain::{
 };
 // Re-export so callers that import from this module continue to compile.
 pub(crate) use crate::domain::{RelationConfidence, RelationReason};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Per-seam test-grip evidence record.
@@ -64,7 +68,6 @@ pub(crate) struct TestGripEvidence {
 }
 
 const COMPACT_RELATED_TEST_LIMIT: usize = 12;
-const LATENCY_TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 const EVIDENCE_PROGRESS_CHUNK: usize = 500;
 const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 
@@ -252,21 +255,36 @@ impl<'index> EvidencePass<'index> {
             return Vec::new();
         };
         let evidence_started = Instant::now();
-        let mut out: Vec<TestGripEvidence> = Vec::with_capacity(seams.len());
-        for (index, seam) in seams.iter().enumerate() {
-            if cancellation::checkpoint().is_err() {
-                break;
-            }
-            out.push(evidence_for_seam_with_context(seam, context));
-            let processed = index + 1;
-            if processed % EVIDENCE_PROGRESS_CHUNK == 0 || processed == seams.len() {
-                trace_latency_phase(
-                    "evidence_for_seams_progress",
-                    &format!("processed_{processed}_of_{}", seams.len()),
-                    evidence_started.elapsed(),
-                );
-            }
-        }
+        // Seams are independent and the context's memos are keyed, so the
+        // pass runs on the rayon pool. Workers inherit this thread's
+        // cancellation token and committed-source overlay; a cancelled
+        // worker drops its seam, and the caller's checkpoint discards the
+        // partial vector exactly as it did for the serial loop.
+        let token = cancellation::current_token();
+        let overlay = crate::analysis::committed_source::current_overlay();
+        let processed = AtomicUsize::new(0);
+        let mut out: Vec<TestGripEvidence> = seams
+            .par_iter()
+            .filter_map(|seam| {
+                cancellation::with_optional_token(token.as_ref(), || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        cancellation::checkpoint().ok()?;
+                        let evidence = evidence_for_seam_with_context(seam, context);
+                        let processed = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                        if processed.is_multiple_of(EVIDENCE_PROGRESS_CHUNK)
+                            || processed == seams.len()
+                        {
+                            trace_latency_phase(
+                                "evidence_for_seams_progress",
+                                &format!("processed_{processed}_of_{}", seams.len()),
+                                evidence_started.elapsed(),
+                            );
+                        }
+                        Some(evidence)
+                    })
+                })
+            })
+            .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
     }
@@ -289,11 +307,11 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, _reason)| *indexed)
         .collect();
-    let owner_fn = find_owner_function(seam, context.index);
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
 
-    let reach = reach_evidence(seam, &related);
+    let reach = reach_evidence(seam, &related, owner_fn, context);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
@@ -304,7 +322,7 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, reason)| related_test_grip(seam, indexed.test, *reason, context))
         .collect();
-    let new_test_target = new_test_target_admission(seam, context.index);
+    let new_test_target = new_test_target_admission(seam, context);
 
     TestGripEvidence {
         seam_id: seam.id().clone(),
@@ -320,28 +338,23 @@ fn evidence_for_seam_with_context(
     }
 }
 
-fn new_test_target_admission(seam: &RepoSeam, index: &RustIndex) -> Option<NewTestTargetAdmission> {
+fn new_test_target_admission(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+) -> Option<NewTestTargetAdmission> {
     match seam.kind() {
         SeamKind::PredicateBoundary
         | SeamKind::ErrorVariant
         | SeamKind::ReturnValue
         | SeamKind::FieldConstruction
-        | SeamKind::MatchArm => Some(new_test_target::admit_new_test_target(seam, index)),
+        | SeamKind::MatchArm => Some(new_test_target::admit_new_test_target(
+            seam,
+            context.index,
+            context.owner_function(seam.file(), seam.display_line()),
+            &context.inline_unit_layouts,
+        )),
         SeamKind::SideEffect | SeamKind::CallPresence => None,
     }
-}
-
-fn trace_latency_phase(phase: &str, status: &str, duration: Duration) {
-    if std::env::var_os(LATENCY_TRACE_ENV).is_some() {
-        eprintln!("{}", latency_trace_line(phase, status, duration));
-    }
-}
-
-fn latency_trace_line(phase: &str, status: &str, duration: Duration) -> String {
-    format!(
-        "ripr_repo_exposure_latency phase={phase} status={status} duration_ms={}",
-        duration.as_millis()
-    )
 }
 
 /// Build compact evidence for a single seam. The returned
@@ -354,9 +367,9 @@ pub(crate) fn compact_evidence_for_seam(
 ) -> TestGripEvidence {
     let related_indexed = find_related_tests_compact(seam, context);
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
-    let owner_fn = find_owner_function(seam, context.index);
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
-    let reach = reach_evidence(seam, &related);
+    let reach = reach_evidence(seam, &related, owner_fn, context);
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let propagate = propagate_evidence(seam, &related);
@@ -377,16 +390,14 @@ pub(crate) fn compact_evidence_for_seam(
     }
 }
 
-fn reach_evidence(seam: &RepoSeam, related: &[&TestSummary]) -> StageEvidence {
+fn reach_evidence(
+    seam: &RepoSeam,
+    related: &[&TestSummary],
+    owner_fn: Option<&FunctionSummary>,
+    context: &CompactGripContext<'_>,
+) -> StageEvidence {
     if related.is_empty() {
-        return StageEvidence::new(
-            StageState::No,
-            Confidence::Medium,
-            format!(
-                "No static test path found for seam owner `{}`",
-                seam.owner()
-            ),
-        );
+        return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
     let names: Vec<&str> = related.iter().take(3).map(|t| t.name.as_str()).collect();
     StageEvidence::new(
@@ -415,23 +426,29 @@ fn activate_evidence(
     let index = context.index;
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let mut observed: Vec<ValueFact> = Vec::new();
-    let observed_argument_selection =
-        (!owner_name.is_empty()).then(|| observed_argument_selection(seam, index, owner_name));
+    let observed_argument_selection = owner_fn
+        .filter(|owner| !owner.name.is_empty())
+        .map(|owner| observed_argument_selection(seam, owner));
 
-    if !owner_name.is_empty() {
+    if let Some(selection) = &observed_argument_selection {
         for indexed in related {
             observed.extend(observed_value_facts_for_test(
-                seam, indexed, index, owner_name,
+                seam, indexed, index, owner_name, selection,
             ));
         }
     }
     sort_value_facts(&mut observed);
 
     let field_assignment_value_unresolved = observed.is_empty()
-        && !owner_name.is_empty()
-        && related.iter().any(|indexed| {
-            field_assignment_value_unresolved_for_test(seam, indexed, index, owner_name)
-        });
+        && observed_argument_selection
+            .as_ref()
+            .is_some_and(|selection| {
+                related.iter().any(|indexed| {
+                    field_assignment_value_unresolved_for_test(
+                        seam, indexed, index, owner_name, selection,
+                    )
+                })
+            });
 
     // A boundary operand naming a constant (`amount >= DISCOUNT_THRESHOLD`)
     // is compared through the shared named-constant lookup: a visible
@@ -560,7 +577,7 @@ fn activate_evidence(
                 constant.1
             )
         } else if boundary_local_unresolved && !related.is_empty() {
-            boundary_activation_operands_unresolved_summary(seam, index, owner_name)
+            boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if !observed.is_empty() {
             format!(
                 "Observed {} concrete activation value(s) for seam `{}`",
@@ -595,7 +612,7 @@ fn activate_evidence(
                     .unwrap_or(seam.expression())
             )
         } else if boundary_activation_operands_unresolved && !related.is_empty() {
-            boundary_activation_operands_unresolved_summary(seam, index, owner_name)
+            boundary_activation_operands_unresolved_summary(seam, owner_fn)
         } else if requires_concrete_activation_values(seam) {
             format!(
                 "No concrete activation values observed for seam `{}`",
@@ -657,9 +674,9 @@ fn observed_value_facts_for_test(
     indexed: &CompactTest<'_>,
     index: &RustIndex,
     owner_name: &str,
+    observed_argument_selection: &ObservedArgumentSelection,
 ) -> Vec<ValueFact> {
     let mut observed: Vec<ValueFact> = Vec::new();
-    let observed_argument_selection = observed_argument_selection(seam, index, owner_name);
     if matches!(
         observed_argument_selection,
         ObservedArgumentSelection::UnresolvedBoundaryOperands
@@ -671,7 +688,7 @@ fn observed_value_facts_for_test(
     // all owner calls in this test. Per `analysis/value-extraction-v2`.
     let value_facts = indexed.value_facts(index);
     let env = super::value_resolution::ValueEnv::new(seam, value_facts);
-    for call in &indexed.test.calls {
+    for call in indexed.test.body_calls() {
         if call.name != owner_name {
             continue;
         }
@@ -679,7 +696,7 @@ fn observed_value_facts_for_test(
             continue;
         };
         for (arg_index, arg) in args.into_iter().enumerate() {
-            let argument_operand = match &observed_argument_selection {
+            let argument_operand = match observed_argument_selection {
                 ObservedArgumentSelection::ArgumentOperands(operands) => operands
                     .iter()
                     .find(|operand| operand.index == arg_index)
@@ -735,8 +752,8 @@ fn field_assignment_value_unresolved_for_test(
     indexed: &CompactTest<'_>,
     index: &RustIndex,
     owner_name: &str,
+    selection: &ObservedArgumentSelection,
 ) -> bool {
-    let selection = observed_argument_selection(seam, index, owner_name);
     let ObservedArgumentSelection::ArgumentOperands(operands) = selection else {
         return false;
     };
@@ -797,18 +814,12 @@ fn has_ambiguous_constructor_field_owner(
             .any(|oracle| field_construction_oracle_matches_seam_field(seam, &oracle.text))
 }
 
+/// `owner_fn` is the seam's resolved owner.
 fn observed_argument_selection(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: &FunctionSummary,
 ) -> ObservedArgumentSelection {
     if seam.kind() != SeamKind::PredicateBoundary {
-        return ObservedArgumentSelection::AllArguments;
-    }
-    let Some(owner_fn) = find_owner_function(seam, index) else {
-        return ObservedArgumentSelection::AllArguments;
-    };
-    if owner_fn.name != owner_name {
         return ObservedArgumentSelection::AllArguments;
     }
     let Some((left, right)) = comparison_operands(seam.expression()) else {
@@ -828,19 +839,18 @@ fn observed_argument_selection(
 
 fn boundary_activation_operands_unresolved_summary(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: Option<&FunctionSummary>,
 ) -> String {
     let expression = seam
         .expression()
         .lines()
         .next()
         .unwrap_or(seam.expression());
-    if boundary_activation_operands_are_iterator_derived(seam, index, owner_name) {
+    if boundary_activation_operands_are_iterator_derived(seam, owner_fn) {
         format!(
             "Boundary activation operand is iterator-derived for seam `{expression}`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet"
         )
-    } else if boundary_activation_operands_are_closure_derived(seam, index, owner_name) {
+    } else if boundary_activation_operands_are_closure_derived(seam, owner_fn) {
         format!(
             "Boundary activation operand is closure-derived for seam `{expression}`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet"
         )
@@ -853,18 +863,14 @@ fn boundary_activation_operands_unresolved_summary(
 
 fn boundary_activation_operands_are_iterator_derived(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: Option<&FunctionSummary>,
 ) -> bool {
     if seam.kind() != SeamKind::PredicateBoundary {
         return false;
     }
-    let Some(owner_fn) = find_owner_function(seam, index) else {
+    let Some(owner_fn) = owner_fn else {
         return false;
     };
-    if owner_fn.name != owner_name {
-        return false;
-    }
     let Some((left, right)) = comparison_operands(seam.expression()) else {
         return false;
     };
@@ -874,18 +880,14 @@ fn boundary_activation_operands_are_iterator_derived(
 
 fn boundary_activation_operands_are_closure_derived(
     seam: &RepoSeam,
-    index: &RustIndex,
-    owner_name: &str,
+    owner_fn: Option<&FunctionSummary>,
 ) -> bool {
     if seam.kind() != SeamKind::PredicateBoundary {
         return false;
     }
-    let Some(owner_fn) = find_owner_function(seam, index) else {
+    let Some(owner_fn) = owner_fn else {
         return false;
     };
-    if owner_fn.name != owner_name {
-        return false;
-    }
     let Some((left, right)) = comparison_operands(seam.expression()) else {
         return false;
     };
@@ -1077,9 +1079,10 @@ fn body_contains_wrapped_local_alias(
     operand: &str,
     parameter: &str,
 ) -> bool {
+    // Built once per body: this runs per seam, related test and parameter.
+    let prefix = format!("if let {wrapper}({operand}) = ");
     body.lines().any(|line| {
         let line = code_line_before_comment(line);
-        let prefix = format!("if let {wrapper}({operand}) = ");
         line.strip_prefix(&prefix)
             .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
     }) || (body_contains_match_parameter(body, parameter)
@@ -1140,25 +1143,48 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
     })
 }
 
+/// The seam's owner function and its argument selection, resolved once
+/// per seam so per-test ranking and activation do not re-derive them.
+pub(super) struct SeamOwnerActivation<'index> {
+    owner_fn: &'index FunctionSummary,
+    selection: ObservedArgumentSelection,
+}
+
+pub(super) fn seam_owner_activation<'index>(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'index>,
+) -> Option<SeamOwnerActivation<'index>> {
+    let owner_fn = context.owner_function(seam.file(), seam.display_line())?;
+    if owner_fn.name.is_empty() {
+        return None;
+    }
+    Some(SeamOwnerActivation {
+        owner_fn,
+        selection: observed_argument_selection(seam, owner_fn),
+    })
+}
+
 fn activation_overlap_score(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     indexed: &CompactTest<'_>,
+    owner: Option<&SeamOwnerActivation<'_>>,
 ) -> usize {
-    let Some(owner_fn) = find_owner_function(seam, context.index) else {
+    let Some(owner) = owner else {
         return 0;
     };
+    let owner_fn = owner.owner_fn;
     let owner_name = owner_fn.name.as_str();
-    if owner_name.is_empty() {
-        return 0;
-    }
 
     let mut score = boundary_equality_overlap_score(seam, indexed, context.index, owner_fn);
     let required_text = required_discriminator_text(seam);
-    score += observed_value_facts_for_test(seam, indexed, context.index, owner_name)
-        .iter()
-        .filter(|fact| observed_value_matches_required_discriminator(&fact.value, required_text))
-        .count();
+    score +=
+        observed_value_facts_for_test(seam, indexed, context.index, owner_name, &owner.selection)
+            .iter()
+            .filter(|fact| {
+                observed_value_matches_required_discriminator(&fact.value, required_text)
+            })
+            .count();
     score
 }
 
@@ -1193,7 +1219,7 @@ fn boundary_equality_overlap_score(
     };
 
     let mut score = 0;
-    for call in &indexed.test.calls {
+    for call in indexed.test.body_calls() {
         if call.name != owner_fn.name {
             continue;
         }
@@ -1425,7 +1451,7 @@ fn boundary_constant_operand(
         return None;
     }
     let left_operand = boundary_operand_argument(owner_fn, &parameters, &left)?;
-    let lookup = index.files.get(&owner_fn.file).map_or(
+    let lookup = index.files().get(&owner_fn.file).map_or(
         super::value_resolution::NamedConstant::Undeclared,
         |facts| super::value_resolution::named_constant(&facts.source, name),
     );
@@ -1453,9 +1479,9 @@ fn test_passes_boundary_constant(
         &owner_fn.file,
         &indexed.test.file,
         index
-            .files
+            .files()
             .get(&indexed.test.file)
-            .map(|facts| facts.source.as_str()),
+            .map(|facts| facts.data().source.as_str()),
         &constant.name,
     ) {
         return false;
