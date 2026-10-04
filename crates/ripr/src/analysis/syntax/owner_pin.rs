@@ -429,6 +429,8 @@ fn macro_binding_ambiguities(
                         wrapper: path.syntax().text().to_string(),
                         attribute: attribute.to_string(),
                     },
+                    // The expansion may export what it defines.
+                    false,
                 );
             }
             // Every mention counts, a plain `assert_eq!(..)` included: to the
