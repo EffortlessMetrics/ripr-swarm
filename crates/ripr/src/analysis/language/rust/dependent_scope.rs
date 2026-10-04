@@ -4,7 +4,9 @@
 //! plus every package that reaches them through path dependencies (#2970
 //! slice C). On a large workspace that reverse closure is most of the
 //! repository: a two-file change in `bevy_reflect` selected 1,738 of 1,925
-//! files and tripped the `diff_scope_oversized` guard.
+//! files and tripped the `diff_scope_oversized` guard. By default the
+//! narrowing below runs only when that closure would exceed the index limit
+//! (see [`DependentScopeMode::Auto`]).
 //!
 //! The extra packages cannot contribute related tests here. The selection
 //! is never workspace-complete, so the related-test package guard drops
@@ -51,16 +53,23 @@ use crate::analysis::facts::{FunctionSummary, RustIndex};
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-/// Env override for the dependent scope. `full` restores the whole reverse
-/// closure (the pre-#5320 selection); `named`, empty or unset admits by
-/// name; anything else fails. Kept as the operator escape hatch and the
-/// parity-check switch.
+/// Env override for the dependent scope. `auto` (also empty or unset)
+/// admits by name only when the whole reverse closure would exceed the
+/// index limit; `named` always admits by name; `full` never does (the
+/// pre-#5320 selection). Anything else fails. `full` and `named` are the
+/// operator escape hatches and the parity-check switches.
 pub(crate) const DEPENDENT_SCOPE_ENV: &str = "RIPR_DIFF_DEPENDENT_SCOPE";
 
 /// Which dependent-package selection a diff run uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DependentScopeMode {
-    /// Admit dependent files by name (the default).
+    /// Admit dependent files by name when the full selection would exceed
+    /// the index limit (the default). Under the limit the full selection
+    /// already runs, and narrowing costs more than it saves whenever the
+    /// witness closure ends up admitting most dependent files (measured on
+    /// rust-analyzer: 17.0s narrowed against 14.0s full, identical output).
+    Auto,
+    /// Admit dependent files by name.
     NameAdmitted,
     /// Index every file of every dependent package.
     Full,
@@ -71,6 +80,18 @@ pub(crate) enum DependentScopeMode {
 }
 
 impl DependentScopeMode {
+    /// Whether a run whose full selection holds `selected` files, against
+    /// an index limit of `limit`, narrows.
+    pub(crate) fn narrows(self, selected: usize, limit: usize) -> bool {
+        match self {
+            Self::Auto => selected > limit,
+            Self::NameAdmitted => true,
+            Self::Full => false,
+            #[cfg(test)]
+            Self::CoreOnly => true,
+        }
+    }
+
     pub(crate) fn from_env() -> Result<Self, String> {
         #[cfg(test)]
         if let Some(mode) = FORCED_MODE.with(std::cell::Cell::get) {
@@ -81,15 +102,16 @@ impl DependentScopeMode {
 
     fn from_env_value(value: Result<String, std::env::VarError>) -> Result<Self, String> {
         match value {
-            Err(std::env::VarError::NotPresent) => Ok(Self::NameAdmitted),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
             Err(std::env::VarError::NotUnicode(_)) => {
                 Err(format!("{DEPENDENT_SCOPE_ENV} must be valid UTF-8"))
             }
             Ok(raw) => match raw.trim() {
-                "" | "named" => Ok(Self::NameAdmitted),
+                "" | "auto" => Ok(Self::Auto),
+                "named" => Ok(Self::NameAdmitted),
                 "full" => Ok(Self::Full),
                 other => Err(format!(
-                    "{DEPENDENT_SCOPE_ENV} must be `named` or `full`, got `{other}`"
+                    "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`"
                 )),
             },
         }
@@ -365,8 +387,10 @@ pub(super) struct NarrowedScope {
     root: PathBuf,
     all_files: Vec<PathBuf>,
     main_files: Vec<PathBuf>,
-    /// Dependent files not in the main index, sorted.
+    /// Dependent files not in the main index.
     withheld: Vec<PathBuf>,
+    /// The identifiers each withheld file spells, read once at admission.
+    tokens: WithheldTokens,
     /// Withheld files the reach closure has admitted so far.
     reach_files: BTreeSet<PathBuf>,
     /// Owners whose reach closure is already admitted.
@@ -377,6 +401,56 @@ pub(super) struct NarrowedScope {
     consumed: ConsumedRustSources,
     /// `false` only for the test-only core-only control.
     widen: bool,
+}
+
+/// Which withheld files spell each identifier, and the `macro_rules!`
+/// names each defines, so the reach closure never rereads a file. Ids are
+/// positions in [`NarrowedScope::withheld`].
+#[derive(Default)]
+struct WithheldTokens {
+    postings: std::collections::HashMap<Box<[u8]>, Vec<u32>>,
+    macros: Vec<Vec<String>>,
+}
+
+impl WithheldTokens {
+    fn insert(&mut self, id: u32, bytes: &[u8]) {
+        let unique = identifier_runs(bytes).collect::<HashSet<_>>();
+        for token in unique {
+            self.postings.entry(token.into()).or_default().push(id);
+        }
+        self.macros.push(macro_rules_names(bytes));
+    }
+
+    /// Ids of the files that spell one of `names`, ascending.
+    fn spelling(&self, names: &BTreeSet<String>) -> BTreeSet<u32> {
+        names
+            .iter()
+            .filter_map(|name| self.postings.get(name.as_bytes()))
+            .flatten()
+            .copied()
+            .collect()
+    }
+
+    /// Keep only the ids `keep` maps, renumbered.
+    fn retain(&mut self, keep: &[Option<u32>]) {
+        for ids in self.postings.values_mut() {
+            ids.retain_mut(|id| match keep.get(*id as usize).copied().flatten() {
+                Some(new) => {
+                    *id = new;
+                    true
+                }
+                None => false,
+            });
+        }
+        self.postings.retain(|_, ids| !ids.is_empty());
+        let macros = std::mem::take(&mut self.macros);
+        self.macros = macros
+            .into_iter()
+            .zip(keep)
+            .filter(|(_, kept)| kept.is_some())
+            .map(|(names, _)| names)
+            .collect();
+    }
 }
 
 /// The outcome of dependent admission for one diff run.
@@ -409,6 +483,7 @@ pub(super) fn admit_dependents(
     let core_only = false;
     let mut admitted = core_files;
     let mut withheld = Vec::new();
+    let mut tokens = WithheldTokens::default();
     // The owner-pin unions span every indexed file; the withheld share is
     // folded in as each file is withheld, until one file may shadow any
     // name. A withheld file that module context later pulls back into the
@@ -452,6 +527,9 @@ pub(super) fn admit_dependents(
         if !core_only && (harness_target || query.admits(&bytes)) {
             admitted.push(file.clone());
         } else {
+            let id = u32::try_from(withheld.len())
+                .map_err(|_| "dependent scope: too many withheld files".to_string())?;
+            tokens.insert(id, &bytes);
             withheld.push(file.clone());
             if !bindings_saturated {
                 bindings_saturated = withheld_macro_bindings
@@ -463,7 +541,18 @@ pub(super) fn admit_dependents(
     admitted.dedup();
     let main_files = crate::analysis::workspace::with_module_context_files(all_files, admitted);
     let main_set = main_files.iter().collect::<BTreeSet<_>>();
+    let mut kept = 0u32;
+    let keep = withheld
+        .iter()
+        .map(|file| {
+            (!main_set.contains(file)).then(|| {
+                kept += 1;
+                kept - 1
+            })
+        })
+        .collect::<Vec<_>>();
     withheld.retain(|file| !main_set.contains(file));
+    tokens.retain(&keep);
     #[cfg(test)]
     OBSERVED_MAIN_FILES.with(|files| *files.borrow_mut() = Some(main_files.clone()));
     if withheld.is_empty() {
@@ -480,6 +569,7 @@ pub(super) fn admit_dependents(
             all_files: all_files.to_vec(),
             main_files,
             withheld,
+            tokens,
             reach_files: BTreeSet::new(),
             reached_owners: BTreeSet::new(),
             reach_index: None,
@@ -566,31 +656,46 @@ impl NarrowedScope {
     fn extend_reach(&mut self, owner: &str, main_index: &RustIndex) -> Result<(), String> {
         let mut admitted = Vec::new();
         let mut admitted_now = BTreeSet::new();
-        let mut names = BTreeSet::from([owner.to_string()]);
+        let mut names = HashSet::from([owner.to_string()]);
         // Seeds: the owner, then every macro defined in a file that spells
         // it (a superset of the macros whose definition mentions it).
+        let owner_bytes = byte_names(&BTreeSet::from([owner.to_string()]));
         let mut seed_macros = BTreeSet::new();
         for facts in main_index.files().values() {
-            if spells_any(facts.source.as_bytes(), &byte_names(&names)) {
+            if spells_any(facts.source.as_bytes(), &owner_bytes) {
                 seed_macros.extend(macro_rules_names(facts.source.as_bytes()));
             }
         }
-        let (index, macros) = self.admit_spelling(&names, &mut admitted_now)?;
+        let (index, macros) =
+            self.admit_spelling(&BTreeSet::from([owner.to_string()]), &mut admitted_now)?;
         seed_macros.extend(macros);
         admitted.extend(index);
         seed_macros.retain(|name| !names.contains(name));
+        let mut frontier = BTreeSet::new();
         if !seed_macros.is_empty() {
             names.extend(seed_macros.iter().cloned());
             let (index, _) = self.admit_spelling(&seed_macros, &mut admitted_now)?;
             admitted.extend(index);
+            // Every invoker spells a seed macro, so it sits in the main
+            // index or a file admitted just now: the first caller level.
+            let seed_macro_bytes = byte_names(&seed_macros);
+            frontier = std::iter::once(main_index)
+                .chain(admitted.iter())
+                .flat_map(|index| macro_body_callers(index, &seed_macro_bytes))
+                .filter(|name| !names.contains(name))
+                .collect::<BTreeSet<_>>();
         }
-        let seed_macro_bytes = byte_names(&seed_macros);
-        for _level in 0..classify::MAX_TRANSITIVE_DEPTH {
+        for level in 0..classify::MAX_TRANSITIVE_DEPTH {
             cancellation::checkpoint()?;
             let callers = std::iter::once(main_index)
                 .chain(admitted.iter())
-                .flat_map(|index| caller_names(index, &names, &seed_macro_bytes))
+                .flat_map(|index| caller_names(index, &names))
                 .filter(|name| !names.contains(name))
+                .chain(if level == 0 {
+                    std::mem::take(&mut frontier)
+                } else {
+                    BTreeSet::new()
+                })
                 .collect::<BTreeSet<_>>();
             if callers.is_empty() {
                 break;
@@ -617,21 +722,19 @@ impl NarrowedScope {
         names: &BTreeSet<String>,
         admitted_now: &mut BTreeSet<PathBuf>,
     ) -> Result<(Option<RustIndex>, Vec<String>), String> {
-        let byte_set = byte_names(names);
         let mut new_files = Vec::new();
         let mut macros = Vec::new();
-        for file in &self.withheld {
+        for id in self.tokens.spelling(names) {
+            let Some(file) = self.withheld.get(id as usize) else {
+                continue;
+            };
             if self.reach_files.contains(file) || admitted_now.contains(file) {
                 continue;
             }
-            cancellation::checkpoint()?;
-            let Some(bytes) = read_source(&self.root, file)? else {
-                continue;
-            };
-            if spells_any(&bytes, &byte_set) {
-                macros.extend(macro_rules_names(&bytes));
-                new_files.push(file.clone());
+            if let Some(defined) = self.tokens.macros.get(id as usize) {
+                macros.extend(defined.iter().cloned());
             }
+            new_files.push(file.clone());
         }
         if new_files.is_empty() {
             return Ok((None, macros));
@@ -644,30 +747,44 @@ impl NarrowedScope {
     }
 }
 
-/// Names of functions and tests in `index` that call one of `names`, or
-/// whose body spells one of `macros` (an invocation the call facts may
-/// not record).
-fn caller_names(
-    index: &RustIndex,
-    names: &BTreeSet<String>,
-    macros: &HashSet<Vec<u8>>,
-) -> Vec<String> {
-    let calls_any = |calls: &[crate::analysis::facts::CallFact], body: &str| {
+/// Names of functions and tests in `index` that call one of `names`.
+fn caller_names(index: &RustIndex, names: &HashSet<String>) -> Vec<String> {
+    let calls_any = |calls: &[crate::analysis::facts::CallFact]| {
         calls
             .iter()
             .any(|call| names.contains(call.name.trim_end_matches('!')))
-            || spells_any(body.as_bytes(), macros)
     };
     index
         .functions()
         .iter()
-        .filter(|function| calls_any(&function.calls, &function.body))
+        .filter(|function| calls_any(&function.calls))
         .map(|function| function.name.clone())
         .chain(
             index
                 .tests()
                 .iter()
-                .filter(|test| calls_any(&test.calls, &test.body))
+                .filter(|test| calls_any(&test.calls))
+                .map(|test| test.name.clone()),
+        )
+        .collect()
+}
+
+/// Names of functions and tests in `index` whose body spells one of
+/// `macros`: an invocation the call facts may not record.
+fn macro_body_callers(index: &RustIndex, macros: &HashSet<Vec<u8>>) -> Vec<String> {
+    if macros.is_empty() {
+        return Vec::new();
+    }
+    index
+        .functions()
+        .iter()
+        .filter(|function| spells_any(function.body.as_bytes(), macros))
+        .map(|function| function.name.clone())
+        .chain(
+            index
+                .tests()
+                .iter()
+                .filter(|test| spells_any(test.body.as_bytes(), macros))
                 .map(|test| test.name.clone()),
         )
         .collect()
@@ -930,6 +1047,14 @@ mod tests {
     }
 
     #[test]
+    fn auto_narrows_only_over_the_limit() {
+        assert!(!DependentScopeMode::Auto.narrows(1200, 1200));
+        assert!(DependentScopeMode::Auto.narrows(1201, 1200));
+        assert!(DependentScopeMode::NameAdmitted.narrows(10, 1200));
+        assert!(!DependentScopeMode::Full.narrows(5000, 1200));
+    }
+
+    #[test]
     fn macro_rules_names_are_collected() {
         assert_eq!(
             macro_rules_names(b"macro_rules! a { () => {} }\nmacro_rules!   b_2 {}"),
@@ -941,7 +1066,11 @@ mod tests {
     fn scope_mode_reads_the_override() {
         assert_eq!(
             DependentScopeMode::from_env_value(Err(std::env::VarError::NotPresent)),
-            Ok(DependentScopeMode::NameAdmitted)
+            Ok(DependentScopeMode::Auto)
+        );
+        assert_eq!(
+            DependentScopeMode::from_env_value(Ok("auto".to_string())),
+            Ok(DependentScopeMode::Auto)
         );
         assert_eq!(
             DependentScopeMode::from_env_value(Ok("full".to_string())),

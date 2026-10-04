@@ -1335,9 +1335,11 @@ impl RustAdapter {
             &dependent_package_roots,
             &manifest_dir_prefixes,
         );
-        // #5320: dependent packages enter the index by name, not whole. The
-        // changed packages stay whole; a dependent file is admitted when it
-        // can change a whole-index scan (see `dependent_scope`). A changed probe
+        // #5320: when the whole reverse closure would exceed the index limit
+        // (or the scope mode says so), dependent packages enter the index by
+        // name, not whole. The changed packages stay whole; a dependent file
+        // is admitted when it can change a whole-index scan (see
+        // `dependent_scope`). A changed probe
         // file without a package prefix keeps the full selection: the
         // related-test package guard does not apply to it. A selection that
         // already spans the workspace keeps it too, so the
@@ -1346,10 +1348,13 @@ impl RustAdapter {
             crate::analysis::consumed_source::ConsumedRustSources::default();
         let mut dependent_scope = None;
         let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
+        let scope_limit = diff_index_file_limit()?;
         if !dependent_package_roots.is_empty()
             && index_files.len() < analyzable_rust_files.len()
-            && dependent_scope::DependentScopeMode::from_env()?
-                != dependent_scope::DependentScopeMode::Full
+            && dependent_scope::DependentScopeMode::from_env()?.narrows(
+                index_files.len() + options.open_rust_index_paths.len(),
+                scope_limit,
+            )
         {
             let seeded_changed_files = analyzable_changed_files
                 .iter()
@@ -1399,7 +1404,6 @@ impl RustAdapter {
         // Open saved Rust documents are index-only inputs. They do not seed
         // changed-file probes, package expansion, or findings. Admit only
         // discovered, analyzable files, then apply the ordinary index budget.
-        let scope_limit = diff_index_file_limit()?;
         if !options.open_rust_index_paths.is_empty() {
             index_files.extend(tracked_open_rust_index_paths(
                 options,
@@ -2859,6 +2863,13 @@ mod tests {
         write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
 
         let (full, full_main, _) = scoped_findings(&root, DependentScopeMode::Full)?;
+        // Under the index limit the default keeps the full selection.
+        let (auto, auto_main, _) = scoped_findings(&root, DependentScopeMode::Auto)?;
+        assert_eq!(
+            auto, full,
+            "auto under the limit must equal the full closure"
+        );
+        assert!(auto_main.is_none(), "auto must not narrow under the limit");
         let (named, named_main, named_reach) =
             scoped_findings(&root, DependentScopeMode::NameAdmitted)?;
         let (core, _, _) = scoped_findings(&root, DependentScopeMode::CoreOnly)?;
