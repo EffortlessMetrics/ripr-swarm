@@ -26,7 +26,10 @@
 //! but not scored. Claims are limited to the recorded checkout revisions, the
 //! cargo-mutants version that produced the outcomes, and this join rule.
 
-use crate::run::{capture_output_with_timeout, capture_stdout_to_file_with_timeout};
+use crate::run::{
+    capture_bytes_in_dir_with_timeout, capture_output_with_timeout,
+    capture_stdout_to_file_with_timeout,
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -308,6 +311,11 @@ fn run_cargo_mutants(
     let _ = fs::remove_dir_all(&output_root);
     fs::create_dir_all(&output_root)
         .map_err(|err| format!("create {}: {err}", output_root.display()))?;
+    // The child runs from the checkout, so hand it absolute paths.
+    let output_root = fs::canonicalize(&output_root)
+        .map_err(|err| format!("resolve {}: {err}", output_root.display()))?;
+    let checkout = &fs::canonicalize(checkout)
+        .map_err(|err| format!("resolve checkout {}: {err}", checkout.display()))?;
     // The repository's `.cargo/config.toml` forces TMPDIR into this
     // workspace's `target/`. cargo-mutants copies the crate under TMPDIR, and
     // a copy inside this workspace fails its baseline build with "believes
@@ -319,8 +327,11 @@ fn run_cargo_mutants(
     fs::create_dir_all(&temp_root)
         .map_err(|err| format!("create {}: {err}", temp_root.display()))?;
     let temp_dir = path_arg(&temp_root);
-    let output = capture_output_with_timeout(
-        "cargo",
+    // Run from the checkout with the toolchain selectors that `cargo xtask`
+    // exports removed, so rustup picks the subject's own toolchain (its
+    // rust-toolchain file, else the default) instead of this repository's pin.
+    let output = capture_bytes_in_dir_with_timeout(
+        Path::new("cargo"),
         &[
             "mutants".to_string(),
             "--dir".to_string(),
@@ -333,27 +344,39 @@ fn run_cargo_mutants(
             options.mutant_timeout_secs.to_string(),
             "--no-shuffle".to_string(),
         ],
+        checkout,
         &[
             ("TMPDIR", &temp_dir),
             ("TMP", &temp_dir),
             ("TEMP", &temp_dir),
         ],
+        &["RUSTUP_TOOLCHAIN", "CARGO"],
         MUTANTS_TIMEOUT,
         "cargo mutants for spot check",
     );
     let _ = fs::remove_dir_all(&temp_root);
     let output = output?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
     // cargo-mutants exits 2 when mutants were missed and 3 when some timed
     // out; both are results. Any other non-zero exit (1 usage, 4 baseline
     // failure) means there is no outcome set to score.
     let code = output.status.and_then(|status| status.code());
     if output.timed_out || !matches!(code, Some(0 | 2 | 3)) {
         return Err(format!(
-            "cargo mutants failed for `{name}` (exit {code:?}); is cargo-mutants installed and does the baseline pass?\n{}",
-            output.stderr.trim()
+            "cargo mutants failed for `{name}` (exit {code:?}); check that cargo-mutants is installed and that `cargo test` passes in {}; see {}/mutants.out/log/baseline.log\n{}",
+            checkout.display(),
+            output_root.display(),
+            stderr.trim()
         ));
     }
-    Ok(output_root.join("mutants.out"))
+    let mutants_out = output_root.join("mutants.out");
+    if !mutants_out.join("outcomes.json").exists() {
+        return Err(format!(
+            "cargo mutants found no mutants for `{name}`, so there is nothing to score; for a multi-crate workspace, run `cargo mutants --workspace` yourself and pass its output with --mutants-out {name}=<dir>\n{}",
+            stderr.trim()
+        ));
+    }
+    Ok(mutants_out)
 }
 
 fn run_text(
@@ -464,11 +487,27 @@ fn pairing_for(genre: &str, mutant: &str, seam_kind: &str, expression: &str) -> 
     let operator_genre = matches!(genre, "BinaryOperator" | "UnaryOperator");
     let behavior_seam = matches!(seam_kind, "predicate_boundary" | "return_value");
     match original_operator(mutant) {
-        Some(operator) if operator_genre && behavior_seam && expression.contains(operator) => {
+        Some(operator)
+            if operator_genre && behavior_seam && contains_operator_token(expression, operator) =>
+        {
             "seam_precise"
         }
         _ => "same_line_other",
     }
+}
+
+/// True when `operator` occurs in `expression` with no adjacent operator
+/// character, so `>` does not match inside `>=`, `->`, `=>`, or `>>`, and `!`
+/// does not match inside `!=`. A generic bracket such as `Vec<u8>` can still
+/// match `<`; the line-level join already narrows candidates to one seam.
+fn contains_operator_token(expression: &str, operator: &str) -> bool {
+    const OPERATOR_CHARS: &str = "!%&*+-/<=>^|";
+    expression.match_indices(operator).any(|(start, _)| {
+        let before = expression[..start].chars().next_back();
+        let after = expression[start + operator.len()..].chars().next();
+        !before.is_some_and(|ch| OPERATOR_CHARS.contains(ch))
+            && !after.is_some_and(|ch| OPERATOR_CHARS.contains(ch))
+    })
 }
 
 /// The operator a cargo-mutants operator mutant replaces or deletes, from its
@@ -749,6 +788,29 @@ mod tests {
         assert_eq!(
             pairing_for("BinaryOperator", boundary, "call_presence", "f(i > 0)"),
             "same_line_other"
+        );
+        // `>` appears only inside the seam's `>=`, so it is not the seam's operator.
+        assert_eq!(
+            pairing_for("BinaryOperator", boundary, "predicate_boundary", "x >= y"),
+            "same_line_other"
+        );
+        assert_eq!(
+            pairing_for(
+                "UnaryOperator",
+                "src/a.rs:3:9: delete ! in f",
+                "predicate_boundary",
+                "a != b"
+            ),
+            "same_line_other"
+        );
+        assert_eq!(
+            pairing_for(
+                "BinaryOperator",
+                "src/a.rs:3:9: replace >= with < in f",
+                "predicate_boundary",
+                "x >= y"
+            ),
+            "seam_precise"
         );
         // Same line and kind, but the operator is outside the seam expression.
         assert_eq!(
