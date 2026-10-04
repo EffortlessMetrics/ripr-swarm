@@ -507,6 +507,14 @@ mod tests {
         named_function(&root, name).ok_or_else(|| "missing fixture function".to_string())
     }
 
+    /// #5312 cuts a probe's `before` to the added line's span, so a match-arm
+    /// probe's `before` can be a bare `pat =>`. That text must not parse as an
+    /// arm, or the cut `before` would read as a complete previous arm.
+    #[test]
+    fn single_arm_rejects_a_pattern_without_its_arm_body() {
+        assert!(single_arm("(true, false) =>").is_none());
+    }
+
     #[test]
     fn current_arm_requires_full_source_or_exact_parser_arrow_boundary() -> Result<(), String> {
         let arm = single_arm("(true, false) => \"new\",")

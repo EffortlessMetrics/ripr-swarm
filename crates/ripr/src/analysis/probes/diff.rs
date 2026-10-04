@@ -331,6 +331,9 @@ fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
 fn project_removed_onto_span(removed: &str, added_line: &str, canonical_text: &str) -> String {
     let added_line = added_line.trim();
     let removed = removed.trim();
+    if canonical_text.trim().is_empty() {
+        return removed.to_string();
+    }
     let Some(start) = added_line.find(canonical_text) else {
         return removed.to_string();
     };
@@ -1018,6 +1021,11 @@ mod tests {
         assert_eq!(
             project_removed_onto_span("if a > b {", "if a >= b {", "a >=\n b"),
             "if a > b {"
+        );
+        // Empty canonical text names no span, so nothing is cut.
+        assert_eq!(
+            project_removed_onto_span("x(); if a > b {", "if a > b {", ""),
+            "x(); if a > b {"
         );
     }
 
