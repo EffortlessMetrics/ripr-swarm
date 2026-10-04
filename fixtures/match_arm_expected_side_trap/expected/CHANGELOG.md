@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_expected_side_trap (2)
+
+Reason:
+RIPR-SPEC-0229: selection outranks tokens; the expected-side Kind::Beta token no longer confirms the unselected arm
+
+Command:
+`cargo xtask goldens bless match_arm_expected_side_trap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

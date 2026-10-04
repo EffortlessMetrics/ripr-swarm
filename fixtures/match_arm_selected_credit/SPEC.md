@@ -1,6 +1,6 @@
 # Fixture: match_arm_selected_credit
 
-Spec: RIPR-SPEC-0093
+Spec: RIPR-SPEC-0229
 
 ## Given
 
@@ -13,7 +13,7 @@ assert_eq!(reason(None), 0);
 ```
 
 `None` has no `::` qualifier, so the variant-token rule of RIPR-SPEC-0093
-cannot confirm this arm. Arm selection (#5432, RIPR-SPEC-0229 proposal) reads
+cannot confirm this arm. Arm selection (#5432, RIPR-SPEC-0229) reads
 the owner call's own argument at the scrutinee position: `None` selects the
 `None =>` arm, and the earlier `Some(v) =>` arm provably does not match it.
 

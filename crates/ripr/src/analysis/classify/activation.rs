@@ -1018,9 +1018,18 @@ fn missing_match_arm_discriminator(
         return None;
     }
     let selector = super::arm_selection::ArmSelector::establish(probe, owner)?;
+    // Built once per probe: the helper walk below looks names up for every
+    // related test.
+    let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
+    for function in index.functions() {
+        functions_by_name
+            .entry(function.name.as_str())
+            .or_default()
+            .push(function);
+    }
     let mut inputs = Vec::new();
     for test in related_tests {
-        if may_reach_owner_unread(test, &owner.name, index) {
+        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
             return None;
         }
         let observed = selector.observed_inputs(test)?;
@@ -1058,7 +1067,7 @@ fn missing_match_arm_discriminator(
 fn may_reach_owner_unread(
     test: &TestSummary,
     owner: &str,
-    index: &crate::analysis::rust_index::RustIndex,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
 ) -> bool {
     const READ_MACROS: &[&str] = &[
         "assert",
@@ -1090,9 +1099,12 @@ fn may_reach_owner_unread(
         if !visited.insert(name) {
             continue;
         }
-        for function in index.functions().iter().filter(|function| {
-            function.name == name && !(function.name == test.name && function.file == test.file)
-        }) {
+        for function in functions_by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|function| !(function.name == test.name && function.file == test.file))
+        {
             if super::reveal::contains_as_whole_word(&function.body, owner) {
                 return true;
             }

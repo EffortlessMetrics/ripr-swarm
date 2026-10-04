@@ -1,6 +1,6 @@
 # Fixture: match_arm_expected_side_trap
 
-Spec: RIPR-SPEC-0093
+Spec: RIPR-SPEC-0229
 
 ## Given
 

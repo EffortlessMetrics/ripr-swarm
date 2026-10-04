@@ -31,21 +31,24 @@ are scoped or reviewed.
 
 - Rust match arms: ripr now reads which arm a related test's owner call
   selects, from the input it passes at the `match` scrutinee (`self` or a
-  named parameter). A call that selects the changed arm inside an exact
-  assertion confirms it, so glob-imported variants (`LowerCase =>`),
-  `Option`/`Result` constructors and integer or string literal arms can read
-  `exposed`; on the verdict corpus both serde_derive rename cases move from
-  false gaps to credited (false actionable 10/20 to 8/20, false exposed and
-  false silent unchanged at 0/14). When every related test calls the owner
-  with an input that provably selects another arm, the finding names the
-  changed arm as its missing discriminator (`None` for `reason(Some(5))`)
-  and infection reads weak. That named arm is what the unknown-not-a-gap
-  rule (#5416) needs to keep `match_arm_blind` and four other sibling-arm
-  fixtures as gaps (#5432). It also turns a false `exposed` into
-  `weakly_exposed` when a sibling arm's variant appears only on an
-  assertion's expected side. Variable, computed, multi-line or
-  function-pointer uses of the owner, guards, wildcards and refutable
-  payloads leave the arm unjudged.
+  named parameter), as RIPR-SPEC-0229 specifies. A call that selects the
+  changed arm inside an exact assertion confirms it, so glob-imported
+  variants (`LowerCase =>`), `Option`/`Result` constructors and integer or
+  string literal arms can read `exposed`. On the verdict corpus's upstream
+  cases both serde_derive rename cases move from false gaps to credited
+  (false actionable 10/20 to 8/20, false exposed and false silent unchanged
+  at 0/14). When every related test calls the owner with an input that
+  provably selects another arm, by first match and including `_` arms, the
+  finding names the changed arm as its missing discriminator (`None` for
+  `reason(Some(5))`) and infection reads weak. That named arm is what the
+  unknown-not-a-gap rule (#5416) needs to keep `match_arm_blind` and four
+  other sibling-arm fixtures as gaps (#5432). Once the scrutinee is a direct
+  owner input, selection alone confirms the arm, so a sibling variant on an
+  assertion's expected side no longer reads `exposed`. The arm is left
+  unjudged, neither named nor credited, when the test reaches the owner
+  through a helper, a closure of the same name or a foreign import, when
+  the match may be skipped, when the diff changed the arm's pattern (credit
+  only), or for guards, ranges, tuples and refutable payloads.
 - `ripr pilot`, repo exposure and the editor no longer report a seam as
   `ungripped` (the top-ranked gap, "No detected test grip") when ripr only
   failed to trace the path to it. A seam with no related test now reads

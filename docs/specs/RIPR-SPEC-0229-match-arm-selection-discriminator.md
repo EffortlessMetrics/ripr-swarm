@@ -1,6 +1,6 @@
 # RIPR-SPEC-0229: Match-arm selection names the unselected arm
 
-Status: proposed
+Status: accepted
 
 Owner: product / analysis
 
@@ -25,6 +25,7 @@ Linked issues:
 Linked PRs:
 
 - #5416 (unknown, not a gap: rule 3 `rust_oracle_target_unresolved`)
+- #5638 (first implementation; see Implementation Status)
 
 Support-tier impact:
 
@@ -173,6 +174,12 @@ These choices are not implied by existing specs. The recommended default is
 written into the Behavior above; each can be reversed without touching the
 rest.
 
+**Adopted 2026-10-04.** The owner directed that open decisions be settled
+with reasonable, documented choices. All four recommended defaults below
+are adopted: the full pattern grammar (1), `_` and binding arms judged by
+first match (2), any unresolved call blocks naming (3), and selected-arm
+credit (4).
+
 1. **Pattern grammar.** Recommended: the list above, including ranges and
    bare imported variants. Narrower alternative: literals and qualified
    enum paths only.
@@ -187,6 +194,47 @@ rest.
 4. **Selected-arm credit.** Recommended: credit (`exposed`) as written above.
    Alternative: name the selection in the discriminate summary but keep the
    existing token rule for credit.
+
+### Implementation Status
+
+#5638 implements the Behavior above for a subset of the grammar. Everything
+outside the subset reads as not provable, which never names an arm and never
+credits one.
+
+Implemented:
+
+- integer, char, bool, and cooked or raw string literals, compared by value;
+- enum variant paths, qualified or bare imported, including `Some`, `None`,
+  `Ok` and `Err`, when the payload is only `_`, `..` or bare bindings;
+- or-patterns of these, and a top-level `_` or bare binding;
+- first-match order: a guarded earlier arm blocks selection, and an earlier
+  arm that provably matches means the input selects another arm;
+- a changed pattern earns no selection credit, and names the arm only when
+  neither the original nor the changed pattern selects any observed input;
+- selection outranks tokens whenever the scrutinee is a direct owner input.
+
+Not yet implemented (each reads as not provable):
+
+- integer ranges, tuple patterns, refutable payload subpatterns and `@`;
+- arguments resolved through an immutable `let` in the test;
+- credit through a `let` binding of the call (RIPR-SPEC-0186 pairing);
+- credit for an input that moved between arms with unequal literal results.
+
+The implementation adds these fail-closed conditions, which the Behavior
+implies but does not spell out:
+
+- a `self` receiver is a scrutinee like a parameter, when it cannot change
+  before the `match`;
+- selection credit requires the `match` to be the owner body's first
+  unconditional expression, since a nested, short-circuited or
+  early-returned match may never run;
+- a test that may reach the owner through a helper (at any depth) or a
+  non-standard macro has an unresolved call;
+- a test whose file imports a foreign same-named function, or whose package
+  defines one, has an unresolved call;
+- a qualified input whose type is neither `Self` nor the scrutinee's type
+  is unresolved, and an owner name that is not unique in a complete
+  workspace establishes nothing.
 
 ## Required Evidence
 
@@ -252,17 +300,28 @@ the diff changes `None => 1` to `None => 0`.
 
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)
-- Planned: one fixture or verdict-corpus case per acceptance example 2 to 9.
-- Planned: `crates/ripr/src/analysis/classify/activation.rs` unit tests for
-  each grammar element, guard blocking, first-match order and unresolved
-  arguments.
+- `fixtures/match_arm_selected_credit` (example 2, with the arm added)
+- `fixtures/match_arm_expected_side_trap` (example 6)
+- `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests: grammar
+  elements, first-match order (examples 4 and 5), changed patterns, unread
+  inputs, and matches the call may skip.
+- `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
+  (foreign imports, a shadowing closure, a two-level helper).
+- Planned: fixtures for examples 3, 7, 8 and 9 once ranges and `let`
+  arguments are implemented.
 - Planned: a `gap_admission` test showing rule 3 keeps the gap once the arm is
   named.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/classify/arm_selection.rs`: pattern and input
+  reading, scrutinee binding and first-match selection.
 - `crates/ripr/src/analysis/classify/activation.rs`: selection facts and the
   `match_arm` missing discriminator; keep constructors on observed values.
+- `crates/ripr/src/analysis/classify/infection.rs`: an unselected arm reads
+  weak infection.
+- `crates/ripr/src/analysis/classifier/evidence.rs`: selector gating and the
+  owner-identity defeats for a named arm.
 - `crates/ripr/src/analysis/classify/reveal.rs`: selection confirmation and
   the selection-outranks-tokens gate.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` (#5416): no change;

@@ -26,8 +26,8 @@
 use super::super::rust_index::{FunctionSummary, TestSummary};
 use super::activation::function_parameters;
 use super::reveal::{
-    assertion_comparison_operands, find_fat_arrow, matching_parenthesis, split_top_level_arguments,
-    string_span_ranges,
+    assertion_comparison_operands, find_fat_arrow, lex_strings, matching_parenthesis,
+    split_top_level_arguments, string_span_ranges,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::Probe;
@@ -66,6 +66,12 @@ pub(in crate::analysis) struct ArmSelector {
     /// after a possible early `return`/`?` may be skipped, so an input
     /// that fits the arm does not show the arm ran.
     reached: bool,
+    /// The arm's original alternatives when the diff changed its pattern
+    /// (`Some(None)` when the original pattern cannot be read). An input
+    /// inside both patterns runs the same arm either way, so a changed
+    /// pattern never earns credit from selection, and the arm is named
+    /// unselected only when neither pattern selects any observed input.
+    changed_from: Option<Option<Vec<PatternHead>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +99,8 @@ enum PatternHead {
         name: String,
         irrefutable: bool,
     },
+    /// `_` or a bare binding (`other`, `ref v`): matches every input.
+    CatchAll,
     Opaque,
 }
 
@@ -122,6 +130,30 @@ impl ArmSelector {
         if alternatives.is_empty() {
             return None;
         }
+        // A removed-line probe names the arm as it was; the arm must still
+        // stand on that line with the same pattern (only its body changed).
+        if probe.after.is_none() {
+            let current = owner
+                .body
+                .lines()
+                .nth(probe.location.line.checked_sub(owner.start_line)?)?;
+            if !arm_pattern_text(current)
+                .is_some_and(|current| same_pattern(&current, &pattern_text))
+            {
+                return None;
+            }
+        }
+        let changed_from = match (&probe.before, &probe.after) {
+            (Some(before), Some(_)) => match arm_pattern_text(before) {
+                Some(original) if same_pattern(&original, &pattern_text) => None,
+                Some(original) => Some(
+                    top_level_alternatives(&original)
+                        .map(|alternatives| alternatives.into_iter().map(pattern_head).collect()),
+                ),
+                None => Some(None),
+            },
+            _ => None,
+        };
         let method = owner.item.has_self_param || owner_has_self_parameter(owner);
         let EnclosingMatch {
             scrutinee,
@@ -165,6 +197,7 @@ impl ArmSelector {
             owner: owner.name.clone(),
             method,
             reached,
+            changed_from,
         })
     }
 
@@ -242,11 +275,9 @@ impl ArmSelector {
         }
     }
 
-    /// First-match selection: the changed arm is selected only when its own
-    /// alternatives select the input, every earlier arm provably does not,
-    /// and the call always runs the enclosing `match`. Not matching the
-    /// changed arm's own pattern is enough for `SelectsOther`, whatever the
-    /// earlier arms are and whether the `match` runs at all.
+    /// RIPR-SPEC-0229 first-match selection. When the diff changed the
+    /// arm's pattern, only "selects another arm under both patterns" is
+    /// kept; everything else is `Unknown`.
     fn judge(&self, input: &str) -> ArmSelection {
         // `Priority::Low` is not `Level::Low`: a qualifier other than the
         // scrutinee's type (or `Self`) names another enum's variant.
@@ -260,7 +291,34 @@ impl ArmSelector {
         if input == PatternHead::Opaque {
             return ArmSelection::Unknown;
         }
-        match judge_alternatives(&self.alternatives, &input) {
+        let current = self.first_match(&self.alternatives, &input);
+        match &self.changed_from {
+            None => current,
+            Some(Some(original))
+                if current == ArmSelection::SelectsOther
+                    && self.first_match(original, &input) == ArmSelection::SelectsOther =>
+            {
+                ArmSelection::SelectsOther
+            }
+            Some(_) => ArmSelection::Unknown,
+        }
+    }
+
+    /// Whether `alternatives`, standing at the changed arm's position, take
+    /// the input. An earlier arm that provably matches runs first, whatever
+    /// the arms between do. Otherwise the arm is selected only when its own
+    /// alternatives match, every earlier arm provably does not, and the call
+    /// always runs the enclosing `match`.
+    fn first_match(&self, alternatives: &[PatternHead], input: &PatternHead) -> ArmSelection {
+        if self
+            .earlier
+            .iter()
+            .flatten()
+            .any(|arm| judge_alternatives(arm, input) == ArmSelection::Selects)
+        {
+            return ArmSelection::SelectsOther;
+        }
+        match judge_alternatives(alternatives, input) {
             ArmSelection::Selects => {}
             other => return other,
         }
@@ -268,7 +326,7 @@ impl ArmSelector {
             let Some(alternatives) = arm else {
                 return ArmSelection::Unknown;
             };
-            if judge_alternatives(alternatives, &input) != ArmSelection::SelectsOther {
+            if judge_alternatives(alternatives, input) != ArmSelection::SelectsOther {
                 return ArmSelection::Unknown;
             }
         }
@@ -340,8 +398,16 @@ fn judge_alternative(alternative: &PatternHead, input: &PatternHead) -> ArmSelec
                 ArmSelection::Unknown
             }
         }
+        (PatternHead::CatchAll, PatternHead::Literal(_) | PatternHead::Variant { .. }) => {
+            ArmSelection::Selects
+        }
         _ => ArmSelection::Unknown,
     }
+}
+
+/// Two pattern texts that differ only in whitespace.
+fn same_pattern(left: &str, right: &str) -> bool {
+    left.split_whitespace().eq(right.split_whitespace())
 }
 
 /// The pattern before `=>`, without comments, trimmed, with no guard.
@@ -425,6 +491,9 @@ fn pattern_head(alternative: &str) -> PatternHead {
     if let Some(literal) = literal_value(alternative) {
         return PatternHead::Literal(literal);
     }
+    if is_catch_all(alternative) {
+        return PatternHead::CatchAll;
+    }
     match variant_parts(alternative) {
         Some((name, payload)) => PatternHead::Variant {
             name: name.to_string(),
@@ -432,6 +501,21 @@ fn pattern_head(alternative: &str) -> PatternHead {
         },
         None => PatternHead::Opaque,
     }
+}
+
+/// `_`, or a bare lowercase binding with an optional `ref`/`mut`. A
+/// binding with an `@` subpattern, a path or a literal is not one.
+fn is_catch_all(alternative: &str) -> bool {
+    let binding = alternative.trim();
+    let binding = binding
+        .strip_prefix("ref ")
+        .or_else(|| binding.strip_prefix("mut "))
+        .unwrap_or(binding)
+        .trim();
+    binding == "_"
+        || is_identifier(binding)
+            && binding.starts_with(|ch: char| ch.is_ascii_lowercase() || ch == '_')
+            && !matches!(binding, "true" | "false" | "self")
 }
 
 /// The same reading applied to a call's input expression. A variant input
@@ -546,11 +630,19 @@ fn literal_value(text: &str) -> Option<LiteralValue> {
         "false" => return Some(LiteralValue::Bool(false)),
         _ => {}
     }
-    if let Some(inner) = text
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-    {
-        return (!inner.contains(['"', '\\'])).then(|| LiteralValue::Str(inner.to_string()));
+    // Cooked and raw strings (`"a"`, `r#"a=>b"#`) compare by their decoded
+    // value, through the same lexer reveal's literal rule uses. The text
+    // must be exactly one literal.
+    if text.starts_with(['"', 'r']) {
+        let literals = lex_strings(text);
+        if let [(0, end, Some(value))] = literals.as_slice()
+            && *end == text.len()
+        {
+            return Some(LiteralValue::Str(value.clone()));
+        }
+        if text.starts_with('"') {
+            return None;
+        }
     }
     if let Some(inner) = text
         .strip_prefix('\'')
@@ -692,8 +784,9 @@ fn enclosing_match(owner: &FunctionSummary, arm_line: usize) -> Option<Enclosing
 
 /// Whether the owner's body always reaches a `match` whose keyword ends
 /// `masked_before_match`: everything between the body's opening `{` and
-/// the keyword is `let` statements (or a `let x =` head for the match
-/// itself) with no block, closure, branch, loop, early exit or macro.
+/// the keyword is complete `let` statements with no block, closure, branch,
+/// short circuit, loop, early exit or macro, and the match's own statement
+/// starts directly with it or with exactly `let <name> =`.
 fn match_always_runs(masked_before_match: &str) -> bool {
     let Some(body_open) = masked_before_match.find('{') else {
         return false;
@@ -702,12 +795,28 @@ fn match_always_runs(masked_before_match: &str) -> bool {
     let control = [
         "if", "else", "match", "loop", "while", "for", "return", "break", "continue",
     ];
-    !prefix.contains(['{', '}', '?', '|', '!', '#'])
-        && !prefix.contains("=>")
-        && control
+    if prefix.contains(['{', '}', '?', '|', '!', '#'])
+        || prefix.contains("=>")
+        || prefix.contains("&&")
+        || control
             .iter()
-            .all(|keyword| whole_word_offsets(prefix, keyword).is_empty())
-        && prefix
+            .any(|keyword| !whole_word_offsets(prefix, keyword).is_empty())
+    {
+        return false;
+    }
+    let (statements, head) = prefix.rsplit_once(';').unwrap_or(("", prefix));
+    let head = head.trim();
+    let head_runs = head.is_empty()
+        || head
+            .strip_prefix("let ")
+            .and_then(|binding| binding.strip_suffix('='))
+            .is_some_and(|pattern| {
+                let pattern = pattern.split_once(':').map_or(pattern, |(name, _)| name);
+                let pattern = pattern.trim();
+                is_identifier(pattern.strip_prefix("mut ").unwrap_or(pattern).trim())
+            });
+    head_runs
+        && statements
             .split(';')
             .map(str::trim)
             .all(|statement| statement.is_empty() || statement.starts_with("let "))
@@ -1187,13 +1296,30 @@ mod tests {
             ArmSelector::establish(&arm_probe("Some(0) => 9,", 3), &owner(body, "reason"))
                 .ok_or_else(|| "premise: the Some(0) arm is readable".to_string())?;
         assert!(!some_zero.assertion_selects("assert_eq!(reason(Some(0)), 9);"));
-        // A wildcard arm can be selected by any input.
+        // RIPR-SPEC-0229 decision 2: a wildcard arm is judged by first
+        // match. `Some(5)` is taken by the earlier `Some(v)` arm, `None`
+        // falls through to `_`.
         let wildcard = ArmSelector::establish(&arm_probe("_ => 0,", 5), &owner(body, "reason"))
             .ok_or_else(|| "premise: the wildcard arm is readable".to_string())?;
         assert_eq!(
             wildcard
                 .observed_inputs(&test_with(
                     "fn t() {\n    assert_eq!(reason(Some(5)), 6);\n}\n"
+                ))
+                .map(|observed| observed.selection),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert!(wildcard.assertion_selects("assert_eq!(reason(None), 0);"));
+        // Only a refutable earlier arm stands before `_`: whether `Some(5)`
+        // reaches `_` depends on a payload this module does not compare.
+        let refutable = "pub fn reason(x: Option<i32>) -> i32 {\n    match x {\n        Some(0) => 9,\n        _ => 0,\n    }\n}\n";
+        let wildcard =
+            ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(refutable, "reason"))
+                .ok_or_else(|| "premise: the wildcard arm is readable".to_string())?;
+        assert_eq!(
+            wildcard
+                .observed_inputs(&test_with(
+                    "fn t() {\n    assert_eq!(reason(Some(5)), 0);\n}\n"
                 ))
                 .map(|observed| observed.selection),
             Some(ArmSelection::Unknown)
@@ -1263,6 +1389,12 @@ mod tests {
                 5,
                 "reason(None, false)",
             ),
+            // A short circuit may skip the match.
+            (
+                "pub fn reason(x: Option<i32>, flag: bool) -> bool {\n    let ok = flag && match x {\n        Some(v) => v > 0,\n        None => true,\n    };\n    ok\n}\n",
+                4,
+                "reason(None, false)",
+            ),
             // After an early return that `None` takes.
             (
                 "pub fn reason(x: Option<i32>) -> i32 {\n    if x.is_none() {\n        return 7;\n    }\n    match x {\n        Some(v) => v + 1,\n        None => 0,\n    }\n}\n",
@@ -1299,6 +1431,45 @@ mod tests {
             ArmSelector::establish(&arm_probe("None => 0,", 5), &owner(straight, "reason"))
                 .ok_or_else(|| "premise: the None arm is readable".to_string())?;
         assert!(selector.assertion_selects("assert_eq!(reason(None), 0);"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_pattern_never_credits_and_names_only_when_both_miss() -> Result<(), String> {
+        let body = "pub fn kind(k: Kind) -> u8 {\n    match k {\n        Kind::Alpha => 1,\n        Kind::Beta => 2,\n        Kind::Gamma => 3,\n    }\n}\n";
+        let mut probe = arm_probe("Kind::Beta => 2,", 4);
+        probe.before = Some("Kind::Beta | Kind::Gamma => 2,".to_string());
+        let selector = ArmSelector::establish(&probe, &owner(body, "kind"))
+            .ok_or_else(|| "premise: the changed arm is readable".to_string())?;
+        // `Kind::Beta` runs this arm under both patterns: no discriminator.
+        assert!(!selector.assertion_selects("assert_eq!(kind(Kind::Beta), 2);"));
+        let observed = |call: &str| {
+            selector
+                .observed_inputs(&test_with(&format!(
+                    "fn t() {{\n    assert_eq!({call}, 0);\n}}\n"
+                )))
+                .map(|observed| observed.selection)
+        };
+        // `Kind::Gamma` moved arms: it selects the original pattern, so the arm
+        // is not named unselected.
+        assert_eq!(observed("kind(Kind::Gamma)"), Some(ArmSelection::Unknown));
+        // `Kind::Alpha` misses both patterns.
+        assert_eq!(
+            observed("kind(Kind::Alpha)"),
+            Some(ArmSelection::SelectsOther)
+        );
+        // A body-only change keeps selection credit.
+        let mut body_only = arm_probe("Kind::Beta => 2,", 4);
+        body_only.before = Some("Kind::Beta => 7,".to_string());
+        let selector = ArmSelector::establish(&body_only, &owner(body, "kind"))
+            .ok_or_else(|| "premise: the changed arm is readable".to_string())?;
+        assert!(selector.assertion_selects("assert_eq!(kind(Kind::Beta), 2);"));
+        // A removed-line probe whose arm no longer stands on that line
+        // establishes nothing.
+        let mut removed = arm_probe("Kind::Delta => 2,", 4);
+        removed.before = Some("Kind::Delta => 2,".to_string());
+        removed.after = None;
+        assert!(ArmSelector::establish(&removed, &owner(body, "kind")).is_none());
         Ok(())
     }
 

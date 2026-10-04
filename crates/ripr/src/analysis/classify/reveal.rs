@@ -355,6 +355,7 @@ fn analyze_related_assertions(
             (!name.is_empty()).then_some(name)
         }),
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
+        arm_inputs_readable: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     let mut related = Vec::new();
@@ -432,9 +433,9 @@ fn analyze_related_assertions(
         // `let reason = |x| ..` closure or any other local use of the name
         // may shadow the owner, so its calls say nothing about the owner.
         let match_context = RevealMatchContext {
-            arm_selector: match_context
+            arm_inputs_readable: match_context
                 .arm_selector
-                .filter(|selector| selector.observed_inputs(test).is_some()),
+                .is_some_and(|selector| selector.observed_inputs(test).is_some()),
             ..match_context
         };
         // Refusing credit must not manufacture the singleton-test fallback
@@ -627,8 +628,13 @@ struct RevealMatchContext<'a> {
     /// RIPR-SPEC-0229: the changed arm's pattern and the owner-call input
     /// position its `match` reads, when established. An assertion whose
     /// compared operand is a direct owner call passing an input that
-    /// selects this arm confirms observation of the arm.
+    /// selects this arm confirms observation of the arm; once established,
+    /// selection is the only confirmation (selection outranks tokens).
     arm_selector: Option<&'a ArmSelector>,
+    /// RIPR-SPEC-0229: whether the current test's every owner mention is a
+    /// direct call the selector reads. A `let reason = |x| ..` closure or
+    /// any other local use of the name may shadow the owner.
+    arm_inputs_readable: bool,
 }
 
 /// The bare-scrutinee convention of the synthesized guarded-Result-match
@@ -858,7 +864,7 @@ fn block_comment_end(text: &str, start: usize) -> usize {
 /// its span with no value, and an unterminated literal extends to the end
 /// of the text with no value, so downstream structural scans fail closed
 /// instead of reading past it.
-fn lex_strings(text: &str) -> Vec<(usize, usize, Option<String>)> {
+pub(super) fn lex_strings(text: &str) -> Vec<(usize, usize, Option<String>)> {
     let mut literals = Vec::new();
     let mut index = 0usize;
     let bytes = text.as_bytes();
@@ -1296,6 +1302,7 @@ fn assertion_matches_probe_detail_with_literals(
         wrapper_seam,
         owner_callee,
         arm_selector,
+        arm_inputs_readable,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -1397,7 +1404,19 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if matches!(family, ProbeFamily::MatchArm) {
+    let has_token_match = if let Some(selector) = arm_selector
+        && matches!(family, ProbeFamily::MatchArm)
+    {
+        // RIPR-SPEC-0229 selection outranks tokens: once the arm's
+        // scrutinee is a direct owner input, a variant token or argument
+        // literal anywhere in the assertion confirms nothing; only a
+        // readable owner call whose input selects the arm does. Same owner
+        // ambiguity defeats as the literal rule below.
+        arm_inputs_readable
+            && !import_defeats_owner
+            && !cross_package_defeats_owner
+            && selector.assertion_selects(&assertion.text)
+    } else if matches!(family, ProbeFamily::MatchArm) {
         !match_arm_guarded
             && (match_arm_variants
                 .iter()
@@ -1409,15 +1428,7 @@ fn assertion_matches_probe_detail_with_literals(
                         owner_call_literals(&assertion.text, owner)
                             .iter()
                             .any(|literal| match_arm_literals.contains(literal))
-                    })
-                // RIPR-SPEC-0229: the owner call's own input selects this
-                // arm (`LowerCase.apply_to_variant(..)`, `reason(None)`,
-                // `max_scalar_value(2)`), which an unqualified variant or a
-                // numeric pattern cannot show through tokens. Same owner
-                // ambiguity defeats as the literal rule above.
-                || !import_defeats_owner
-                    && !cross_package_defeats_owner
-                    && arm_selector.is_some_and(|selector| selector.assertion_selects(&assertion.text)))
+                    }))
     } else if wrapper_seam {
         // A #3700 wrapper error seam stays unconfirmable: see above.
         false
@@ -1489,6 +1500,7 @@ fn assertion_matches_probe_detail(
             wrapper_seam: false,
             owner_callee,
             arm_selector: None,
+            arm_inputs_readable: false,
         },
         assertion,
         assertion_count,
@@ -3244,6 +3256,7 @@ mod tests {
                 wrapper_seam: false,
                 owner_callee: Some("route"),
                 arm_selector: None,
+                arm_inputs_readable: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
