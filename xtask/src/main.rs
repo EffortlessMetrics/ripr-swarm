@@ -5408,7 +5408,7 @@ fn executable_file_violations(
             continue;
         };
         let normalized = normalize_slashes(path);
-        staged_modes.insert(normalized.clone(), mode.to_string());
+        staged_modes.insert(normalized.clone(), mode);
         if mode == "100755" && !allowlist.contains(&normalized) {
             violations.push(format!(
                 "checked-in executable file is not allowlisted: {normalized}\n  preferred: use cargo xtask instead of executable scripts"
@@ -5425,11 +5425,11 @@ fn executable_file_violations(
 
 fn executable_allowlist_stale_row_violations(
     allowlist: &BTreeSet<String>,
-    staged_modes: &BTreeMap<String, String>,
+    staged_modes: &BTreeMap<String, &str>,
 ) -> Vec<String> {
     let mut violations = Vec::new();
     for path in allowlist {
-        match staged_modes.get(path).map(String::as_str) {
+        match staged_modes.get(path).copied() {
             Some("100755") => {}
             Some(mode) => violations.push(format!(
                 "{path} allowlist entry is stale: mode is {mode}, expected 100755; remove the entry"
