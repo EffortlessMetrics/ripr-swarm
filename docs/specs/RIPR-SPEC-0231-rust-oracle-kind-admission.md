@@ -169,8 +169,11 @@ they are read through their sub-pattern.
    sub-pattern is `_`, `..` or a catch-all binding (`Some(_)`, `Ok(..)`,
    `Some(ref x)`, `Ok(mut x)`, `Ok(x @ _)`), and `None`, assign `smoke_only` /
    smoke when unguarded, because they only check the side (RIPR-SPEC-0227);
-   with a guard they assign `relational_check` / weak. Any other pattern stays
-   `exact_value`.
+   with a guard they assign `relational_check` / weak. An or-pattern
+   (`p | q`) reads as its weakest alternative, and one whose alternatives
+   together cover every constructor of the type (`Some(_) | None`,
+   `Ok(_) | Err(_)`) assigns `relational_check` / weak, because it accepts
+   every value. Any other pattern stays `exact_value`.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -271,6 +274,12 @@ rejected alternative. Any can be reversed later without touching the rest.
 23. `assert!(matches!(lookup(1), Some(ref x)))` and `Ok(x @ _)`:
     `smoke_only` / smoke (today `exact_value` / strong);
     `assert!(matches!(lookup(1), Some(x @ 3)))` stays `exact_value`.
+24. `assert!(matches!(lookup(1), Some(_) | None))`: `relational_check` / weak
+    (today `exact_value` / strong at step 5).
+    `assert!(matches!(check(5), Ok(_) | Err(_)))`: `relational_check` / weak
+    (today `broad_error` / weak at step 2, so no strength moves).
+    `assert!(matches!(lookup(1), Some(3) | Some(_)))`: `smoke_only` / smoke
+    (weakest alternative).
 
 ## Test Mapping
 
