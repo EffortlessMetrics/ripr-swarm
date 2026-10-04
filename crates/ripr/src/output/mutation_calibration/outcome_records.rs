@@ -191,11 +191,18 @@ impl<'a> OutcomeObjectContext<'a> {
         if self.line() != Some(line) || column == 0 {
             return None;
         }
-        let end = nested_object(span, "end").and_then(|end| {
-            let end_line = usize_field_any(end, LINE_KEYS)?;
-            let end_column = usize_field_any(end, COLUMN_KEYS)?;
-            ((end_line, end_column) >= (line, column)).then_some((end_line, end_column))
-        });
+        // A partial or inverted end is malformed: drop the whole span so the
+        // record falls back to the file/line join instead of a point span.
+        let end = match nested_object(span, "end") {
+            Some(end) => {
+                let end = (
+                    usize_field_any(end, LINE_KEYS)?,
+                    usize_field_any(end, COLUMN_KEYS)?,
+                );
+                (end >= (line, column)).then_some(Some(end))?
+            }
+            None => None,
+        };
         Some(RuntimeSpan {
             start: (line, column),
             end,
@@ -430,6 +437,36 @@ mod tests {
         assert_eq!(duration_only.runtime_outcome, "unknown");
         Ok(())
     }
+    #[test]
+    fn reads_mutant_span_columns_and_drops_malformed_ends() -> Result<(), String> {
+        let records = parse_mutation_outcomes_json(
+            r#"[
+  {"name": "src/a.rs:3:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "function": {"span": {"start": {"line": 1, "column": 1}, "end": {"line": 9, "column": 2}}},
+   "span": {"start": {"line": 3, "column": 7}, "end": {"line": 3, "column": 8}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:4:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 4, "column": 7}, "end": {"line": 4, "column": 2}}, "summary": "MissedMutant"}
+]"#,
+        )?;
+
+        let span_of = |line| {
+            records
+                .iter()
+                .find(|record| record.line == Some(line))
+                .map(|record| record.span)
+        };
+        assert_eq!(
+            span_of(3),
+            Some(Some(RuntimeSpan {
+                start: (3, 7),
+                end: Some((3, 8)),
+            })),
+            "the mutant span, not function.span"
+        );
+        assert_eq!(span_of(4), Some(None), "an inverted end drops the span");
+        Ok(())
+    }
+
     /// Shapes copied from a cargo-mutants 27.1.0 `mutants.out` (rust-hex),
     /// combined the way `ripr calibrate --mutants-json <dir>` combines
     /// `outcomes.json` and `mutants.json`.

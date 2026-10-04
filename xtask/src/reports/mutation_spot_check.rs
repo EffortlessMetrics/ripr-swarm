@@ -839,7 +839,7 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
     json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
-        "claim_boundary": "Agreement is scored only on seam_precise joins (operator mutants inside a predicate_boundary or return_value seam: by span containment when the snapshot carries seam spans, otherwise by the original operator appearing in the seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
+        "claim_boundary": "Agreement is scored only on seam_precise joins (operator mutants inside a predicate_boundary or return_value seam: by span containment when the snapshot carries seam spans, which for a return_value seam includes any operator inside the returned expression, otherwise by the original operator appearing in the seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
         "repos": repos.iter().map(|repo| json!({
             "name": repo.name,
             "revision": repo.revision,

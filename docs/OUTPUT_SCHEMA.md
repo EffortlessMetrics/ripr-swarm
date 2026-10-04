@@ -16931,7 +16931,8 @@ Field contract:
   span-less seams on the record's line, or several innermost seam spans that
   tie (identical or partially overlapping ranges).
 - `metrics.unmatched_mutants_total` — runtime records that could not be joined
-  by `seam_id` or file/line.
+  by `seam_id`, span containment, or file/line. This includes mutants on a line
+  whose spanned seams do not contain them.
 - `metrics.static_without_runtime_total` — static seams with no definitive or
   ambiguous runtime record in this import.
 - `metrics.runtime_outcome_counts` — counts keyed by normalized runtime outcome
@@ -16972,7 +16973,9 @@ Field contract:
   the same file contains the mutated range; otherwise `file_line` when
   normalized path and line match exactly one seam without a span. A spanned
   seam that does not contain the mutated range is never joined to it, even on
-  the same line. Runtime records without a column join by file and line over
+  the same line. A seam without a span on the mutant's line (a match arm) keeps
+  its `file_line` join when every innermost containing span reaches past that
+  line; when a containing span is confined to the line, both are ambiguous. Runtime records without a column join by file and line over
   every seam on the line.
 - `matches[].static.column`, `end_line`, `end_column` and
   `matches[].runtime.column`, `end_line`, `end_column` — 1-based character
@@ -16989,7 +16992,9 @@ Field contract:
   map to `no_runtime_data` because they provide no usable support or
   contradiction for the static claim.
 - `ambiguous_file_line_matches[]` — runtime records that matched multiple
-  static seams by normalized file/line. These records are intentionally not
+  static seams: several seams without a span on the record's line, several
+  innermost containing seam spans that tie, or a containing span confined to
+  the line next to a seam without a span. These records are intentionally not
   assigned to `matches[]` without a stronger seam/probe ID.
 - `ambiguous_file_line_matches[].confidence_label` — always
   `ambiguous_runtime_join`; ambiguous joins do not raise or lower confidence for
