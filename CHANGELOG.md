@@ -17,6 +17,14 @@ are scoped or reviewed.
   publication behind the shared transition guard, and a refresh cancelled
   by shutdown no longer rolls back previous diagnostics afterward, so no
   stale diagnostics survive shutdown (#5202).
+- The `ripr agent card` `full packet:` line, the `ripr pilot` `repair this seam:`
+  line, the `agent repair --phase before` next command (stdout and stderr) and
+  the workflow packet's `Missing Inputs` commands now print a `(PowerShell)`
+  form when the path holds an apostrophe or typographic quote, so the command
+  pastes as one argument in PowerShell. A new advisory `printed-command-paste`
+  lane pastes the commands from the main flows it runs into bash, zsh, sh and
+  PowerShell on Linux, macOS and Windows. Commands carried in JSON are checked
+  in Bash only.
 - `ripr check --diff` on an unreadable file, `ripr check --root` on a file, and an unknown command now say what to do next: pass an existing diff or `-`, pass the directory that contains the workspace, and no `Did you mean` unless the typo is close (`ripr bogus` no longer suggests `plus`). No exit code changes; an unknown command of 5 to 7 characters now needs to be within two edits (and four or fewer within one) to get a suggestion (#5340).
 - Config: a `ripr.toml` that is a dangling or self-referencing symlink is
   reported as an unreadable config naming the file. It was treated as absent,
@@ -202,6 +210,16 @@ are scoped or reviewed.
   explicit and never assigned an inferred package (#5043).
 
 ### Added
+
+- Repo ops: `cargo xtask dx-scoreboard` measures developer-experience
+  scoreboards (speed, ci, trust, paste, first_run) on a pinned
+  real-repository corpus: cold pilot and warm check time and peak memory,
+  generated workflow size, false-clean and self-contradicting output, and
+  paste safety of printed commands under a hostile repository path. Targets
+  and regression margins live in `benchmarks/dx_scoreboard/scoreboards.toml`;
+  `--ingest` merges the first-run walk and verdict-corpus results; `--gate`
+  fails on regressions against `metrics/dx-scoreboard/baseline.json`. A
+  nightly `DX Scoreboard` workflow runs it.
 
 - Verdict corpus: 9 cases from the mutation spot-check (rusqlite, strsim and
   second semver and bytesize pins), now 32 cases across 10 subjects. The
