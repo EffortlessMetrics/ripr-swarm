@@ -493,7 +493,7 @@ fn edited_forbidden_files(
             .filter(|file| match comparison_key(file, &root_key) {
                 Some(key) => forbidden.contains(&key),
                 // An edited path that cannot be placed inside `--root` cannot
-                // be proven distinct from a forbidden file. Fail closed rather
+                // be shown distinct from a forbidden file. Fail closed rather
                 // than classifying the attempt `closed` / `resolved` (#5984).
                 None => forbidden_listed,
             })
