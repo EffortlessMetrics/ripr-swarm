@@ -283,8 +283,9 @@ mod outer {
 }
 fn top() {}
 "#;
-    let (modules, paths) = inline_unit_module_layout(source)
+    let layout = inline_unit_module_layout(source)
         .ok_or_else(|| "parser-valid source should yield a layout".to_string())?;
+    let (modules, paths) = (layout.modules, layout.owner_module_paths);
     let expected_modules = governed_cfg_test_modules(source)
         .ok_or_else(|| "parser-valid source should yield governed modules".to_string())?;
     if modules != expected_modules {

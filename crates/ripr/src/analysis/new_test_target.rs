@@ -346,7 +346,7 @@ impl InlineUnitLayoutMemo {
             return Rc::clone(layout);
         }
         let (modules, owner_module_paths) = match inline_unit_module_layout(source) {
-            Some((modules, paths)) => (Some(modules), paths),
+            Some(layout) => (Some(layout.modules), layout.owner_module_paths),
             None => (None, BTreeMap::new()),
         };
         let layout = Rc::new(InlineUnitFileLayout {

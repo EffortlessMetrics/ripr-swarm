@@ -567,8 +567,7 @@ mod tests {
             move || {
                 worker_runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 std::thread::sleep(Duration::from_millis(200));
-                crate::analysis::cancellation::checkpoint()
-                    .map_err(|_| "analysis cancelled".to_string())?;
+                crate::analysis::cancellation::checkpoint()?;
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
                     limit_info: None,
@@ -602,8 +601,7 @@ mod tests {
             || extended.set(true),
             || {
                 std::thread::sleep(Duration::from_millis(200));
-                crate::analysis::cancellation::checkpoint()
-                    .map_err(|_| "analysis cancelled".to_string())?;
+                crate::analysis::cancellation::checkpoint()?;
                 Err("analysis was not cancelled".to_string())
             },
         );

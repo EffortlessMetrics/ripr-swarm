@@ -779,18 +779,25 @@ pub(crate) fn governed_cfg_test_modules(source: &str) -> Option<Vec<GovernedCfgT
     Some(governed_cfg_test_modules_in(&parse.tree()))
 }
 
-/// [`governed_cfg_test_modules`] and every production function's
-/// [`production_owner_module_path`] from one parse of `source`, keyed by the
-/// function's start line. `None` when the file is not parser-valid.
-pub(crate) fn inline_unit_module_layout(
-    source: &str,
-) -> Option<(Vec<GovernedCfgTestModule>, BTreeMap<usize, Vec<String>>)> {
+/// Module facts new-test-target admission reads from one source file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct InlineUnitModuleLayout {
+    /// [`governed_cfg_test_modules`] for the file.
+    pub(crate) modules: Vec<GovernedCfgTestModule>,
+    /// Every function's enclosing non-cfg-test module names, keyed by start
+    /// line, as [`production_owner_module_path`] answers one line at a time.
+    pub(crate) owner_module_paths: BTreeMap<usize, Vec<String>>,
+}
+
+/// [`InlineUnitModuleLayout`] from one parse of `source`. `None` when the
+/// file is not parser-valid.
+pub(crate) fn inline_unit_module_layout(source: &str) -> Option<InlineUnitModuleLayout> {
     let parse = parse_clean_source_file(source)?;
     let file = parse.tree();
-    Some((
-        governed_cfg_test_modules_in(&file),
-        production_owner_module_paths_in(&file, &LineIndex::new(source)),
-    ))
+    Some(InlineUnitModuleLayout {
+        modules: governed_cfg_test_modules_in(&file),
+        owner_module_paths: production_owner_module_paths_in(&file, &LineIndex::new(source)),
+    })
 }
 
 fn governed_cfg_test_modules_in(file: &ast::SourceFile) -> Vec<GovernedCfgTestModule> {
