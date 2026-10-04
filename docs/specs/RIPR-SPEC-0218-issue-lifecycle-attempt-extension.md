@@ -142,7 +142,7 @@ disappear from the projection.
   issue/main/PR/receipt identity; unchanged progress update suppressed;
   closed-not-planned without implementation success; and malformed zero-byte
   intake evidence.
-- `cargo test -p xtask issue_lifecycle_attempt` unit coverage over the
+- `cargo test -p xtask issue_lifecycle` unit coverage over the
   counting law, digest bindings and scorecard projection.
 - `cargo xtask issue-lifecycle-scorecard` JSON and Markdown reports derived
   from one DTO, including the honest empty report (zero real lifecycles,
@@ -207,7 +207,7 @@ support.
 ## CI Proof
 
 ```bash
-cargo test -p xtask issue_lifecycle_attempt
+cargo test -p xtask issue_lifecycle
 cargo xtask issue-lifecycle-scorecard --captured fixtures/issue_lifecycle_attempts/corpus.json
 cargo xtask check-fixture-contracts
 cargo xtask check-output-contracts

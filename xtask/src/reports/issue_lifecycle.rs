@@ -215,8 +215,14 @@ pub(crate) fn build_issue_lifecycle_scorecard(
         });
     }
     rejected.append(&mut rejected_from_dedupe);
-    real_rows.sort_by(|left, right| left.lifecycle_id.cmp(&right.lifecycle_id));
-    rejected.sort_by(|left, right| left.lifecycle_id.cmp(&right.lifecycle_id));
+    real_rows.sort_by(|left, right| {
+        (&left.lifecycle_id, &left.observation_key)
+            .cmp(&(&right.lifecycle_id, &right.observation_key))
+    });
+    rejected.sort_by(|left, right| {
+        (&left.lifecycle_id, &left.observation_key)
+            .cmp(&(&right.lifecycle_id, &right.observation_key))
+    });
     let implementation_success_rate = if real_lifecycles == 0 {
         IssueLifecycleRateV1 {
             state: IssueLifecycleRateStateV1::NotMeasured,

@@ -678,8 +678,8 @@ pub(crate) fn assess_issue_lifecycle_attempt(
                     IssueLifecycleDispositionV1::Blocked
                 },
                 format!(
-                    "uncovered or contradicted burn-down rows {:?} block a completed closeout",
-                    row.burn_down.uncovered_rows
+                    "uncovered burn-down rows {:?} or contradicted burn-down rows {:?} block a completed closeout",
+                    row.burn_down.uncovered_rows, row.burn_down.contradicted_rows
                 ),
                 &mut reasons,
             );
