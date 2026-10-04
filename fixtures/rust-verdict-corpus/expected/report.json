@@ -136,6 +136,195 @@
       }
     }
   },
+  "spec_example_coverage": {
+    "ledger": "fixtures/rust-verdict-corpus/spec-coverage.toml",
+    "floor": 71,
+    "coverage": {
+      "numerator": 71,
+      "denominator": 100,
+      "rate": "0.7100"
+    },
+    "accounted": {
+      "numerator": 80,
+      "denominator": 109,
+      "rate": "0.7339"
+    },
+    "in_scope_examples": 109,
+    "covered_examples": 71,
+    "waived_examples": 9,
+    "in_scope_specs": 14,
+    "out_of_scope_specs": 50,
+    "unmeasured_specs": [
+      "RIPR-SPEC-0001",
+      "RIPR-SPEC-0002",
+      "RIPR-SPEC-0004",
+      "RIPR-SPEC-0005",
+      "RIPR-SPEC-0035",
+      "RIPR-SPEC-0040",
+      "RIPR-SPEC-0048",
+      "RIPR-SPEC-0093",
+      "RIPR-SPEC-0094",
+      "RIPR-SPEC-0096",
+      "RIPR-SPEC-0106",
+      "RIPR-SPEC-0107",
+      "RIPR-SPEC-0108",
+      "RIPR-SPEC-0150",
+      "RIPR-SPEC-0153",
+      "RIPR-SPEC-0154",
+      "RIPR-SPEC-0157",
+      "RIPR-SPEC-0158",
+      "RIPR-SPEC-0159",
+      "RIPR-SPEC-0163",
+      "RIPR-SPEC-0164",
+      "RIPR-SPEC-0165",
+      "RIPR-SPEC-0168",
+      "RIPR-SPEC-0169",
+      "RIPR-SPEC-0171",
+      "RIPR-SPEC-0172",
+      "RIPR-SPEC-0175",
+      "RIPR-SPEC-0186",
+      "RIPR-SPEC-0197",
+      "RIPR-SPEC-0219"
+    ],
+    "by_spec": [
+      {
+        "spec": "RIPR-SPEC-0114",
+        "in_scope_examples": 6,
+        "covered": 2,
+        "waived": 0,
+        "uncovered": [
+          2,
+          3,
+          4,
+          6
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0115",
+        "in_scope_examples": 7,
+        "covered": 0,
+        "waived": 4,
+        "uncovered": [
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0117",
+        "in_scope_examples": 4,
+        "covered": 0,
+        "waived": 0,
+        "uncovered": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0118",
+        "in_scope_examples": 4,
+        "covered": 1,
+        "waived": 0,
+        "uncovered": [
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0119",
+        "in_scope_examples": 2,
+        "covered": 0,
+        "waived": 0,
+        "uncovered": [
+          1,
+          2
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0120",
+        "in_scope_examples": 2,
+        "covered": 0,
+        "waived": 0,
+        "uncovered": [
+          1,
+          2
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0125",
+        "in_scope_examples": 3,
+        "covered": 0,
+        "waived": 2,
+        "uncovered": [
+          1
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0224",
+        "in_scope_examples": 2,
+        "covered": 0,
+        "waived": 1,
+        "uncovered": [
+          1
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0225",
+        "in_scope_examples": 16,
+        "covered": 16,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0226",
+        "in_scope_examples": 4,
+        "covered": 4,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0227",
+        "in_scope_examples": 13,
+        "covered": 13,
+        "waived": 0,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0228",
+        "in_scope_examples": 11,
+        "covered": 9,
+        "waived": 2,
+        "uncovered": []
+      },
+      {
+        "spec": "RIPR-SPEC-0229",
+        "in_scope_examples": 9,
+        "covered": 0,
+        "waived": 0,
+        "uncovered": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ]
+      },
+      {
+        "spec": "RIPR-SPEC-0231",
+        "in_scope_examples": 26,
+        "covered": 26,
+        "waived": 0,
+        "uncovered": []
+      }
+    ]
+  },
   "rows": [
     {
       "case_id": "serde-format-u8-hundreds",

@@ -32,6 +32,15 @@ false silent against its label; contradictions inside ripr's own output are
 counted; authored rates are reported apart from upstream rates; and the
 report must equal `expected/report.json`.
 
+A case may cite the numbered spec acceptance examples it labels in
+`spec_examples` (`RIPR-SPEC-NNNN#K`). `spec-coverage.toml` scopes every spec
+with numbered acceptance examples in or out, waives in-scope examples no
+case can label (each with a reason), lists in-scope specs with prose
+examples as unmeasured, and records `floor`. The report's
+`spec_example_coverage` section gives covered over in-scope minus waived
+examples and the uncovered example numbers per spec; `check` fails when
+covered falls below `floor`.
+
 ## Must Not
 
 - Run mutation testing, `cargo test`, or network access.
@@ -45,3 +54,9 @@ differing line. Read `target/ripr/reports/verdict-corpus/report.md`. A row
 marked `changed_since_labeling` must be re-checked against the full pinned
 checkout (for an authored crate, the stored crate itself) before the expected report is refreshed with
 `cargo xtask verdict-corpus report --out fixtures/rust-verdict-corpus/expected`.
+
+When a new case labels a spec example, add its id to the case's
+`spec_examples`, re-bless the expected report, and raise `floor` in
+`spec-coverage.toml` to the new covered count (`check` prints it). A new
+spec with numbered acceptance examples fails `validate` until it has a
+`[[spec]]` entry.

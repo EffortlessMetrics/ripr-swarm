@@ -4756,6 +4756,9 @@
         ]
       },
       "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107; RIPR-SPEC-0227 example 11.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#11"
+      ],
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "gap",
@@ -5151,6 +5154,9 @@
         ]
       },
       "reasoning": "No test freezes a wallet; the guarded match pins Insufficient, a sibling variant, so the Frozen return is never observed. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0106; RIPR-SPEC-0227 example 10.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#10"
+      ],
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "gap",
@@ -5999,6 +6005,9 @@
         ]
       },
       "reasoning": "deep(2) is pinned to 14 through six helper hops, so both mutants fail it. Spec cells: RIPR-SPEC-0114.",
+      "spec_examples": [
+        "RIPR-SPEC-0114#5"
+      ],
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "gap",
@@ -6149,6 +6158,10 @@
         ]
       },
       "reasoning": "tests/public.rs pins public_total(3) to 45, and public_total is the only caller of the private add_fee. Spec cells: RIPR-SPEC-0118.",
+      "spec_examples": [
+        "RIPR-SPEC-0114#1",
+        "RIPR-SPEC-0118#1"
+      ],
       "labeling_observation": {
         "ripr_commit": "b0c6ef6",
         "full_checkout_verdict": "gap",
@@ -6992,6 +7005,9 @@
         ]
       },
       "reasoning": "assert_eq! compares build(3) with a literal naming retries: 4; Config derives PartialEq. Spec cells: RIPR-SPEC-0225 example 1.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#1"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7039,6 +7055,9 @@
         ]
       },
       "reasoning": "The manual PartialEq compares only name, so any retries value passes. Spec cells: RIPR-SPEC-0225 example 2.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#2"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7089,6 +7108,9 @@
         ]
       },
       "reasoning": "parse(\"3\") is compared with Ok(Config { retries: 4, .. }) under derived equality. Spec cells: RIPR-SPEC-0225 example 3.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#3"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7139,6 +7161,9 @@
         ]
       },
       "reasoning": "The immutable binding c holds build(3) and is compared with a literal naming retries: 4. Spec cells: RIPR-SPEC-0225 example 4.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#4"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7189,6 +7214,9 @@
         ]
       },
       "reasoning": "e holds retries: 4 and derived equality compares every field, so wrong retries fails. Spec cells: RIPR-SPEC-0225 example 5.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#5"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7239,6 +7267,9 @@
         ]
       },
       "reasoning": "expected() returns retries: 4 and derived equality compares every field. Spec cells: RIPR-SPEC-0225 example 6.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#6"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7289,6 +7320,9 @@
         ]
       },
       "reasoning": "The manual Default supplies retries: 4 through ..Config::default(), and derived equality compares it. Spec cells: RIPR-SPEC-0225 example 7.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#7"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7336,6 +7370,9 @@
         ]
       },
       "reasoning": "The test calls build(3) but discards it and only compares other(), which does not call build. Spec cells: RIPR-SPEC-0225 example 8.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#8"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7383,6 +7420,9 @@
         ]
       },
       "reasoning": "The test reads only c.name, so retries is never observed. Spec cells: RIPR-SPEC-0225 example 9, RIPR-SPEC-0005.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#9"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7430,6 +7470,9 @@
         ]
       },
       "reasoning": "assert_ne! against retries: 9 passes for any retries other than 9, including both mutants. Spec cells: RIPR-SPEC-0225 example 10.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#10"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7477,6 +7520,9 @@
         ]
       },
       "reasoning": "Retries has an always-true PartialEq, so the retries field never affects Config equality. Spec cells: RIPR-SPEC-0225 example 11.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#11"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7524,6 +7570,9 @@
         ]
       },
       "reasoning": "The literal copies c.retries from the result, so the comparison holds for any retries value. Spec cells: RIPR-SPEC-0225 example 12.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#12"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "credited",
@@ -7571,6 +7620,9 @@
         ]
       },
       "reasoning": "The test overwrites c.retries with 4 before the comparison, erasing the owner value. Spec cells: RIPR-SPEC-0225 example 13.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#13"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7618,6 +7670,9 @@
         ]
       },
       "reasoning": "Wrapped has an always-true PartialEq, so the wrapped Config is never compared. Spec cells: RIPR-SPEC-0225 example 14.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#14"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7665,6 +7720,9 @@
         ]
       },
       "reasoning": "r is copied from c.retries, so the comparison holds for any retries value. Spec cells: RIPR-SPEC-0225 example 15.",
+      "spec_examples": [
+        "RIPR-SPEC-0225#15"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7712,6 +7770,9 @@
         ]
       },
       "reasoning": "Count has an always-true PartialEq, so the nested retries value never affects equality. Spec cells: RIPR-SPEC-0225 example 16 (manual Count impl).",
+      "spec_examples": [
+        "RIPR-SPEC-0225#16"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7762,6 +7823,9 @@
         ]
       },
       "reasoning": "Count, Retries and Config all derive PartialEq, so Count(4) is compared by value. Spec cells: RIPR-SPEC-0225 example 16 (derived Count).",
+      "spec_examples": [
+        "RIPR-SPEC-0225#16"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7811,6 +7875,9 @@
         ]
       },
       "reasoning": "far asserts gate(100) is true, which catches the inverted comparison; boundary calls gate(10) and gate(9) without asserting, so moving the edge back to input > 10 survives. Spec cells: RIPR-SPEC-0226 example 1, RIPR-SPEC-0186.",
+      "spec_examples": [
+        "RIPR-SPEC-0226#1"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "credited",
@@ -7862,6 +7929,9 @@
         ]
       },
       "reasoning": "record_appends_the_amount builds the ledger with default(), records 5 and asserts history == vec![5], so a wrong pushed value and a deleted push both fail. Spec cells: RIPR-SPEC-0226 example 2, RIPR-SPEC-0001.",
+      "spec_examples": [
+        "RIPR-SPEC-0226#2"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "credited",
@@ -7911,6 +7981,9 @@
         ]
       },
       "reasoning": "note_keeps_a_seeded_entry pushes 5 before note(5) and asserts only contains(&5), so the seeded entry satisfies the assertion whatever note pushes, and when it pushes nothing. Spec cells: RIPR-SPEC-0226 example 2 (control).",
+      "spec_examples": [
+        "RIPR-SPEC-0226#2"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -7961,6 +8034,9 @@
         ]
       },
       "reasoning": "try_parse_x_pins_malformed_source matches Err(ParseXError::MalformedSource) on parse_x(\"zz\"), so a different converted variant or an Ok both fail. Spec cells: RIPR-SPEC-0226 example 3, RIPR-SPEC-0219.",
+      "spec_examples": [
+        "RIPR-SPEC-0226#3"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8016,6 +8092,9 @@
         ]
       },
       "reasoning": "t asserts bump(2, 1, 7) == 8, which catches an inverted guard and a wrong bump amount, but 2 versus 1 is not the edge, so a >= b survives. Spec cells: RIPR-SPEC-0226 example 4, RIPR-SPEC-0186.",
+      "spec_examples": [
+        "RIPR-SPEC-0226#4"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8066,6 +8145,9 @@
         ]
       },
       "reasoning": "pair_boundary asserts check_pair(256).is_err() and check_pair(255).is_ok(), so either edge shift flips a side the test observes. Spec cells: RIPR-SPEC-0227 example 1, RIPR-SPEC-0186.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#1"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8115,6 +8197,9 @@
         ]
       },
       "reasoning": "edge_is_refused asserts check_edge(256).is_err(), which catches len > 256 but not len >= 255, since 255 is never called. Spec cells: RIPR-SPEC-0227 example 2, RIPR-SPEC-0186.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#2"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8164,6 +8249,9 @@
         ]
       },
       "reasoning": "far_is_refused only checks 300, which is Err under either edge, so neither shift is noticed. Spec cells: RIPR-SPEC-0227 example 3.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#3"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8213,6 +8301,9 @@
         ]
       },
       "reasoning": "split_touches_the_edge calls check_split(256) without observing it and split_refuses_far checks only 300, so neither shift is noticed. Spec cells: RIPR-SPEC-0227 example 4, RIPR-SPEC-0186.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#4"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8262,6 +8353,9 @@
         ]
       },
       "reasoning": "is_err_on_far_input notices an Ok but not a different error variant. Spec cells: RIPR-SPEC-0227 example 5, RIPR-SPEC-0107.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#5"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8311,6 +8405,9 @@
         ]
       },
       "reasoning": "unwrap_panics_on_far_input panics on any Err, so it notices an Ok but not a different variant. Spec cells: RIPR-SPEC-0227 example 6.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#6"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8360,6 +8457,9 @@
         ]
       },
       "reasoning": "unwrap_err_on_far_input panics when the result is Ok, so it notices an Ok but not a different variant. Spec cells: RIPR-SPEC-0227 example 7.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#7"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8409,6 +8509,9 @@
         ]
       },
       "reasoning": "short_input_is_ok asserts only is_ok(), so no wrong Ok value is noticed. Spec cells: RIPR-SPEC-0227 example 8, RIPR-SPEC-0001.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#8"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8459,6 +8562,9 @@
         ]
       },
       "reasoning": "non_digit_is_refused asserts total(\"x\").is_err(); without the ? the non-digit is swallowed and total returns Ok, so the test fails. Spec cells: RIPR-SPEC-0227 example 9 (rule 3b positive case), RIPR-SPEC-0107.",
+      "spec_examples": [
+        "RIPR-SPEC-0227#9"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "gap",
@@ -8509,6 +8615,9 @@
         ]
       },
       "reasoning": "tick_adds_one calls tick() once and asserts count == 1, so both wrong increments fail it. Spec cells: RIPR-SPEC-0228 example 1.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#1"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8559,6 +8668,9 @@
         ]
       },
       "reasoning": "count() returns self.count directly, and the test asserts count() == 1 after advance(). Spec cells: RIPR-SPEC-0228 example 2.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#2"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8606,6 +8718,9 @@
         ]
       },
       "reasoning": "count() returns self.other, so the test never sees the changed field. Spec cells: RIPR-SPEC-0228 example 3.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#3"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8653,6 +8768,9 @@
         ]
       },
       "reasoning": "raise_keeps_the_label asserts only label, a sibling field. Spec cells: RIPR-SPEC-0228 example 4.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#4"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8700,6 +8818,9 @@
         ]
       },
       "reasoning": "beat_runs calls beat() and asserts nothing. Spec cells: RIPR-SPEC-0228 example 5.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#5"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8750,6 +8871,9 @@
         ]
       },
       "reasoning": "finish_marks_done asserts state == Done after finish(). Spec cells: RIPR-SPEC-0228 example 6.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#6"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8797,6 +8921,9 @@
         ]
       },
       "reasoning": "complete_leaves_the_mode_idle asserts mode == Idle, a different field from the written state. Spec cells: RIPR-SPEC-0228 example 6 (second control).",
+      "spec_examples": [
+        "RIPR-SPEC-0228#6"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8847,6 +8974,9 @@
         ]
       },
       "reasoning": "store_writes_through_the_reference passes &mut x, then asserts x == 5. Spec cells: RIPR-SPEC-0228 example 7.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#7"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8897,6 +9027,9 @@
         ]
       },
       "reasoning": "add_pushes_the_item asserts items == vec![4] after add(4). Spec cells: RIPR-SPEC-0228 example 8, RIPR-SPEC-0094.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#8"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "credited",
@@ -8944,6 +9077,9 @@
         ]
       },
       "reasoning": "The test calls reset() between drive() and the read, so count is always 0. Spec cells: RIPR-SPEC-0228 example 9.",
+      "spec_examples": [
+        "RIPR-SPEC-0228#9"
+      ],
       "labeling_observation": {
         "ripr_commit": "7b3deeb",
         "full_checkout_verdict": "limited",
@@ -8993,6 +9129,9 @@
         ]
       },
       "reasoning": "digit_is_accepted asserts total(\"7\").is_ok(); digit('7') is Ok, so the unwrap_or mutants return Ok(7) like the original and the test passes. Spec cells: RIPR-SPEC-0227 example 12 (rule 3b negative control: condition 2 fails, both versions return Ok).",
+      "spec_examples": [
+        "RIPR-SPEC-0227#12"
+      ],
       "labeling_observation": {
         "ripr_commit": "a9d36dc71",
         "full_checkout_verdict": "gap",
@@ -9042,6 +9181,9 @@
         ]
       },
       "reasoning": "letter_is_refused asserts total(\"x\").is_err(), but no_letters(s)? already returns Err(Bad) for \"x\" before the digit loop, so the unwrap_or mutants never run on that input and the test passes. Spec cells: RIPR-SPEC-0227 example 13 (rule 3b negative control: condition 2 fails, an earlier ? already returns Err).",
+      "spec_examples": [
+        "RIPR-SPEC-0227#13"
+      ],
       "labeling_observation": {
         "ripr_commit": "a9d36dc71",
         "full_checkout_verdict": "gap",
@@ -9097,6 +9239,9 @@
         ]
       },
       "reasoning": "assert_ne!(score(2), 0) only rejects 0: x * 0 and x - 2 fail it, x * 3 (6) passes. Spec cells: RIPR-SPEC-0231 example 1; spec-adopted oracle relational_check / weak.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#1"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9146,6 +9291,9 @@
         ]
       },
       "reasoning": "assert_ne!(check(20), Ok(20)) only rejects Ok(20): raising the threshold to 30 fails it, lowering it to 5 passes. Spec cells: RIPR-SPEC-0231 example 2; spec-adopted oracle relational_check / weak.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#2"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9195,6 +9343,9 @@
         ]
       },
       "reasoning": "The guard only requires a non-empty error: an empty message fails it, a different message passes. Spec cells: RIPR-SPEC-0231 example 3; spec-adopted oracle broad_error / weak.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#3"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9244,6 +9395,9 @@
         ]
       },
       "reasoning": "matches!(check(20), Err(_)) only checks the side: threshold 30 makes check(20) Ok and fails it, threshold 5 passes. Spec cells: RIPR-SPEC-0231 example 4 (control: spec marks it unchanged); spec-adopted oracle broad_error / weak.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#4"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9294,6 +9448,9 @@
         ]
       },
       "reasoning": "assert_eq! against Err(String::from(\"big\")) pins the message, so both message mutants fail it. Spec cells: RIPR-SPEC-0231 example 5 (control: spec marks it unchanged); spec-adopted oracle exact_error_variant / strong.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#5"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9344,6 +9501,9 @@
         ]
       },
       "reasoning": "matches!(check(5), Ok(5)) pins the payload, so both payload mutants fail it. Spec cells: RIPR-SPEC-0231 example 6 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#6"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9399,6 +9559,9 @@
         ]
       },
       "reasoning": "matches!(check(5), Ok(_)) only checks the side: payload changes pass, turning the Ok into an Err fails it. Spec cells: RIPR-SPEC-0231 example 7; spec-adopted oracle smoke_only / smoke.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#7"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9448,6 +9611,9 @@
         ]
       },
       "reasoning": "The || is_present() arm (always true) makes the assertion vacuous, so no mutant fails it. Spec cells: RIPR-SPEC-0231 example 8; spec-adopted oracle not mock_expectation.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#8"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9497,6 +9663,9 @@
         ]
       },
       "reasoning": "assert_eq!(events_sent.len(), 1) pins the count, not the id: pushing twice fails it, pushing id + 1 passes. Spec cells: RIPR-SPEC-0231 example 9 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#9"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "credited",
@@ -9546,6 +9715,9 @@
         ]
       },
       "reasoning": "contains(&id) pins membership, not count: pushing id + 1 fails it, pushing twice passes. Spec cells: RIPR-SPEC-0231 example 10 (control: spec marks it unchanged); spec-adopted oracle mock_expectation / medium.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#10"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9601,6 +9773,9 @@
         ]
       },
       "reasoning": "The helper only rejects equality with 0: x * 0 and x - 2 fail it, x * 3 passes. Spec cells: RIPR-SPEC-0231 example 11; spec-adopted oracle relational_check / weak.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#11"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9651,6 +9826,9 @@
         ]
       },
       "reasoning": "The helper compares the rendered JSON with {\"score\":4}, so both mutants fail it. Spec cells: RIPR-SPEC-0231 example 12 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#12"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9706,6 +9884,9 @@
         ]
       },
       "reasoning": "ensure!(score(2) != 0) (a local macro_rules! that returns Err) only rejects 0: x * 0 and x - 2 fail it, x * 3 passes. Spec cells: RIPR-SPEC-0231 example 13; spec-adopted oracle relational_check / weak.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#13"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9754,6 +9935,9 @@
         ]
       },
       "reasoning": "assert_ne! only excludes retries == 9, so only the mutant hitting 9 fails. Spec cells: RIPR-SPEC-0231 example 14, RIPR-SPEC-0225.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#14"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9809,6 +9993,9 @@
         ]
       },
       "reasoning": "is_some_and(|v| v > 1) catches None and values <= 1 but not other values above 1. Spec cells: RIPR-SPEC-0231 example 15 (unchanged; control).",
+      "spec_examples": [
+        "RIPR-SPEC-0231#15"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9857,6 +10044,9 @@
         ]
       },
       "reasoning": "!events.is_empty() catches the deleted push but not a wrong pushed value. Spec cells: RIPR-SPEC-0231 example 16 (unchanged; control).",
+      "spec_examples": [
+        "RIPR-SPEC-0231#16"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "limited",
@@ -9905,6 +10095,9 @@
         ]
       },
       "reasoning": "Err(_e) only checks the error side. Spec cells: RIPR-SPEC-0231 example 17.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#17"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -9953,6 +10146,9 @@
         ]
       },
       "reasoning": "ensure!(matches!(check(5), Ok(_))) via a local macro_rules! ensure only checks the Ok side. Spec cells: RIPR-SPEC-0231 example 18.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#18"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10001,6 +10197,9 @@
         ]
       },
       "reasoning": "!matches!(.., Err(E::Bad)) excludes only one value. Spec cells: RIPR-SPEC-0231 example 19.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#19"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10049,6 +10248,9 @@
         ]
       },
       "reasoning": "assert_ne! excludes only Err(E::Bad). Spec cells: RIPR-SPEC-0231 example 20.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#20"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10097,6 +10299,9 @@
         ]
       },
       "reasoning": "Err(ref e) if e.len() > 1 checks the side and a length, not the value. Spec cells: RIPR-SPEC-0231 example 21 (form Err(ref e) with guard).",
+      "spec_examples": [
+        "RIPR-SPEC-0231#21"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10145,6 +10350,9 @@
         ]
       },
       "reasoning": "Err(e @ _) only checks the error side. Spec cells: RIPR-SPEC-0231 example 21 (form Err(e @ _)).",
+      "spec_examples": [
+        "RIPR-SPEC-0231#21"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10195,6 +10403,9 @@
         ]
       },
       "reasoning": "Err(e @ E::Bad) pins the variant of a two-variant enum. Spec cells: RIPR-SPEC-0231 example 22 (unchanged; control).",
+      "spec_examples": [
+        "RIPR-SPEC-0231#22"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "credited",
@@ -10243,6 +10454,9 @@
         ]
       },
       "reasoning": "Some(ref x) only checks the side. Spec cells: RIPR-SPEC-0231 example 23 (form Some(ref x)).",
+      "spec_examples": [
+        "RIPR-SPEC-0231#23"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10293,6 +10507,9 @@
         ]
       },
       "reasoning": "Some(x @ 3) pins the value 3. Spec cells: RIPR-SPEC-0231 example 23 (unchanged; control) (form Some(x @ 3)).",
+      "spec_examples": [
+        "RIPR-SPEC-0231#23"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10340,6 +10557,9 @@
         ]
       },
       "reasoning": "Some(_) | None is irrefutable, so no mutant can fail it. Spec cells: RIPR-SPEC-0231 example 24.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#24"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10394,6 +10614,9 @@
         ]
       },
       "reasoning": "Some(1..=5) checks a range, not the value. Spec cells: RIPR-SPEC-0231 example 25.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#25"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",
@@ -10441,6 +10664,9 @@
         ]
       },
       "reasoning": "r.is_ok() || r.is_err() accepts every Result, so no mutant can fail it. Spec cells: RIPR-SPEC-0231 example 26.",
+      "spec_examples": [
+        "RIPR-SPEC-0231#26"
+      ],
       "labeling_observation": {
         "ripr_commit": "96c1a18e9",
         "full_checkout_verdict": "gap",

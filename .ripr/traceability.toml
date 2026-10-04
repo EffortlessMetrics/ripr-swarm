@@ -12060,12 +12060,23 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
   "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
   "xtask/src/reports/verdict_corpus_tests.rs::stored_paths_keep_vendored_rust_out_of_the_workspace",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::numbered_examples_read_only_top_level_items_under_acceptance_examples",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::spec_ids_come_from_the_spec_file_name",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::example_ids_accept_only_the_canonical_spelling",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::citations_of_malformed_unknown_or_unnumbered_examples_are_rejected",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::citing_an_out_of_scope_spec_is_rejected",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::an_example_both_waived_and_covered_is_rejected",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::coverage_counts_cited_in_scope_examples_over_the_unwaived_ones",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::floor_gate_fails_below_passes_at_and_invites_a_raise_above",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::committed_ledger_is_valid_and_meets_its_floor",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
 ]
 code = [
   "xtask/src/reports/verdict_corpus.rs",
+  "xtask/src/reports/verdict_corpus_coverage.rs",
 ]
 outputs = [
   "fixtures/rust-verdict-corpus/expected/report.json",
@@ -12075,6 +12086,7 @@ metrics = [
   "verdict_corpus_false_verdict_rate",
   "verdict_corpus_false_actionable_rate",
   "verdict_corpus_contradiction_rate",
+  "verdict_corpus_spec_example_coverage",
 ]
 
 [[behavior]]

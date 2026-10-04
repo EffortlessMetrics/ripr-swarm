@@ -10,6 +10,7 @@
 use super::fixtures::ripr_fixture_binary;
 use crate::normalize_path;
 use crate::run::run_output_owned_with_envs;
+use coverage::{Ledger, SpecExampleCoverage, SpecExamples};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -113,6 +114,10 @@ pub(crate) struct Case {
     pub(crate) expected: Expected,
     pub(crate) reasoning: String,
     pub(crate) labeling_observation: LabelingObservation,
+    /// Numbered spec acceptance examples this case labels, as
+    /// `RIPR-SPEC-NNNN#K` (see `verdict_corpus_coverage.rs`).
+    #[serde(default)]
+    pub(crate) spec_examples: Vec<String>,
 }
 
 /// What ripr said when the case was labeled, on the full pinned checkout and
@@ -615,6 +620,10 @@ pub(crate) struct Report {
     /// The verdict rates again, per subject origin. Authored cases are chosen
     /// to fill cells, so only the upstream rates describe real-world tests.
     pub(crate) by_origin: BTreeMap<String, OriginRates>,
+    /// Which numbered spec acceptance examples carry a case. Filled from the
+    /// ledger and the spec files, not from ripr's output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) spec_example_coverage: Option<SpecExampleCoverage>,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
 }
@@ -816,6 +825,7 @@ pub(crate) fn build_report(
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
         by_origin,
+        spec_example_coverage: None,
         rows,
         non_claims: corpus.non_claims.clone(),
     })
@@ -910,6 +920,9 @@ pub(crate) fn render_report_markdown(report: &Report) -> String {
                 row.contradictions.join(", ")
             },
         ));
+    }
+    if let Some(coverage) = &report.spec_example_coverage {
+        out.push_str(&coverage::render_coverage_markdown(coverage));
     }
     out.push_str("\nNon-claims:\n\n");
     for claim in &report.non_claims {
@@ -1667,11 +1680,15 @@ fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, S
     build_report(corpus, &checks, &anchor_lines)
 }
 
-fn validated_corpus(dir: &Path) -> Result<Corpus, String> {
+fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverage), String> {
     let corpus = load_corpus(dir)?;
-    let violations = validate(&corpus, dir);
+    let ledger: Ledger = coverage::load_ledger(dir)?;
+    let specs: SpecExamples = coverage::scan_specs(Path::new(coverage::SPECS_DIR))?;
+    let mut violations = validate(&corpus, dir);
+    violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
     if violations.is_empty() {
-        Ok(corpus)
+        let coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
+        Ok((corpus, coverage))
     } else {
         Err(format!(
             "verdict corpus is invalid:\n- {}",
@@ -1710,16 +1727,24 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                         .to_string(),
                 );
             }
-            let corpus = validated_corpus(dir)?;
+            let (corpus, coverage) = validated_corpus(dir)?;
             println!(
-                "verdict-corpus: {} cases across {} subjects are valid",
+                "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (floor {})",
                 corpus.cases.len(),
-                corpus.subjects.len()
+                corpus.subjects.len(),
+                coverage.coverage.numerator,
+                coverage.coverage.denominator,
+                coverage.floor
             );
             Ok(())
         }
         "report" | "check" => {
-            let corpus = validated_corpus(dir)?;
+            let (corpus, coverage) = validated_corpus(dir)?;
+            let floor_note = if sub == "check" {
+                coverage::floor_gate(&coverage)?
+            } else {
+                None
+            };
             // Read the golden before writing anything, so an `--out` that
             // aliases the expected directory cannot make the check pass.
             let expected_path = dir.join("expected").join("report.json");
@@ -1744,7 +1769,8 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                     normalize_path(&out)
                 ));
             }
-            let report = run_corpus(dir, &corpus, Path::new("target/ripr/verdict-corpus"))?;
+            let mut report = run_corpus(dir, &corpus, Path::new("target/ripr/verdict-corpus"))?;
+            report.spec_example_coverage = Some(coverage);
             let json = render_report_json(&report)?;
             let markdown = render_report_markdown(&report);
             fs::create_dir_all(&out)
@@ -1763,6 +1789,18 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
                 report.contradiction_rate.denominator,
                 normalize_path(&out)
             );
+            if let Some(coverage) = &report.spec_example_coverage {
+                println!(
+                    "verdict-corpus: spec examples covered {} ({}/{}), floor {}",
+                    coverage.coverage.rate,
+                    coverage.coverage.numerator,
+                    coverage.coverage.denominator,
+                    coverage.floor
+                );
+            }
+            if let Some(note) = &floor_note {
+                println!("{note}");
+            }
             if let Some((_, expected_md)) = &expected
                 && *expected_md != markdown
             {
@@ -1790,6 +1828,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         )),
     }
 }
+
+#[path = "verdict_corpus_coverage.rs"]
+pub(crate) mod coverage;
 
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]

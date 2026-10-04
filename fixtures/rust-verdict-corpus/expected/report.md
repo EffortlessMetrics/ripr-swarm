@@ -197,6 +197,29 @@ By subject origin. Authored cases are written to fill cells the upstream cases l
 | `spec0231-oracle-some-range-pattern` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 | `spec0231-oracle-is-ok-or-is-err` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | no | none |
 
+## Spec example coverage
+
+Numbered acceptance examples of in-scope specs that at least one case cites in `spec_examples` (fixtures/rust-verdict-corpus/spec-coverage.toml). Covered 71/100 (0.7100); floor 71. Waived 9 and accounted (covered plus waived) 80/109. In-scope specs 14, out-of-scope specs 50.
+
+Unmeasured in-scope specs (prose acceptance examples, not counted): RIPR-SPEC-0001, RIPR-SPEC-0002, RIPR-SPEC-0004, RIPR-SPEC-0005, RIPR-SPEC-0035, RIPR-SPEC-0040, RIPR-SPEC-0048, RIPR-SPEC-0093, RIPR-SPEC-0094, RIPR-SPEC-0096, RIPR-SPEC-0106, RIPR-SPEC-0107, RIPR-SPEC-0108, RIPR-SPEC-0150, RIPR-SPEC-0153, RIPR-SPEC-0154, RIPR-SPEC-0157, RIPR-SPEC-0158, RIPR-SPEC-0159, RIPR-SPEC-0163, RIPR-SPEC-0164, RIPR-SPEC-0165, RIPR-SPEC-0168, RIPR-SPEC-0169, RIPR-SPEC-0171, RIPR-SPEC-0172, RIPR-SPEC-0175, RIPR-SPEC-0186, RIPR-SPEC-0197, RIPR-SPEC-0219.
+
+| Spec | In-scope examples | Covered | Waived | Uncovered |
+| --- | --- | --- | --- | --- |
+| RIPR-SPEC-0114 | 6 | 2 | 0 | 2, 3, 4, 6 |
+| RIPR-SPEC-0115 | 7 | 0 | 4 | 1, 2, 3 |
+| RIPR-SPEC-0117 | 4 | 0 | 0 | 1, 2, 3, 4 |
+| RIPR-SPEC-0118 | 4 | 1 | 0 | 2, 3, 4 |
+| RIPR-SPEC-0119 | 2 | 0 | 0 | 1, 2 |
+| RIPR-SPEC-0120 | 2 | 0 | 0 | 1, 2 |
+| RIPR-SPEC-0125 | 3 | 0 | 2 | 1 |
+| RIPR-SPEC-0224 | 2 | 0 | 1 | 1 |
+| RIPR-SPEC-0225 | 16 | 16 | 0 | none |
+| RIPR-SPEC-0226 | 4 | 4 | 0 | none |
+| RIPR-SPEC-0227 | 13 | 13 | 0 | none |
+| RIPR-SPEC-0228 | 11 | 9 | 2 | none |
+| RIPR-SPEC-0229 | 9 | 0 | 0 | 1, 2, 3, 4, 5, 6, 7, 8, 9 |
+| RIPR-SPEC-0231 | 26 | 26 | 0 | none |
+
 Non-claims:
 
 - Rates describe this corpus only; they are not a population estimate for Rust code or for ripr in general.
