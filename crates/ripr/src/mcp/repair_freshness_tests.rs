@@ -143,6 +143,12 @@ fn parity(root: &Path, id: &RepairAttemptId, expected: &str) -> Result<(Value, V
     Ok((attempt, receipt))
 }
 
+fn receipt_document(root: &Path, id: &RepairAttemptId) -> Result<Value, String> {
+    WorkspaceSession::default()
+        .receipt_status_document(id.as_str(), Some(root), None)
+        .map_err(|failure| failure.detail)
+}
+
 #[test]
 fn durable_currentness_keeps_ordinary_descendant_continuation() -> Result<(), String> {
     let (root, id) = prepared("descendant")?;
@@ -203,7 +209,7 @@ fn durable_currentness_does_not_reuse_recorded_after_admission() -> Result<(), S
     let (root, id) = prepared("terminal")?;
     let result = (|| {
         finish_and_issue(&root, &id)?;
-        let (_, before) = parity(&root, &id, "current")?;
+        let before = receipt_document(&root, &id)?;
         assert_eq!(before["status"], "improved");
         assert_eq!(before["receipt"]["status"], "issued");
         git(&root, &["add", "tests/target.rs"])?;
@@ -347,7 +353,7 @@ fn durable_currentness_issued_receipt_at_unknown_head_is_limited() -> Result<(),
     let (root, id) = prepared("issued-unknown")?;
     let result = (|| {
         finish_and_issue(&root, &id)?;
-        let (_, before) = parity(&root, &id, "current")?;
+        let before = receipt_document(&root, &id)?;
         assert_eq!(before["status"], "improved");
         std::fs::rename(root.join(".git"), root.join(".git-unavailable"))
             .map_err(|error| error.to_string())?;
@@ -370,7 +376,7 @@ fn durable_currentness_keeps_tampered_terminal_evidence_invalid_at_historical_he
     let (root, id) = prepared("tampered")?;
     let result = (|| {
         finish_and_issue(&root, &id)?;
-        let (_, before) = parity(&root, &id, "current")?;
+        let before = receipt_document(&root, &id)?;
         assert_eq!(before["receipt"]["status"], "issued");
         let manifest = load_repair_attempt_manifest(&root, &id)?;
         let verify = find_terminal_artifact_by_role(&manifest, "agent_verify")

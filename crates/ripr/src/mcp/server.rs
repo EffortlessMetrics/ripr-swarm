@@ -219,6 +219,27 @@ impl McpServer {
         id: &str,
         receipt: bool,
     ) -> Result<Value, workspace::AttemptFailure> {
+        let root = self.analysis_root.clone();
+        let root_identity = self.root_identity.clone();
+        let durable_id = id.to_string();
+        self.repair_read_document_with(id, receipt, move || {
+            repair_document_from_session(
+                &workspace::WorkspaceSession::default(),
+                &durable_id,
+                receipt,
+                root.as_deref(),
+                root_identity.as_deref(),
+            )
+        })
+        .await
+    }
+
+    async fn repair_read_document_with(
+        &self,
+        id: &str,
+        receipt: bool,
+        durable_read: impl FnOnce() -> Result<Value, workspace::AttemptFailure> + Send + 'static,
+    ) -> Result<Value, workspace::AttemptFailure> {
         {
             let session = self.session.lock().await;
             if session.in_flight
@@ -235,19 +256,7 @@ impl McpServer {
                 );
             }
         }
-        let root = self.analysis_root.clone();
-        let root_identity = self.root_identity.clone();
-        let id = id.to_string();
-        blocking_repair_read(move || {
-            repair_document_from_session(
-                &workspace::WorkspaceSession::default(),
-                &id,
-                receipt,
-                root.as_deref(),
-                root_identity.as_deref(),
-            )
-        })
-        .await
+        blocking_repair_read(durable_read).await
     }
 
     async fn get_repair_card_tool(
