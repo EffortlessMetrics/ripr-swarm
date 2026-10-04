@@ -500,17 +500,6 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
                 "mutation spot check",
             )
         }
-        "ci.install_seconds" => {
-            let value = items(&r.install, "metrics")
-                .iter()
-                .find(|m| text(m, "id") == id)
-                .and_then(|m| field(m, "value").as_f64());
-            value.map(|value| Derived {
-                value: Some(value),
-                trend: "first receipt".to_string(),
-                basis: "install receipt".to_string(),
-            })
-        }
         "first_run.unknown_verdicts"
         | "first_run.friction_events"
         | "first_run.failed_steps"
@@ -1221,7 +1210,7 @@ fn first_run_section(page: &mut Page, previous: &Value, current: &Value, install
     page.line("## First run");
     page.blank();
     page.line(
-        "A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. Install is timed in its own receipt, shown at the end of this section."
+        "A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. A standalone install timing is shown at the end of this section; it is not the time for the generated CI workflow to get ripr, which stays unmeasured."
     );
     page.blank();
     let mut verdict_rows = Vec::new();

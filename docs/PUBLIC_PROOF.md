@@ -21,7 +21,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 
 ## Scoreboard
 
-22 bars. ripr meets 7, is below the bar on 13, and has not measured 2. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements.
+22 bars. ripr meets 6, is below the bar on 13, and has not measured 3. Bold values miss their bar. A trend compares against the earlier receipt named in the row; rows with no earlier receipt are first measurements.
 
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
@@ -31,7 +31,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 | Speed and memory | Warm `ripr check` peak memory | **1187 MB** | <= 512 MB | below the bar | +13 MB since a7a089e (was 1174 MB) |
 | CI adoption | Lines in the workflow `ripr init --ci github` writes | **1154 lines** | <= 150 lines | below the bar | -1220 lines since a7a089e (was 2374 lines) |
 | CI adoption | Generated workflow can only get ripr by compiling it (1 = yes) | no | <= no | meets the bar | changed since a7a089e (was yes) |
-| CI adoption | Time for the generated workflow to have ripr on PATH | 0.97 s | <= 30 s | meets the bar | first receipt |
+| CI adoption | Time for the generated workflow to have ripr on PATH | not measured | <= 30 s | not measured | no earlier measurement |
 | Trust | Commands that exit 0 when pointed at a missing repository | **2 commands** | <= 0 commands | below the bar | unchanged since a7a089e (2 commands) |
 | Trust | Findings or seams whose own evidence contradicts itself | **1 findings** | <= 0 findings | below the bar | unchanged since a7a089e (1 findings) |
 | Trust | Wrong verdicts on the hand-checked verdict corpus | **30.4%** | <= 5.0% | below the bar | first receipt |
@@ -50,6 +50,7 @@ The page is generated. `cargo xtask public-proof --check` (also run by the xtask
 
 Not measured, and why:
 
+- `ci.install_seconds`: needs a hosted run of the generated workflow; the prebuilt-install path landed with #5236 but no instrument times it yet
 - `trust.judged_panel_false_actionable`: metrics/rust-judged-behavior-panel/calibration-scorecard.json candidates.false_actionable: denominator is 0, no eligible cases yet
 - `first_run.time_to_first_useful_result_s`: no --ingest file supplied for `ingest:first-run`
 
@@ -172,7 +173,7 @@ Measured on the pinned corpus repositories at the revisions in the receipt, with
 
 ## First run
 
-A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. Install is timed in its own receipt, shown at the end of this section.
+A scripted new developer runs `doctor`, `check`, `pilot`, the follow-up command `check` prints, and `init --ci github` against crates ripr was not tuned on, with one committed boundary edit each. The walk records timings and friction and does not judge verdict accuracy. Timings come from one Linux container. A standalone install timing is shown at the end of this section; it is not the time for the generated CI workflow to get ripr, which stays unmeasured.
 
 | Crate | Verdict, ripr 0.10.0 | Verdict, ripr 0.11.0 (a7a089e) | Workflow lines, ripr 0.10.0 | Workflow lines, ripr 0.11.0 (a7a089e) |
 | --- | --- | --- | --- | --- |
