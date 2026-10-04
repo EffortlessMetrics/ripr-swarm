@@ -60,7 +60,17 @@ mutants, and it does not prove that a test would fail.
 
 ## The first useful run
 
-The fastest install needs no Rust toolchain: download the prebuilt 0.10.0
+Install the published CLI (the prebuilt archive below is faster and needs no Rust), then run it in a Rust repository on a branch with
+committed changes. The 0.10 release resolves its default base by trying
+`origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
+`--base REF` to choose another existing branch or commit:
+
+```bash
+cargo install ripr
+ripr check
+```
+
+Faster, with no Rust toolchain: download the prebuilt 0.10.0
 archive (about a second here, against about two minutes to compile). This
 example is Linux x86-64; the release also has macOS and Windows archives
 ([asset list](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0)):
@@ -75,16 +85,6 @@ echo "$(cat $f.sha256)  $f" | sha256sum -c - && tar xzf $f   # puts ./ripr here;
 Once 0.11.0 is published the same URLs work with the new version, and
 `cargo binstall ripr` downloads the archive instead of compiling. Until then it
 compiles from source, like `cargo install`.
-
-Install the published CLI, then run it in a Rust repository on a branch with
-committed changes. The 0.10 release resolves its default base by trying
-`origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
-`--base REF` to choose another existing branch or commit:
-
-```bash
-cargo install ripr
-ripr check
-```
 
 Read the changed behavior, the related tests, and the recommended next test.
 No configuration file is required. `ripr check` is advisory: it exits 0 whether
