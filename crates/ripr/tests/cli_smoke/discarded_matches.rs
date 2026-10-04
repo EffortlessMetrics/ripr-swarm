@@ -6,6 +6,8 @@ use super::{
 /// only in the returned offset; their patches each describe the actual source.
 /// Discarding a matcher accepts either value, while exact/guarded assertions
 /// distinguish them. This exercises the current binary, not constructed facts.
+/// Discarded-only subjects have no other observer: reach must survive while
+/// their finding and related test receive no oracle, including weak credit.
 #[test]
 fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> Result<(), String> {
     let root = unique_temp_workspace("discarded-matcher-cli-5713");
@@ -217,34 +219,47 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 );
                 match expected {
                     "discarded" => {
-                        assert_ne!(
-                            finding["classification"], "exposed",
-                            "{id}: computation cannot discriminate"
+                        assert_eq!(
+                            finding["classification"], "reachable_unrevealed",
+                            "{id}: discarded-only computation retains reach without observation"
                         );
-                        assert_ne!(
-                            kind, "exact_value",
+                        assert_eq!(
+                            kind, "unknown",
                             "{id}: discarded pattern cannot provide an oracle"
                         );
-                        assert_ne!(strength, "strong", "{id}: unused boolean cannot fail");
+                        assert_eq!(strength, "none", "{id}: unused boolean cannot fail");
                         for test in related {
-                            assert_ne!(
-                                test["oracle_strength"], "strong",
+                            assert_eq!(
+                                test["oracle_strength"], "none",
                                 "{id}: related-test projection must agree"
                             );
-                            assert_ne!(
-                                test["oracle_kind"], "exact_value",
+                            assert_eq!(
+                                test["oracle_kind"], "unknown",
                                 "{id}: related-test pattern must not leak"
                             );
+                            assert_eq!(
+                                test["oracle"], "",
+                                "{id}: absent oracle serializes as an empty string"
+                            );
+                            assert_eq!(test["miss"], "no_assertion", "{id}");
+                            assert_eq!(test["why"], "has no assertion", "{id}");
                         }
+                        assert!(
+                            human_full_text
+                                .lines()
+                                .any(|line| line.trim().starts_with("reachable_unrevealed (")),
+                            "{id}: full human output must retain the exact no-observer class"
+                        );
+                        assert!(
+                            human_full_text.lines().any(|line| line.trim()
+                                == "- related test src/lib.rs:8 observes_score misses: has no assertion"),
+                            "{id}: full human output must explain the absent assertion"
+                        );
                         for line in human_full_text.lines().map(str::trim) {
-                            if line.starts_with(projection) {
+                            if line.starts_with("- related test ") {
                                 assert!(
-                                    !line.contains("uses strong "),
-                                    "{id}: false strong human projection"
-                                );
-                                assert!(
-                                    !line.contains(" exact value oracle:"),
-                                    "{id}: discarded pattern in human projection"
+                                    !line.contains(" uses "),
+                                    "{id}: discarded-only test must have no credited human oracle"
                                 );
                             }
                             assert!(
@@ -312,6 +327,9 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
             "post_capture_retained_output_limit_bytes_per_subject": 262144,
             "independent_contract": "score(1) == 2; original returns2, wrong returns3",
             "denominator": "14 authored static CLI subjects; not representative accuracy or fixture runtime execution",
+            "discarded_only_subjects": 8,
+            "discarded_only_contract": "reachable_unrevealed/unknown/none; related oracle empty, miss no_assertion; human no-assertion explanation and no credited oracle",
+            "retained_wrapped_positive_subjects": 6,
             "records": records,
         });
         std::fs::write(

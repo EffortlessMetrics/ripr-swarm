@@ -50,7 +50,7 @@ fn run_matcher_calibration_with_deadline(
     args: &[&str],
     budget: std::time::Duration,
 ) -> Result<Output, std::io::Error> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
     command
         .args(args)
         .stdin(Stdio::piped())
