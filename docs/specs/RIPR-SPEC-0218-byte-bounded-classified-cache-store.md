@@ -74,7 +74,9 @@ proving a universal RSS threshold.
 ## Required Evidence
 
 - Owned versus borrowed streaming encodes are byte-identical for single
-  entries and shards.
+  entries and shards. Borrowed store envelopes serialize
+  `classified_seams` through the same `related_test_table` adapter owned
+  envelopes use.
 - Variable-size records with a record cap that would keep one entry still
   split when the encoded-byte ceiling requires it.
 - Below-limit, exactly-at-limit, and one-byte-over single-record cases.

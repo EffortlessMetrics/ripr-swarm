@@ -51,7 +51,11 @@ newer generation. Compare the parked-at snapshot; restore when it is
 unchanged, and refuse restore when the bytes changed or the file is
 unreadable. Load/decode auxiliary memory is a separate claim (#5124).
 A passing record-count test is not RSS proof; host-scoped 10k/self-dogfood
-store-phase RSS stays `not_established` until #3794 observes it.
+store-phase RSS stays `not_established` until #3794 observes it. After
+#5291, owned envelopes serialize `classified_seams` through
+`related_test_table`. Borrowed store envelopes must use the same adapter
+(`serialize_with = related_test_table::serialize`); a sequence body is
+load-incompatible even when checksums are well-formed.
 
 ## 2026-10-03: `Path::is_dir()` is not a missing-path probe (#5101)
 

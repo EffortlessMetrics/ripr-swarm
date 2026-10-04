@@ -74,8 +74,9 @@ are scoped or reviewed.
   count remains a secondary cap. Ordinary store no longer deep-clones a shard
   or retains the complete encoded `Vec<u8>`. One oversized record skips with
   `skipped_oversized_record_index_*` instead of claiming a populated cache
-  (#4999). Cache load/decode bounds remain #5124. Host-scoped store-phase RSS
-  remains `not_established` (#3794).
+  (#4999). Combined-tree store after #5291 serializes borrowed envelopes
+  through the related-test table the loader expects. Cache load/decode bounds
+  remain #5124. Host-scoped store-phase RSS remains `not_established` (#3794).
 
 - LSP: the actionable-profile line-findings hover names the editor-neutral
   `diagnosticProfile` key and `[lsp] diagnostic_profile = "full"` in

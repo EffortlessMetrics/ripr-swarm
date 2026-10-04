@@ -692,6 +692,7 @@ struct BorrowedCacheEnvelope<'a> {
     workspace_manifests_hash: &'a str,
     lockfile_hash: &'a str,
     toolchain_hash: &'a str,
+    #[serde(serialize_with = "super::related_test_table::serialize")]
     classified_seams: &'a [ClassifiedSeam],
     seam_limit_info: Option<&'a CachedSeamLimitInfo>,
     lexical_fallback_files: &'a [PathBuf],
@@ -713,6 +714,7 @@ struct BorrowedShardedEnvelope<'a> {
     toolchain_hash: &'a str,
     shard_index: usize,
     shard_count: usize,
+    #[serde(serialize_with = "super::related_test_table::serialize")]
     classified_seams: &'a [ClassifiedSeam],
 }
 
