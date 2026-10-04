@@ -9,6 +9,14 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- `ripr help --json` now projects a typed per-command `exit` object for the
+  0/2/3 process contract (`schema_version` 2). Orchestrators can branch on
+  `check` findings still completing with 0, `gate evaluate` `config_error`=2
+  versus `blocked`=3, and `agent verify`'s empty-stdout refusal without
+  scraping `stop_states` (#5066).
+
 ### Fixed
 
 - CLI: `ripr doctor --profile source-build` warns when the workspace's
@@ -21,6 +29,15 @@ are scoped or reviewed.
   `mkdir` repair. The redirect stays — it protects full system temp drives —
   and the constraint is now documented in
   `docs/agent-context/validation.md` (#5280).
+- Preview-language refusals (parse budget, read caps, walk cap) no longer
+  downgrade a diff that touches none of that language. A Rust-only change in a
+  repository with an unrelated, deeply nested Python fixture (found trialing
+  `bat`) was reported `partial_with_limitations`; it now completes. The same
+  refusal still surfaces when the diff touches that language.
+- `ripr help --all` now names `ripr help --json` and excepts that route
+  from the global `-v` claim. The default `More:` line and `cmd:help`
+  `json_support: true` already landed with #5398; the exhaustive screen
+  was still a discovery dead end (#5266 residual).
 - Calibration: `ripr calibrate cargo-mutants` reads real cargo-mutants
   `mutants.out` output. Outcomes nested under `scenario.Mutant` with
   `CaughtMutant`/`MissedMutant`/`Timeout`/`Unviable` summaries now import as
@@ -28,6 +45,12 @@ are scoped or reviewed.
   `mutants.json` records merge by mutant name. Before, every outcome from a
   cargo-mutants 27.1 run imported as `unknown`, so no agreement bucket ever
   filled.
+- Mutation spot-check: `--mutants-arg <name>=<arg>` (#5475) passes selection
+  arguments such as `--workspace`, `--file` or `--re` to the cargo-mutants run
+  the harness starts, records them in the receipt, and marks scoreboard samples
+  from such runs. Arguments the harness owns or that cannot take effect are
+  refused, including bundled short flags such as `-vj8` and
+  `--minimum-test-timeout`; `-V` (`--unviable`) is accepted (#5565).
 - CLI: `ripr check` warns on stderr, on the no-scope empty-result path, when
   the default base and HEAD each resolve to the same commit after analysis (for
   example `origin/HEAD` tracking the checked-out branch in a clone of a feature
@@ -91,7 +114,21 @@ are scoped or reviewed.
   provider, and `ripr agent repair --phase before` without `--seam-id` points
   to `ripr pilot --root .` and says the `probe:...` IDs from `ripr check` are
   not seam IDs.
-
+- Tiny repositories are fast again: `ripr check` on a ~20-file crate no
+  longer pays ~0.3 s of fixed waiting. Every `git`/`cargo` subprocess wait
+  slept a fixed 50 ms after spawn although the probes exit in ~3 ms (8 probes
+  per `check`); the wait now backs off from 1 ms to the same 50 ms ceiling.
+  The progress heartbeat thread is woken on the terminal stage instead of
+  finishing its 50 ms tick, `pilot` renders each `repo-exposure.json` seam
+  once instead of once per pass (subject, hash, write) for the first 64 MiB
+  of rendered seams (only seams past that are rendered per pass), and pilot
+  ranking computes each seam's rank key once.
+  Median of 5, before -> after, on semver 1.0.23 / fastrand 2.3.0 /
+  bytesize 1.3.0 (warm cache): `check` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s,
+  `check --format json` 0.46/0.36/0.46 s -> 0.05/0.03/0.05 s, `explain`
+  0.38/0.26/0.38 s -> 0.04/0.03/0.05 s, `doctor` 0.21 s -> 0.07 s, `pilot`
+  0.65/0.28/0.30 s -> 0.29/0.07/0.11 s; cold-cache `pilot` 0.73/0.30/0.30 s
+  -> 0.35/0.12/0.13 s. Output bytes are unchanged (#5348).
 
 - `ripr agent card` and the `ripr agent repair` / `ripr agent receipt`
   recovery messages bind a relative `--root` to the selected directory in the
@@ -140,6 +177,12 @@ are scoped or reviewed.
   actionable receipt status. Retained evidence and recorded finish admission
   remain unchanged. Durable reads run off the async executor; supported stdio
   request admission remains serialized through reply flush (#5399).
+
+- MCP durable attempts at a current HEAD use the selected CLI attempt's next
+  action: a finished result offers none, and failed or open-gap work starts a
+  new before phase. Retained typed packet routes remain available only for a
+  current after continuation; a restart display never supplies typed command
+  authority. Retained receipts and freshness refusals are unchanged (#5413).
 
 ### Changed
 
@@ -315,6 +358,17 @@ are scoped or reviewed.
 
 ### Added
 
+- Verdict corpus: authored subjects. Three small crates written for the
+  corpus add 23 runtime-labeled cases covering the verdicts and probe
+  families the real crates left empty: field construction, call deletion,
+  side effect, error path, static unknown and non-arithmetic return values.
+  ripr now credits 6 authored lines, and 3 of those credits are false
+  exposed (3 of 13 not fully discriminated), the corpus's first. Authored
+  cases are reported apart from upstream ones under `by_origin`, because
+  they were chosen to fill cells: the upstream rates stay 10 of 20 false
+  actionable and 0 of 14 false exposed. For a changed `let`, the projection can
+  follow ripr's retarget to the predicate that uses it (RIPR-SPEC-0157); no
+  current case exercises it (RIPR-SPEC-0219).
 - `ripr agent stub --at FILE:LINE` (or `--seam-id ID`) turns a Rust gap
   into a test that compiles and fails at its own labelled `todo!()` until
   you write the expected value; `--write` places it in the existing inline
