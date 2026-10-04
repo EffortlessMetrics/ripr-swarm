@@ -929,7 +929,10 @@ pub(crate) fn rust_corpus_smoke_to_input(value: &Value) -> Result<Value, String>
 /// - gap claim agreement: when ripr says no test discriminates, the share of
 ///   seam-precise mutants a real run missed (the rest are false gaps);
 /// - join coverage: seam-precise joins over all mutants, because agreement
-///   rates only speak for the mutants that could be joined to a seam.
+///   rates only speak for the mutants that could be joined to a seam;
+/// - pilot top-recommendation precision: of `ripr pilot`'s top seams that a
+///   real mutant scores, the share where a mutant was missed (receipts written
+///   before the pilot section existed simply omit the row).
 pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, String> {
     let families = value["scored_families"]
         .as_object()
@@ -985,6 +988,20 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         }
         joined += precise;
         mutants += total;
+    }
+    let pilot = &value["pilot_top_recommendations"];
+    if let Some(scored) = pilot["scored"].as_u64().filter(|scored| *scored > 0) {
+        let precision = pilot["precision"]
+            .as_f64()
+            .filter(|rate| (0.0..=1.0).contains(rate))
+            .ok_or(
+                "mutation spot-check pilot_top_recommendations needs precision between 0 and 1",
+            )?;
+        rows.push(json!({
+            "id": "trust.pilot_top_recommendation_precision",
+            "value": precision,
+            "evidence": format!("{scored} pilot recommendations scored"),
+        }));
     }
     if mutants > 0 {
         rows.push(json!({

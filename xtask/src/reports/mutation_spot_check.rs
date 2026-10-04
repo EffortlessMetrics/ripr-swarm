@@ -25,6 +25,12 @@
 //! claim a single operator mutant can settle, so their outcomes are counted
 //! but not scored. Claims are limited to the recorded checkout revisions, the
 //! cargo-mutants version that produced the outcomes, and this join rule.
+//!
+//! The report also scores `ripr pilot`'s top recommendations against the same
+//! outcomes (see [`pilot`]), because a wrong top recommendation is the error a
+//! developer meets first.
+
+mod pilot;
 
 use crate::run::{
     capture_bytes_in_dir_with_timeout, capture_output_with_timeout,
@@ -285,6 +291,7 @@ struct RepoRun {
     cargo_mutants_version: Option<String>,
     metrics: Value,
     pairs: Vec<Pair>,
+    pilot: Vec<Value>,
 }
 
 fn spot_check_repo(
@@ -350,6 +357,7 @@ fn spot_check_repo(
     let outcomes = read_mutants_out("outcomes.json")?;
     let mutant_records = read_mutants_out("mutants.json")?;
     let diffs_checked = require_mutants_match_checkout(name, checkout, &revision, &mutant_records)?;
+    let pilot_top = pilot::pilot_top_seams(binary, scratch, name, checkout)?;
 
     let calibration = run_text(
         &path_arg(binary),
@@ -388,6 +396,7 @@ fn spot_check_repo(
             .map(str::to_string),
         metrics: calibration.get("metrics").cloned().unwrap_or(Value::Null),
         pairs: classify_matches(&calibration, &exposure_json, &mutant_records),
+        pilot: pilot::judge_recommendations(&pilot_top, &mutant_records, &outcomes),
     })
 }
 
@@ -870,6 +879,12 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
         "outcomes_by_pairing_and_grip_class": by_pairing,
         "scored_families": families,
         "disagreement_examples": disagreements,
+        "pilot_top_recommendations": pilot::summarize(
+            &repos
+                .iter()
+                .map(|repo| (repo.name.clone(), repo.pilot.clone()))
+                .collect::<Vec<_>>(),
+        ),
     })
 }
 
@@ -1018,6 +1033,7 @@ fn spot_check_markdown(report: &Value) -> String {
     if !any {
         out.push_str("None in the scored joins.\n");
     }
+    out.push_str(&pilot::markdown(report));
     out
 }
 
@@ -1324,6 +1340,9 @@ mod tests {
             cargo_mutants_version: Some("27.1.0".to_string()),
             metrics: Value::Null,
             pairs: classify_matches(&calibration, &exposure, &mutants),
+            pilot: vec![
+                json!({"verdict": "refuted", "tier": "line", "grip_class": "weakly_gripped"}),
+            ],
         };
         let report = build_report(&[repo], 5);
 
@@ -1356,5 +1375,7 @@ mod tests {
             spot_check_markdown(&report)
                 .contains("demo ran cargo-mutants with `--re=decode` `--workspace`.")
         );
+        assert_eq!(report["pilot_top_recommendations"]["counts"]["refuted"], 1);
+        assert!(spot_check_markdown(&report).contains("## Pilot top recommendations"));
     }
 }

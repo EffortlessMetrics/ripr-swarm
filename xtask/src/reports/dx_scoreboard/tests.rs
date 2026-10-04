@@ -560,6 +560,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             {"pairings": {"seam_precise": 2}, "calibration_metrics": {"mutants_total": 86}},
             {"pairings": {"seam_precise": 170}, "calibration_metrics": {"mutants_total": 1659}},
         ],
+        "pilot_top_recommendations": {"scored": 39, "precision": 0.385},
     });
     let input = mutation_spot_check_to_input(&receipt)?;
     let value = |id: &str| {
@@ -573,6 +574,10 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     assert!(
         value("trust.mutation_join_coverage").is_some_and(|v| (v - 172.0 / 1745.0).abs() < 1e-9)
     );
+    assert_eq!(
+        value("trust.pilot_top_recommendation_precision"),
+        Some(0.385)
+    );
 
     let evidence = |input: &Value| input["evidence"].as_str().unwrap_or_default().to_string();
     assert!(
@@ -583,7 +588,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 
     let config = load_config(&committed_config())?;
     let samples = parse_ingest(&receipt, &config)?;
-    assert_eq!(samples.len(), 3);
+    assert_eq!(samples.len(), 4);
 
     let mut empty_args = receipt.clone();
     empty_args["repos"][0]["cargo_mutants_args"] = json!([]);
@@ -602,7 +607,7 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
     // Ingest publishes each row's own evidence, so the caveat must reach
     // every sample, not only the top-level evidence.
     let samples = parse_ingest(&sampled, &config)?;
-    assert_eq!(samples.len(), 3);
+    assert_eq!(samples.len(), 4);
     for sample in &samples {
         assert!(sample.detail.contains(caveat), "{}", sample.detail);
     }
@@ -612,6 +617,16 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             .iter()
             .all(|sample| !sample.detail.contains("cargo-mutants arguments"))
     );
+
+    // A receipt from before the pilot section, or with nothing scored, adds
+    // no pilot row rather than a misleading zero.
+    let mut older = receipt.clone();
+    older["pilot_top_recommendations"] = json!({"scored": 0, "precision": null});
+    let rows = mutation_spot_check_to_input(&older)?;
+    assert!(rows["metrics"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .all(|row| row["id"] != "trust.pilot_top_recommendation_precision")
+    }));
     Ok(())
 }
 
