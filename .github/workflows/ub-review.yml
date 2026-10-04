@@ -57,6 +57,8 @@ jobs:
           pr-head-sha: ${{ github.event.pull_request.head.sha }}
           out: target/ub-review
           posting: review
+          # Receipt discovery must use the same name as the upload below.
+          prior-resolved-candidates-artifact: ub-review-${{ github.event.pull_request.number || github.run_id }}
           # The pinned action defaults to the bun-ub preset, whose
           # artifact-verifier sensor runs
           # `python scripts/verify-bun-review-artifacts.py --self-test`.
