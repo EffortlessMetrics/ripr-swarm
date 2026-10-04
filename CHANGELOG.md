@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr explain` and `ripr context` explain `file:line` syntax after a malformed
+  location misses and retain the scoped listing command for recovery. Finding
+  IDs remain opaque; selection and exit status are unchanged (#5581, #5252).
+
 - `ripr first-pr` and `ripr reports gap-ledger` exit 2 and write nothing when
   `--root` is not a directory or the gap-ledger input cannot be read, instead
   of exiting 0 after writing a `wrong_root` or `blocked` packet. The refusal

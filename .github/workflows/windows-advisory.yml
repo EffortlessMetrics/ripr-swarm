@@ -306,6 +306,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@1.95
 
@@ -316,6 +317,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}
+          cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run lsp::gap_artifacts subset (advisory, #4921)
@@ -351,6 +353,7 @@ jobs:
           out.mkdir(parents=True, exist_ok=True)
           end = time.monotonic() + 720
           receipt = {"schema_version": 1, "state": "INCOMPLETE", "cases": [], "controls": []}
+          staged_by_consumer = False
           k = c.WinDLL("kernel32", use_last_error=True)
 
           class Security(c.Structure):
@@ -390,6 +393,18 @@ jobs:
                   raise RuntimeError(message)
           def digest(path):
               return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+          def remove_staged(path, owned):
+              if not owned:
+                  return {"state": "NOT_CREATED"}
+              path = Path(path)
+              cleanup = {"path": str(path), "initially_absent": True}
+              if path.exists():
+                  cleanup["sha256_before_removal"] = digest(path)
+                  path.unlink()
+              require(not path.exists(), "owned staged executable remains")
+              cleanup["state"] = "REMOVED"
+              return cleanup
 
           def run(label, argv, cwd, seconds=30, memory=512 * 1024**2, output_cap=2 * 1024**2, active=2):
               require(time.monotonic() < end, "consumer total deadline exceeded")
@@ -479,13 +494,15 @@ jobs:
               require(actual_digest == expected_digest, "wrong executable digest")
               require(Path(actual_path).resolve() == Path(expected_path).resolve(), "wrong stock executable resolution")
 
-          def packet(raw, expected_id=None):
+          def packet(raw, selected_file, expected_id=None):
               data = json.loads(raw)
               findings = data.get("findings")
               require(isinstance(findings, list) and findings, "listing has no findings")
+              selected_file = Path(selected_file).resolve()
               selected = [f for f in findings if f.get("language") == "rust" and f.get("probe", {}).get("family") == "predicate"
-                          and f["probe"].get("line") == 2 and f["probe"].get("file", "").replace("\\", "/") in ("src/lib.rs", "./src/lib.rs")
-                          and f["probe"].get("expression") == "if amount >= threshold { amount - 100 } else { amount }"]
+                          and f["probe"].get("line") == 2 and Path(f["probe"].get("file", "")).is_absolute()
+                          and Path(f["probe"]["file"]).resolve() == selected_file
+                          and f["probe"].get("expression") == "amount >= threshold"]
               require(len(selected) == 1, "listing does not identify the frozen fixture predicate")
               finding = selected[0]
               require(finding.get("id") and finding["probe"].get("id") == finding["id"], "listing identities disagree")
@@ -546,6 +563,7 @@ jobs:
               staged = stock_bin / "ripr.exe"
               require(not staged.exists() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
               require(2 * binary.stat().st_size + sum(p.stat().st_size for p in out.glob("*") if p.is_file()) < 128 * 1024**2, "staging/evidence budget exceeded")
+              staged_by_consumer = True  # Exact path was absent; this run owns even a partial copy.
               shutil.copyfile(binary, staged)
               resolved = shutil.which("ripr")
               require(resolved, "staged candidate does not resolve")
@@ -587,14 +605,21 @@ jobs:
                   frozen_inputs()
                   return result
               status, stdout, _ = invoke("version", ["--version"])
-              require(status == 0, "candidate version unavailable")
+              require(status == 0 and stdout.decode().strip().endswith("(" + actual_head + ")"), "candidate version/source identity mismatch")
               receipt["producer"]["version"] = stdout.decode().strip()
               check_args = ["check", "--root", str(fixture), "--diff", str(diff), "--json"]
               status, stdout, _ = invoke("initial-list", check_args)
               require(status == 0, "fixture listing failed")
-              actual_id = packet(stdout)
+              actual_id = packet(stdout, source)
               require(all(f.get("id") != "repo-probe:src_lib.rs:error_path:3bf8c64c" for f in json.loads(stdout)["findings"]), "opaque negative ID is present in fixture")
-              rejected("wrong-listing-identity", lambda: packet(stdout, "probe:wrong-control"))
+              rejected("wrong-listing-identity", lambda: packet(stdout, source, "probe:wrong-control"))
+              for name, field, value in (("wrong-fixture-file-identity", "file", str(foreign / "src" / "lib.rs")),
+                                         ("wrong-predicate-condition", "expression", "amount > threshold")):
+                  wrong = json.loads(stdout)
+                  for finding in wrong["findings"]:
+                      if finding.get("id") == actual_id:
+                          finding["probe"][field] = value
+                  rejected(name, lambda: packet(json.dumps(wrong).encode(), source, actual_id))
               commands = []
               for sibling, selector in (("explain", "src/lib.rs:abc"), ("context", ":::")):
                   args = [sibling, "--root", str(fixture), "--diff", str(diff)] + (["--at"] if sibling == "context" else []) + [selector]
@@ -610,7 +635,7 @@ jobs:
                   status, stdout, _ = run(sibling + "-literal-replay", [shell, "-NoProfile", "-NonInteractive", "-Command", command], foreign)
                   frozen_inputs()
                   require(status == 0, "literal PowerShell recovery failed")
-                  require(packet(stdout, actual_id) == actual_id, "literal replay selected another fixture")
+                  require(packet(stdout, source, actual_id) == actual_id, "literal replay selected another fixture")
                   receipt["cases"][-1]["command_exactly_as_printed"] = command
                   status, stdout, _ = invoke(sibling + "-actual-id", [sibling, "--root", str(fixture), "--diff", str(diff)]
                                             + (["--at"] if sibling == "context" else []) + [actual_id])
@@ -627,11 +652,18 @@ jobs:
               frozen_inputs()
               status, stdout, _ = run("literal-repeat", [shell, "-NoProfile", "-NonInteractive", "-Command", commands[0]], foreign)
               frozen_inputs()
-              require(status == 0 and packet(stdout, actual_id) == actual_id, "literal repeat changed selected fixture")
+              require(status == 0 and packet(stdout, source, actual_id) == actual_id, "literal repeat changed selected fixture")
               receipt.update(state="PASS", actual_listed_id=actual_id, literal_replays=3, siblings_retried=["explain", "context"])
           except Exception as error:
               receipt.update(state="FAIL", error_type=type(error).__name__, error=str(error))
           finally:
+              try:
+                  receipt["staging_cleanup"] = remove_staged(globals().get("staged"), staged_by_consumer)
+              except Exception as cleanup_error:
+                  receipt["staging_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
+                  if receipt.get("error"):
+                      receipt["primary_error"] = receipt["error"]
+                  receipt.update(state="FAIL", error_type="StagingCleanup", error=str(cleanup_error))
               receipt["python"] = sys.version
               receipt["total_deadline_seconds"] = 720
               receipt["evidence_bytes"] = sum(p.stat().st_size for p in out.glob("*") if p.is_file())
@@ -723,6 +755,9 @@ jobs:
               raise SystemExit("selector receipt/log malformed or inconsistent")
           if status != (0 if receipt["state"] == "PASS" else 1):
               raise SystemExit("selector native status disagrees with retained receipt")
+          cleanup = receipt.get("staging_cleanup", {}).get("state")
+          if cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and cleanup != "REMOVED"):
+              raise SystemExit("selector staged executable cleanup missing or failed")
           if receipt["state"] == "FAIL":
               if not receipt.get("error"):
                   raise SystemExit("selector FAIL has no retained failure")
@@ -735,8 +770,8 @@ jobs:
               if not all(n in cases and cases[n].get("exit") == 0 and not cases[n].get("stop") for n in literal + retries):
                   raise SystemExit("selector PASS lacks successful native replay/retry")
               controls = receipt.get("controls", [])
-              if {c.get("name") for c in controls} != {"wrong-digest-before-launch", "stale-source-receipt-before-launch", "wrong-listing-identity"} or len(controls) != 3 or not all(c.get("rejected") and c.get("processes_launched") == 0 for c in controls):
-                  raise SystemExit("selector PASS lacks three rejected controls")
+              if {c.get("name") for c in controls} != {"wrong-digest-before-launch", "stale-source-receipt-before-launch", "wrong-listing-identity", "wrong-fixture-file-identity", "wrong-predicate-condition"} or len(controls) != 5 or not all(c.get("rejected") and c.get("processes_launched") == 0 for c in controls):
+                  raise SystemExit("selector PASS lacks five rejected controls")
           print("Selector consumer evidence retained: " + receipt["state"])
           PY
 
