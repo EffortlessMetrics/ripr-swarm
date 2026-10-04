@@ -901,6 +901,29 @@ fn first_run_rows_fail_closed_on_malformed_or_cut_off_input() {
         ))
         .is_err_and(|e| e.contains("no case rows"))
     );
+    // A failed install writes only setup rows; its timing still lands as an
+    // incomplete install sample, and no per-case metric appears.
+    let failed_install = [
+        row(
+            r#""ripr":"r","case":"_setup","step":"install_published","metric":"secs","value":20.0"#,
+        ),
+        row(r#""ripr":"r","case":"_setup","step":"install_published","metric":"exit","value":101"#),
+    ]
+    .join("\n");
+    let install_rows = convert(failed_install).map(|input| {
+        input["metrics"]
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .filter(|r| r["id"].as_str() == Some("first_run.install_seconds"))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    });
+    assert!(install_rows.is_ok_and(|rows| rows.len() == 1
+        && rows[0]["value"] == json!(20.0)
+        && rows[0]["completed"] == json!(false)));
     // A step cut off before its exit row counts as failed.
     let cut = [
         row(r#""case":"a","step":"check","metric":"exit","value":0"#),

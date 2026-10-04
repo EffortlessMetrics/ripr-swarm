@@ -763,9 +763,6 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
                 }
                 cases
             });
-    if cases.is_empty() {
-        return Err("first_run_row.v1 input has no case rows outside _setup".to_string());
-    }
     let failed: Vec<String> = steps
         .iter()
         .filter_map(|s| match s.exit {
@@ -782,6 +779,15 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         .iter()
         .filter(|s| s.case == "_setup" && s.step.contains("install"))
         .all(|s| s.secs.is_some());
+    let install_ok = steps
+        .iter()
+        .filter(|s| s.case == "_setup" && s.step.contains("install"))
+        .all(|s| s.exit == Some(0.0));
+    // A walk whose install failed writes no case rows; its install timing and
+    // failed step are still worth ingesting.
+    if cases.is_empty() && install.is_none() {
+        return Err("first_run_row.v1 input has no case rows outside _setup".to_string());
+    }
     let list = |items: &[String]| {
         if items.is_empty() {
             "none".to_string()
@@ -802,7 +808,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
         out.push(json!({
             "id": "first_run.install_seconds",
             "value": install,
-            "completed": install_timed,
+            "completed": install_timed && install_ok,
         }));
     }
     for case in &cases {
