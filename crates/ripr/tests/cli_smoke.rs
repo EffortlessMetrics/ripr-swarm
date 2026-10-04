@@ -10303,7 +10303,6 @@ fn perl_doctor_workspace_with_exporter_stub(
     label: &str,
     perllsp_body: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
-    use std::os::unix::fs::PermissionsExt;
     let root = unique_temp_workspace(label);
     std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
     std::fs::write(
@@ -10315,22 +10314,107 @@ fn perl_doctor_workspace_with_exporter_stub(
         .map_err(|err| err.to_string())?;
     std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
         .map_err(|err| err.to_string())?;
+    // #5103: a checkout-local exporter must not steal PATH resolution or
+    // the displayed bin path.
+    write_probe_stub(
+        &root.join("perllsp"),
+        "#!/bin/sh\necho 'cwd-hijack 0.0.0'\nexit 0\n",
+        "@echo off\r\necho cwd-hijack 0.0.0\r\nexit /b 0\r\n",
+    )?;
     let shim_dir = root.join("exporter-shims");
     std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
-    for (name, body) in [
-        ("perl-ripr-facts", "#!/bin/sh\nexit 127\n"),
-        ("perllsp", perllsp_body),
-    ] {
-        let path = shim_dir.join(name);
-        std::fs::write(&path, body).map_err(|err| format!("write {name} stub: {err}"))?;
-        let mut permissions = std::fs::metadata(&path)
-            .map_err(|err| format!("stat {name} stub: {err}"))?
+    write_probe_stub(
+        &shim_dir.join("perl-ripr-facts"),
+        "#!/bin/sh\nexit 127\n",
+        "@echo off\r\nexit /b 127\r\n",
+    )?;
+    write_probe_stub(&shim_dir.join("perllsp"), perllsp_body, perllsp_body)?;
+    Ok((root, shim_dir))
+}
+
+fn write_probe_stub(path: &Path, unix_body: &str, windows_body: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = windows_body;
+        std::fs::write(path, unix_body)
+            .map_err(|err| format!("write {}: {err}", path.display()))?;
+        let mut permissions = std::fs::metadata(path)
+            .map_err(|err| format!("stat {}: {err}", path.display()))?
             .permissions();
         permissions.set_mode(0o755);
-        std::fs::set_permissions(&path, permissions)
-            .map_err(|err| format!("chmod {name} stub: {err}"))?;
+        std::fs::set_permissions(path, permissions)
+            .map_err(|err| format!("chmod {}: {err}", path.display()))?;
     }
-    Ok((root, shim_dir))
+    #[cfg(windows)]
+    {
+        let _ = unix_body;
+        std::fs::write(path, windows_body)
+            .map_err(|err| format!("write {}: {err}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn mixed_perl_doctor_workspace(label: &str) -> Result<PathBuf, String> {
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(root.join("lib")).map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(root.join("t")).map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Makefile.PL"),
+        "use ExtUtils::MakeMaker;\nWriteMakefile(NAME => 'Pricing');\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mixed-perl\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("lib/Pricing.pm"),
+        "package Pricing;\nuse strict;\nsub discount { return 0; }\n1;\n",
+    )
+    .map_err(|err| err.to_string())?;
+    std::fs::write(
+        root.join("t/pricing.t"),
+        "use Test::More;\nok(1, 'placeholder');\ndone_testing();\n",
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(root)
+}
+
+fn plant_cwd_prove_decoys(root: &Path) -> Result<(), String> {
+    write_probe_stub(
+        &root.join("prove.cmd"),
+        "#!/bin/sh\necho 'cwd prove.cmd hijack'\nexit 0\n",
+        "@echo off\r\necho cwd prove.cmd hijack\r\nexit /b 0\r\n",
+    )?;
+    write_probe_stub(
+        &root.join("prove"),
+        "#!/bin/sh\necho 'cwd prove hijack'\nexit 0\n",
+        "@echo off\r\necho cwd prove hijack\r\nexit /b 0\r\n",
+    )
+}
+
+fn prove_path_stub_name() -> &'static str {
+    if cfg!(windows) { "prove.cmd" } else { "prove" }
+}
+
+fn doctor_perl_stdout_with_path(
+    root: &Path,
+    search_path: &std::ffi::OsString,
+) -> Result<String, String> {
+    let root_str = root.display().to_string();
+    let search_path = search_path
+        .to_str()
+        .ok_or_else(|| "search PATH is not UTF-8".to_string())?;
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        root,
+        &["doctor", "--root", &root_str],
+        &[("PATH", search_path)],
+    )
+    .map_err(|err| format!("run doctor: {err}"))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(unix)]
@@ -10412,6 +10496,10 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
         "ripr-facts-capable exporter must be reported compatible: {exporter_line}\n{stdout}"
     );
     assert!(
+        !exporter_line.contains("cwd-hijack") && !stdout.contains("cwd-hijack"),
+        "checkout-local perllsp must not be the displayed exporter:\n{stdout}"
+    );
+    assert!(
         !stdout.contains("not a compatible exporter"),
         "compatible control must not be reported incompatible:\n{stdout}"
     );
@@ -10433,6 +10521,69 @@ fn doctor_omits_perl_preview_when_no_perl_markers() -> Result<(), String> {
     );
 
     ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_does_not_treat_a_repo_local_prove_cmd_as_path_prove() -> Result<(), String> {
+    // #5103: Windows `where` searches cwd first. A checkout prove.cmd (and a
+    // Unix cwd `prove` decoy) must not print "prove available on PATH".
+    let root = mixed_perl_doctor_workspace("doctor-perl-cwd-prove")?;
+    plant_cwd_prove_decoys(&root)?;
+    let empty_bin = root.join("empty-bin");
+    std::fs::create_dir_all(&empty_bin).map_err(|err| format!("mkdir empty-bin: {err}"))?;
+    let stdout = doctor_perl_stdout_with_path(&root, &empty_bin.into_os_string())?;
+    assert!(
+        stdout.contains("perl: prove NOT found on PATH"),
+        "repo-local prove.cmd must not read as PATH prove:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("perl: prove available on PATH"),
+        "repo-local prove.cmd must not read as available:\n{stdout}"
+    );
+    let runners = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("runners:"))
+        .unwrap_or("");
+    assert!(
+        runners.contains("none found on PATH") || !runners.contains("prove"),
+        "runners must not name a cwd prove: {runners}\n{stdout}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_a_real_path_prove_despite_a_repo_local_prove_cmd() -> Result<(), String> {
+    // Discriminating control: the same cwd decoys, plus a PATH stub named the
+    // way this host actually resolves `prove`.
+    let root = mixed_perl_doctor_workspace("doctor-perl-path-prove")?;
+    plant_cwd_prove_decoys(&root)?;
+    let shim_dir = root.join("path-bin");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("mkdir path-bin: {err}"))?;
+    write_probe_stub(
+        &shim_dir.join(prove_path_stub_name()),
+        "#!/bin/sh\necho 'path prove'\nexit 0\n",
+        "@echo off\r\necho path prove\r\nexit /b 0\r\n",
+    )?;
+    let stdout = doctor_perl_stdout_with_path(&root, &shim_dir.into_os_string())?;
+    assert!(
+        stdout.contains("perl: prove available on PATH"),
+        "PATH prove must still count:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("perl: prove NOT found on PATH"),
+        "PATH prove must not be reported missing:\n{stdout}"
+    );
+    let runners = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("runners:"))
+        .unwrap_or("");
+    assert!(
+        runners.contains("prove"),
+        "runners must name PATH prove: {runners}\n{stdout}"
+    );
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
@@ -11246,11 +11397,7 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("ripr agent review-summary"));
     assert!(stdout.contains("target/ripr/workflow/agent-status.md"));
     assert!(stdout.contains("target/ripr/workflow/agent-review-summary.md"));
-    assert!(stdout.contains("#### First-run status"));
-    assert!(stdout.contains("Start-here artifact:"));
-    assert!(stdout.contains("missing_start_here"));
-    assert!(stdout.contains("cat target/ripr/reports/start-here.md"));
-    assert!(stdout.contains("### Language preview grouping"));
+    assert!(stdout.contains("ripr reports ci-summary --root ."));
     assert!(stdout.contains("github/codeql-action/upload-sarif@v4"));
     assert!(!workspace.join("ripr.toml").exists());
     assert!(!workspace.join(".github/workflows/ripr.yml").exists());
@@ -11301,7 +11448,11 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // The steps use the generating version's CLI, so the install is pinned
     // to it rather than taking the newest crates.io release.
     assert!(workflow.contains(&format!(
-        "run: cargo install ripr --version {} --locked\n",
+        "          version={}\n",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(workflow.contains(&format!(
+        "            cargo install ripr --version {} --locked\n",
         env!("CARGO_PKG_VERSION")
     )));
     assert!(!workflow.contains("cargo install ripr --locked"));
@@ -11310,9 +11461,9 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains(
         "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
     ));
-    // Every third-party action is pinned to a commit SHA (#4452).
-    assert!(workflow.contains("dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"));
-    assert!(!workflow.contains("dtolnay/rust-toolchain@stable"));
+    // The prebuilt install needs no third-party toolchain or cache action.
+    assert!(!workflow.contains("dtolnay/rust-toolchain"));
+    assert!(!workflow.contains("Swatinem/rust-cache"));
     assert!(workflow.contains("ripr pilot"));
     assert!(workflow.contains("--format sarif"));
     assert!(workflow.contains("--format repo-sarif"));
@@ -11351,16 +11502,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(workflow.contains("Run RIPR PR guidance report"));
     assert!(workflow.contains("Emit RIPR PR guidance annotations"));
     assert!(workflow.contains("Add RIPR advisory summary"));
-    assert!(workflow.contains("## RIPR advisory summary"));
-    assert!(workflow.contains("### Start here"));
-    assert!(workflow.contains("#### First-run status"));
-    assert!(workflow.contains("Start-here artifact:"));
-    assert!(workflow.contains("missing_start_here"));
-    assert!(workflow.contains("cat target/ripr/reports/start-here.md"));
-    assert!(workflow.contains("### Language preview grouping"));
-    assert!(workflow.contains("### SARIF and badge status"));
-    assert!(workflow.contains("### PR guidance annotations"));
-    assert!(workflow.contains("### Known limits"));
+    assert!(workflow.contains("ripr reports ci-summary --root ."));
     assert!(!workflow.contains("cargo xtask"));
     assert!(workflow.contains("continue-on-error: true"));
     assert!(workflow.contains("actions/upload-artifact@v7"));
@@ -19133,6 +19275,520 @@ fn agent_status_selects_nothing_past_an_unreadable_attempt()
     Ok(())
 }
 
+/// The #4798 fresh-process journey as one built-binary integration test:
+/// process A prepares the attempt, process B resumes it by exact ID, the
+/// external test-only edit lands, process C finishes it, and process D reads
+/// the retained terminal result — every step a fresh `ripr` process over
+/// repository artifacts alone, with no manual artifact paths.
+#[test]
+fn agent_status_attempt_resumes_and_finishes_one_attempt_across_fresh_processes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt journey")?;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    // Process A: prepare the attempt and keep the after command it printed.
+    let before = repair_route_before(&root)?;
+    let attempt = repair_route_attempt_id(&before)?;
+
+    // Process B: a fresh process resumes exactly this attempt.
+    let resumed = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        resumed["attempt"]["status_class"], "awaiting_edit",
+        "{resumed:#}"
+    );
+    assert_eq!(resumed["attempt"]["state"], "awaiting_edit", "{resumed:#}");
+    assert_eq!(resumed["attempt"]["head_current"], true, "{resumed:#}");
+    assert_eq!(resumed["attempt"]["currentness"], "current", "{resumed:#}");
+    assert_eq!(
+        resumed["next_action"]["step"], "repair_attempt_after",
+        "{resumed:#}"
+    );
+    assert_eq!(
+        resumed["next_action"]["command"], before,
+        "status must name the exact command the before phase recorded"
+    );
+    assert!(
+        resumed["claim_boundary"]
+            .as_array()
+            .is_some_and(|claims| claims.iter().any(|claim| {
+                claim
+                    .as_str()
+                    .is_some_and(|claim| claim.contains("read-only"))
+            })),
+        "{resumed:#}"
+    );
+
+    // External test-only edit, outside RIPR.
+    let focused_test = format!(
+        "{REPAIR_ROUTE_WEAK_TEST}\n#[test]\nfn at_threshold_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    std::fs::write(root.join("tests/pricing.rs"), focused_test)?;
+
+    // Process C: finish the attempt.
+    assert_success(&repair_route_after(&root, &attempt));
+
+    // Process D: the retained terminal result is readable by exact ID.
+    let finished = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        finished["attempt"]["status_class"], "finished_current",
+        "{finished:#}"
+    );
+    assert_eq!(
+        finished["attempt"]["receipt"]["issued_for_attempt"], true,
+        "{finished:#}"
+    );
+    assert_eq!(
+        finished["next_action"],
+        serde_json::Value::Null,
+        "a terminal current attempt names no next action: {finished:#}"
+    );
+    assert_eq!(
+        finished["test_run"]["status"], "not_recorded",
+        "the receipt records no test run and status says so: {finished:#}"
+    );
+
+    // The same state in the human rendering, from the same DTO.
+    let human = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_arg,
+        "--attempt",
+        &attempt,
+    ]);
+    assert_success(&human);
+    let rendered = String::from_utf8_lossy(&human.stdout);
+    assert!(rendered.contains("finished_current"), "{rendered}");
+    assert!(rendered.contains("Claim Boundary"), "{rendered}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A retained earlier result survives HEAD movement: it stays readable, but
+/// its currentness drops to historical and it is never presented as current
+/// proof.
+#[test]
+fn agent_status_attempt_reports_historical_after_head_moves()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt historical")?;
+    let before = repair_route_before(&root)?;
+    let attempt = repair_route_attempt_id(&before)?;
+    let focused_test = format!(
+        "{REPAIR_ROUTE_WEAK_TEST}\n#[test]\nfn at_threshold_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    std::fs::write(root.join("tests/pricing.rs"), focused_test)?;
+    assert_success(&repair_route_after(&root, &attempt));
+
+    repair_route_commit(&root, "unrelated later work")?;
+    let historical = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        historical["attempt"]["status_class"], "finished_historical",
+        "{historical:#}"
+    );
+    assert_eq!(
+        historical["attempt"]["head_current"], false,
+        "{historical:#}"
+    );
+    assert_eq!(
+        historical["attempt"]["currentness"], "historical",
+        "{historical:#}"
+    );
+    assert_eq!(
+        historical["next_action"],
+        serde_json::Value::Null,
+        "{historical:#}"
+    );
+    assert!(
+        historical["claim_boundary"]
+            .as_array()
+            .is_some_and(|claims| claims.iter().any(|claim| {
+                claim
+                    .as_str()
+                    .is_some_and(|claim| claim.contains("not current proof"))
+            })),
+        "{historical:#}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// Two same-seam attempts are distinct by attempt ID: exact selection
+/// resumes each one, and the unselected inventory surface refuses to guess.
+#[test]
+fn agent_status_attempt_keeps_same_seam_attempts_distinct_by_id()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt same seam")?;
+    let first_command = repair_route_before(&root)?;
+    let first = repair_route_attempt_id(&first_command)?;
+    let second_command = repair_route_before(&root)?;
+    let second = repair_route_attempt_id(&second_command)?;
+    assert_ne!(first, second);
+
+    // Several active attempts never select newest/first/same-seam: the
+    // inventory surface names the ambiguity instead.
+    let report = repair_route_status(&root)?;
+    assert_eq!(
+        report["next_command"],
+        serde_json::Value::Null,
+        "{report:#}"
+    );
+    assert!(
+        repair_route_warning_kinds(&report).contains(&"ambiguous_repair_attempts".to_string()),
+        "{report:#}"
+    );
+
+    for (id, command) in [(&first, &first_command), (&second, &second_command)] {
+        let selected = repair_route_attempt_status(&root, id)?;
+        assert_eq!(
+            selected["attempt"]["status_class"], "awaiting_edit",
+            "{selected:#}"
+        );
+        assert_eq!(
+            selected["next_action"]["command"],
+            command.as_str(),
+            "each same-seam attempt resumes its own recorded command: {selected:#}"
+        );
+        assert_eq!(
+            selected["attempt"]["seam_id"], REPAIR_ROUTE_SEAM,
+            "{selected:#}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// An explicit non-default store from #4797 works through status selection
+/// without manual artifact plumbing: the default store cannot see the
+/// attempt, the explicit store resumes it, and the next action repeats
+/// `--store`.
+#[test]
+fn agent_status_attempt_round_trips_an_explicit_store() -> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt store")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let store = "target/ripr/alt-attempts";
+
+    let before = run_ripr(&[
+        "agent",
+        "repair",
+        "--json",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        REPAIR_ROUTE_SEAM,
+        "--phase",
+        "before",
+        "--store",
+        store,
+    ]);
+    assert_success(&before);
+    let command = String::from_utf8_lossy(&before.stderr)
+        .lines()
+        .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
+        .ok_or("explicit-store before phase printed no attempt command")?
+        .to_string();
+    assert!(command.contains("--store"), "{command}");
+    let attempt = repair_route_attempt_id(&command)?;
+
+    // The default store cannot resolve an explicit-store attempt.
+    let foreign = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        foreign["attempt"]["status_class"], "corrupt_or_unavailable",
+        "{foreign:#}"
+    );
+
+    let selected = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_arg,
+        "--attempt",
+        &attempt,
+        "--store",
+        store,
+        "--json",
+    ]);
+    assert_success(&selected);
+    let report: serde_json::Value = serde_json::from_slice(&selected.stdout)?;
+    assert_eq!(
+        report["attempt"]["status_class"], "awaiting_edit",
+        "{report:#}"
+    );
+    assert_eq!(
+        report["store"]["location_class"], "explicit_repository",
+        "{report:#}"
+    );
+    assert_eq!(report["store"]["locator"], store, "{report:#}");
+    let next = report["next_action"]["command"]
+        .as_str()
+        .ok_or("explicit-store attempt status named no next action")?;
+    assert!(next.contains("--store"), "{next}");
+    assert!(next.contains(attempt.as_str()), "{next}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A malformed attempt row is typed `corrupt_or_unavailable` under exact
+/// selection while the store's valid rows stay discoverable and resumable —
+/// one bad row cannot hide or strengthen another.
+#[test]
+fn agent_status_attempt_types_a_malformed_row_and_isolates_valid_rows()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt malformed")?;
+    let before = repair_route_before(&root)?;
+    let valid = repair_route_attempt_id(&before)?;
+    let broken_id = "repair-attempt-000000000000000000000000";
+    let broken = root.join("target/ripr/repair-attempts").join(broken_id);
+    std::fs::create_dir_all(&broken)?;
+    std::fs::write(broken.join("attempt.json"), "{ not json")?;
+
+    let corrupt = repair_route_attempt_status(&root, broken_id)?;
+    assert_eq!(
+        corrupt["attempt"]["status_class"], "corrupt_or_unavailable",
+        "{corrupt:#}"
+    );
+    assert!(
+        corrupt["attempt"]["unreadable_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("decode")),
+        "{corrupt:#}"
+    );
+
+    let valid_report = repair_route_attempt_status(&root, &valid)?;
+    assert_eq!(
+        valid_report["attempt"]["status_class"], "awaiting_edit",
+        "the malformed row must not weaken the valid row: {valid_report:#}"
+    );
+    assert_eq!(
+        valid_report["next_action"]["command"], before,
+        "{valid_report:#}"
+    );
+
+    // The discovery surface fails closed: a malformed row keeps the whole
+    // listing untrusted, so the inventory names the bad row and withholds
+    // every candidate instead of crediting a subset. Exact `--attempt`
+    // selection above already proved the valid row itself stays readable.
+    let inventory = repair_route_status(&root)?;
+    assert_eq!(
+        inventory["repair_attempts"]
+            .as_array()
+            .map(|attempts| attempts.len()),
+        Some(0),
+        "{inventory:#}"
+    );
+    assert!(
+        repair_route_warning_kinds(&inventory).contains(&"repair_attempt_unreadable".to_string()),
+        "{inventory:#}"
+    );
+
+    // A selector that is not a repair attempt ID fails closed at the CLI.
+    let root_arg = root.to_string_lossy().into_owned();
+    let rejected = run_ripr(&["agent", "status", "--root", &root_arg, "--attempt", "bogus"]);
+    assert!(
+        !rejected.status.success(),
+        "a malformed attempt ID must be refused: {rejected:?}"
+    );
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("repair-attempt-"), "{stderr}");
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// Missing or tampered attempt-local terminal evidence never falls back to
+/// another attempt's compatibility receipt: the selected attempt is typed
+/// `corrupt_or_unavailable` and names the unbound artifact.
+#[test]
+fn agent_status_attempt_never_reconstructs_a_tampered_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt tampered")?;
+    let before = repair_route_before(&root)?;
+    let attempt = repair_route_attempt_id(&before)?;
+    let focused_test = format!(
+        "{REPAIR_ROUTE_WEAK_TEST}\n#[test]\nfn at_threshold_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    std::fs::write(root.join("tests/pricing.rs"), focused_test)?;
+    assert_success(&repair_route_after(&root, &attempt));
+
+    let manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt)
+        .join("attempt.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    let receipt_path = manifest["terminal_artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_receipt")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("finished attempt retained no agent_receipt artifact")?;
+    let local_receipt = root.join(receipt_path);
+
+    // The one-slot compatibility projection still matches this attempt, so
+    // the only honest reading is the retained one: corrupting it must not
+    // resurrect the result through the projection.
+    std::fs::write(&local_receipt, b"tampered-not-the-retained-receipt")?;
+    let tampered = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        tampered["attempt"]["status_class"], "corrupt_or_unavailable",
+        "{tampered:#}"
+    );
+    assert_eq!(
+        tampered["attempt"]["receipt"]["issued_for_attempt"], false,
+        "{tampered:#}"
+    );
+    assert_eq!(
+        tampered["attempt"]["receipt"]["unavailable"], true,
+        "{tampered:#}"
+    );
+    assert!(
+        tampered["attempt"]["receipt"]["movement"].is_null(),
+        "another reading's movement must not be projected: {tampered:#}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// Deleting a finished attempt's retained verify artifact makes the whole
+/// terminal record unavailable: the gap-closing receipt alone never reads
+/// `finished_*` while the verify half it was issued over is gone.
+#[test]
+fn agent_status_attempt_types_a_deleted_verify_artifact_as_corrupt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt verify deleted")?;
+    let before = repair_route_before(&root)?;
+    let attempt = repair_route_attempt_id(&before)?;
+    let focused_test = format!(
+        "{REPAIR_ROUTE_WEAK_TEST}\n#[test]\nfn at_threshold_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    std::fs::write(root.join("tests/pricing.rs"), focused_test)?;
+    assert_success(&repair_route_after(&root, &attempt));
+
+    let manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt)
+        .join("attempt.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    let verify_path = manifest["terminal_artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "agent_verify")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("finished attempt retained no agent_verify artifact")?;
+    let finished = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        finished["attempt"]["status_class"], "finished_current",
+        "the retained pair reads finished before the delete: {finished:#}"
+    );
+
+    std::fs::remove_file(root.join(verify_path))?;
+    let corrupt = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        corrupt["attempt"]["status_class"], "corrupt_or_unavailable",
+        "{corrupt:#}"
+    );
+    assert_eq!(
+        corrupt["attempt"]["receipt"]["unavailable"], true,
+        "{corrupt:#}"
+    );
+    assert!(
+        corrupt["attempt"]["receipt"]["movement"].is_null(),
+        "a missing verify half must not leave a movement reading: {corrupt:#}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// A legacy manifest (finished before attempt-local terminal retention
+/// existed) is visible only at its earned compatibility strength: the class
+/// is `legacy_compatibility_only` even when the one-slot projection still
+/// matches it.
+#[test]
+fn agent_status_attempt_reports_legacy_manifest_at_compatibility_strength()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("status attempt legacy")?;
+    let before = repair_route_before(&root)?;
+    let attempt = repair_route_attempt_id(&before)?;
+    let focused_test = format!(
+        "{REPAIR_ROUTE_WEAK_TEST}\n#[test]\nfn at_threshold_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    std::fs::write(root.join("tests/pricing.rs"), focused_test)?;
+    assert_success(&repair_route_after(&root, &attempt));
+
+    // Strip the terminal retention from the manifest. The before commitment
+    // excludes `terminal_artifacts`, so the manifest stays valid and the
+    // attempt becomes exactly what a pre-retention attempt looks like.
+    let manifest_path = root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt)
+        .join("attempt.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+    manifest
+        .as_object_mut()
+        .ok_or("attempt manifest is not an object")?
+        .remove("terminal_artifacts");
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+
+    let legacy = repair_route_attempt_status(&root, &attempt)?;
+    assert_eq!(
+        legacy["attempt"]["status_class"], "legacy_compatibility_only",
+        "{legacy:#}"
+    );
+    assert_eq!(
+        legacy["attempt"]["state"], "ready_to_finish",
+        "the operational state stays readable: {legacy:#}"
+    );
+    assert_eq!(
+        legacy["attempt"]["receipt"]["issued_for_attempt"], true,
+        "the exact matching projection is still read at its strength: {legacy:#}"
+    );
+    assert!(
+        legacy["claim_boundary"]
+            .as_array()
+            .is_some_and(|claims| claims.iter().any(|claim| {
+                claim
+                    .as_str()
+                    .is_some_and(|claim| claim.contains("compatibility strength"))
+            })),
+        "{legacy:#}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// `ripr agent status --attempt <id> --json` for one selected attempt.
+fn repair_route_attempt_status(
+    root: &Path,
+    attempt_id: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let root_arg = root.to_string_lossy().into_owned();
+    let status = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_arg,
+        "--attempt",
+        attempt_id,
+        "--json",
+    ]);
+    assert_success(&status);
+    Ok(serde_json::from_slice(&status.stdout)?)
+}
+
 // ── ripr pr-summary (Campaign 31 item 8: binary-first downstream CI) ──
 
 struct PrSummaryScratch(PathBuf);
@@ -19622,6 +20278,68 @@ fn impacted_evidence_unknown_arg_fails_clearly() {
         stderr.contains("unknown impacted-evidence argument") || stderr.contains("--bogus"),
         "error must name the unknown arg:\n{stderr}"
     );
+}
+
+#[test]
+fn impacted_evidence_refuses_missing_pr_evidence_and_writes_nothing() -> Result<(), String> {
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
+    let dir = unique_temp_workspace("impacted-missing");
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let _cleanup = Scratch(dir.clone());
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&dir),
+        &["impacted-evidence", "--pr-evidence", "missing.json"],
+    )
+    .map_err(|err| err.to_string())?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "missing evidence must be an operational failure:\n{stderr}"
+    );
+    assert!(stderr.contains("missing.json"), "{stderr}");
+    assert!(
+        !dir.join("target").exists(),
+        "nothing may be written into the cwd"
+    );
+    Ok(())
+}
+
+#[test]
+fn impacted_evidence_failure_removes_stale_outputs() -> Result<(), String> {
+    struct Scratch(PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            ignore_remove_dir_all(&self.0);
+        }
+    }
+    let dir = unique_temp_workspace("impacted-stale");
+    let out_dir = dir.join("target/xtask/impacted-evidence");
+    std::fs::create_dir_all(&out_dir).map_err(|err| err.to_string())?;
+    let _cleanup = Scratch(dir.clone());
+    std::fs::write(out_dir.join("latest.json"), "{}").map_err(|err| err.to_string())?;
+    std::fs::write(out_dir.join("latest.md"), "old").map_err(|err| err.to_string())?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&dir),
+        &["impacted-evidence", "--pr-evidence", "missing.json"],
+    )
+    .map_err(|err| err.to_string())?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("Removed stale"), "{stderr}");
+    assert!(!out_dir.join("latest.json").exists(), "stale JSON must go");
+    assert!(
+        !out_dir.join("latest.md").exists(),
+        "stale Markdown must go"
+    );
+    Ok(())
 }
 
 // ── ripr plus (binary-first RIPR+ repo receipt, composition-only) ──
@@ -20666,6 +21384,94 @@ fn no_origin_master_repo(label: &str, initial_branch: &str) -> Result<PathBuf, S
     .map_err(|err| format!("write work lib.rs: {err}"))?;
     run_git(&root, &["commit", "-am", "work"])?;
     Ok(root)
+}
+
+/// `pr-evidence` reads Git history and writes from the invocation directory.
+/// A `--root` naming another repository, a missing directory, or a file used
+/// to pair the invocation repository's diff with the selected root's source
+/// and stamp a clean packet with the selected root. Each must refuse before
+/// any packet is written in either tree.
+#[test]
+fn pr_evidence_refuses_root_outside_invocation_repository() -> Result<(), String> {
+    let selected = no_origin_master_repo("pr-evidence-foreign-selected", "master")?;
+    let invocation = no_origin_master_repo("pr-evidence-foreign-invocation", "master")?;
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let missing = selected.join("missing-member");
+    let file_root = selected.join("Cargo.toml");
+    let mut failures = Vec::new();
+    for (label, root, expected) in [
+        (
+            "foreign repository",
+            &selected,
+            "is not inside the Git work tree",
+        ),
+        ("missing directory", &missing, "is not a directory"),
+        ("file", &file_root, "is not a directory"),
+    ] {
+        let root_arg = root.to_string_lossy().into_owned();
+        let output = run_command(
+            bin,
+            Some(&invocation),
+            &[
+                "pr-evidence",
+                "--root",
+                &root_arg,
+                "--base",
+                "master",
+                "--head",
+                "HEAD",
+            ],
+        )
+        .map_err(|err| format!("spawn ripr pr-evidence: {err}"))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let written =
+            invocation.join("target/ripr/pr").exists() || selected.join("target/ripr/pr").exists();
+        if output.status.code() != Some(2) || !stderr.contains(expected) || written {
+            failures.push(format!(
+                "{label} root must refuse with `{expected}` and write nothing; status {:?}, written {written}, stderr:\n{stderr}",
+                output.status.code()
+            ));
+        }
+    }
+    // An inherited repository selector (as a Git hook exports) must not make
+    // both top-level probes answer for the invocation repository.
+    let selected_arg = selected.to_string_lossy().into_owned();
+    let git_dir = invocation.join(".git").to_string_lossy().into_owned();
+    let work_tree = invocation.to_string_lossy().into_owned();
+    let output = run_command_with_env(
+        bin,
+        &invocation,
+        &[
+            "pr-evidence",
+            "--root",
+            &selected_arg,
+            "--base",
+            "master",
+            "--head",
+            "HEAD",
+        ],
+        &[("GIT_DIR", &git_dir), ("GIT_WORK_TREE", &work_tree)],
+    )
+    .map_err(|err| format!("spawn ripr pr-evidence with GIT_DIR: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let written =
+        invocation.join("target/ripr/pr").exists() || selected.join("target/ripr/pr").exists();
+    if output.status.code() != Some(2)
+        || !stderr.contains("is not inside the Git work tree")
+        || written
+    {
+        failures.push(format!(
+            "foreign root under inherited GIT_DIR/GIT_WORK_TREE must still refuse; status {:?}, written {written}, stderr:\n{stderr}",
+            output.status.code()
+        ));
+    }
+    ignore_remove_dir_all(&selected);
+    ignore_remove_dir_all(&invocation);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
 }
 
 fn json_string_at(path: &Path, pointer: &str) -> Result<serde_json::Value, String> {
