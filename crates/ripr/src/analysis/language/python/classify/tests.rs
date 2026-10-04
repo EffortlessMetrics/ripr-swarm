@@ -20,6 +20,65 @@ fn classify_case(
         .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
 }
 
+// RIPR-SPEC-0028 / #5389: a registered test may not run, or may suppress
+// the assertion failure. Its exact oracle cannot lend credit to other tests.
+#[test]
+fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result<(), String> {
+    for decorator in [
+        "unittest.skip('disabled')",
+        "unittest.skipIf(True, 'disabled')",
+        "unittest.skipUnless(False, 'disabled')",
+        "unittest.expectedFailure",
+        "pytest.mark.skip(reason='disabled')",
+        "pytest.mark.skipif(True, reason='disabled')",
+        "pytest.mark.xfail(strict=False)",
+    ] {
+        let tests = format!(
+            "import unittest\nimport pytest\nfrom src.subject import score\n\n@{decorator}\ndef test_score():\n    assert score(0) == 8\n"
+        );
+        let finding = classify_case(
+            "def score(value):\n    return 8\n", &tests, 2, "    return 7", "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{decorator}");
+        assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes, "{decorator}");
+        assert!(finding.evidence.iter().any(|line| line.contains("test activation")), "{decorator}");
+    }
+    Ok(())
+}
+
+#[test]
+fn class_and_aliased_activation_controls_do_not_credit_python_tests() -> Result<(), String> {
+    for tests in [
+        "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\nclass ScoreChecks(unittest.TestCase):\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n",
+        "import pytest as pt\nfrom src.subject import score\n@pt.mark.skip(reason='disabled')\nclass TestScore:\n    def test_score(self):\n        assert score(0) == 8\n",
+        "from unittest import skip as disabled\nfrom src.subject import score\n@disabled('disabled')\ndef test_score():\n    assert score(0) == 8\n",
+    ] {
+        let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
+fn active_python_oracle_keeps_credit_beside_a_disabled_test() -> Result<(), String> {
+    let tests = "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\ndef test_disabled_score():\n    assert score(0) == 8\n\ndef test_active_score():\n    assert score(0) == 8\n";
+    let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    let disabled = finding.related_tests.iter().find(|test| test.name == "test_disabled_score")
+        .ok_or_else(|| "disabled test pointer must remain visible".to_string())?;
+    assert_eq!(disabled.oracle_strength, crate::domain::OracleStrength::Unknown);
+    Ok(())
+}
+
+#[test]
+fn disabled_exact_python_oracle_cannot_lend_credit_to_an_active_smoke_test() -> Result<(), String> {
+    let tests = "import unittest\nfrom src.subject import score\n@unittest.skip('disabled')\ndef test_disabled_score():\n    assert score(0) == 8\n\ndef test_active_score():\n    assert score(0)\n";
+    let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
 /// Keep the exact non-credit wording separate from the positive control below.
 fn assert_strong_oracle_is_not_discrimination(finding: &Finding) {
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
